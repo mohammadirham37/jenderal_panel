@@ -12,6 +12,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
+	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
@@ -47,6 +48,7 @@ type Dependencies struct {
 	QueueSvc       *queue.Service
 	NodeSvc        *nodejs.Service
 	DBManagerSvc   *dbmanager.Service
+	DockerSvc      *docker.Service
 	StaticHandler  http.Handler
 }
 
@@ -77,6 +79,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	queueHandler := queue.NewHandler(deps.QueueSvc, deps.AuditSvc)
 	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc)
 	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc)
+	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -344,6 +347,56 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/databases/users/{id}/password", dbHandler.ResetPassword)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/users/{id}/grant", dbHandler.GrantPrivileges)
+
+			// Docker
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/status", dockerHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/install", dockerHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/start", dockerHandler.Start)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/stop", dockerHandler.Stop)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/restart", dockerHandler.Restart)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/containers", dockerHandler.ListContainers)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/containers/{id}/start", dockerHandler.StartContainer)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/containers/{id}/stop", dockerHandler.StopContainer)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/containers/{id}/restart", dockerHandler.RestartContainer)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Delete("/docker/containers/{id}", dockerHandler.RemoveContainer)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/containers/{id}/logs", dockerHandler.ContainerLogs)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/containers/{id}/inspect", dockerHandler.InspectContainer)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/images", dockerHandler.ListImages)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/images/pull", dockerHandler.PullImage)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Delete("/docker/images/{id}", dockerHandler.RemoveImage)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/volumes", dockerHandler.ListVolumes)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/volumes", dockerHandler.CreateVolume)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Delete("/docker/volumes/{name}", dockerHandler.RemoveVolume)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/networks", dockerHandler.ListNetworks)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/networks", dockerHandler.CreateNetwork)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Delete("/docker/networks/{name}", dockerHandler.RemoveNetwork)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/compose/up", dockerHandler.ComposeUp)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.manage")).
+				Post("/docker/compose/down", dockerHandler.ComposeDown)
+			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
+				Get("/docker/compose/status", dockerHandler.ComposeStatus)
 		})
 	})
 

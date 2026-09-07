@@ -19,6 +19,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
+	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
@@ -132,6 +133,7 @@ func cmdServe() {
 	queueSvc := queue.NewService(db, exec, auditSvc)
 	nodeSvc := nodejs.NewService(db, exec, auditSvc)
 	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
+	dockerSvc := docker.NewService(exec, auditSvc)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -163,6 +165,7 @@ func cmdServe() {
 		QueueSvc:       queueSvc,
 		NodeSvc:        nodeSvc,
 		DBManagerSvc:   dbManagerSvc,
+		DockerSvc:      dockerSvc,
 		StaticHandler:  staticHandler(),
 	})
 

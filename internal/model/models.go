@@ -250,6 +250,45 @@ type DBUser struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+type DockerStatus struct {
+	Installed  bool   `json:"installed"`
+	Running    bool   `json:"running"`
+	Version    string `json:"version"`
+	Containers int    `json:"containers"`
+	Images     int    `json:"images"`
+}
+
+type Container struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Image   string `json:"image"`
+	Status  string `json:"status"`
+	State   string `json:"state"`
+	Ports   string `json:"ports"`
+	Created string `json:"created"`
+}
+
+type DockerImage struct {
+	ID         string `json:"id"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
+	Size       string `json:"size"`
+	Created    string `json:"created"`
+}
+
+type DockerVolume struct {
+	Name       string `json:"name"`
+	Driver     string `json:"driver"`
+	Mountpoint string `json:"mountpoint"`
+}
+
+type DockerNetwork struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	Driver string `json:"driver"`
+	Scope  string `json:"scope"`
+}
+
 type EngineStatus struct {
 	Name      string `json:"name"`
 	Installed bool   `json:"installed"`
