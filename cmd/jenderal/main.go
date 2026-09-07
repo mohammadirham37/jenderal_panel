@@ -23,6 +23,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
+	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
@@ -118,6 +119,9 @@ func cmdServe() {
 	firewallSvc := firewall.NewService(exec, auditSvc)
 	processSvc := process.NewService(exec)
 	logSvc := system.NewLogService(exec)
+	acmeClient := ssl.NewLegoClient("admin@localhost", "/etc/jenderal/ssl")
+	sslSvc := ssl.NewService(db, exec, auditSvc, acmeClient, "/etc/jenderal/ssl")
+	renewalWorker := ssl.NewRenewalWorker(sslSvc)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -143,6 +147,7 @@ func cmdServe() {
 		LogSvc:        logSvc,
 		WebsiteSvc:    websiteSvc,
 		PHPSvc:        phpSvc,
+		SSLSvc:        sslSvc,
 		StaticHandler: staticHandler(),
 	})
 
@@ -151,6 +156,7 @@ func cmdServe() {
 
 	metricsCollector.Start(ctx)
 	provisioner.Start(ctx)
+	renewalWorker.Start(ctx)
 
 	srv := server.New(cfg.Server, router, logger)
 	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {

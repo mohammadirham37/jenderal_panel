@@ -14,6 +14,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
+	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
@@ -35,6 +36,7 @@ type Dependencies struct {
 	LogSvc        *system.LogService
 	WebsiteSvc    *website.Service
 	PHPSvc        *php.Service
+	SSLSvc        *ssl.Service
 	StaticHandler http.Handler
 }
 
@@ -59,6 +61,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
 	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc)
+	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -224,6 +227,20 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/php/{version}/config", phpHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "php.config")).
 				Put("/php/{version}/config", phpHandler.SaveConfig)
+
+			// SSL
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Post("/ssl/issue", sslHandler.Issue)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.view")).
+				Get("/ssl", sslHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.view")).
+				Get("/ssl/{id}", sslHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Post("/ssl/{id}/renew", sslHandler.Renew)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Post("/ssl/{id}/revoke", sslHandler.Revoke)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Delete("/ssl/{id}", sslHandler.Delete)
 		})
 	})
 

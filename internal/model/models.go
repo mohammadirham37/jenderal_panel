@@ -163,6 +163,19 @@ type Domain struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type SSLCertificate struct {
+	ID           string    `json:"id"`
+	WebsiteID    string    `json:"website_id"`
+	Domain       string    `json:"domain"`
+	Issuer       string    `json:"issuer"`
+	Status       string    `json:"status"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	AutoRenew    bool      `json:"auto_renew"`
+	ErrorMessage string    `json:"error_message"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+}
+
 type PHPVersion struct {
 	Version   string `json:"version"`
 	Installed bool   `json:"installed"`
