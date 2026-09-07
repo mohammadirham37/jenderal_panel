@@ -153,6 +153,22 @@
 				<div class="text-white mt-1">{info.cpu}</div>
 			</div>
 
+			<!-- CPU Model -->
+			{#if info.cpu_model}
+				<div class="p-4">
+					<div class="text-xs text-gray-400 uppercase tracking-wider">CPU Model</div>
+					<div class="text-white mt-1">{info.cpu_model}</div>
+				</div>
+			{/if}
+
+			<!-- CPU Cores -->
+			{#if info.cpu_cores}
+				<div class="p-4">
+					<div class="text-xs text-gray-400 uppercase tracking-wider">CPU Cores</div>
+					<div class="text-white mt-1">{info.cpu_cores}</div>
+				</div>
+			{/if}
+
 			<!-- RAM -->
 			<div class="p-4">
 				<div class="text-xs text-gray-400 uppercase tracking-wider">Memory</div>
@@ -213,5 +229,69 @@
 				{/if}
 			</div>
 		</div>
+
+		<!-- Disk Partitions -->
+		{#if info.disk_partitions && info.disk_partitions.length > 0}
+			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+				<div class="px-4 py-3 border-b border-gray-700">
+					<h3 class="text-sm font-semibold text-white">Disk Partitions</h3>
+				</div>
+				<div class="overflow-x-auto">
+					<table class="w-full">
+						<thead>
+							<tr class="border-b border-gray-700 bg-gray-800/80">
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Device</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Mount</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Used</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Available</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Use%</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-gray-700">
+							{#each info.disk_partitions as partition}
+								<tr class="hover:bg-gray-750">
+									<td class="px-4 py-2 text-sm text-white font-mono">{partition.device}</td>
+									<td class="px-4 py-2 text-sm text-gray-300 font-mono">{partition.mount}</td>
+									<td class="px-4 py-2 text-sm text-gray-300">{partition.size}</td>
+									<td class="px-4 py-2 text-sm text-gray-300">{partition.used}</td>
+									<td class="px-4 py-2 text-sm text-gray-300">{partition.available}</td>
+									<td class="px-4 py-2 text-sm text-gray-300">{partition.use_percent}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
+
+		<!-- Network Interfaces -->
+		{#if info.network_interfaces && info.network_interfaces.length > 0}
+			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+				<div class="px-4 py-3 border-b border-gray-700">
+					<h3 class="text-sm font-semibold text-white">Network Interfaces</h3>
+				</div>
+				<div class="overflow-x-auto">
+					<table class="w-full">
+						<thead>
+							<tr class="border-b border-gray-700 bg-gray-800/80">
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">IP Address</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">MAC Address</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-gray-700">
+							{#each info.network_interfaces as iface}
+								<tr class="hover:bg-gray-750">
+									<td class="px-4 py-2 text-sm text-white font-mono">{iface.name}</td>
+									<td class="px-4 py-2 text-sm text-gray-300 font-mono">{iface.ip || '-'}</td>
+									<td class="px-4 py-2 text-sm text-gray-300 font-mono">{iface.mac || '-'}</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>

@@ -2,10 +2,11 @@ package system
 
 import (
 	"net/http"
+	"strconv"
 
-	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 )
 
 // Handler handles system-related HTTP requests.
@@ -13,15 +14,48 @@ type Handler struct {
 	info    *Info
 	metrics *MetricsCollector
 	audit   *audit.Service
+	logs    *LogService
 }
 
 // NewHandler creates a new system Handler.
-func NewHandler(info *Info, metrics *MetricsCollector, auditSvc *audit.Service) *Handler {
+func NewHandler(info *Info, metrics *MetricsCollector, auditSvc *audit.Service, logSvc *LogService) *Handler {
 	return &Handler{
 		info:    info,
 		metrics: metrics,
 		audit:   auditSvc,
+		logs:    logSvc,
 	}
+}
+
+func (h *Handler) ReadLog(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "path required")
+		return
+	}
+	lines, _ := strconv.Atoi(r.URL.Query().Get("lines"))
+	if lines < 1 {
+		lines = 100
+	}
+	content, err := h.logs.ReadLog(r.Context(), path, lines)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
+}
+
+func (h *Handler) StreamLog(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if path == "" {
+		http.Error(w, "path required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := auth.UserFromContext(r.Context()); !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	h.logs.StreamLog(w, r, path)
 }
 
 // GetInfo returns server information.

@@ -39,10 +39,29 @@ export interface ServerInfo {
 	os: string;
 	kernel: string;
 	cpu: string;
+	cpu_model: string;
+	cpu_cores: number;
 	ram: string;
 	disk: string;
 	uptime: string;
 	timezone: string;
+	disk_partitions: DiskPartition[];
+	network_interfaces: NetworkInterface[];
+}
+
+export interface DiskPartition {
+	device: string;
+	mount: string;
+	size: string;
+	used: string;
+	available: string;
+	use_percent: string;
+}
+
+export interface NetworkInterface {
+	name: string;
+	ip: string;
+	mac: string;
 }
 
 export interface ServerMetrics {

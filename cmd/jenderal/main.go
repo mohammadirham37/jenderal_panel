@@ -17,7 +17,10 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
+	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
@@ -109,6 +112,10 @@ func cmdServe() {
 	systemInfo := system.NewInfo(exec)
 	metricsCollector := system.NewMetricsCollector(db, cfg.Metrics)
 	settingsSvc := settings.NewService(db)
+	nginxSvc := nginx.NewService(exec, auditSvc)
+	firewallSvc := firewall.NewService(exec, auditSvc)
+	processSvc := process.NewService(exec)
+	logSvc := system.NewLogService(exec)
 
 	if err := rbac.Seed(context.Background()); err != nil {
 		logger.Error("RBAC seed failed", "error", err)
@@ -124,6 +131,10 @@ func cmdServe() {
 		Metrics:       metricsCollector,
 		ServiceMgr:    serviceMgr,
 		SettingsSvc:   settingsSvc,
+		NginxSvc:      nginxSvc,
+		FirewallSvc:   firewallSvc,
+		ProcessSvc:    processSvc,
+		LogSvc:        logSvc,
 		StaticHandler: staticHandler(),
 	})
 

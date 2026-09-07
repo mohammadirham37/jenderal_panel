@@ -69,18 +69,6 @@ type ServerMetrics struct {
 	Timestamp time.Time     `json:"timestamp"`
 }
 
-type ServerInfo struct {
-	Hostname string `json:"hostname"`
-	IP       string `json:"ip"`
-	OS       string `json:"os"`
-	Kernel   string `json:"kernel"`
-	CPU      string `json:"cpu"`
-	RAM      string `json:"ram"`
-	Disk     string `json:"disk"`
-	Uptime   string `json:"uptime"`
-	Timezone string `json:"timezone"`
-}
-
 type ServiceStatus struct {
 	Name    string        `json:"name"`
 	Active  bool          `json:"active"`
@@ -94,4 +82,76 @@ type UserWithRoles struct {
 	User        User         `json:"user"`
 	Roles       []Role       `json:"roles"`
 	Permissions []Permission `json:"permissions"`
+}
+
+type NginxStatus struct {
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Enabled   bool   `json:"enabled"`
+	Version   string `json:"version"`
+	PID       int    `json:"pid"`
+	ConfigOK  bool   `json:"config_ok"`
+}
+
+type SiteConfig struct {
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+	Path    string `json:"path"`
+}
+
+type FirewallStatus struct {
+	Active  bool           `json:"active"`
+	Default string         `json:"default"`
+	Rules   []FirewallRule `json:"rules"`
+}
+
+type FirewallRule struct {
+	Number  int    `json:"number"`
+	To      string `json:"to"`
+	Action  string `json:"action"`
+	From    string `json:"from"`
+	Comment string `json:"comment"`
+}
+
+type Process struct {
+	PID     int     `json:"pid"`
+	User    string  `json:"user"`
+	CPU     float64 `json:"cpu"`
+	RAM     float64 `json:"ram"`
+	VSZ     uint64  `json:"vsz"`
+	RSS     uint64  `json:"rss"`
+	Command string  `json:"command"`
+	Started string  `json:"started"`
+}
+
+type DiskPartition struct {
+	Device     string `json:"device"`
+	Mount      string `json:"mount"`
+	Filesystem string `json:"filesystem"`
+	Size       string `json:"size"`
+	Used       string `json:"used"`
+	Available  string `json:"available"`
+	UsePct     string `json:"use_pct"`
+}
+
+type NetworkInterface struct {
+	Name string `json:"name"`
+	IP   string `json:"ip"`
+	MAC  string `json:"mac"`
+}
+
+type ServerInfo struct {
+	Hostname   string             `json:"hostname"`
+	IP         string             `json:"ip"`
+	OS         string             `json:"os"`
+	Kernel     string             `json:"kernel"`
+	CPU        string             `json:"cpu"`
+	CPUModel   string             `json:"cpu_model"`
+	CPUCores   int                `json:"cpu_cores"`
+	RAM        string             `json:"ram"`
+	Disk       string             `json:"disk"`
+	Uptime     string             `json:"uptime"`
+	Timezone   string             `json:"timezone"`
+	Partitions []DiskPartition    `json:"partitions"`
+	Interfaces []NetworkInterface `json:"interfaces"`
 }

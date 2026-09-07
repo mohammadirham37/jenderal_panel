@@ -70,6 +70,14 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"audit.view", "audit"},
 		{"settings.view", "settings"},
 		{"settings.update", "settings"},
+		{"nginx.view", "nginx"},
+		{"nginx.manage", "nginx"},
+		{"nginx.config", "nginx"},
+		{"firewall.view", "firewall"},
+		{"firewall.manage", "firewall"},
+		{"processes.view", "processes"},
+		{"processes.kill", "processes"},
+		{"logs.view", "logs"},
 	}
 
 	permIDs := make(map[string]string)
@@ -102,7 +110,10 @@ func (r *RBAC) Seed(ctx context.Context) error {
 	}
 
 	// Assign limited permissions to user role
-	userPerms := []string{"dashboard.view", "server.view", "services.view"}
+	userPerms := []string{
+		"dashboard.view", "server.view", "services.view",
+		"nginx.view", "firewall.view", "processes.view", "logs.view",
+	}
 	for _, name := range userPerms {
 		_, err := r.db.ExecContext(ctx,
 			`INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)`,

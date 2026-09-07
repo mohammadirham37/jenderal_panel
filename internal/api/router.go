@@ -9,6 +9,9 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
+	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
@@ -24,6 +27,10 @@ type Dependencies struct {
 	Metrics       *system.MetricsCollector
 	ServiceMgr    service.ServiceManager
 	SettingsSvc   *settings.Service
+	NginxSvc      *nginx.Service
+	FirewallSvc   *firewall.Service
+	ProcessSvc    *process.Service
+	LogSvc        *system.LogService
 	StaticHandler http.Handler
 }
 
@@ -38,11 +45,14 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// Handlers
 	authHandler := auth.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)
-	systemHandler := system.NewHandler(deps.SystemInfo, deps.Metrics, deps.AuditSvc)
+	systemHandler := system.NewHandler(deps.SystemInfo, deps.Metrics, deps.AuditSvc, deps.LogSvc)
 	serviceHandler := service.NewHandler(deps.ServiceMgr, deps.AuditSvc)
 	userHandler := user.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)
 	auditHandler := audit.NewHandler(deps.AuditSvc)
 	settingsHandler := settings.NewHandler(deps.SettingsSvc)
+	nginxHandler := nginx.NewHandler(deps.NginxSvc, deps.AuditSvc)
+	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
+	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -104,6 +114,66 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/settings", settingsHandler.Get)
 			r.With(auth.RequirePermission(deps.RBAC, "settings.update")).
 				Put("/settings", settingsHandler.Update)
+
+			// Nginx
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
+				Get("/nginx/status", nginxHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/install", nginxHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/start", nginxHandler.Start)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/stop", nginxHandler.Stop)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/restart", nginxHandler.Restart)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/reload", nginxHandler.Reload)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/test", nginxHandler.TestConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
+				Get("/nginx/config", nginxHandler.GetConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.config")).
+				Put("/nginx/config", nginxHandler.SaveConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
+				Get("/nginx/sites", nginxHandler.ListSites)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
+				Get("/nginx/sites/{name}", nginxHandler.GetSiteConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.config")).
+				Put("/nginx/sites/{name}", nginxHandler.SaveSiteConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/sites/{name}/enable", nginxHandler.EnableSite)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/sites/{name}/disable", nginxHandler.DisableSite)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Delete("/nginx/sites/{name}", nginxHandler.DeleteSite)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
+				Get("/nginx/logs/access", nginxHandler.AccessLog)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
+				Get("/nginx/logs/error", nginxHandler.ErrorLog)
+
+			// Firewall
+			r.With(auth.RequirePermission(deps.RBAC, "firewall.view")).
+				Get("/firewall/status", firewallHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "firewall.manage")).
+				Post("/firewall/enable", firewallHandler.Enable)
+			r.With(auth.RequirePermission(deps.RBAC, "firewall.manage")).
+				Post("/firewall/disable", firewallHandler.Disable)
+			r.With(auth.RequirePermission(deps.RBAC, "firewall.view")).
+				Get("/firewall/rules", firewallHandler.ListRules)
+			r.With(auth.RequirePermission(deps.RBAC, "firewall.manage")).
+				Post("/firewall/rules", firewallHandler.AddRule)
+			r.With(auth.RequirePermission(deps.RBAC, "firewall.manage")).
+				Delete("/firewall/rules/{number}", firewallHandler.DeleteRule)
+
+			// Processes
+			r.With(auth.RequirePermission(deps.RBAC, "processes.view")).
+				Get("/processes", processHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "processes.kill")).
+				Post("/processes/{pid}/kill", processHandler.Kill)
+
+			// Logs
+			r.With(auth.RequirePermission(deps.RBAC, "logs.view")).
+				Get("/logs", systemHandler.ReadLog)
 		})
 	})
 
@@ -111,6 +181,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(auth.SessionMiddleware(deps.AuthSvc))
 		r.Get("/ws/metrics", systemHandler.WSMetrics)
+		r.Get("/ws/logs", systemHandler.StreamLog)
 	})
 
 	// Static files (SPA frontend)
