@@ -102,6 +102,10 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"databases.users", "databases"},
 		{"docker.view", "docker"},
 		{"docker.manage", "docker"},
+		{"backups.view", "backups"},
+		{"backups.create", "backups"},
+		{"backups.restore", "backups"},
+		{"backups.delete", "backups"},
 	}
 
 	permIDs := make(map[string]string)
@@ -139,7 +143,7 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		"nginx.view", "firewall.view", "processes.view", "logs.view",
 		"websites.view", "php.view", "ssl.view",
 		"deployments.view", "cron.view", "queue.view", "nodejs.view",
-		"databases.view", "docker.view",
+		"databases.view", "docker.view", "backups.view",
 	}
 	for _, name := range userPerms {
 		_, err := r.db.ExecContext(ctx,

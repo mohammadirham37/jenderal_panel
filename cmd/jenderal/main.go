@@ -13,6 +13,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/api"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
+	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
@@ -134,6 +135,8 @@ func cmdServe() {
 	nodeSvc := nodejs.NewService(db, exec, auditSvc)
 	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
 	dockerSvc := docker.NewService(exec, auditSvc)
+	backupSvc := backup.NewService(db, exec, auditSvc, "/var/lib/jenderal/backups")
+	backupScheduler := backup.NewScheduler(backupSvc)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -166,6 +169,7 @@ func cmdServe() {
 		NodeSvc:        nodeSvc,
 		DBManagerSvc:   dbManagerSvc,
 		DockerSvc:      dockerSvc,
+		BackupSvc:      backupSvc,
 		StaticHandler:  staticHandler(),
 	})
 
@@ -176,6 +180,7 @@ func cmdServe() {
 	provisioner.Start(ctx)
 	renewalWorker.Start(ctx)
 	deploySvc.Start(ctx)
+	backupScheduler.Start(ctx)
 
 	srv := server.New(cfg.Server, router, logger)
 	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {

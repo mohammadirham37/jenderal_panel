@@ -101,8 +101,8 @@ func TestGetUserPermissions(t *testing.T) {
 		t.Fatalf("get permissions: %v", err)
 	}
 
-	if len(perms) != 46 {
-		t.Errorf("expected 46 permissions for admin, got %d", len(perms))
+	if len(perms) != 50 {
+		t.Errorf("expected 50 permissions for admin, got %d", len(perms))
 	}
 }
 
@@ -156,8 +156,8 @@ func TestSeedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count permissions: %v", err)
 	}
-	if count != 46 {
-		t.Errorf("expected 46 permissions after double seed, got %d", count)
+	if count != 50 {
+		t.Errorf("expected 50 permissions after double seed, got %d", count)
 	}
 
 	var roleCount int

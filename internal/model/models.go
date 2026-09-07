@@ -296,6 +296,31 @@ type EngineStatus struct {
 	Version   string `json:"version"`
 }
 
+type Backup struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Target    string    `json:"target"`
+	Storage   string    `json:"storage"`
+	Path      string    `json:"path"`
+	SizeBytes int64     `json:"size_bytes"`
+	Status    string    `json:"status"`
+	ErrorMsg  string    `json:"error_msg"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type BackupSchedule struct {
+	ID            string    `json:"id"`
+	Type          string    `json:"type"`
+	Target        string    `json:"target"`
+	Storage       string    `json:"storage"`
+	Schedule      string    `json:"schedule"`
+	RetentionDays int       `json:"retention_days"`
+	Enabled       bool      `json:"enabled"`
+	LastRun       time.Time `json:"last_run"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
 	IP         string             `json:"ip"`

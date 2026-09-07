@@ -8,6 +8,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
+	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
@@ -49,6 +50,7 @@ type Dependencies struct {
 	NodeSvc        *nodejs.Service
 	DBManagerSvc   *dbmanager.Service
 	DockerSvc      *docker.Service
+	BackupSvc      *backup.Service
 	StaticHandler  http.Handler
 }
 
@@ -80,6 +82,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc)
 	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc)
 	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc)
+	backupHandler := backup.NewHandler(deps.BackupSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -397,6 +400,30 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/docker/compose/down", dockerHandler.ComposeDown)
 			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
 				Get("/docker/compose/status", dockerHandler.ComposeStatus)
+
+			// Backups
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Post("/backups", backupHandler.CreateBackup)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
+				Get("/backups", backupHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
+				Get("/backups/{id}", backupHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.delete")).
+				Delete("/backups/{id}", backupHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.restore")).
+				Post("/backups/{id}/restore", backupHandler.Restore)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
+				Get("/backup-schedules", backupHandler.ListSchedules)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Post("/backup-schedules", backupHandler.CreateSchedule)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Put("/backup-schedules/{id}", backupHandler.UpdateSchedule)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.delete")).
+				Delete("/backup-schedules/{id}", backupHandler.DeleteSchedule)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Post("/backup-schedules/{id}/enable", backupHandler.EnableSchedule)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Post("/backup-schedules/{id}/disable", backupHandler.DisableSchedule)
 		})
 	})
 
