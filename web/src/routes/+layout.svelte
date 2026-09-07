@@ -28,6 +28,10 @@
 		{ href: '/firewall', label: 'Firewall', icon: 'shield' },
 		{ href: '/processes', label: 'Processes', icon: 'activity' },
 		{ href: '/users', label: 'Users', icon: 'users' },
+		{ href: '/alerts', label: 'Alerts', icon: 'bell' },
+		{ href: '/notifications', label: 'Notify', icon: 'megaphone' },
+		{ href: '/terminal', label: 'Terminal', icon: 'command-line' },
+		{ href: '/update', label: 'Update', icon: 'arrow-path' },
 		{ href: '/audit-logs', label: 'Audit Logs', icon: 'file-text' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' }
 	];

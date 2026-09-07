@@ -50,6 +50,40 @@
 	// Delete confirm
 	let deleteConfirm = $state(false);
 
+	// File Manager
+	interface FileEntry {
+		name: string;
+		type: 'file' | 'directory';
+		size: number;
+		permissions: string;
+	}
+
+	let files = $state<FileEntry[]>([]);
+	let currentPath = $state('/');
+	let filesLoading = $state(false);
+	let filesError = $state('');
+	let showFiles = $state(false);
+	let fileActionMsg = $state('');
+	let fileActionError = $state('');
+
+	// File edit
+	let editingFile = $state<string | null>(null);
+	let editFileContent = $state('');
+	let editFileLoading = $state(false);
+
+	// Create dir/file
+	let showCreateDir = $state(false);
+	let newDirName = $state('');
+	let showCreateFile = $state(false);
+	let newFileName = $state('');
+
+	// Rename
+	let renamingFile = $state<string | null>(null);
+	let renameValue = $state('');
+
+	// Upload
+	let uploadInput: HTMLInputElement;
+
 	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
 
 	function statusBadgeClass(status: string): string {
@@ -226,6 +260,185 @@
 			actionError = err instanceof Error ? err.message : 'Failed to delete website';
 			deleteConfirm = false;
 		}
+	}
+
+	// File Manager functions
+	async function loadFiles(path: string = '/') {
+		if (!website) return;
+		filesLoading = true;
+		filesError = '';
+		try {
+			const data = await api.get<FileEntry[]>(`/api/v1/websites/${website.id}/files?path=${encodeURIComponent(path)}`);
+			files = data || [];
+			currentPath = path;
+		} catch (err) {
+			filesError = err instanceof Error ? err.message : 'Failed to load files';
+		} finally {
+			filesLoading = false;
+		}
+	}
+
+	function navigateTo(name: string) {
+		const newPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+		loadFiles(newPath);
+	}
+
+	function navigateUp() {
+		const parts = currentPath.split('/').filter(Boolean);
+		parts.pop();
+		loadFiles(parts.length === 0 ? '/' : '/' + parts.join('/'));
+	}
+
+	function breadcrumbParts(): { name: string; path: string }[] {
+		const parts = currentPath.split('/').filter(Boolean);
+		const result = [{ name: '/', path: '/' }];
+		let accumulated = '';
+		for (const part of parts) {
+			accumulated += '/' + part;
+			result.push({ name: part, path: accumulated });
+		}
+		return result;
+	}
+
+	function formatSize(bytes: number): string {
+		if (bytes === 0) return '-';
+		const units = ['B', 'KB', 'MB', 'GB'];
+		let i = 0;
+		let size = bytes;
+		while (size >= 1024 && i < units.length - 1) {
+			size /= 1024;
+			i++;
+		}
+		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+	}
+
+	function isTextFile(name: string): boolean {
+		const ext = name.split('.').pop()?.toLowerCase() || '';
+		return ['txt', 'html', 'css', 'js', 'ts', 'json', 'xml', 'yml', 'yaml', 'md', 'conf', 'cfg', 'ini', 'log', 'sh', 'bash', 'php', 'py', 'rb', 'env', 'htaccess', 'svg'].includes(ext);
+	}
+
+	async function openFileEdit(name: string) {
+		if (!website) return;
+		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+		editFileLoading = true;
+		editingFile = filePath;
+		editFileContent = '';
+		try {
+			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/files/content?path=${encodeURIComponent(filePath)}`);
+			editFileContent = data.content || '';
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to read file';
+			editingFile = null;
+		} finally {
+			editFileLoading = false;
+		}
+	}
+
+	async function saveFileEdit() {
+		if (!website || !editingFile) return;
+		fileActionMsg = '';
+		fileActionError = '';
+		try {
+			await api.put(`/api/v1/websites/${website.id}/files/content`, { path: editingFile, content: editFileContent });
+			fileActionMsg = 'File saved.';
+			editingFile = null;
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to save file';
+		}
+	}
+
+	async function deleteFile(name: string) {
+		if (!website) return;
+		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+		fileActionMsg = '';
+		fileActionError = '';
+		try {
+			await api.del(`/api/v1/websites/${website.id}/files?path=${encodeURIComponent(filePath)}`);
+			fileActionMsg = `"${name}" deleted.`;
+			await loadFiles(currentPath);
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to delete file';
+		}
+	}
+
+	async function createDir() {
+		if (!website || !newDirName.trim()) return;
+		const dirPath = currentPath === '/' ? `/${newDirName}` : `${currentPath}/${newDirName}`;
+		fileActionMsg = '';
+		fileActionError = '';
+		try {
+			await api.post(`/api/v1/websites/${website.id}/files/directory`, { path: dirPath });
+			fileActionMsg = `Directory "${newDirName}" created.`;
+			newDirName = '';
+			showCreateDir = false;
+			await loadFiles(currentPath);
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to create directory';
+		}
+	}
+
+	async function createFile() {
+		if (!website || !newFileName.trim()) return;
+		const filePath = currentPath === '/' ? `/${newFileName}` : `${currentPath}/${newFileName}`;
+		fileActionMsg = '';
+		fileActionError = '';
+		try {
+			await api.post(`/api/v1/websites/${website.id}/files`, { path: filePath, content: '' });
+			fileActionMsg = `File "${newFileName}" created.`;
+			newFileName = '';
+			showCreateFile = false;
+			await loadFiles(currentPath);
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to create file';
+		}
+	}
+
+	async function renameFile(oldName: string) {
+		if (!website || !renameValue.trim()) return;
+		const oldPath = currentPath === '/' ? `/${oldName}` : `${currentPath}/${oldName}`;
+		const newPath = currentPath === '/' ? `/${renameValue}` : `${currentPath}/${renameValue}`;
+		fileActionMsg = '';
+		fileActionError = '';
+		try {
+			await api.post(`/api/v1/websites/${website.id}/files/rename`, { old_path: oldPath, new_path: newPath });
+			fileActionMsg = `Renamed "${oldName}" to "${renameValue}".`;
+			renamingFile = null;
+			renameValue = '';
+			await loadFiles(currentPath);
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to rename';
+		}
+	}
+
+	async function uploadFile(event: Event) {
+		if (!website) return;
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		fileActionMsg = '';
+		fileActionError = '';
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			formData.append('path', currentPath);
+			const res = await fetch(`/api/v1/websites/${website.id}/files/upload`, {
+				method: 'POST',
+				credentials: 'include',
+				body: formData
+			});
+			if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+			fileActionMsg = `"${file.name}" uploaded.`;
+			input.value = '';
+			await loadFiles(currentPath);
+		} catch (err) {
+			fileActionError = err instanceof Error ? err.message : 'Failed to upload file';
+		}
+	}
+
+	function downloadFile(name: string) {
+		if (!website) return;
+		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+		window.open(`/api/v1/websites/${website.id}/files/download?path=${encodeURIComponent(filePath)}`, '_blank');
 	}
 
 	onMount(loadWebsite);
@@ -514,6 +727,191 @@
 					value={logTab === 'access' ? accessLogs : errorLogs}
 					class="w-full h-64 bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-xs font-mono resize-y focus:outline-none"
 				></textarea>
+			{/if}
+		</div>
+
+		<!-- File Manager -->
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+			<div class="flex items-center justify-between mb-3">
+				<h3 class="text-lg font-semibold text-white">File Manager</h3>
+				{#if !showFiles}
+					<button
+						onclick={() => { showFiles = true; loadFiles('/'); }}
+						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+					>
+						Browse Files
+					</button>
+				{:else}
+					<button
+						onclick={() => { showFiles = false; editingFile = null; }}
+						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+					>
+						Close
+					</button>
+				{/if}
+			</div>
+
+			{#if showFiles}
+				{#if fileActionMsg}
+					<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
+						{fileActionMsg}
+						<button onclick={() => (fileActionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+					</div>
+				{/if}
+
+				{#if fileActionError}
+					<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+						{fileActionError}
+						<button onclick={() => (fileActionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+					</div>
+				{/if}
+
+				{#if editingFile}
+					<!-- File Editor -->
+					<div class="space-y-3">
+						<div class="flex items-center justify-between">
+							<span class="text-sm text-gray-300 font-mono">{editingFile}</span>
+							<button onclick={() => (editingFile = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Back</button>
+						</div>
+						{#if editFileLoading}
+							<div class="text-gray-400 text-sm">Loading file...</div>
+						{:else}
+							<textarea
+								bind:value={editFileContent}
+								rows={20}
+								class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+							></textarea>
+							<button onclick={saveFileEdit} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
+								Save File
+							</button>
+						{/if}
+					</div>
+				{:else}
+					<!-- Breadcrumb -->
+					<div class="flex items-center gap-1 mb-3 text-sm">
+						{#each breadcrumbParts() as part, i}
+							{#if i > 0}
+								<span class="text-gray-500">/</span>
+							{/if}
+							<button
+								onclick={() => loadFiles(part.path)}
+								class="text-blue-400 hover:text-blue-300 cursor-pointer font-mono"
+							>
+								{part.name}
+							</button>
+						{/each}
+					</div>
+
+					<!-- Toolbar -->
+					<div class="flex flex-wrap gap-2 mb-3">
+						<input type="file" bind:this={uploadInput} onchange={uploadFile} class="hidden" />
+						<button onclick={() => uploadInput.click()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Upload</button>
+						<button onclick={() => { showCreateDir = true; showCreateFile = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create Dir</button>
+						<button onclick={() => { showCreateFile = true; showCreateDir = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create File</button>
+						<button onclick={() => loadFiles(currentPath)} disabled={filesLoading} class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer">
+							Refresh
+						</button>
+					</div>
+
+					<!-- Create Dir Form -->
+					{#if showCreateDir}
+						<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
+							<div>
+								<label for="new-dir" class="block text-xs text-gray-400 mb-1">Directory Name</label>
+								<input id="new-dir" type="text" bind:value={newDirName} placeholder="new-folder" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+							</div>
+							<button onclick={createDir} disabled={!newDirName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
+							<button onclick={() => { showCreateDir = false; newDirName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
+						</div>
+					{/if}
+
+					<!-- Create File Form -->
+					{#if showCreateFile}
+						<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
+							<div>
+								<label for="new-file" class="block text-xs text-gray-400 mb-1">File Name</label>
+								<input id="new-file" type="text" bind:value={newFileName} placeholder="index.html" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+							</div>
+							<button onclick={createFile} disabled={!newFileName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
+							<button onclick={() => { showCreateFile = false; newFileName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
+						</div>
+					{/if}
+
+					{#if filesError}
+						<div class="mb-2 text-red-400 text-sm">{filesError}</div>
+					{/if}
+
+					{#if filesLoading}
+						<div class="text-gray-400 text-sm">Loading files...</div>
+					{:else if files.length === 0}
+						<div class="text-gray-400 text-sm">Empty directory.</div>
+					{:else}
+						<div class="overflow-x-auto">
+							<table class="w-full">
+								<thead>
+									<tr class="border-b border-gray-700">
+										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
+										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
+										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
+										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Permissions</th>
+										<th class="text-right px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
+									</tr>
+								</thead>
+								<tbody class="divide-y divide-gray-700">
+									{#if currentPath !== '/'}
+										<tr class="hover:bg-gray-750">
+											<td class="px-4 py-2" colspan="5">
+												<button onclick={navigateUp} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">..</button>
+											</td>
+										</tr>
+									{/if}
+									{#each files as entry}
+										<tr class="hover:bg-gray-750">
+											<td class="px-4 py-2">
+												{#if renamingFile === entry.name}
+													<div class="flex items-center gap-2">
+														<input type="text" bind:value={renameValue} class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-48" />
+														<button onclick={() => renameFile(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer">OK</button>
+														<button onclick={() => { renamingFile = null; renameValue = ''; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer">X</button>
+													</div>
+												{:else if entry.type === 'directory'}
+													<button onclick={() => navigateTo(entry.name)} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">{entry.name}</button>
+												{:else}
+													<span class="text-sm text-gray-200 font-mono">{entry.name}</span>
+												{/if}
+											</td>
+											<td class="px-4 py-2">
+												{#if entry.type === 'directory'}
+													<svg class="w-4 h-4 text-yellow-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+														<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+													</svg>
+												{:else}
+													<svg class="w-4 h-4 text-gray-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+														<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+													</svg>
+												{/if}
+											</td>
+											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.type === 'file' ? formatSize(entry.size) : '-'}</td>
+											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.permissions}</td>
+											<td class="px-4 py-2 text-right">
+												<div class="flex justify-end gap-1.5">
+													{#if entry.type === 'file' && isTextFile(entry.name)}
+														<button onclick={() => openFileEdit(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Edit</button>
+													{/if}
+													<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Rename</button>
+													{#if entry.type === 'file'}
+														<button onclick={() => downloadFile(entry.name)} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Download</button>
+													{/if}
+													<button onclick={() => deleteFile(entry.name)} class="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>
+												</div>
+											</td>
+										</tr>
+									{/each}
+								</tbody>
+							</table>
+						</div>
+					{/if}
+				{/if}
 			{/if}
 		</div>
 	{/if}

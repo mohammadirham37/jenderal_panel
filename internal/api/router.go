@@ -1,19 +1,23 @@
 package api
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/alert"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
-	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
@@ -21,7 +25,10 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
+	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
+	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
@@ -29,6 +36,7 @@ import (
 )
 
 type Dependencies struct {
+	DB            *sql.DB
 	Logger        *slog.Logger
 	AuthSvc       *auth.Service
 	RBAC          *auth.RBAC
@@ -51,6 +59,11 @@ type Dependencies struct {
 	DBManagerSvc   *dbmanager.Service
 	DockerSvc      *docker.Service
 	BackupSvc      *backup.Service
+	AlertSvc       *alert.Service
+	NotifSvc       *notification.Service
+	FileManagerSvc *filemanager.Service
+	UpdateSvc      *update.Service
+	Exec           executor.CommandExecutor
 	StaticHandler  http.Handler
 }
 
@@ -83,6 +96,11 @@ func NewRouter(deps Dependencies) http.Handler {
 	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc)
 	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc)
 	backupHandler := backup.NewHandler(deps.BackupSvc, deps.AuditSvc)
+	alertHandler := alert.NewHandler(deps.AlertSvc, deps.AuditSvc)
+	notifHandler := notification.NewHandler(deps.NotifSvc, deps.AuditSvc)
+	fileHandler := filemanager.NewHandler(deps.FileManagerSvc, deps.DB, deps.AuditSvc)
+	terminalHandler := terminal.NewHandler(deps.Exec, deps.AuditSvc)
+	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -424,6 +442,63 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/backup-schedules/{id}/enable", backupHandler.EnableSchedule)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
 				Post("/backup-schedules/{id}/disable", backupHandler.DisableSchedule)
+
+			// Alerts
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).
+				Get("/alert-rules", alertHandler.ListRules)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.manage")).
+				Post("/alert-rules", alertHandler.CreateRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).
+				Get("/alert-rules/{id}", alertHandler.GetRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.manage")).
+				Put("/alert-rules/{id}", alertHandler.UpdateRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.manage")).
+				Delete("/alert-rules/{id}", alertHandler.DeleteRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).
+				Get("/alert-history", alertHandler.ListHistory)
+
+			// Notifications
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.view")).
+				Get("/notification-channels", notifHandler.ListChannels)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Post("/notification-channels", notifHandler.CreateChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Put("/notification-channels/{id}", notifHandler.UpdateChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Delete("/notification-channels/{id}", notifHandler.DeleteChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Post("/notification-channels/{id}/test", notifHandler.TestChannel)
+
+			// TOTP
+			r.Post("/auth/totp/setup", authHandler.TOTPSetup)
+			r.Post("/auth/totp/enable", authHandler.TOTPEnable)
+			r.Post("/auth/totp/disable", authHandler.TOTPDisable)
+
+			// File Manager
+			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
+				Get("/websites/{id}/files", fileHandler.Browse)
+			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
+				Get("/websites/{id}/files/read", fileHandler.ReadFile)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/write", fileHandler.WriteFile)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/delete", fileHandler.DeleteFile)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/rename", fileHandler.Rename)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/mkdir", fileHandler.CreateDir)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/chmod", fileHandler.Chmod)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/upload", fileHandler.Upload)
+			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
+				Get("/websites/{id}/files/download", fileHandler.Download)
+
+			// Self-Update
+			r.With(auth.RequirePermission(deps.RBAC, "update.view")).
+				Get("/update/check", updateHandler.Check)
+			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
+				Post("/update/perform", updateHandler.Perform)
 		})
 	})
 
@@ -432,6 +507,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Use(auth.SessionMiddleware(deps.AuthSvc))
 		r.Get("/ws/metrics", systemHandler.WSMetrics)
 		r.Get("/ws/logs", systemHandler.StreamLog)
+		r.Get("/ws/terminal", terminalHandler.HandleWS)
 	})
 
 	// Static files (SPA frontend)

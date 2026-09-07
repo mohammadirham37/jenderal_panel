@@ -321,6 +321,63 @@ type BackupSchedule struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+type AlertRule struct {
+	ID        string    `json:"id"`
+	Metric    string    `json:"metric"`
+	Operator  string    `json:"operator"`
+	Threshold float64   `json:"threshold"`
+	DurationS int       `json:"duration_s"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type AlertEvent struct {
+	ID        string    `json:"id"`
+	RuleID    string    `json:"rule_id"`
+	Metric    string    `json:"metric"`
+	Value     float64   `json:"value"`
+	Message   string    `json:"message"`
+	Resolved  bool      `json:"resolved"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type NotificationChannel struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	Config    string    `json:"config"`
+	Enabled   bool      `json:"enabled"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type APIToken struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Name      string    `json:"name"`
+	TokenHash string    `json:"-"`
+	LastUsed  time.Time `json:"last_used"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type FileEntry struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	IsDir       bool   `json:"is_dir"`
+	Size        int64  `json:"size"`
+	Permissions string `json:"permissions"`
+	Owner       string `json:"owner"`
+	ModTime     string `json:"mod_time"`
+}
+
+type UpdateInfo struct {
+	CurrentVersion string `json:"current_version"`
+	LatestVersion  string `json:"latest_version"`
+	UpdateAvail    bool   `json:"update_available"`
+	ReleaseURL     string `json:"release_url"`
+}
+
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
 	IP         string             `json:"ip"`

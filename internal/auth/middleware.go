@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"net/http"
+	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
@@ -32,11 +33,28 @@ func SessionFromContext(ctx context.Context) (model.Session, bool) {
 }
 
 // SessionMiddleware validates the session cookie, loads the user, and injects
-// both into the request context. Requests without a valid session receive a
-// 401 Unauthorized response.
+// both into the request context. If a Bearer token is present in the
+// Authorization header, API-token authentication is attempted first. Requests
+// without a valid session or token receive a 401 Unauthorized response.
 func SessionMiddleware(authSvc *Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try Bearer token authentication first.
+			if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+				token := strings.TrimPrefix(authHeader, "Bearer ")
+				user, err := authSvc.ValidateAPIToken(r.Context(), token)
+				if err != nil {
+					httputil.HandleError(w, model.ErrUnauthorized)
+					return
+				}
+
+				ctx := context.WithValue(r.Context(), userContextKey, user)
+				ctx = logging.WithUserID(ctx, user.ID)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
+			// Fall back to session cookie authentication.
 			cookie, err := r.Cookie("session_id")
 			if err != nil {
 				httputil.HandleError(w, model.ErrUnauthorized)

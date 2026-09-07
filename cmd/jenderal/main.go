@@ -12,6 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/api"
+	"github.com/mohammadirham37/jenderal_panel/internal/alert"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
@@ -22,15 +23,19 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
+	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
@@ -137,6 +142,13 @@ func cmdServe() {
 	dockerSvc := docker.NewService(exec, auditSvc)
 	backupSvc := backup.NewService(db, exec, auditSvc, "/var/lib/jenderal/backups")
 	backupScheduler := backup.NewScheduler(backupSvc)
+	alertSvc := alert.NewService(db, auditSvc)
+	notifSvc := notification.NewService(db)
+	alertChecker := alert.NewChecker(alertSvc, notifSvc, func() model.ServerMetrics {
+		return metricsCollector.Buffer().Latest()
+	})
+	fileManagerSvc := filemanager.NewService(exec, auditSvc)
+	updateSvc := update.NewService(exec, version)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -170,6 +182,12 @@ func cmdServe() {
 		DBManagerSvc:   dbManagerSvc,
 		DockerSvc:      dockerSvc,
 		BackupSvc:      backupSvc,
+		AlertSvc:       alertSvc,
+		NotifSvc:       notifSvc,
+		FileManagerSvc: fileManagerSvc,
+		UpdateSvc:      updateSvc,
+		Exec:           exec,
+		DB:             db,
 		StaticHandler:  staticHandler(),
 	})
 
@@ -181,6 +199,7 @@ func cmdServe() {
 	renewalWorker.Start(ctx)
 	deploySvc.Start(ctx)
 	backupScheduler.Start(ctx)
+	alertChecker.Start(ctx)
 
 	srv := server.New(cfg.Server, router, logger)
 	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {
