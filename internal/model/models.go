@@ -183,6 +183,55 @@ type PHPVersion struct {
 	Enabled   bool   `json:"enabled"`
 }
 
+type Deployment struct {
+	ID         string    `json:"id"`
+	WebsiteID  string    `json:"website_id"`
+	CommitHash string    `json:"commit_hash"`
+	Branch     string    `json:"branch"`
+	Status     string    `json:"status"`
+	DurationMs int       `json:"duration_ms"`
+	Log        string    `json:"log"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type CronJob struct {
+	ID         string    `json:"id"`
+	WebsiteID  string    `json:"website_id"`
+	Command    string    `json:"command"`
+	Schedule   string    `json:"schedule"`
+	Enabled    bool      `json:"enabled"`
+	LastRun    time.Time `json:"last_run"`
+	LastStatus string    `json:"last_status"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type QueueWorker struct {
+	ID          string    `json:"id"`
+	WebsiteID   string    `json:"website_id"`
+	Command     string    `json:"command"`
+	NumWorkers  int       `json:"num_workers"`
+	AutoRestart bool      `json:"auto_restart"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+type NodeApp struct {
+	ID          string    `json:"id"`
+	WebsiteID   string    `json:"website_id"`
+	NodeVersion string    `json:"node_version"`
+	PackageMgr  string    `json:"package_mgr"`
+	BuildCmd    string    `json:"build_cmd"`
+	StartCmd    string    `json:"start_cmd"`
+	Port        int       `json:"port"`
+	EnvVars     string    `json:"env_vars"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
 	IP         string             `json:"ip"`

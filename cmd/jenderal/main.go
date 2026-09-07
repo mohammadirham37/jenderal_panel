@@ -15,13 +15,17 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
+	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
+	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
+	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
+	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
@@ -122,6 +126,10 @@ func cmdServe() {
 	acmeClient := ssl.NewLegoClient("admin@localhost", "/etc/jenderal/ssl")
 	sslSvc := ssl.NewService(db, exec, auditSvc, acmeClient, "/etc/jenderal/ssl")
 	renewalWorker := ssl.NewRenewalWorker(sslSvc)
+	deploySvc := deployment.NewService(db, exec, auditSvc)
+	cronSvc := cron.NewService(db, exec, auditSvc)
+	queueSvc := queue.NewService(db, exec, auditSvc)
+	nodeSvc := nodejs.NewService(db, exec, auditSvc)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -147,8 +155,12 @@ func cmdServe() {
 		LogSvc:        logSvc,
 		WebsiteSvc:    websiteSvc,
 		PHPSvc:        phpSvc,
-		SSLSvc:        sslSvc,
-		StaticHandler: staticHandler(),
+		SSLSvc:         sslSvc,
+		DeploymentSvc:  deploySvc,
+		CronSvc:        cronSvc,
+		QueueSvc:       queueSvc,
+		NodeSvc:        nodeSvc,
+		StaticHandler:  staticHandler(),
 	})
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -157,6 +169,7 @@ func cmdServe() {
 	metricsCollector.Start(ctx)
 	provisioner.Start(ctx)
 	renewalWorker.Start(ctx)
+	deploySvc.Start(ctx)
 
 	srv := server.New(cfg.Server, router, logger)
 	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {

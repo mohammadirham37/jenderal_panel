@@ -9,10 +9,14 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/cron"
+	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
+	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
+	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
@@ -36,8 +40,12 @@ type Dependencies struct {
 	LogSvc        *system.LogService
 	WebsiteSvc    *website.Service
 	PHPSvc        *php.Service
-	SSLSvc        *ssl.Service
-	StaticHandler http.Handler
+	SSLSvc         *ssl.Service
+	DeploymentSvc  *deployment.Service
+	CronSvc        *cron.Service
+	QueueSvc       *queue.Service
+	NodeSvc        *nodejs.Service
+	StaticHandler  http.Handler
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -62,6 +70,10 @@ func NewRouter(deps Dependencies) http.Handler {
 	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
+	deployHandler := deployment.NewHandler(deps.DeploymentSvc, deps.AuditSvc)
+	cronHandler := cron.NewHandler(deps.CronSvc, deps.AuditSvc)
+	queueHandler := queue.NewHandler(deps.QueueSvc, deps.AuditSvc)
+	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -241,6 +253,66 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/ssl/{id}/revoke", sslHandler.Revoke)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
 				Delete("/ssl/{id}", sslHandler.Delete)
+
+			// Deployments
+			r.With(auth.RequirePermission(deps.RBAC, "deployments.deploy")).
+				Post("/websites/{id}/deploy", deployHandler.Deploy)
+			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).
+				Get("/websites/{id}/deployments", deployHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).
+				Get("/deployments/{id}", deployHandler.Get)
+
+			// Cron Jobs
+			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
+				Get("/cron-jobs", cronHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Post("/cron-jobs", cronHandler.Create)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
+				Get("/cron-jobs/{id}", cronHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Put("/cron-jobs/{id}", cronHandler.Update)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Delete("/cron-jobs/{id}", cronHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Post("/cron-jobs/{id}/enable", cronHandler.Enable)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Post("/cron-jobs/{id}/disable", cronHandler.Disable)
+
+			// Queue Workers
+			r.With(auth.RequirePermission(deps.RBAC, "queue.view")).
+				Get("/queue-workers", queueHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+				Post("/queue-workers", queueHandler.Create)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.view")).
+				Get("/queue-workers/{id}", queueHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+				Delete("/queue-workers/{id}", queueHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+				Post("/queue-workers/{id}/start", queueHandler.Start)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+				Post("/queue-workers/{id}/stop", queueHandler.Stop)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+				Post("/queue-workers/{id}/restart", queueHandler.Restart)
+
+			// Node.js
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.view")).
+				Get("/nodejs/versions", nodeHandler.ListVersions)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Post("/nodejs/install", nodeHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.view")).
+				Get("/nodejs/apps", nodeHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Post("/nodejs/apps", nodeHandler.CreateApp)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.view")).
+				Get("/nodejs/apps/{id}", nodeHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Delete("/nodejs/apps/{id}", nodeHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Post("/nodejs/apps/{id}/start", nodeHandler.Start)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Post("/nodejs/apps/{id}/stop", nodeHandler.Stop)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Post("/nodejs/apps/{id}/restart", nodeHandler.Restart)
 		})
 	})
 
