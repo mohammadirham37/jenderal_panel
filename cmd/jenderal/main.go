@@ -16,6 +16,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
+	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -130,6 +131,7 @@ func cmdServe() {
 	cronSvc := cron.NewService(db, exec, auditSvc)
 	queueSvc := queue.NewService(db, exec, auditSvc)
 	nodeSvc := nodejs.NewService(db, exec, auditSvc)
+	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -160,6 +162,7 @@ func cmdServe() {
 		CronSvc:        cronSvc,
 		QueueSvc:       queueSvc,
 		NodeSvc:        nodeSvc,
+		DBManagerSvc:   dbManagerSvc,
 		StaticHandler:  staticHandler(),
 	})
 

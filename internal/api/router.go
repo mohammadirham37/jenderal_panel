@@ -10,6 +10,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
+	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
@@ -45,6 +46,7 @@ type Dependencies struct {
 	CronSvc        *cron.Service
 	QueueSvc       *queue.Service
 	NodeSvc        *nodejs.Service
+	DBManagerSvc   *dbmanager.Service
 	StaticHandler  http.Handler
 }
 
@@ -74,6 +76,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	cronHandler := cron.NewHandler(deps.CronSvc, deps.AuditSvc)
 	queueHandler := queue.NewHandler(deps.QueueSvc, deps.AuditSvc)
 	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc)
+	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -313,6 +316,34 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/nodejs/apps/{id}/stop", nodeHandler.Stop)
 			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
 				Post("/nodejs/apps/{id}/restart", nodeHandler.Restart)
+
+			// Database Management
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/engines", dbHandler.ListEngines)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+				Post("/databases/engines/{engine}/install", dbHandler.InstallEngine)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+				Post("/databases/engines/{engine}/start", dbHandler.StartEngine)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+				Post("/databases/engines/{engine}/stop", dbHandler.StopEngine)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+				Post("/databases/engines/{engine}/restart", dbHandler.RestartEngine)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases", dbHandler.ListDatabases)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+				Post("/databases", dbHandler.CreateDatabase)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.delete")).
+				Delete("/databases/{id}", dbHandler.DropDatabase)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/users", dbHandler.ListDBUsers)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/users", dbHandler.CreateDBUser)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Delete("/databases/users/{id}", dbHandler.DropDBUser)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/users/{id}/password", dbHandler.ResetPassword)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/users/{id}/grant", dbHandler.GrantPrivileges)
 		})
 	})
 

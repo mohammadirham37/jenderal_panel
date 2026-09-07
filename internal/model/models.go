@@ -232,6 +232,31 @@ type NodeApp struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+type ManagedDatabase struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Engine    string    `json:"engine"`
+	Charset   string    `json:"charset"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type DBUser struct {
+	ID         string    `json:"id"`
+	Username   string    `json:"username"`
+	Engine     string    `json:"engine"`
+	Privileges string    `json:"privileges"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type EngineStatus struct {
+	Name      string `json:"name"`
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Version   string `json:"version"`
+}
+
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
 	IP         string             `json:"ip"`
