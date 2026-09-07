@@ -1,0 +1,33 @@
+# Go
+/jenderal
+*.exe
+*.test
+*.out
+vendor/
+
+# SvelteKit
+web/node_modules/
+web/.svelte-kit/
+web/build/
+cmd/jenderal/web_build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config
+jenderal.yaml
+*.db
+*.db-wal
+*.db-shm
+
+# TLS
+*.pem
+*.key
+*.crt

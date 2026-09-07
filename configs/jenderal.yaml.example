@@ -1,0 +1,38 @@
+server:
+  host: "0.0.0.0"
+  port: 8443
+  tls:
+    enabled: false
+    cert: ""
+    key: ""
+
+database:
+  path: "./jenderal.db"
+
+auth:
+  session_ttl: "24h"
+  rate_limit_login: 5
+  rate_limit_api: 100
+  argon2:
+    memory: 65536
+    iterations: 3
+    parallelism: 2
+
+metrics:
+  collect_interval: "5s"
+  store_interval: "60s"
+  retention_days: 7
+
+logging:
+  level: "debug"
+  file: ""
+  max_size_mb: 100
+  max_backups: 3
+
+services:
+  allowed:
+    - nginx
+    - "php*-fpm"
+    - mysql
+    - postgresql
+    - redis-server

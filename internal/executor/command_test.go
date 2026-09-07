@@ -1,0 +1,102 @@
+package executor
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestRunEcho(t *testing.T) {
+	e := NewExecutor(30 * time.Second)
+	ctx := context.Background()
+
+	result, err := e.Run(ctx, "echo", "hello", "world")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ExitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d", result.ExitCode)
+	}
+	got := strings.TrimSpace(result.Stdout)
+	if got != "hello world" {
+		t.Fatalf("expected stdout 'hello world', got %q", got)
+	}
+	if result.Duration <= 0 {
+		t.Fatal("expected positive duration")
+	}
+}
+
+func TestRunTimeout(t *testing.T) {
+	e := NewExecutor(100 * time.Millisecond)
+	ctx := context.Background() // no deadline, so default 100ms timeout applies
+
+	_, err := e.Run(ctx, "sleep", "10")
+	if err == nil {
+		t.Fatal("expected error due to timeout, got nil")
+	}
+}
+
+func TestRunContextCancel(t *testing.T) {
+	e := NewExecutor(30 * time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	_, err := e.Run(ctx, "sleep", "10")
+	if err == nil {
+		t.Fatal("expected error due to cancelled context, got nil")
+	}
+}
+
+func TestRunNonZeroExit(t *testing.T) {
+	e := NewExecutor(30 * time.Second)
+	ctx := context.Background()
+
+	result, err := e.Run(ctx, "sh", "-c", "exit 42")
+	if err != nil {
+		t.Fatalf("non-zero exit should not return error, got: %v", err)
+	}
+	if result.ExitCode != 42 {
+		t.Fatalf("expected exit code 42, got %d", result.ExitCode)
+	}
+}
+
+func TestMockExecutor(t *testing.T) {
+	mock := &MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*Result, error) {
+			return &Result{
+				Stdout:   "mocked output",
+				ExitCode: 0,
+				Duration: 5 * time.Millisecond,
+			}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*Result, error) {
+			return &Result{
+				Stdout:   "mocked sudo output",
+				ExitCode: 0,
+				Duration: 5 * time.Millisecond,
+			}, nil
+		},
+	}
+
+	// Verify it satisfies the interface.
+	var _ CommandExecutor = mock
+
+	ctx := context.Background()
+
+	result, err := mock.Run(ctx, "anything")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stdout != "mocked output" {
+		t.Fatalf("expected 'mocked output', got %q", result.Stdout)
+	}
+
+	result, err = mock.RunSudo(ctx, "anything")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stdout != "mocked sudo output" {
+		t.Fatalf("expected 'mocked sudo output', got %q", result.Stdout)
+	}
+}
