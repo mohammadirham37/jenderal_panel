@@ -78,6 +78,14 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"processes.view", "processes"},
 		{"processes.kill", "processes"},
 		{"logs.view", "logs"},
+		{"websites.view", "websites"},
+		{"websites.create", "websites"},
+		{"websites.update", "websites"},
+		{"websites.delete", "websites"},
+		{"websites.suspend", "websites"},
+		{"php.view", "php"},
+		{"php.manage", "php"},
+		{"php.config", "php"},
 	}
 
 	permIDs := make(map[string]string)
@@ -113,6 +121,7 @@ func (r *RBAC) Seed(ctx context.Context) error {
 	userPerms := []string{
 		"dashboard.view", "server.view", "services.view",
 		"nginx.view", "firewall.view", "processes.view", "logs.view",
+		"websites.view", "php.view",
 	}
 	for _, name := range userPerms {
 		_, err := r.db.ExecContext(ctx,

@@ -11,8 +11,10 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
+	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/user"
@@ -31,6 +33,8 @@ type Dependencies struct {
 	FirewallSvc   *firewall.Service
 	ProcessSvc    *process.Service
 	LogSvc        *system.LogService
+	WebsiteSvc    *website.Service
+	PHPSvc        *php.Service
 	StaticHandler http.Handler
 }
 
@@ -53,6 +57,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	nginxHandler := nginx.NewHandler(deps.NginxSvc, deps.AuditSvc)
 	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
+	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc)
+	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -174,6 +180,50 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Logs
 			r.With(auth.RequirePermission(deps.RBAC, "logs.view")).
 				Get("/logs", systemHandler.ReadLog)
+
+			// Websites
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites", websiteHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.create")).
+				Post("/websites", websiteHandler.Create)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}", websiteHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}", websiteHandler.Update)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.delete")).
+				Delete("/websites/{id}", websiteHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.suspend")).
+				Post("/websites/{id}/suspend", websiteHandler.Suspend)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/enable", websiteHandler.Enable)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/retry", websiteHandler.Retry)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/config", websiteHandler.GetConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/config", websiteHandler.SaveConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/logs/access", websiteHandler.AccessLog)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/logs/error", websiteHandler.ErrorLog)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/domains", websiteHandler.AddDomain)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Delete("/websites/{id}/domains/{did}", websiteHandler.RemoveDomain)
+
+			// PHP
+			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
+				Get("/php", phpHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/install", phpHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/uninstall", phpHandler.Uninstall)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/restart", phpHandler.Restart)
+			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
+				Get("/php/{version}/config", phpHandler.GetConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "php.config")).
+				Put("/php/{version}/config", phpHandler.SaveConfig)
 		})
 	})
 

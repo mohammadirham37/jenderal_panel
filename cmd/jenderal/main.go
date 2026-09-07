@@ -20,8 +20,10 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
+	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
@@ -116,6 +118,10 @@ func cmdServe() {
 	firewallSvc := firewall.NewService(exec, auditSvc)
 	processSvc := process.NewService(exec)
 	logSvc := system.NewLogService(exec)
+	phpSvc := php.NewService(exec, auditSvc)
+	websiteSvc := website.NewService(db, exec, auditSvc)
+	provisioner := website.NewProvisioner(db, exec, auditSvc)
+	websiteSvc.SetProvisioner(provisioner)
 
 	if err := rbac.Seed(context.Background()); err != nil {
 		logger.Error("RBAC seed failed", "error", err)
@@ -135,6 +141,8 @@ func cmdServe() {
 		FirewallSvc:   firewallSvc,
 		ProcessSvc:    processSvc,
 		LogSvc:        logSvc,
+		WebsiteSvc:    websiteSvc,
+		PHPSvc:        phpSvc,
 		StaticHandler: staticHandler(),
 	})
 
@@ -142,6 +150,7 @@ func cmdServe() {
 	defer cancel()
 
 	metricsCollector.Start(ctx)
+	provisioner.Start(ctx)
 
 	srv := server.New(cfg.Server, router, logger)
 	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {

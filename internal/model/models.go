@@ -140,6 +140,36 @@ type NetworkInterface struct {
 	MAC  string `json:"mac"`
 }
 
+type Website struct {
+	ID           string    `json:"id"`
+	Domain       string    `json:"domain"`
+	AppType      string    `json:"app_type"`
+	PHPVersion   string    `json:"php_version"`
+	DocumentRoot string    `json:"document_root"`
+	WebUser      string    `json:"web_user"`
+	Status       string    `json:"status"`
+	ErrorMessage string    `json:"error_message"`
+	SSLEnabled   bool      `json:"ssl_enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Domains      []Domain  `json:"domains,omitempty"`
+}
+
+type Domain struct {
+	ID        string    `json:"id"`
+	WebsiteID string    `json:"website_id"`
+	Name      string    `json:"name"`
+	Type      string    `json:"type"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type PHPVersion struct {
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Enabled   bool   `json:"enabled"`
+}
+
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
 	IP         string             `json:"ip"`
