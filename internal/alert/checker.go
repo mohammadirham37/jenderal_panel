@@ -31,19 +31,20 @@ func NewChecker(alertSvc *Service, notifSvc NotificationSender, getMetrics func(
 }
 
 // Start begins the background checker loop with a 60-second ticker.
-// It blocks until ctx is cancelled.
 func (c *Checker) Start(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Second)
-	defer ticker.Stop()
+	go func() {
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			c.check(ctx)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				c.check(ctx)
+			}
 		}
-	}
+	}()
 }
 
 func (c *Checker) check(ctx context.Context) {
