@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import { parseSimplePHPConfig, switchPHPConfigMode, updateSimplePHPConfig } from '$lib/php-config.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	interface PhpVersion {
@@ -16,7 +17,8 @@
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
-	let operationInProgress = $derived(actionInProgress !== null || !!currentTaskId);
+	let configSaving = $state(false);
+	let operationInProgress = $derived(actionInProgress !== null || !!currentTaskId || configSaving);
 
 	// Config editor
 	let configVersion = $state<string | null>(null);
@@ -24,6 +26,8 @@
 	let configLoading = $state(false);
 	let configError = $state('');
 	let configSaveMsg = $state('');
+	let configMode = $state<'simple' | 'advanced'>('simple');
+	let simpleConfig = $state<Record<string, string>>(parseSimplePHPConfig(''));
 
 	// Uninstall confirm
 	let uninstallConfirmVersion = $state<string | null>(null);
@@ -99,13 +103,16 @@
 	}
 
 	async function loadConfig(version: string) {
+		if (configSaving) return;
 		configVersion = version;
+		configMode = 'simple';
 		configLoading = true;
 		configError = '';
 		configSaveMsg = '';
 		try {
 			const data = await api.get<{ content: string }>(`/api/v1/php/${version}/config`);
 			configContent = data.content || '';
+			simpleConfig = parseSimplePHPConfig(configContent);
 		} catch (err) {
 			configError = err instanceof Error ? err.message : 'Failed to load config';
 		} finally {
@@ -113,16 +120,37 @@
 		}
 	}
 
-	async function saveConfig() {
-		if (!configVersion) return;
+	async function persistConfig(content: string) {
+		if (!configVersion || configSaving) return;
 		configSaveMsg = '';
 		configError = '';
+		configSaving = true;
 		try {
-			await api.put(`/api/v1/php/${configVersion}/config`, { content: configContent });
+			await api.put(`/api/v1/php/${configVersion}/config`, { content });
+			configContent = content;
+			simpleConfig = parseSimplePHPConfig(content);
 			configSaveMsg = 'Configuration saved successfully.';
 		} catch (err) {
 			configError = err instanceof Error ? err.message : 'Failed to save config';
+		} finally {
+			configSaving = false;
 		}
+	}
+
+	function saveSimpleConfig(event: SubmitEvent) {
+		event.preventDefault();
+		void persistConfig(updateSimplePHPConfig(configContent, simpleConfig));
+	}
+
+	function switchConfigMode(targetMode: 'simple' | 'advanced') {
+		if (configSaving) return;
+		const next = switchPHPConfigMode(
+			{ mode: configMode, content: configContent, simpleConfig },
+			targetMode
+		);
+		configMode = next.mode;
+		configContent = next.content;
+		simpleConfig = next.simpleConfig;
 	}
 
 	onMount(loadPhp);
@@ -232,14 +260,35 @@
 		<!-- php.ini Config Editor -->
 		{#if configVersion}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-				<div class="flex items-center justify-between mb-3">
+				<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
 					<h3 class="text-lg font-semibold text-white">PHP {configVersion} Configuration (php.ini)</h3>
-					<button
-						onclick={() => { configVersion = null; configContent = ''; configError = ''; configSaveMsg = ''; }}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						Close
-					</button>
+					<div class="flex items-center gap-2">
+						<div class="inline-flex rounded-lg border border-gray-600 p-0.5" aria-label="PHP configuration mode">
+							<button
+								type="button"
+								onclick={() => switchConfigMode('simple')}
+								disabled={configSaving}
+								class="px-3 py-1 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 {configMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+							>
+								Simple
+							</button>
+							<button
+								type="button"
+								onclick={() => switchConfigMode('advanced')}
+								disabled={configSaving}
+								class="px-3 py-1 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 {configMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+							>
+								Advanced
+							</button>
+						</div>
+						<button
+							onclick={() => { configVersion = null; configContent = ''; configError = ''; configSaveMsg = ''; }}
+							disabled={configSaving}
+							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+						>
+							Close
+						</button>
+					</div>
 				</div>
 
 				{#if configError}
@@ -254,18 +303,71 @@
 
 				{#if configLoading}
 					<div class="text-gray-400 text-sm">Loading configuration...</div>
+				{:else if configMode === 'simple'}
+					<form onsubmit={saveSimpleConfig}>
+						<fieldset disabled={configSaving} class="space-y-4">
+						<p class="text-sm text-gray-400">
+							Edit common PHP settings here. Other php.ini directives will remain unchanged.
+						</p>
+						<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Memory Limit</span>
+								<input bind:value={simpleConfig.memory_limit} required pattern="-1|[0-9]+[KMGkmg]?" placeholder="128M" class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								<span class="block text-xs text-gray-500">Examples: 128M, 1G, or -1 for unlimited</span>
+							</label>
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Upload Max Filesize</span>
+								<input bind:value={simpleConfig.upload_max_filesize} required pattern="[0-9]+[KMGkmg]?" placeholder="2M" class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								<span class="block text-xs text-gray-500">Maximum size for one uploaded file</span>
+							</label>
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Post Max Size</span>
+								<input bind:value={simpleConfig.post_max_size} required pattern="[0-9]+[KMGkmg]?" placeholder="8M" class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								<span class="block text-xs text-gray-500">Should normally be at least the upload limit</span>
+							</label>
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Max Execution Time</span>
+								<input type="number" min="0" step="1" bind:value={simpleConfig.max_execution_time} required class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								<span class="block text-xs text-gray-500">Seconds; 0 means no time limit</span>
+							</label>
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Max Input Time</span>
+								<input type="number" min="-1" step="1" bind:value={simpleConfig.max_input_time} required class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								<span class="block text-xs text-gray-500">Seconds; -1 follows max execution time</span>
+							</label>
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Max Input Vars</span>
+								<input type="number" min="0" step="1" bind:value={simpleConfig.max_input_vars} required class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								<span class="block text-xs text-gray-500">Maximum accepted input variables per request</span>
+							</label>
+							<label class="space-y-1 text-sm text-gray-300">
+								<span>Display Errors</span>
+								<select bind:value={simpleConfig.display_errors} class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+									<option value="Off">Off (recommended for production)</option>
+									<option value="On">On</option>
+								</select>
+								<span class="block text-xs text-gray-500">Controls whether errors appear in responses</span>
+							</label>
+						</div>
+						<button type="submit" disabled={configSaving} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer">
+							{configSaving ? 'Saving...' : 'Save Configuration'}
+						</button>
+						</fieldset>
+					</form>
 				{:else}
 					<textarea
 						bind:value={configContent}
+						disabled={configSaving}
 						rows={20}
-						class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+						class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
 					></textarea>
 					<div class="mt-2">
 						<button
-							onclick={saveConfig}
-							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+							onclick={() => persistConfig(configContent)}
+							disabled={configSaving}
+							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 						>
-							Save Configuration
+							{configSaving ? 'Saving...' : 'Save Configuration'}
 						</button>
 					</div>
 				{/if}
