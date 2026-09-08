@@ -18,6 +18,7 @@
 	let updateError = $state('');
 	let confirmUpdate = $state(false);
 	let currentTaskId = $state('');
+	let updateInProgress = $derived(updating || !!currentTaskId);
 
 	async function checkUpdate() {
 		loading = true;
@@ -63,7 +64,7 @@
 		<h2 class="text-2xl font-bold text-white">Update Panel</h2>
 		<button
 			onclick={checkUpdate}
-			disabled={loading || updating}
+			disabled={loading || updateInProgress}
 			class="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded-lg transition-colors cursor-pointer"
 		>
 			{loading ? 'Checking...' : 'Check Again'}
@@ -117,7 +118,7 @@
 				{/if}
 			</div>
 
-			{#if info.update_available && !updating}
+			{#if info.update_available && !updateInProgress}
 				{#if confirmUpdate}
 					<div class="p-4 bg-yellow-950 border border-yellow-700 rounded-lg">
 						<p class="text-yellow-300 text-sm font-medium mb-1">Confirm Update</p>
@@ -152,7 +153,5 @@
 		</div>
 	{/if}
 
-	{#if currentTaskId}
-		<TaskProgress taskId={currentTaskId} storageKey="jenderal_update_task" onComplete={onTaskComplete} />
-	{/if}
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_update_task" onComplete={onTaskComplete} />
 </div>

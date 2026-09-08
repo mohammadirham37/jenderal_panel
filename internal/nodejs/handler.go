@@ -61,8 +61,14 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	if version == "" {
 		version = "20" // default LTS
 	}
+	if err := h.svc.validateVersion(version); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
 	taskID := h.tasks.RunMultiple("Install Node.js "+version, [][]string{
-		{"bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_" + version + ".x | bash -"},
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "curl", "ca-certificates"},
+		{"bash", "-o", "pipefail", "-c", "curl -fsSL https://deb.nodesource.com/setup_" + version + ".x | bash -"},
 		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "nodejs"},
 	})
 

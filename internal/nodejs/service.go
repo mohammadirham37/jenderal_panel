@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"strings"
 	"time"
 
@@ -15,6 +17,16 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
+
+type VersionInfo struct {
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+	LTS       bool   `json:"lts"`
+}
+
+var supportedNodeVersions = []VersionInfo{
+	{Version: "20", LTS: true},
+}
 
 // CreateAppRequest holds the data for creating a new Node.js app.
 type CreateAppRequest struct {
@@ -39,24 +51,40 @@ func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Servi
 	return &Service{db: db, exec: exec, audit: auditSvc}
 }
 
-// ListVersions returns installed Node.js versions by running node --version.
-func (s *Service) ListVersions(ctx context.Context) ([]string, error) {
+// ListVersions returns supported Node.js versions and marks the installed major.
+func (s *Service) ListVersions(ctx context.Context) ([]VersionInfo, error) {
+	versions := append([]VersionInfo(nil), supportedNodeVersions...)
 	result, err := s.exec.Run(ctx, "node", "--version")
 	if err != nil {
+		if errors.Is(err, osexec.ErrNotFound) {
+			return versions, nil
+		}
 		return nil, fmt.Errorf("check node version: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return []string{}, nil
+		return versions, nil
 	}
 
 	version := strings.TrimSpace(result.Stdout)
 	if version == "" {
-		return []string{}, nil
+		return versions, nil
 	}
-	// Strip leading "v" if present (e.g. "v20.11.0" -> "20.11.0").
 	version = strings.TrimPrefix(version, "v")
+	major := strings.SplitN(version, ".", 2)[0]
+	for i := range versions {
+		versions[i].Installed = versions[i].Version == major
+	}
 
-	return []string{version}, nil
+	return versions, nil
+}
+
+func (s *Service) validateVersion(version string) error {
+	for _, supported := range supportedNodeVersions {
+		if supported.Version == version {
+			return nil
+		}
+	}
+	return model.NewValidationError("unsupported Node.js version: " + version)
 }
 
 // Install installs Node.js using apt-get.

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface DockerStatus {
@@ -65,6 +66,8 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
+	let currentTaskId = $state('');
+	let installInProgress = $derived(actionInProgress !== null || !!currentTaskId);
 
 	// Containers
 	let showAll = $state(false);
@@ -198,14 +201,19 @@
 		actionError = '';
 		actionInProgress = 'install';
 		try {
-			await api.post('/api/v1/docker/install');
+			const result = await api.post<{ task_id: string }>('/api/v1/docker/install');
+			currentTaskId = result.task_id;
 			actionMsg = 'Docker installation started.';
-			await loadDockerStatus();
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to install Docker';
-		} finally {
 			actionInProgress = null;
 		}
+	}
+
+	function onInstallComplete() {
+		actionInProgress = null;
+		currentTaskId = '';
+		loadDockerStatus();
 	}
 
 	async function dockerDaemonAction(action: 'start' | 'stop' | 'restart') {
@@ -469,7 +477,7 @@
 				{#if !dockerStatus.installed}
 					<button
 						onclick={installDocker}
-						disabled={actionInProgress !== null}
+						disabled={installInProgress}
 						class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 					>
 						{actionInProgress === 'install' ? 'Installing...' : 'Install Docker'}
@@ -963,4 +971,6 @@
 			{/if}
 		</div>
 	{/if}
+
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_docker_task" onComplete={onInstallComplete} />
 </div>

@@ -13,9 +13,9 @@ import (
 
 // Handler handles PHP management HTTP requests.
 type Handler struct {
-	svc    *Service
-	audit  *audit.Service
-	tasks  *taskrunner.Runner
+	svc   *Service
+	audit *audit.Service
+	tasks *taskrunner.Runner
 }
 
 // NewHandler creates a new PHP HTTP handler.
@@ -55,6 +55,8 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := h.tasks.RunMultiple("Install PHP "+version, [][]string{
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "software-properties-common", "ca-certificates"},
 		{"add-apt-repository", "-y", "ppa:ondrej/php"},
 		{"apt-get", "update", "-qq"},
 		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120",

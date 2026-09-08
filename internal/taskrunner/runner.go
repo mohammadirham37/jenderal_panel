@@ -49,8 +49,8 @@ func (r *Runner) Run(name string, cmdName string, args ...string) string {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 
-		cmd := exec.CommandContext(ctx, "sudo", append([]string{cmdName}, args...)...)
-		cmd.Env = append(cmd.Environ(), "DEBIAN_FRONTEND=noninteractive")
+		cmdArgs := append([]string{cmdName}, args...)
+		cmd := exec.CommandContext(ctx, "sudo", sudoArgs(cmdArgs)...)
 
 		// Pipe stdout and stderr for live streaming
 		stdoutPipe, _ := cmd.StdoutPipe()
@@ -117,8 +117,7 @@ func (r *Runner) RunMultiple(name string, commands [][]string) string {
 			r.mu.Unlock()
 
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			cmd := exec.CommandContext(ctx, "sudo", cmdArgs...)
-			cmd.Env = append(cmd.Environ(), "DEBIAN_FRONTEND=noninteractive")
+			cmd := exec.CommandContext(ctx, "sudo", sudoArgs(cmdArgs)...)
 
 			// Live output streaming
 			pr, pw := io.Pipe()
@@ -174,6 +173,12 @@ func (r *Runner) RunMultiple(name string, commands [][]string) string {
 	}()
 
 	return id
+}
+
+func sudoArgs(command []string) []string {
+	args := make([]string, 0, len(command)+2)
+	args = append(args, "env", "DEBIAN_FRONTEND=noninteractive")
+	return append(args, command...)
 }
 
 func (r *Runner) Get(id string) (*Task, bool) {

@@ -40,6 +40,7 @@
 	let actionError = $state('');
 	let installingVersion = $state<string | null>(null);
 	let currentTaskId = $state('');
+	let installInProgress = $derived(installingVersion !== null || !!currentTaskId);
 
 	// Create form
 	let showCreateForm = $state(false);
@@ -248,7 +249,7 @@
 						{:else}
 							<button
 								onclick={() => installVersion(ver.version)}
-								disabled={installingVersion !== null}
+								disabled={installInProgress}
 								class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 							>
 								{installingVersion === ver.version ? 'Installing...' : 'Install'}
@@ -449,5 +450,5 @@
 		</div>
 	{/if}
 
-	<TaskProgress taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; loadVersions(); }} />
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; loadVersions(); }} />
 </div>

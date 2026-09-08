@@ -39,6 +39,7 @@
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
+	let engineOperationInProgress = $derived(actionInProgress !== null || !!currentTaskId);
 
 	// Create database form
 	let newDbName = $state('');
@@ -341,7 +342,7 @@
 							{#if !eng.installed}
 								<button
 									onclick={() => installEngine(eng.name)}
-									disabled={actionInProgress !== null}
+									disabled={engineOperationInProgress}
 									class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 								>
 									{actionInProgress === `install-${eng.name}` ? 'Installing...' : 'Install'}
@@ -350,7 +351,7 @@
 								{#if !eng.running}
 									<button
 										onclick={() => engineAction(eng.name, 'start')}
-										disabled={actionInProgress !== null}
+										disabled={engineOperationInProgress}
 										class="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 									>
 										{actionInProgress === `start-${eng.name}` ? '...' : 'Start'}
@@ -358,7 +359,7 @@
 								{:else}
 									<button
 										onclick={() => engineAction(eng.name, 'stop')}
-										disabled={actionInProgress !== null}
+										disabled={engineOperationInProgress}
 										class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 									>
 										{actionInProgress === `stop-${eng.name}` ? '...' : 'Stop'}
@@ -366,7 +367,7 @@
 								{/if}
 								<button
 									onclick={() => engineAction(eng.name, 'restart')}
-									disabled={actionInProgress !== null}
+									disabled={engineOperationInProgress}
 									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 								>
 									{actionInProgress === `restart-${eng.name}` ? '...' : 'Restart'}
@@ -665,5 +666,5 @@
 		{/if}
 	</div>
 
-	<TaskProgress taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); }} />
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); }} />
 </div>

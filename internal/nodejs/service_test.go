@@ -3,6 +3,8 @@ package nodejs
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	osexec "os/exec"
 	"testing"
 	"time"
 
@@ -272,18 +274,20 @@ func TestListVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListVersions: %v", err)
 	}
-	if len(versions) != 1 {
-		t.Fatalf("expected 1 version, got %d", len(versions))
+	got, err := json.Marshal(versions)
+	if err != nil {
+		t.Fatalf("marshal versions: %v", err)
 	}
-	if versions[0] != "20.11.0" {
-		t.Errorf("expected '20.11.0', got %q", versions[0])
+	want := `[{"version":"20","installed":true,"lts":true}]`
+	if string(got) != want {
+		t.Errorf("versions JSON: got %s, want %s", got, want)
 	}
 }
 
 func TestListVersions_NotInstalled(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			return mockResult("", "node: command not found", 127), nil
+			return nil, &osexec.Error{Name: "node", Err: osexec.ErrNotFound}
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return mockResult("", "", 0), nil
@@ -295,7 +299,12 @@ func TestListVersions_NotInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListVersions: %v", err)
 	}
-	if len(versions) != 0 {
-		t.Errorf("expected 0 versions when not installed, got %d", len(versions))
+	got, err := json.Marshal(versions)
+	if err != nil {
+		t.Fatalf("marshal versions: %v", err)
+	}
+	want := `[{"version":"20","installed":false,"lts":true}]`
+	if string(got) != want {
+		t.Errorf("versions JSON: got %s, want %s", got, want)
 	}
 }

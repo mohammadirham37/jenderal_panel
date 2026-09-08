@@ -16,6 +16,7 @@
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
+	let operationInProgress = $derived(actionInProgress !== null || !!currentTaskId);
 
 	// Config editor
 	let configVersion = $state<string | null>(null);
@@ -172,7 +173,7 @@
 						{#if !php.installed}
 							<button
 								onclick={() => installPhp(php.version)}
-								disabled={actionInProgress !== null}
+								disabled={operationInProgress}
 								class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
 							>
 								{actionInProgress === `install-${php.version}` ? 'Installing...' : 'Install'}
@@ -181,7 +182,7 @@
 							{#if php.running}
 								<button
 									onclick={() => restartPhp(php.version)}
-									disabled={actionInProgress !== null}
+									disabled={operationInProgress}
 									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
 								>
 									{actionInProgress === `restart-${php.version}` ? 'Restarting...' : 'Restart'}
@@ -190,7 +191,7 @@
 
 							<button
 								onclick={() => loadConfig(php.version)}
-								disabled={actionInProgress !== null}
+								disabled={operationInProgress}
 								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
 							>
 								Config
@@ -201,7 +202,7 @@
 									<span class="text-xs text-red-300">Remove PHP {php.version}?</span>
 									<button
 										onclick={() => uninstallPhp(php.version)}
-										disabled={actionInProgress !== null}
+										disabled={operationInProgress}
 										class="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 									>
 										{actionInProgress === `uninstall-${php.version}` ? 'Removing...' : 'Yes'}
@@ -216,7 +217,7 @@
 							{:else}
 								<button
 									onclick={() => (uninstallConfirmVersion = php.version)}
-									disabled={actionInProgress !== null}
+									disabled={operationInProgress}
 									class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
 								>
 									Uninstall
@@ -272,7 +273,5 @@
 		{/if}
 	{/if}
 
-	{#if currentTaskId}
-		<TaskProgress taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} />
-	{/if}
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} />
 </div>
