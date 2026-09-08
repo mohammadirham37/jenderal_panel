@@ -233,6 +233,36 @@ func TestIssue_ACMEFail(t *testing.T) {
 	}
 }
 
+func TestLoadSiteForDomain(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	insertTestWebsite(t, db, "ws-domain", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO domains (id, website_id, name, type, created_at) VALUES (?, ?, ?, 'alias', ?)`,
+		"dom-alias", "ws-domain", "www.example.com", now,
+	); err != nil {
+		t.Fatalf("insert alias: %v", err)
+	}
+
+	svc := newTestService(t, db, &MockACMEClient{})
+	site, err := svc.loadSiteForDomain(context.Background(), "ws-domain", "www.example.com")
+	if err != nil {
+		t.Fatalf("loadSiteForDomain() error = %v", err)
+	}
+	if site.PrimaryDomain != "example.com" || site.Domain != "www.example.com" {
+		t.Fatalf("unexpected site: %#v", site)
+	}
+	if len(site.Aliases) != 1 || site.Aliases[0] != "www.example.com" {
+		t.Fatalf("aliases = %#v, want www.example.com", site.Aliases)
+	}
+
+	if _, err := svc.loadSiteForDomain(context.Background(), "ws-domain", "other.example.net"); err == nil {
+		t.Fatal("unregistered domain was accepted")
+	}
+}
+
 func TestList(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

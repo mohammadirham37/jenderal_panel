@@ -14,25 +14,28 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 )
 
 // Service manages SSL certificate lifecycle: issuance, renewal, revocation and deletion.
 type Service struct {
-	db      *sql.DB
-	exec    executor.CommandExecutor
-	audit   *audit.Service
-	acme    ACMEClient
-	certDir string
+	db            *sql.DB
+	exec          executor.CommandExecutor
+	audit         *audit.Service
+	acme          ACMEClient
+	certDir       string
+	ipv6Available func() bool
 }
 
 // NewService creates a new SSL management service.
 func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service, acme ACMEClient, certDir string) *Service {
 	return &Service{
-		db:      db,
-		exec:    exec,
-		audit:   auditSvc,
-		acme:    acme,
-		certDir: certDir,
+		db:            db,
+		exec:          exec,
+		audit:         auditSvc,
+		acme:          acme,
+		certDir:       certDir,
+		ipv6Available: nginxconfig.IPv6Available,
 	}
 }
 
