@@ -36,11 +36,18 @@ func ListenAndServe(ctx context.Context, srv *http.Server, cfg config.ServerConf
 
 	go func() {
 		logger.Info("server starting", "addr", srv.Addr, "tls", cfg.TLS.Enabled)
+		var err error
 		if cfg.TLS.Enabled && cfg.TLS.Cert != "" {
-			errCh <- srv.ListenAndServeTLS(cfg.TLS.Cert, cfg.TLS.Key)
+			logger.Info("starting TLS server", "cert", cfg.TLS.Cert, "key", cfg.TLS.Key)
+			err = srv.ListenAndServeTLS(cfg.TLS.Cert, cfg.TLS.Key)
 		} else {
-			errCh <- srv.ListenAndServe()
+			logger.Info("starting HTTP server")
+			err = srv.ListenAndServe()
 		}
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("server listen failed", "error", err)
+		}
+		errCh <- err
 	}()
 
 	select {

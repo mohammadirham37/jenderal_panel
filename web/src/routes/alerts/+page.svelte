@@ -213,6 +213,7 @@
 										<td class="px-4 py-3">
 											<button
 												onclick={() => toggleRule(rule)}
+												aria-label="Toggle rule"
 												class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer {rule.enabled ? 'bg-blue-600' : 'bg-gray-600'}"
 											>
 												<span class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform {rule.enabled ? 'translate-x-4.5' : 'translate-x-0.5'}"></span>

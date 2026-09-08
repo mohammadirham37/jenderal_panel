@@ -208,6 +208,7 @@
 									<td class="px-4 py-3">
 										<button
 											onclick={() => toggleChannel(ch)}
+											aria-label="Toggle channel"
 											class="relative inline-flex h-5 w-9 items-center rounded-full transition-colors cursor-pointer {ch.enabled ? 'bg-blue-600' : 'bg-gray-600'}"
 										>
 											<span class="inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform {ch.enabled ? 'translate-x-4.5' : 'translate-x-0.5'}"></span>
