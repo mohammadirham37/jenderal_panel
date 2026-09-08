@@ -83,6 +83,7 @@ export interface ServerMetrics {
 
 export interface ServiceStatus {
 	name: string;
+	installed: boolean;
 	active: boolean;
 	running: boolean;
 	enabled: boolean;

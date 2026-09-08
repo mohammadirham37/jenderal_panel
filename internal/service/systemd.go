@@ -176,7 +176,7 @@ func parseStatus(name, output string) (*model.ServiceStatus, error) {
 	return status, nil
 }
 
-// List returns the status of all allowed services, skipping unavailable ones.
+// List returns the status of all allowed services, including not-installed ones.
 func (s *Systemd) List(ctx context.Context) ([]model.ServiceStatus, error) {
 	var statuses []model.ServiceStatus
 	for _, name := range s.allowed {
@@ -184,11 +184,28 @@ func (s *Systemd) List(ctx context.Context) ([]model.ServiceStatus, error) {
 		if strings.ContainsAny(name, "*?[") {
 			continue
 		}
-		status, err := s.Status(ctx, name)
-		if err != nil {
-			// Service may not be installed — skip silently
+
+		// Check if unit file exists (installed)
+		checkResult, _ := s.exec.RunSudo(ctx, "systemctl", "cat", name)
+		installed := checkResult != nil && checkResult.ExitCode == 0
+
+		if !installed {
+			statuses = append(statuses, model.ServiceStatus{
+				Name:      name,
+				Installed: false,
+			})
 			continue
 		}
+
+		status, err := s.Status(ctx, name)
+		if err != nil {
+			statuses = append(statuses, model.ServiceStatus{
+				Name:      name,
+				Installed: true,
+			})
+			continue
+		}
+		status.Installed = true
 		statuses = append(statuses, *status)
 	}
 	return statuses, nil

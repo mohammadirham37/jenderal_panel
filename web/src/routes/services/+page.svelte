@@ -97,50 +97,60 @@
 						<tr class="hover:bg-gray-750">
 							<td class="px-4 py-3 text-sm text-white font-medium">{svc.name}</td>
 							<td class="px-4 py-3">
-								<span
-									class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium {svc.running
-										? 'bg-green-900/50 text-green-400'
-										: 'bg-red-900/50 text-red-400'}"
-								>
-									<span
-										class="w-1.5 h-1.5 rounded-full {svc.running ? 'bg-green-400' : 'bg-red-400'}"
-									></span>
-									{svc.running ? 'Running' : 'Stopped'}
-								</span>
+								{#if !svc.installed}
+									<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-700 text-gray-400">
+										<span class="w-1.5 h-1.5 rounded-full bg-gray-500"></span>
+										Not Installed
+									</span>
+								{:else if svc.running}
+									<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-400">
+										<span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
+										Running
+									</span>
+								{:else}
+									<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-900/50 text-red-400">
+										<span class="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+										Stopped
+									</span>
+								{/if}
 							</td>
 							<td class="px-4 py-3 text-sm text-gray-400">
-								{svc.enabled ? 'Yes' : 'No'}
+								{svc.installed ? (svc.enabled ? 'Yes' : 'No') : '-'}
 							</td>
 							<td class="px-4 py-3 text-sm text-gray-400 font-mono">
 								{svc.pid || '-'}
 							</td>
 							<td class="px-4 py-3 text-right">
-								<div class="flex items-center justify-end gap-2">
-									{#if !svc.running}
+								{#if svc.installed}
+									<div class="flex items-center justify-end gap-2">
+										{#if !svc.running}
+											<button
+												onclick={() => serviceAction(svc.name, 'start')}
+												disabled={actionInProgress !== null}
+												class="px-2.5 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
+											>
+												{actionInProgress === `${svc.name}-start` ? '...' : 'Start'}
+											</button>
+										{:else}
+											<button
+												onclick={() => serviceAction(svc.name, 'stop')}
+												disabled={actionInProgress !== null}
+												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
+											>
+												{actionInProgress === `${svc.name}-stop` ? '...' : 'Stop'}
+											</button>
+										{/if}
 										<button
-											onclick={() => serviceAction(svc.name, 'start')}
+											onclick={() => serviceAction(svc.name, 'restart')}
 											disabled={actionInProgress !== null}
-											class="px-2.5 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
+											class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 										>
-											{actionInProgress === `${svc.name}-start` ? '...' : 'Start'}
+											{actionInProgress === `${svc.name}-restart` ? '...' : 'Restart'}
 										</button>
-									{:else}
-										<button
-											onclick={() => serviceAction(svc.name, 'stop')}
-											disabled={actionInProgress !== null}
-											class="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
-										>
-											{actionInProgress === `${svc.name}-stop` ? '...' : 'Stop'}
-										</button>
-									{/if}
-									<button
-										onclick={() => serviceAction(svc.name, 'restart')}
-										disabled={actionInProgress !== null}
-										class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
-									>
-										{actionInProgress === `${svc.name}-restart` ? '...' : 'Restart'}
-									</button>
-								</div>
+									</div>
+								{:else}
+									<span class="text-xs text-gray-500">Install via Databases menu</span>
+								{/if}
 							</td>
 						</tr>
 					{/each}

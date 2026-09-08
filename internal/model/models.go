@@ -70,12 +70,13 @@ type ServerMetrics struct {
 }
 
 type ServiceStatus struct {
-	Name    string        `json:"name"`
-	Active  bool          `json:"active"`
-	Running bool          `json:"running"`
-	Enabled bool          `json:"enabled"`
-	Uptime  time.Duration `json:"uptime"`
-	PID     int           `json:"pid"`
+	Name      string        `json:"name"`
+	Installed bool          `json:"installed"`
+	Active    bool          `json:"active"`
+	Running   bool          `json:"running"`
+	Enabled   bool          `json:"enabled"`
+	Uptime    time.Duration `json:"uptime"`
+	PID       int           `json:"pid"`
 }
 
 type UserWithRoles struct {
