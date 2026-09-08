@@ -42,7 +42,7 @@ const vhostPHPTemplate = `server {
     }
 
     location ~ \.php$ {
-        include snippets/fastcgi-params.conf;
+        include fastcgi_params;
         fastcgi_pass unix:/run/php/php{{ .PHPVersion }}-fpm-{{ .Domain }}.sock;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }

@@ -38,6 +38,29 @@ func TestRenderVhost_PHP(t *testing.T) {
 	}
 }
 
+func TestRenderVhost_PHPUsesPackagedFastCGIParams(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:       "example.com",
+		DocumentRoot: "/home/web_example_com/public",
+		LogDir:       "/home/web_example_com/logs",
+		PHPVersion:   "8.3",
+		AppType:      "php",
+	})
+	if err != nil {
+		t.Fatalf("RenderVhost() error = %v", err)
+	}
+
+	if !strings.Contains(output, "include fastcgi_params;") {
+		t.Fatalf("PHP vhost does not include the packaged FastCGI params file:\n%s", output)
+	}
+	if strings.Contains(output, "snippets/fastcgi-params.conf") {
+		t.Errorf("PHP vhost still includes the unavailable FastCGI params snippet:\n%s", output)
+	}
+	if !strings.Contains(output, "fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;") {
+		t.Errorf("PHP vhost does not set SCRIPT_FILENAME explicitly:\n%s", output)
+	}
+}
+
 func TestRenderVhost_Static(t *testing.T) {
 	data := VhostData{
 		Domain:       "static.example.com",
