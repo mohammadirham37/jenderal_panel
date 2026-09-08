@@ -14,8 +14,9 @@ import (
 
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
-	"github.com/go-acme/lego/v4/challenge/http01"
+	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/lego"
+	"github.com/go-acme/lego/v4/providers/http/webroot"
 	"github.com/go-acme/lego/v4/registration"
 )
 
@@ -31,9 +32,8 @@ type ACMEClient interface {
 // ----------------------------------------------------------------
 
 // LegoClient implements ACMEClient using the lego ACME library.
-// By default it targets the Let's Encrypt staging directory; switch to the
-// production URL by setting the LEGO_CA_URL environment variable before
-// constructing the client.
+// By default it targets Let's Encrypt production. LEGO_CA_URL may override it,
+// for example with the Let's Encrypt staging directory during testing.
 type LegoClient struct {
 	email      string
 	accountDir string
@@ -45,6 +45,17 @@ func NewLegoClient(email, accountDir string) *LegoClient {
 	return &LegoClient{email: email, accountDir: accountDir}
 }
 
+func newHTTP01Provider(root string) (challenge.Provider, error) {
+	return webroot.NewHTTPProvider(root)
+}
+
+func acmeDirectoryURL() string {
+	if url := os.Getenv("LEGO_CA_URL"); url != "" {
+		return url
+	}
+	return lego.LEDirectoryProduction
+}
+
 // legoUser implements the registration.User interface required by lego.
 type legoUser struct {
 	Email        string                 `json:"email"`
@@ -54,7 +65,7 @@ type legoUser struct {
 
 func (u *legoUser) GetEmail() string                        { return u.Email }
 func (u *legoUser) GetRegistration() *registration.Resource { return u.Registration }
-func (u *legoUser) GetPrivateKey() crypto.PrivateKey         { return u.key }
+func (u *legoUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 
 // loadOrCreateAccount loads an existing ACME account from disk, or generates
 // a new one and registers it with the CA.
@@ -122,21 +133,18 @@ func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, [
 	config := lego.NewConfig(user)
 	config.Certificate.KeyType = certcrypto.RSA2048
 
-	// Use staging by default; override with LEGO_CA_URL.
-	caURL := os.Getenv("LEGO_CA_URL")
-	if caURL != "" {
-		config.CADirURL = caURL
-	} else {
-		config.CADirURL = lego.LEDirectoryStaging
-	}
+	config.CADirURL = acmeDirectoryURL()
 
 	client, err := lego.NewClient(config)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create lego client: %w", err)
 	}
 
-	// Use HTTP-01 with a webroot provider.
-	provider := http01.NewProviderServer("", "")
+	// Let Nginx keep port 80 and serve the challenge file from the website root.
+	provider, err := newHTTP01Provider(webroot)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create HTTP-01 webroot provider: %w", err)
+	}
 	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
 		return nil, nil, fmt.Errorf("set http01 provider: %w", err)
 	}
@@ -177,12 +185,7 @@ func (c *LegoClient) RevokeCertificate(certPEM []byte) error {
 	config := lego.NewConfig(user)
 	config.Certificate.KeyType = certcrypto.RSA2048
 
-	caURL := os.Getenv("LEGO_CA_URL")
-	if caURL != "" {
-		config.CADirURL = caURL
-	} else {
-		config.CADirURL = lego.LEDirectoryStaging
-	}
+	config.CADirURL = acmeDirectoryURL()
 
 	client, err := lego.NewClient(config)
 	if err != nil {
