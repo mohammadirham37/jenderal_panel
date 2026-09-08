@@ -18,7 +18,7 @@ type ServiceManager interface {
 	Restart(ctx context.Context, name string) error
 	Reload(ctx context.Context, name string) error
 	Status(ctx context.Context, name string) (*model.ServiceStatus, error)
-	List(ctx context.Context, name string) ([]model.ServiceStatus, error)
+	List(ctx context.Context) ([]model.ServiceStatus, error)
 }
 
 // Systemd implements ServiceManager using systemctl commands.
@@ -160,11 +160,20 @@ func parseStatus(name, output string) (*model.ServiceStatus, error) {
 	return status, nil
 }
 
-// List returns a list with the status of the named service.
-func (s *Systemd) List(ctx context.Context, name string) ([]model.ServiceStatus, error) {
-	status, err := s.Status(ctx, name)
-	if err != nil {
-		return nil, err
+// List returns the status of all allowed services, skipping unavailable ones.
+func (s *Systemd) List(ctx context.Context) ([]model.ServiceStatus, error) {
+	var statuses []model.ServiceStatus
+	for _, name := range s.allowed {
+		// Skip glob patterns — query exact names only
+		if strings.ContainsAny(name, "*?[") {
+			continue
+		}
+		status, err := s.Status(ctx, name)
+		if err != nil {
+			// Service may not be installed — skip silently
+			continue
+		}
+		statuses = append(statuses, *status)
 	}
-	return []model.ServiceStatus{*status}, nil
+	return statuses, nil
 }

@@ -24,10 +24,9 @@ func NewHandler(mgr ServiceManager, auditSvc *audit.Service) *Handler {
 	}
 }
 
-// List returns the status list for the named service.
+// List returns the status of all allowed services.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	name := chi.URLParam(r, "name")
-	statuses, err := h.mgr.List(r.Context(), name)
+	statuses, err := h.mgr.List(r.Context())
 	if err != nil {
 		httputil.HandleError(w, err)
 		return

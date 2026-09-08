@@ -77,6 +77,10 @@ func (s *Service) Install(ctx context.Context, version string) error {
 		return err
 	}
 
+	// Add ondrej/php PPA if not already present (required for multiple PHP versions)
+	s.exec.RunSudo(ctx, "add-apt-repository", "-y", "ppa:ondrej/php")
+	s.exec.RunSudo(ctx, "apt-get", "update")
+
 	packages := []string{
 		"install", "-y",
 		"php" + version + "-fpm",

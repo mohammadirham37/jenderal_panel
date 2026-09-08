@@ -45,9 +45,21 @@ func (h *Handler) ListVersions(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, versions)
 }
 
-// Install handles POST /api/nodejs/versions/{version}/install.
+// Install handles POST /api/nodejs/install.
 func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
+	if version == "" {
+		var req struct {
+			Version string `json:"version"`
+		}
+		if err := httputil.DecodeJSON(r, &req); err == nil {
+			version = req.Version
+		}
+	}
+	if version == "" {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "version required")
+		return
+	}
 	if err := h.svc.Install(r.Context(), version); err != nil {
 		httputil.HandleError(w, err)
 		return
