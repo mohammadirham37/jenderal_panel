@@ -203,9 +203,11 @@ func (a *activationSession) commit() {
 func (a *activationSession) rollback() error {
 	cleanupCtx, cancel := cleanupContext()
 	defer cancel()
-	err := a.service.restorePaths(cleanupCtx, a.backups)
+	if err := a.service.restorePaths(cleanupCtx, a.backups); err != nil {
+		return fmt.Errorf("%w (backup retained at %s)", err, a.backupDir)
+	}
 	_, _ = a.service.exec.RunSudo(context.Background(), "rm", "-rf", a.backupDir)
-	return err
+	return nil
 }
 
 func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectDomains []string) error {
@@ -251,18 +253,19 @@ func (s *Service) removeCertificateConfig(ctx context.Context, site siteRecord, 
 	if err := s.runSudoOK(ctx, "mkdir", "-m", "0700", backupDir); err != nil {
 		return fmt.Errorf("create SSL backup: %w", err)
 	}
-	defer func() { _, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir) }()
 
 	backups, err := s.snapshotPaths(ctx, backupDir, paths)
 	if err != nil {
+		_, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir)
 		return err
 	}
 	rollback := func(cause error) error {
 		cleanupCtx, cancel := cleanupContext()
 		defer cancel()
 		if restoreErr := s.restorePaths(cleanupCtx, backups); restoreErr != nil {
-			return fmt.Errorf("%v; rollback failed: %w", cause, restoreErr)
+			return fmt.Errorf("%v; rollback failed: %w (backup retained at %s)", cause, restoreErr, backupDir)
 		}
+		_, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir)
 		return cause
 	}
 
@@ -284,6 +287,7 @@ func (s *Service) removeCertificateConfig(ctx context.Context, site siteRecord, 
 	if err := s.runSudoOK(ctx, "systemctl", "reload", "nginx"); err != nil {
 		return rollback(fmt.Errorf("reload nginx: %w", err))
 	}
+	_, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir)
 	return nil
 }
 

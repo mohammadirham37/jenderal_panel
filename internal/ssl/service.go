@@ -412,8 +412,10 @@ func (s *Service) GetExpiringCerts(ctx context.Context, days int) ([]model.SSLCe
 
 // markFailed updates a certificate record to status=failed with the given error message.
 func (s *Service) markFailed(ctx context.Context, certID, errMsg string) {
+	cleanupCtx, cancel := cleanupContext()
+	defer cancel()
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, _ = s.db.ExecContext(ctx,
+	_, _ = s.db.ExecContext(cleanupCtx,
 		`UPDATE ssl_certificates SET status = ?, error_message = ?, updated_at = ? WHERE id = ?`,
 		"failed", errMsg, now, certID,
 	)
