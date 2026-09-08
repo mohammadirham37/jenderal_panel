@@ -10,17 +10,18 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Handler handles Docker management HTTP requests.
 type Handler struct {
 	svc   *Service
 	audit *audit.Service
+	tasks *taskrunner.Runner
 }
 
-// NewHandler creates a new Docker Handler.
-func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
-	return &Handler{svc: svc, audit: auditSvc}
+func NewHandler(svc *Service, auditSvc *audit.Service, tasks *taskrunner.Runner) *Handler {
+	return &Handler{svc: svc, audit: auditSvc, tasks: tasks}
 }
 
 // ---------- Docker daemon ----------
@@ -37,10 +38,12 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 
 // Install installs Docker on the server.
 func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Install(r.Context()); err != nil {
-		httputil.HandleError(w, err)
-		return
-	}
+	taskID := h.tasks.RunMultiple("Install Docker", [][]string{
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "docker.io"},
+		{"systemctl", "enable", "docker"},
+		{"systemctl", "start", "docker"},
+	})
 
 	user, _ := auth.UserFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
@@ -52,7 +55,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		IP:     r.RemoteAddr,
 	})
 
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
 // Start starts the Docker daemon.

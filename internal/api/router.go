@@ -97,7 +97,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc, deps.Tasks)
 	taskHandler := taskrunner.NewHandler(deps.Tasks)
 	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc, deps.Tasks)
-	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc)
+	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc, deps.Tasks)
 	backupHandler := backup.NewHandler(deps.BackupSvc, deps.AuditSvc)
 	alertHandler := alert.NewHandler(deps.AlertSvc, deps.AuditSvc)
 	notifHandler := notification.NewHandler(deps.NotifSvc, deps.AuditSvc)

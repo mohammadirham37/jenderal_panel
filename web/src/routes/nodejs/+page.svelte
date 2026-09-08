@@ -108,7 +108,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			const result = await api.post<{ task_id: string }>('/api/v1/nodejs/versions/install', { version });
+			const result = await api.post<{ task_id: string }>('/api/v1/nodejs/install', { version });
 			currentTaskId = result.task_id;
 			actionMsg = `Node.js ${version} installation started.`;
 		} catch (err) {
