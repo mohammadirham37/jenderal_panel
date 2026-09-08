@@ -153,6 +153,6 @@
 	{/if}
 
 	{#if currentTaskId}
-		<TaskProgress taskId={currentTaskId} onComplete={onTaskComplete} />
+		<TaskProgress taskId={currentTaskId} storageKey="jenderal_update_task" onComplete={onTaskComplete} />
 	{/if}
 </div>

@@ -665,5 +665,5 @@
 		{/if}
 	</div>
 
-	<TaskProgress taskId={currentTaskId} onComplete={() => { currentTaskId = ''; loadEngines(); }} />
+	<TaskProgress taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); }} />
 </div>

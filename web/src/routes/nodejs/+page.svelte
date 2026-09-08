@@ -449,5 +449,5 @@
 		</div>
 	{/if}
 
-	<TaskProgress taskId={currentTaskId} onComplete={() => { currentTaskId = ''; loadVersions(); }} />
+	<TaskProgress taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; loadVersions(); }} />
 </div>

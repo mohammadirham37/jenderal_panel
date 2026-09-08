@@ -273,6 +273,6 @@
 	{/if}
 
 	{#if currentTaskId}
-		<TaskProgress taskId={currentTaskId} onComplete={onTaskComplete} />
+		<TaskProgress taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} />
 	{/if}
 </div>
