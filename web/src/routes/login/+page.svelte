@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import LogoMark from '$lib/components/LogoMark.svelte';
 	import { login, isAuthenticated } from '$lib/stores/auth';
 	import { onMount } from 'svelte';
 
@@ -34,6 +35,11 @@
 	<div class="w-full max-w-sm">
 		<div class="bg-gray-800 rounded-xl shadow-2xl border border-gray-700 p-8">
 			<div class="text-center mb-8">
+				<div class="mb-4 flex justify-center">
+					<div class="rounded-2xl border border-teal-400/20 bg-teal-500/10 p-3 shadow-lg shadow-teal-950/30">
+						<LogoMark size="lg" decorative />
+					</div>
+				</div>
 				<h1 class="text-2xl font-bold text-white">Jenderal Panel</h1>
 				<p class="text-gray-400 text-sm mt-1">Sign in to your account</p>
 			</div>

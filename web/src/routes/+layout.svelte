@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import LogoMark from '$lib/components/LogoMark.svelte';
 	import { isAuthenticated, user, logout, checkAuth } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import '../app.css';
@@ -110,13 +111,19 @@
 				? 'w-60'
 				: 'w-16'}"
 		>
-			<div class="flex items-center gap-2 px-4 py-4 border-b border-gray-700">
+			<div
+				class="border-b border-gray-700 {sidebarOpen
+					? 'flex items-center gap-2 px-4 py-4'
+					: 'flex flex-col items-center gap-2 px-2 py-3'}"
+			>
+				<LogoMark size={sidebarOpen ? 'md' : 'sm'} decorative />
 				{#if sidebarOpen}
-					<span class="text-lg font-bold text-white tracking-tight">Jenderal-Panel</span>
+					<span class="text-lg font-bold text-white tracking-tight">Jenderal Panel</span>
 				{/if}
 				<button
 					onclick={() => (sidebarOpen = !sidebarOpen)}
-					class="ml-auto p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white cursor-pointer"
+					class="{sidebarOpen ? 'ml-auto' : ''} p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white cursor-pointer"
+					aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
 				>
 					<svg
 						class="w-5 h-5"
