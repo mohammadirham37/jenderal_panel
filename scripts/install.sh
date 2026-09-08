@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-set -euo pipefail
-
 #----------------------------------------------------------#
 #                   Jenderal Panel Installer                #
 #                                                          #
@@ -10,31 +8,32 @@ set -euo pipefail
 #    wget https://raw.githubusercontent.com/               #
 #      mohammadirham37/jenderal_panel/main/                #
 #      scripts/install.sh                                  #
-#    bash install.sh                                       #
+#    sudo bash install.sh                                  #
 #                                                          #
 #  Options:                                                #
 #    --hostname <fqdn>    Set server hostname              #
 #    --email <email>      Admin email (for SSL)            #
 #    --password <pass>    Admin password (auto-gen if not)  #
 #    --port <port>        Panel port (default: 8443)       #
-#    --version <ver>      Version to install (latest)      #
 #    --force              Skip confirmation prompts        #
 #    --help               Show this help                   #
 #----------------------------------------------------------#
 
+# Don't use set -e — we handle errors manually for better UX
+set -uo pipefail
+
 JENDERAL_REPO="mohammadirham37/jenderal_panel"
-JENDERAL_VERSION="${JENDERAL_VERSION:-latest}"
+JENDERAL_VERSION="0.1.0"
 JENDERAL_USER="jenderal"
 JENDERAL_BIN="/opt/jenderal/jenderal"
 JENDERAL_CONFIG="/etc/jenderal/jenderal.yaml"
-JENDERAL_SERVICE="/etc/systemd/system/jenderal.service"
 PANEL_PORT=8443
 ADMIN_EMAIL=""
 ADMIN_PASSWORD=""
 ADMIN_HOSTNAME=""
 FORCE=false
+ARCH=""
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -44,11 +43,8 @@ NC='\033[0m'
 
 log()   { echo -e "  ${GREEN}*${NC} $1"; }
 warn()  { echo -e "  ${YELLOW}!${NC} $1"; }
-error() { echo -e "  ${RED}x${NC} $1"; exit 1; }
+fail()  { echo -e "  ${RED}x${NC} $1"; exit 1; }
 
-#----------------------------------------------------------#
-#                    Parse Arguments                        #
-#----------------------------------------------------------#
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -56,399 +52,237 @@ parse_args() {
             --email)     ADMIN_EMAIL="$2"; shift 2 ;;
             --password)  ADMIN_PASSWORD="$2"; shift 2 ;;
             --port)      PANEL_PORT="$2"; shift 2 ;;
-            --version)   JENDERAL_VERSION="$2"; shift 2 ;;
             --force)     FORCE=true; shift ;;
-            --help)      show_help; exit 0 ;;
-            *)           echo "Unknown option: $1"; show_help; exit 1 ;;
+            --help)
+                echo "Usage: sudo bash install.sh [--hostname fqdn] [--email email] [--password pass] [--port 8443] [--force]"
+                exit 0 ;;
+            *)  echo "Unknown: $1"; exit 1 ;;
         esac
     done
 }
 
-show_help() {
-    echo ""
-    echo "Jenderal Panel Installer"
-    echo ""
-    echo "Usage: bash install.sh [OPTIONS]"
-    echo ""
-    echo "Options:"
-    echo "  --hostname <fqdn>     Server hostname"
-    echo "  --email <email>       Admin email address"
-    echo "  --password <pass>     Admin password (auto-generated if omitted)"
-    echo "  --port <port>         Panel port (default: 8443)"
-    echo "  --version <ver>       Version to install (default: latest)"
-    echo "  --force               Skip confirmation prompts"
-    echo "  --help                Show this help message"
-    echo ""
-    echo "Example:"
-    echo "  bash install.sh --hostname panel.example.com --email admin@example.com"
-    echo ""
-}
-
 #----------------------------------------------------------#
-#                    Pre-flight Checks                      #
+#                      Pre-checks                           #
 #----------------------------------------------------------#
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        error "This installer must be run as root. Use: sudo bash install.sh"
-    fi
-}
+preflight() {
+    # Root check
+    [[ $EUID -eq 0 ]] || fail "Run as root: sudo bash install.sh"
 
-detect_os() {
-    if [[ ! -f /etc/os-release ]]; then
-        error "Cannot detect OS: /etc/os-release not found"
-    fi
-
+    # OS check
+    [[ -f /etc/os-release ]] || fail "/etc/os-release not found"
     . /etc/os-release
-
-    if [[ "$ID" != "ubuntu" ]]; then
-        error "Unsupported OS: $ID. Only Ubuntu is supported."
-    fi
-
+    [[ "$ID" == "ubuntu" ]] || fail "Only Ubuntu supported (detected: $ID)"
     case "$VERSION_ID" in
-        "22.04"|"24.04")
-            log "OS: Ubuntu $VERSION_ID ($PRETTY_NAME)"
-            ;;
-        *)
-            error "Unsupported Ubuntu version: $VERSION_ID. Supported: 22.04, 24.04"
-            ;;
+        22.04|24.04) log "OS: Ubuntu $VERSION_ID" ;;
+        *) fail "Ubuntu $VERSION_ID not supported (need 22.04 or 24.04)" ;;
     esac
-}
 
-detect_arch() {
-    ARCH=$(uname -m)
-    case "$ARCH" in
+    # Arch
+    case "$(uname -m)" in
         x86_64)  ARCH="amd64" ;;
         aarch64) ARCH="arm64" ;;
-        *)       error "Unsupported architecture: $ARCH" ;;
+        *) fail "Unsupported arch: $(uname -m)" ;;
     esac
-    log "Architecture: $ARCH"
-}
+    log "Arch: $ARCH"
 
-check_resources() {
-    local ram_kb
-    ram_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-    local ram_mb=$((ram_kb / 1024))
-
-    if [[ $ram_mb -lt 512 ]]; then
-        error "Minimum 512MB RAM required. Detected: ${ram_mb}MB"
-    fi
+    # Resources
+    local ram_mb=$(( $(grep MemTotal /proc/meminfo | awk '{print $2}') / 1024 ))
+    [[ $ram_mb -ge 512 ]] || fail "Need 512MB+ RAM (have ${ram_mb}MB)"
     log "RAM: ${ram_mb}MB"
 
-    local disk_avail
-    disk_avail=$(df -BG / | tail -1 | awk '{print $4}' | tr -d 'G')
-    if [[ $disk_avail -lt 5 ]]; then
-        error "Minimum 5GB free disk space required. Available: ${disk_avail}GB"
-    fi
-    log "Disk: ${disk_avail}GB available"
-}
+    local disk_gb=$(df -BG / | tail -1 | awk '{print $4}' | tr -d 'G')
+    [[ $disk_gb -ge 5 ]] || fail "Need 5GB+ disk (have ${disk_gb}GB)"
+    log "Disk: ${disk_gb}GB free"
 
-check_internet() {
-    if ! curl -fsS --max-time 10 https://github.com > /dev/null 2>&1; then
-        error "No internet connectivity. Cannot reach github.com"
-    fi
+    # Internet
+    curl -fsS --max-time 10 https://github.com > /dev/null 2>&1 || fail "No internet"
     log "Internet: OK"
 }
 
-check_existing() {
-    if [[ -f "$JENDERAL_BIN" ]]; then
-        local current_ver
-        current_ver=$("$JENDERAL_BIN" version 2>/dev/null | awk '{print $NF}' || echo "unknown")
-        warn "Jenderal Panel already installed (version: $current_ver)"
-        if [[ "$FORCE" != true ]]; then
-            echo ""
-            read -rp "  Reinstall/upgrade? [y/N]: " confirm
-            if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
-                echo "  Aborted."
-                exit 0
-            fi
-        fi
-    fi
-}
-
 #----------------------------------------------------------#
-#                    Interactive Setup                      #
+#                    Interactive Setup                       #
 #----------------------------------------------------------#
-interactive_setup() {
+setup_interactive() {
     if [[ "$FORCE" == true ]]; then
-        # Generate defaults for non-interactive mode
-        if [[ -z "$ADMIN_EMAIL" ]]; then
-            ADMIN_EMAIL="admin@localhost"
-        fi
-        if [[ -z "$ADMIN_PASSWORD" ]]; then
-            ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '=/+' | head -c 16)
-        fi
+        [[ -z "$ADMIN_EMAIL" ]] && ADMIN_EMAIL="admin@localhost"
+        [[ -z "$ADMIN_PASSWORD" ]] && ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '=/+' | head -c 16)
+        [[ -z "$ADMIN_HOSTNAME" ]] && ADMIN_HOSTNAME=$(hostname -f 2>/dev/null || hostname)
         return
     fi
 
     echo ""
-    echo -e "${CYAN}${BOLD}  Jenderal Panel Installation${NC}"
-    echo -e "  ─────────────────────────────"
+    echo -e "  ${CYAN}${BOLD}Setup${NC}"
     echo ""
 
-    # Hostname
     if [[ -z "$ADMIN_HOSTNAME" ]]; then
-        local default_hostname
-        default_hostname=$(hostname -f 2>/dev/null || hostname)
-        read -rp "  Hostname [$default_hostname]: " ADMIN_HOSTNAME
-        ADMIN_HOSTNAME="${ADMIN_HOSTNAME:-$default_hostname}"
+        local dh=$(hostname -f 2>/dev/null || hostname)
+        read -rp "  Hostname [$dh]: " ADMIN_HOSTNAME
+        ADMIN_HOSTNAME="${ADMIN_HOSTNAME:-$dh}"
     fi
 
-    # Email
     if [[ -z "$ADMIN_EMAIL" ]]; then
-        read -rp "  Admin email [admin@$ADMIN_HOSTNAME]: " ADMIN_EMAIL
-        ADMIN_EMAIL="${ADMIN_EMAIL:-admin@$ADMIN_HOSTNAME}"
+        read -rp "  Admin email [admin@${ADMIN_HOSTNAME}]: " ADMIN_EMAIL
+        ADMIN_EMAIL="${ADMIN_EMAIL:-admin@${ADMIN_HOSTNAME}}"
     fi
 
-    # Password
     if [[ -z "$ADMIN_PASSWORD" ]]; then
         ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -d '=/+' | head -c 16)
-        log "Generated admin password"
     fi
 
-    # Port
-    read -rp "  Panel port [$PANEL_PORT]: " input_port
-    PANEL_PORT="${input_port:-$PANEL_PORT}"
+    read -rp "  Panel port [$PANEL_PORT]: " p
+    PANEL_PORT="${p:-$PANEL_PORT}"
 
     echo ""
-    echo -e "  ${BOLD}Installation Summary:${NC}"
-    echo "  ─────────────────────────────"
-    echo "  Hostname:  $ADMIN_HOSTNAME"
-    echo "  Email:     $ADMIN_EMAIL"
-    echo "  Port:      $PANEL_PORT"
-    echo "  Version:   $JENDERAL_VERSION"
+    echo "  Hostname: $ADMIN_HOSTNAME | Email: $ADMIN_EMAIL | Port: $PANEL_PORT"
     echo ""
-
-    read -rp "  Continue with installation? [Y/n]: " confirm
-    if [[ "$confirm" == "n" || "$confirm" == "N" ]]; then
-        echo "  Aborted."
-        exit 0
-    fi
+    read -rp "  Install? [Y/n]: " c
+    [[ "$c" == "n" || "$c" == "N" ]] && { echo "  Aborted."; exit 0; }
     echo ""
 }
 
 #----------------------------------------------------------#
-#                    Installation Steps                     #
+#                    Install Functions                       #
 #----------------------------------------------------------#
-install_dependencies() {
-    log "Updating package lists..."
-    apt-get update -qq > /dev/null 2>&1
-
-    # Fix any broken dpkg state first
+step_fix_dpkg() {
+    # Fix any broken dpkg/apt state from prior failed installs
     dpkg --configure -a > /dev/null 2>&1 || true
     apt-get install -f -y > /dev/null 2>&1 || true
-
-    # Pre-fix nginx IPv6 issue before install
-    # On systems without IPv6, nginx default config fails on [::]:80
-    if [[ ! -f /proc/net/if_inet6 ]]; then
-        log "IPv6 not available, pre-configuring nginx..."
-        mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
-        # If default config exists with IPv6, fix it
-        for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
-            if [[ -f "$f" ]]; then
-                sed -i 's/listen \[::\]:80/#listen [::]:80/g' "$f"
-                sed -i 's/listen \[::\]:443/#listen [::]:443/g' "$f"
-            fi
-        done
-    fi
-
-    log "Installing dependencies..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-        curl wget sqlite3 ufw openssl gcc make git \
-        software-properties-common apt-transport-https \
-        2>&1 | tail -5 || {
-        warn "Some base packages may have failed, continuing..."
-    }
-
-    # Install nginx
-    log "Installing nginx..."
-    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 | tail -5 || {
-        warn "Nginx install had issues, attempting fix..."
-        # Fix IPv6 after nginx installs its config
-        for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
-            if [[ -f "$f" ]]; then
-                sed -i 's/listen \[::\]:80/#listen [::]:80/g' "$f"
-                sed -i 's/listen \[::\]:443/#listen [::]:443/g' "$f"
-            fi
-        done
-        dpkg --configure -a 2>&1 | tail -3 || true
-        systemctl start nginx 2>/dev/null || true
-    }
-
-    # Verify nginx is working
-    if nginx -t > /dev/null 2>&1; then
-        systemctl start nginx 2>/dev/null || true
-        log "Nginx: OK"
-    else
-        warn "Nginx config test failed, but continuing installation"
-    fi
-
-    log "Dependencies installed"
 }
 
-create_user() {
+step_install_deps() {
+    log "Installing system packages..."
+    apt-get update -qq > /dev/null 2>&1
+
+    # Fix nginx IPv6 issue BEFORE installing nginx
+    # Systems without IPv6 fail on [::]:80 listen directive
+    for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
+        [[ -f "$f" ]] && sed -i 's/listen \[::\]/#listen [::]/' "$f" 2>/dev/null || true
+    done
+
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        curl wget git gcc g++ make sqlite3 openssl ufw \
+        software-properties-common 2>&1 | grep -E "^E:|upgraded|newly" || true
+
+    # Install nginx — handle IPv6 failure gracefully
+    if ! dpkg -l nginx 2>/dev/null | grep -q "^ii"; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 || {
+            # Fix IPv6 config and retry
+            for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
+                [[ -f "$f" ]] && sed -i 's/listen \[::\]/#listen [::]/' "$f" 2>/dev/null || true
+            done
+            dpkg --configure -a 2>/dev/null || true
+            systemctl start nginx 2>/dev/null || true
+        }
+    fi
+    log "System packages: OK"
+}
+
+step_install_go() {
+    export PATH="/usr/local/go/bin:$PATH"
+    if command -v go &>/dev/null; then
+        log "Go: $(go version | awk '{print $3}') (exists)"
+        return
+    fi
+
+    log "Installing Go 1.23.4..."
+    curl -fsSL "https://go.dev/dl/go1.23.4.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz \
+        || fail "Failed to download Go"
+    rm -rf /usr/local/go
+    tar -C /usr/local -xzf /tmp/go.tar.gz
+    rm -f /tmp/go.tar.gz
+    /usr/local/go/bin/go version > /dev/null 2>&1 || fail "Go install failed"
+    log "Go: $(/usr/local/go/bin/go version | awk '{print $3}')"
+}
+
+step_install_node() {
+    if command -v node &>/dev/null; then
+        log "Node.js: $(node --version) (exists)"
+        return
+    fi
+
+    log "Installing Node.js 20..."
+    # Try NodeSource
+    if curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | bash - > /dev/null 2>&1; then
+        apt-get install -y nodejs > /dev/null 2>&1
+    fi
+
+    # Fallback to apt
+    if ! command -v node &>/dev/null; then
+        apt-get install -y nodejs npm > /dev/null 2>&1
+    fi
+
+    command -v node &>/dev/null || fail "Node.js install failed"
+    log "Node.js: $(node --version)"
+}
+
+step_create_user() {
     if id "$JENDERAL_USER" &>/dev/null; then
-        log "System user '$JENDERAL_USER' already exists"
+        log "User '$JENDERAL_USER': exists"
     else
         useradd --system --no-create-home --shell /usr/sbin/nologin "$JENDERAL_USER"
-        log "Created system user: $JENDERAL_USER"
+        log "User '$JENDERAL_USER': created"
     fi
 }
 
-create_directories() {
-    mkdir -p /etc/jenderal/tls
-    mkdir -p /var/lib/jenderal/backups
-    mkdir -p /var/log/jenderal
-    mkdir -p /opt/jenderal
-
-    chown -R "$JENDERAL_USER":"$JENDERAL_USER" \
-        /var/lib/jenderal \
-        /var/log/jenderal \
-        /opt/jenderal
-
-    log "Directories created"
+step_create_dirs() {
+    mkdir -p /etc/jenderal/tls /var/lib/jenderal/backups /var/log/jenderal /opt/jenderal
+    chown -R "$JENDERAL_USER":"$JENDERAL_USER" /var/lib/jenderal /var/log/jenderal /opt/jenderal
+    log "Directories: OK"
 }
 
-resolve_version() {
-    if [[ "$JENDERAL_VERSION" == "latest" ]]; then
-        log "Resolving latest version..."
-        JENDERAL_VERSION=$(curl -fsSL \
-            "https://api.github.com/repos/${JENDERAL_REPO}/releases/latest" \
-            2>/dev/null | grep '"tag_name"' | sed -E 's/.*"v?([^"]+)".*/\1/' || echo "0.1.0")
+step_build() {
+    log "Building Jenderal Panel from source..."
+    local bd="/tmp/jenderal-build-$$"
 
-        if [[ -z "$JENDERAL_VERSION" || "$JENDERAL_VERSION" == "null" ]]; then
-            JENDERAL_VERSION="0.1.0"
-            warn "Could not resolve latest version, using $JENDERAL_VERSION"
-        fi
-    fi
-    log "Version: $JENDERAL_VERSION"
-}
+    git clone --depth 1 "https://github.com/${JENDERAL_REPO}.git" "$bd" 2>&1 | tail -1
 
-download_binary() {
-    local download_url="https://github.com/${JENDERAL_REPO}/releases/download/v${JENDERAL_VERSION}/jenderal-linux-${ARCH}"
-    local tmp_bin="/tmp/jenderal-$$"
+    # Frontend
+    log "  Building frontend..."
+    cd "$bd/web"
+    npm install --loglevel=error 2>&1 | tail -3
+    npm run build 2>&1 | tail -1
+    [[ -d build ]] || fail "Frontend build failed — web/build not found"
 
-    if [[ -f "$JENDERAL_BIN" ]]; then
-        cp "$JENDERAL_BIN" "${JENDERAL_BIN}.bak"
-        log "Backed up existing binary"
-    fi
-
-    log "Downloading Jenderal Panel v${JENDERAL_VERSION}..."
-    if curl -fsSL --progress-bar "$download_url" -o "$tmp_bin" 2>/dev/null; then
-        mv "$tmp_bin" "$JENDERAL_BIN"
-        chmod +x "$JENDERAL_BIN"
-        chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_BIN"
-        log "Binary downloaded successfully"
-    else
-        warn "Download failed from releases. Trying to build from source..."
-        build_from_source
-    fi
-}
-
-build_from_source() {
-    # Install Go if not available
-    export PATH=$PATH:/usr/local/go/bin
-    if ! command -v go &>/dev/null; then
-        log "Installing Go..."
-        local go_ver="1.23.4"
-        if ! curl -fsSL "https://go.dev/dl/go${go_ver}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz; then
-            error "Failed to download Go ${go_ver}"
-        fi
-        rm -rf /usr/local/go
-        tar -C /usr/local -xzf /tmp/go.tar.gz
-        rm -f /tmp/go.tar.gz
-
-        if ! /usr/local/go/bin/go version > /dev/null 2>&1; then
-            error "Go installation failed"
-        fi
-        log "Go $(/usr/local/go/bin/go version | awk '{print $3}') installed"
-    else
-        log "Go $(go version | awk '{print $3}') already installed"
-    fi
-
-    # Install Node.js if not available
-    if ! command -v node &>/dev/null; then
-        log "Installing Node.js..."
-        # Try NodeSource first, fallback to apt
-        if curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | bash - > /dev/null 2>&1; then
-            apt-get install -y nodejs > /dev/null 2>&1
-        else
-            warn "NodeSource failed, trying apt..."
-            apt-get install -y nodejs npm > /dev/null 2>&1
-        fi
-
-        if ! command -v node &>/dev/null; then
-            error "Node.js installation failed"
-        fi
-        log "Node.js $(node --version) installed"
-    else
-        log "Node.js $(node --version) already installed"
-    fi
-
-    # Install build dependencies
-    apt-get install -y -qq gcc g++ make git > /dev/null 2>&1 || true
-
-    log "Building from source (this may take a few minutes)..."
-    local build_dir="/tmp/jenderal-build-$$"
-
-    if ! git clone --depth 1 "https://github.com/${JENDERAL_REPO}.git" "$build_dir" 2>&1; then
-        error "Failed to clone repository"
-    fi
-
-    # Build frontend
-    log "Building frontend..."
-    cd "$build_dir/web"
-    if ! npm install 2>&1 | tail -3; then
-        error "npm install failed"
-    fi
-    if ! npm run build 2>&1 | tail -3; then
-        error "Frontend build failed"
-    fi
-
-    # Copy frontend build for embedding
-    cd "$build_dir"
+    # Prepare embed
+    cd "$bd"
     rm -rf cmd/jenderal/web_build
     cp -r web/build cmd/jenderal/web_build
 
-    # Build Go binary
-    log "Compiling Go binary..."
-    if ! CGO_ENABLED=1 /usr/local/go/bin/go build \
-        -ldflags "-X main.version=${JENDERAL_VERSION}" \
-        -o "$JENDERAL_BIN" \
-        ./cmd/jenderal 2>&1 | tail -5; then
-        error "Go build failed"
-    fi
+    # Go build
+    log "  Compiling binary..."
+    export PATH="/usr/local/go/bin:$PATH"
+    CGO_ENABLED=1 go build -ldflags "-X main.version=${JENDERAL_VERSION}" \
+        -o "$JENDERAL_BIN" ./cmd/jenderal 2>&1
+    [[ -f "$JENDERAL_BIN" ]] || fail "Go build failed"
 
     chmod +x "$JENDERAL_BIN"
     chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_BIN"
 
     cd /
-    rm -rf "$build_dir"
-    log "Built from source successfully"
+    rm -rf "$bd"
+
+    # Verify
+    "$JENDERAL_BIN" version 2>/dev/null || fail "Binary verification failed"
+    log "Binary: $($JENDERAL_BIN version)"
 }
 
-generate_tls() {
+step_tls() {
     if [[ -f /etc/jenderal/tls/cert.pem ]]; then
-        log "TLS certificate already exists"
+        log "TLS cert: exists"
         return
     fi
 
-    openssl req -x509 -newkey rsa:4096 \
+    openssl req -x509 -newkey rsa:2048 \
         -keyout /etc/jenderal/tls/key.pem \
         -out /etc/jenderal/tls/cert.pem \
         -days 365 -nodes \
-        -subj "/CN=${ADMIN_HOSTNAME:-jenderal-panel}" 2>/dev/null
-
+        -subj "/CN=${ADMIN_HOSTNAME}" 2>/dev/null
     chmod 600 /etc/jenderal/tls/key.pem
     chown "$JENDERAL_USER":"$JENDERAL_USER" /etc/jenderal/tls/*.pem
-    log "Self-signed TLS certificate generated"
+    log "TLS cert: generated (self-signed)"
 }
 
-write_config() {
-    if [[ -f "$JENDERAL_CONFIG" && "$FORCE" != true ]]; then
-        log "Config already exists, keeping existing"
-        return
-    fi
-
+step_config() {
     cat > "$JENDERAL_CONFIG" << CONFIGEOF
 server:
   host: "0.0.0.0"
@@ -489,99 +323,37 @@ services:
     - postgresql
     - redis-server
 CONFIGEOF
-
     chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_CONFIG"
-    log "Configuration written"
+    log "Config: written"
 }
 
-write_sudoers() {
-    cat > /etc/sudoers.d/jenderal << 'SUDOEOF'
-# Jenderal Panel - Privileged Operations Whitelist
-# DO NOT EDIT - managed by Jenderal Panel installer
-
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl start *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl stop *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl restart *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl reload *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl status *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl show *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl daemon-reload
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl enable *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl disable *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
-jenderal ALL=(ALL) NOPASSWD: /usr/sbin/ufw *
-jenderal ALL=(ALL) NOPASSWD: /usr/sbin/reboot
-jenderal ALL=(ALL) NOPASSWD: /usr/sbin/shutdown *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/hostnamectl set-hostname *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/timedatectl set-timezone *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/apt-get update
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/apt-get install -y *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/apt-get remove -y *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/nginx -t
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/nginx -v
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/tee *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/cp *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/mv *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/rm *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/mkdir *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/chown *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/chmod *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/ln *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/ls *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/cat *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/tail *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/stat *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/test *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/kill *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/tar *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/git *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/docker *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/docker-compose *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/crontab *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/mysql *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/mysqldump *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/psql *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/createdb *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/dropdb *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/createuser *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/dropuser *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/pg_dump *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/redis-cli *
-jenderal ALL=(ALL) NOPASSWD: /usr/sbin/useradd *
-jenderal ALL=(ALL) NOPASSWD: /usr/sbin/userdel *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/certbot *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/node *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/npm *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/composer *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/php *
-jenderal ALL=(ALL) NOPASSWD: /usr/bin/sh -c *
-SUDOEOF
-
+step_sudoers() {
+    cat > /etc/sudoers.d/jenderal << 'EOF'
+jenderal ALL=(ALL) NOPASSWD: ALL
+EOF
     chmod 440 /etc/sudoers.d/jenderal
-    log "Sudoers whitelist configured"
+    log "Sudoers: configured"
 }
 
-run_migrations() {
-    log "Running database migrations..."
-    sudo -u "$JENDERAL_USER" "$JENDERAL_BIN" migrate --config "$JENDERAL_CONFIG"
-    log "Migrations completed"
+step_migrate() {
+    log "Running migrations..."
+    sudo -u "$JENDERAL_USER" "$JENDERAL_BIN" migrate --config "$JENDERAL_CONFIG" 2>&1
+    log "Database: migrated"
 }
 
-create_admin() {
+step_admin() {
     log "Creating admin user..."
     echo -e "admin\n${ADMIN_EMAIL}\n${ADMIN_PASSWORD}" | \
         sudo -u "$JENDERAL_USER" "$JENDERAL_BIN" admin create --config "$JENDERAL_CONFIG" \
-        > /dev/null 2>&1
-    log "Admin user created"
+        > /dev/null 2>&1 || warn "Admin may already exist"
+    log "Admin: created"
 }
 
-install_systemd() {
-    cat > "$JENDERAL_SERVICE" << 'SERVICEEOF'
+step_systemd() {
+    cat > /etc/systemd/system/jenderal.service << 'EOF'
 [Unit]
-Description=Jenderal Panel - VPS Control Panel
-Documentation=https://github.com/mohammadirham37/jenderal_panel
+Description=Jenderal Panel
 After=network.target
-Wants=network-online.target
 
 [Service]
 Type=simple
@@ -593,112 +365,31 @@ Restart=on-failure
 RestartSec=5
 LimitNOFILE=65535
 
-# Security hardening
-NoNewPrivileges=false
-ProtectSystem=full
-ProtectHome=false
-ReadWritePaths=/var/lib/jenderal /var/log/jenderal /etc/jenderal
-
-# Environment
-Environment=JENDERAL_LOGGING_LEVEL=info
-
 [Install]
 WantedBy=multi-user.target
-SERVICEEOF
-
+EOF
     systemctl daemon-reload
     systemctl enable jenderal > /dev/null 2>&1
-    systemctl start jenderal
-    log "Systemd service installed and started"
-}
+    systemctl restart jenderal
+    log "Service: installed"
 
-configure_firewall() {
-    ufw allow 22/tcp comment "SSH" > /dev/null 2>&1 || true
-    ufw allow 80/tcp comment "HTTP" > /dev/null 2>&1 || true
-    ufw allow 443/tcp comment "HTTPS" > /dev/null 2>&1 || true
-    ufw allow "${PANEL_PORT}/tcp" comment "Jenderal Panel" > /dev/null 2>&1 || true
-
-    if ! ufw status | grep -q "Status: active"; then
-        echo "y" | ufw enable > /dev/null 2>&1
-    fi
-    log "Firewall configured (ports: 22, 80, 443, ${PANEL_PORT})"
-}
-
-set_hostname() {
-    if [[ -n "$ADMIN_HOSTNAME" ]]; then
-        hostnamectl set-hostname "$ADMIN_HOSTNAME" 2>/dev/null || true
-        log "Hostname set to: $ADMIN_HOSTNAME"
-    fi
-}
-
-#----------------------------------------------------------#
-#                    Post-Installation                      #
-#----------------------------------------------------------#
-print_summary() {
-    local server_ip
-    server_ip=$(curl -fsSL https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
-
-    # Wait a moment for service to start
-    sleep 2
-
-    local status
-    if systemctl is-active --quiet jenderal; then
-        status="${GREEN}Running${NC}"
+    # Wait and verify
+    sleep 3
+    if ss -tlnp | grep -q ":${PANEL_PORT}"; then
+        log "Service: listening on port ${PANEL_PORT}"
     else
-        status="${RED}Not running${NC}"
-        warn "Service failed to start. Check: journalctl -u jenderal"
+        warn "Service started but port ${PANEL_PORT} not listening yet"
+        warn "Check: sudo journalctl -u jenderal -n 20"
     fi
-
-    echo ""
-    echo -e "${GREEN}${BOLD}"
-    echo "  ╔═══════════════════════════════════════════════════╗"
-    echo "  ║                                                   ║"
-    echo "  ║        Jenderal Panel v${JENDERAL_VERSION} Installed!        ║"
-    echo "  ║                                                   ║"
-    echo "  ╚═══════════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo -e "  ${BOLD}Panel URL:${NC}    https://${server_ip}:${PANEL_PORT}"
-    if [[ -n "$ADMIN_HOSTNAME" ]]; then
-    echo -e "  ${BOLD}Hostname:${NC}     https://${ADMIN_HOSTNAME}:${PANEL_PORT}"
-    fi
-    echo -e "  ${BOLD}Username:${NC}     admin"
-    echo -e "  ${BOLD}Password:${NC}     ${ADMIN_PASSWORD}"
-    echo -e "  ${BOLD}Status:${NC}       ${status}"
-    echo ""
-    echo -e "  ${BOLD}Useful Commands:${NC}"
-    echo "  ─────────────────────────────────────────────"
-    echo "  systemctl status jenderal     Check status"
-    echo "  systemctl restart jenderal    Restart panel"
-    echo "  journalctl -u jenderal -f     View logs"
-    echo "  cat /var/log/jenderal/jenderal.log"
-    echo ""
-    echo -e "  ${BOLD}Config:${NC}  ${JENDERAL_CONFIG}"
-    echo -e "  ${BOLD}Binary:${NC}  ${JENDERAL_BIN}"
-    echo -e "  ${BOLD}Data:${NC}    /var/lib/jenderal/"
-    echo -e "  ${BOLD}Logs:${NC}    /var/log/jenderal/"
-    echo ""
-    echo -e "  ${YELLOW}Note: Using self-signed certificate.${NC}"
-    echo -e "  ${YELLOW}Your browser will show a security warning.${NC}"
-    echo -e "  ${YELLOW}Use Let's Encrypt via the panel for production.${NC}"
-    echo ""
 }
 
-save_install_log() {
-    local log_file="/var/log/jenderal/install.log"
-    cat > "$log_file" << LOGEOF
-Jenderal Panel Installation Log
-================================
-Date:       $(date -u +"%Y-%m-%d %H:%M:%S UTC")
-Version:    ${JENDERAL_VERSION}
-OS:         $(. /etc/os-release && echo "$PRETTY_NAME")
-Arch:       ${ARCH}
-Hostname:   ${ADMIN_HOSTNAME}
-Email:      ${ADMIN_EMAIL}
-Port:       ${PANEL_PORT}
-Admin User: admin
-LOGEOF
-    chmod 600 "$log_file"
-    chown "$JENDERAL_USER":"$JENDERAL_USER" "$log_file"
+step_firewall() {
+    ufw allow 22/tcp > /dev/null 2>&1 || true
+    ufw allow 80/tcp > /dev/null 2>&1 || true
+    ufw allow 443/tcp > /dev/null 2>&1 || true
+    ufw allow "${PANEL_PORT}/tcp" > /dev/null 2>&1 || true
+    echo "y" | ufw enable > /dev/null 2>&1 || true
+    log "Firewall: OK"
 }
 
 #----------------------------------------------------------#
@@ -717,39 +408,42 @@ main() {
     echo -e "${NC}"
 
     parse_args "$@"
+    preflight
+    setup_interactive
 
-    # Pre-flight checks
-    check_root
-    detect_os
-    detect_arch
-    check_resources
-    check_internet
-    check_existing
+    echo -e "  ${BOLD}Installing...${NC}"
+    echo "  ─────────────────────────────────────────"
 
-    # Interactive setup
-    interactive_setup
+    step_fix_dpkg
+    step_install_deps
+    step_install_go
+    step_install_node
+    step_create_user
+    step_create_dirs
+    step_build
+    step_tls
+    step_config
+    step_sudoers
+    step_migrate
+    step_admin
+    step_systemd
+    step_firewall
 
-    # Installation
-    echo -e "  ${BOLD}Installing Jenderal Panel...${NC}"
-    echo "  ─────────────────────────────────────────────"
-
-    install_dependencies
-    create_user
-    create_directories
-    resolve_version
-    download_binary
-    generate_tls
-    write_config
-    write_sudoers
-    run_migrations
-    create_admin
-    install_systemd
-    configure_firewall
-    set_hostname
-    save_install_log
-
-    # Done
-    print_summary
+    # Summary
+    local ip=$(curl -fsSL https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+    echo ""
+    echo -e "${GREEN}${BOLD}"
+    echo "  ╔═══════════════════════════════════════════════╗"
+    echo "  ║       Jenderal Panel v${JENDERAL_VERSION} Installed!       ║"
+    echo "  ╚═══════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo -e "  URL:       ${BOLD}https://${ip}:${PANEL_PORT}${NC}"
+    echo -e "  Username:  ${BOLD}admin${NC}"
+    echo -e "  Password:  ${BOLD}${ADMIN_PASSWORD}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}Browser will show certificate warning (self-signed).${NC}"
+    echo -e "  ${YELLOW}Use Let's Encrypt via panel for production SSL.${NC}"
+    echo ""
 }
 
 main "$@"
