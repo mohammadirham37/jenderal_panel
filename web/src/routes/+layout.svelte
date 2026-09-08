@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import LogoMark from '$lib/components/LogoMark.svelte';
@@ -11,6 +11,11 @@
 
 	let loading = $state(true);
 	let sidebarOpen = $state(true);
+	let mobileSidebarOpen = $state(false);
+	let isMobile = $state(false);
+	let mobileMenuButton: HTMLButtonElement | undefined = $state();
+	let mobileCloseButton: HTMLButtonElement | undefined = $state();
+	let sidebarExpanded = $derived(sidebarOpen || mobileSidebarOpen);
 
 	const navGroups = [
 		{
@@ -77,12 +82,42 @@
 		goto('/login');
 	}
 
+	async function openMobileSidebar() {
+		mobileSidebarOpen = true;
+		await tick();
+		mobileCloseButton?.focus();
+	}
+
+	async function closeMobileSidebar() {
+		mobileSidebarOpen = false;
+		await tick();
+		mobileMenuButton?.focus();
+	}
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape' && mobileSidebarOpen) {
+			closeMobileSidebar();
+		}
+	}
+
 	onMount(async () => {
 		const authed = await checkAuth();
 		loading = false;
 		if (!authed && page.url.pathname !== '/login') {
 			goto('/login');
 		}
+	});
+
+	onMount(() => {
+		const mediaQuery = window.matchMedia('(max-width: 1023px)');
+		const updateViewport = () => {
+			isMobile = mediaQuery.matches;
+			if (!isMobile) mobileSidebarOpen = false;
+		};
+
+		updateViewport();
+		mediaQuery.addEventListener('change', updateViewport);
+		return () => mediaQuery.removeEventListener('change', updateViewport);
 	});
 
 	// Redirect when auth state changes
@@ -93,36 +128,70 @@
 	});
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <svelte:head>
 	<title>Jenderal Panel</title>
 </svelte:head>
 
 {#if loading}
-	<div class="flex h-screen items-center justify-center bg-gray-900">
-		<div class="text-gray-400 text-lg">Loading...</div>
+	<div class="app-shell flex h-screen items-center justify-center">
+		<div class="flex flex-col items-center gap-4 text-sm text-gray-400">
+			<div class="h-8 w-8 rounded-full border-2 border-gray-700 border-t-blue-400 motion-safe:animate-spin"></div>
+			Loading your workspace...
+		</div>
 	</div>
 {:else if !$isAuthenticated}
 	{@render children()}
 {:else}
-	<div class="flex h-screen bg-gray-900 text-gray-100">
+	<div class="app-shell flex h-screen text-gray-100">
+		{#if mobileSidebarOpen}
+			<button
+				type="button"
+				onclick={closeMobileSidebar}
+				class="fixed inset-0 z-30 cursor-default bg-black/60 backdrop-blur-sm lg:hidden"
+				aria-label="Close navigation"
+				tabindex="-1"
+			></button>
+		{/if}
+
 		<!-- Sidebar -->
 		<aside
-			class="flex flex-col bg-gray-800 border-r border-gray-700 transition-all duration-200 {sidebarOpen
-				? 'w-60'
-				: 'w-16'}"
+			id="primary-sidebar"
+			class="sidebar-surface fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-white/5 transition-[transform,width] duration-200 lg:static lg:translate-x-0
+			{mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+			{sidebarOpen ? 'lg:w-60' : 'lg:w-16'}"
+			aria-label="Primary navigation"
+			inert={isMobile && !mobileSidebarOpen ? true : undefined}
 		>
 			<div
-				class="border-b border-gray-700 {sidebarOpen
+				class="border-b border-white/5 {sidebarExpanded
 					? 'flex items-center gap-2 px-4 py-4'
 					: 'flex flex-col items-center gap-2 px-2 py-3'}"
 			>
-				<LogoMark size={sidebarOpen ? 'md' : 'sm'} decorative />
-				{#if sidebarOpen}
-					<span class="text-lg font-bold text-white tracking-tight">Jenderal Panel</span>
+				<div class="rounded-xl border border-blue-400/15 bg-blue-500/8 p-1.5">
+					<LogoMark size={sidebarExpanded ? 'md' : 'sm'} decorative />
+				</div>
+				{#if sidebarExpanded}
+					<div class="min-w-0">
+						<span class="block truncate text-base font-semibold tracking-tight text-white">Jenderal Panel</span>
+						<span class="block text-[9px] font-semibold uppercase tracking-[0.18em] text-blue-400">Control center</span>
+					</div>
 				{/if}
 				<button
+					type="button"
+					onclick={closeMobileSidebar}
+					bind:this={mobileCloseButton}
+					class="ml-auto cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-white/5 hover:text-white lg:hidden"
+					aria-label="Close navigation"
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+				<button
 					onclick={() => (sidebarOpen = !sidebarOpen)}
-					class="{sidebarOpen ? 'ml-auto' : ''} p-1 rounded hover:bg-gray-700 text-gray-400 hover:text-white cursor-pointer"
+					class="{sidebarOpen ? 'ml-auto' : ''} hidden cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-white/5 hover:text-white lg:block"
 					aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
 				>
 					<svg
@@ -141,24 +210,25 @@
 				</button>
 			</div>
 
-			<nav class="flex-1 overflow-y-auto py-2 px-2">
+			<nav class="flex-1 overflow-y-auto px-2 py-2">
 				{#each navGroups as group}
-					{#if sidebarOpen}
+					{#if sidebarExpanded}
 						<div class="px-3 pt-4 pb-1">
-							<span class="text-[10px] font-semibold uppercase tracking-wider text-gray-500">
+							<span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
 								{translate($language, group.key)}
 							</span>
 						</div>
 					{:else}
-						<div class="pt-3 pb-1 border-t border-gray-700/50 mx-2"></div>
+						<div class="mx-2 border-t border-white/5 pb-1 pt-3"></div>
 					{/if}
 					{#each group.items as item}
 						<a
 							href={item.href}
-							class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors
+							onclick={() => (mobileSidebarOpen = false)}
+							class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all
 							{isActive(item.href)
-								? 'bg-blue-600 text-white'
-								: 'text-gray-400 hover:bg-gray-700 hover:text-white'}"
+								? 'bg-blue-500/15 text-blue-100 shadow-[inset_0_0_0_1px_rgba(45,212,191,0.16)]'
+								: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'}"
 						>
 							<svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 								{#if item.icon === 'globe-alt'}
@@ -210,39 +280,64 @@
 									<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 								{/if}
 							</svg>
-							{#if sidebarOpen}
-								<span>{translate($language, item.labelKey)}</span>
-							{/if}
+							<span class={sidebarExpanded ? '' : 'sr-only'}>{translate($language, item.labelKey)}</span>
 						</a>
 					{/each}
 				{/each}
 			</nav>
 
 			<!-- User info at bottom -->
-			{#if sidebarOpen && $user}
-				<div class="border-t border-gray-700 px-4 py-3">
-					<div class="text-sm text-gray-400 truncate">{$user.username}</div>
+			{#if sidebarExpanded && $user}
+				<div class="border-t border-white/5 px-3 py-3">
+					<div class="flex items-center gap-3 rounded-xl bg-white/[0.025] p-2.5">
+						<div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/12 text-xs font-semibold uppercase text-blue-300">
+							{$user.username.slice(0, 1)}
+						</div>
+						<div class="min-w-0">
+							<div class="truncate text-sm font-medium text-gray-200">{$user.username}</div>
+							<div class="text-[10px] uppercase tracking-wider text-gray-400">Administrator</div>
+						</div>
+					</div>
 				</div>
 			{/if}
 		</aside>
 
 		<!-- Main Content -->
-		<div class="flex-1 flex flex-col overflow-hidden">
+		<div class="flex min-w-0 flex-1 flex-col overflow-hidden" inert={isMobile && mobileSidebarOpen ? true : undefined}>
 			<!-- Top Bar -->
 			<header
-				class="flex items-center justify-between px-6 py-3 bg-gray-800 border-b border-gray-700"
+				class="topbar-surface flex items-center justify-between border-b border-white/5 px-4 py-3 sm:px-6"
 			>
-				<h1 class="text-lg font-semibold text-white">Jenderal Panel</h1>
+				<div class="flex items-center gap-3">
+					<button
+						type="button"
+						onclick={openMobileSidebar}
+						bind:this={mobileMenuButton}
+						class="cursor-pointer rounded-lg border border-white/8 bg-white/[0.035] p-2 text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white lg:hidden"
+						aria-label="Open navigation"
+						aria-expanded={mobileSidebarOpen}
+						aria-controls="primary-sidebar"
+					>
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+						</svg>
+					</button>
+					<span class="h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_10px_rgba(45,212,191,0.55)]"></span>
+					<div>
+						<h1 class="text-sm font-semibold text-white">Server workspace</h1>
+						<p class="hidden text-[10px] uppercase tracking-[0.16em] text-gray-400 sm:block">Jenderal Panel</p>
+					</div>
+				</div>
 				<button
 					onclick={handleLogout}
-					class="px-3 py-1.5 text-sm bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors cursor-pointer"
+					class="cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] px-3.5 py-2 text-xs font-medium text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white"
 				>
 					Logout
 				</button>
 			</header>
 
 			<!-- Page Content -->
-			<main class="flex-1 overflow-auto p-6">
+			<main class="flex-1 overflow-auto p-4 sm:p-6">
 				{@render children()}
 			</main>
 		</div>

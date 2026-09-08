@@ -31,64 +31,125 @@
 	}
 </script>
 
-<div class="flex min-h-screen items-center justify-center bg-gray-900 p-4">
-	<div class="w-full max-w-sm">
-		<div class="bg-gray-800 rounded-xl shadow-2xl border border-gray-700 p-8">
-			<div class="text-center mb-8">
-				<div class="mb-4 flex justify-center">
-					<div class="rounded-2xl border border-teal-400/20 bg-teal-500/10 p-3 shadow-lg shadow-teal-950/30">
-						<LogoMark size="lg" decorative />
-					</div>
+<div class="login-shell flex min-h-screen items-center px-4 py-8 sm:px-6 lg:px-8">
+	<main
+		class="login-card relative z-10 mx-auto grid w-full max-w-6xl overflow-hidden rounded-[2rem] border border-white/10 lg:min-h-[680px] lg:grid-cols-[1.08fr_0.92fr]"
+	>
+		<section class="login-brand-panel hidden flex-col justify-between border-r border-white/8 p-12 lg:flex">
+			<div class="flex items-center gap-4">
+				<div class="rounded-2xl border border-blue-400/20 bg-blue-500/10 p-2.5 shadow-lg shadow-blue-950/30">
+					<LogoMark size="lg" decorative />
 				</div>
-				<h1 class="text-2xl font-bold text-white">Jenderal Panel</h1>
-				<p class="text-gray-400 text-sm mt-1">Sign in to your account</p>
+				<div>
+					<p class="text-xl font-semibold tracking-tight text-white">Jenderal Panel</p>
+					<p class="mt-1 text-xs font-medium uppercase tracking-[0.2em] text-blue-300">
+						Server command center
+					</p>
+				</div>
 			</div>
 
-			{#if error}
-				<div class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-					{error}
+			<div class="max-w-lg">
+				<div class="mb-6 inline-flex items-center gap-2 rounded-full border border-blue-400/15 bg-blue-500/8 px-3 py-1.5 text-xs font-medium text-blue-200">
+					<span class="h-1.5 w-1.5 rounded-full bg-blue-400 shadow-[0_0_12px_rgba(45,212,191,0.8)]"></span>
+					Infrastructure, under control
 				</div>
-			{/if}
+				<h2 class="text-4xl font-semibold leading-tight tracking-[-0.035em] text-white xl:text-5xl">
+					Command your server with clarity.
+				</h2>
+				<p class="mt-5 max-w-md text-base leading-7 text-gray-400">
+					A focused control panel for deploying, securing, and monitoring your Linux infrastructure.
+				</p>
 
-			<form onsubmit={handleSubmit} class="space-y-4">
-				<div>
-					<label for="username" class="block text-sm font-medium text-gray-300 mb-1">
-						Username
-					</label>
-					<input
-						id="username"
-						type="text"
-						bind:value={username}
-						required
-						autocomplete="username"
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-						placeholder="Enter your username"
-					/>
+				<div class="mt-10 grid grid-cols-3 gap-3">
+					<div class="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+						<p class="text-sm font-medium text-gray-200">Secure</p>
+						<p class="mt-1 text-xs text-gray-400">Access-first</p>
+					</div>
+					<div class="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+						<p class="text-sm font-medium text-gray-200">Live</p>
+						<p class="mt-1 text-xs text-gray-400">Real-time view</p>
+					</div>
+					<div class="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
+						<p class="text-sm font-medium text-gray-200">Lean</p>
+						<p class="mt-1 text-xs text-gray-400">Built with Go</p>
+					</div>
+				</div>
+			</div>
+
+			<p class="text-xs text-gray-400">Open-source VPS control panel</p>
+		</section>
+
+		<section class="flex items-center justify-center p-6 sm:p-10 lg:p-12">
+			<div class="w-full max-w-sm">
+				<div class="mb-10 lg:hidden">
+					<div class="mb-5 flex items-center gap-3">
+						<div class="rounded-2xl border border-blue-400/20 bg-blue-500/10 p-2">
+							<LogoMark size="lg" decorative />
+						</div>
+						<div>
+							<p class="text-xl font-semibold text-white">Jenderal Panel</p>
+							<p class="text-xs uppercase tracking-[0.18em] text-blue-300">Server control</p>
+						</div>
+					</div>
 				</div>
 
-				<div>
-					<label for="password" class="block text-sm font-medium text-gray-300 mb-1">
-						Password
-					</label>
-					<input
-						id="password"
-						type="password"
-						bind:value={password}
-						required
-						autocomplete="current-password"
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-						placeholder="Enter your password"
-					/>
-				</div>
+				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">Secure access</p>
+				<h1 class="mt-3 text-3xl font-semibold tracking-tight text-white">Welcome back</h1>
+				<p class="mt-2 text-sm leading-6 text-gray-400">Sign in to continue to your server workspace.</p>
 
-				<button
-					type="submit"
-					disabled={submitting}
-					class="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white font-medium rounded-lg transition-colors cursor-pointer"
-				>
-					{submitting ? 'Signing in...' : 'Sign In'}
-				</button>
-			</form>
-		</div>
-	</div>
+				{#if error}
+					<div id="login-error" role="alert" class="mt-6 rounded-xl border border-red-700/80 bg-red-900/40 p-3.5 text-sm text-red-300">
+						{error}
+					</div>
+				{/if}
+
+				<form onsubmit={handleSubmit} aria-describedby={error ? 'login-error' : undefined} class="mt-8 space-y-5">
+					<div>
+						<label for="username" class="mb-2 block text-sm font-medium text-gray-300">
+							Username
+						</label>
+						<input
+							id="username"
+							type="text"
+							bind:value={username}
+							required
+							autocomplete="username"
+							class="w-full rounded-xl border border-gray-700 bg-gray-950/70 px-4 py-3 text-white outline-none transition placeholder:text-gray-400 hover:border-gray-600 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+							placeholder="Enter your username"
+						/>
+					</div>
+
+					<div>
+						<label for="password" class="mb-2 block text-sm font-medium text-gray-300">
+							Password
+						</label>
+						<input
+							id="password"
+							type="password"
+							bind:value={password}
+							required
+							autocomplete="current-password"
+							class="w-full rounded-xl border border-gray-700 bg-gray-950/70 px-4 py-3 text-white outline-none transition placeholder:text-gray-400 hover:border-gray-600 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+							placeholder="Enter your password"
+						/>
+					</div>
+
+					<button
+						type="submit"
+						disabled={submitting}
+						class="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-700 hover:shadow-blue-900/40 disabled:cursor-not-allowed disabled:bg-blue-800 disabled:text-blue-200"
+					>
+						{submitting ? 'Signing in...' : 'Sign in'}
+						{#if !submitting}
+							<svg class="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+							</svg>
+						{/if}
+					</button>
+				</form>
+
+				<p class="mt-8 text-center text-xs text-gray-400">Protected administrative access</p>
+			</div>
+		</section>
+	</main>
 </div>
