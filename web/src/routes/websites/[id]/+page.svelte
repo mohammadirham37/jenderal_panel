@@ -16,6 +16,7 @@
 		app_type: string;
 		php_version: string;
 		status: string;
+		ssl_enabled: boolean;
 		error_message?: string;
 		domains?: WebsiteDomain[];
 		created_at: string;
@@ -485,6 +486,8 @@
 				{#if website.app_type !== 'static'}
 					<span>PHP Version: <span class="text-gray-200">{website.php_version}</span></span>
 				{/if}
+				<span>SSL: <span class={website.ssl_enabled ? 'text-green-400' : 'text-gray-300'}>{website.ssl_enabled ? 'Enabled' : 'Not configured'}</span></span>
+				<a href="/ssl" class="text-blue-400 hover:text-blue-300 transition-colors">Manage SSL Certificates</a>
 			</div>
 
 			{#if website.status === 'failed' && website.error_message}
