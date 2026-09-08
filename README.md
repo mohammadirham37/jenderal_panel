@@ -102,15 +102,58 @@ Built with Go backend + SvelteKit frontend, deployed as a single binary.
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mohammadirham37/jenderal_panel/main/scripts/install.sh | sudo bash
+wget https://raw.githubusercontent.com/mohammadirham37/jenderal_panel/main/scripts/install.sh
+sudo bash install.sh
 ```
+
+Or one-liner:
+
+```bash
+wget https://raw.githubusercontent.com/mohammadirham37/jenderal_panel/main/scripts/install.sh && sudo bash install.sh
+```
+
+### Install Options
+
+```bash
+# Interactive (default) — prompts for hostname, email, port
+sudo bash install.sh
+
+# Non-interactive with options
+sudo bash install.sh \
+  --hostname panel.example.com \
+  --email admin@example.com \
+  --password MySecurePass123 \
+  --port 8443 \
+  --force
+
+# Show all options
+bash install.sh --help
+```
+
+### What the Installer Does
+
+1. Checks OS (Ubuntu 22.04/24.04), architecture, resources
+2. Installs dependencies (curl, nginx, ufw, openssl, sqlite3)
+3. Creates `jenderal` system user
+4. Downloads binary from GitHub releases (or builds from source)
+5. Generates self-signed TLS certificate
+6. Writes config to `/etc/jenderal/jenderal.yaml`
+7. Configures sudoers whitelist
+8. Runs database migrations
+9. Creates admin user
+10. Installs and starts systemd service
+11. Configures firewall (UFW)
 
 After installation:
 
 ```
-URL:      https://<SERVER_IP>:8443
-Username: admin
-Password: <generated during install>
+╔═══════════════════════════════════════════════════╗
+║        Jenderal Panel Installed!                  ║
+╚═══════════════════════════════════════════════════╝
+
+  Panel URL:    https://<SERVER_IP>:8443
+  Username:     admin
+  Password:     <generated or provided>
 ```
 
 ## Manual Installation
