@@ -203,13 +203,14 @@ func cmdServe() {
 	alertChecker.Start(ctx)
 
 	srv := server.New(cfg.Server, router, logger)
+	fmt.Fprintf(os.Stderr, "Starting server on %s:%d (tls=%v)\n", cfg.Server.Host, cfg.Server.Port, cfg.Server.TLS.Enabled)
 	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {
 		if err != http.ErrServerClosed {
-			logger.Error("server error", "error", err)
+			fmt.Fprintf(os.Stderr, "SERVER ERROR: %v\n", err)
 			os.Exit(1)
 		}
-		logger.Info("server stopped")
 	}
+	fmt.Fprintln(os.Stderr, "Server stopped.")
 }
 
 func cmdMigrate() {

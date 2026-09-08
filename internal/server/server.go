@@ -34,8 +34,9 @@ func New(cfg config.ServerConfig, handler http.Handler, logger *slog.Logger) *ht
 func ListenAndServe(ctx context.Context, srv *http.Server, cfg config.ServerConfig, logger *slog.Logger) error {
 	errCh := make(chan error, 1)
 
+	logger.Info("server starting", "addr", srv.Addr, "tls", cfg.TLS.Enabled)
+
 	go func() {
-		logger.Info("server starting", "addr", srv.Addr, "tls", cfg.TLS.Enabled)
 		var err error
 		if cfg.TLS.Enabled && cfg.TLS.Cert != "" {
 			logger.Info("starting TLS server", "cert", cfg.TLS.Cert, "key", cfg.TLS.Key)
@@ -43,9 +44,6 @@ func ListenAndServe(ctx context.Context, srv *http.Server, cfg config.ServerConf
 		} else {
 			logger.Info("starting HTTP server")
 			err = srv.ListenAndServe()
-		}
-		if err != nil && err != http.ErrServerClosed {
-			logger.Error("server listen failed", "error", err)
 		}
 		errCh <- err
 	}()
@@ -57,6 +55,9 @@ func ListenAndServe(ctx context.Context, srv *http.Server, cfg config.ServerConf
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			logger.Error("server listen failed", "error", err)
+		}
 		return err
 	}
 }
