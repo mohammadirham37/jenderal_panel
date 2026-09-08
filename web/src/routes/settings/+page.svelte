@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { Setting } from '$lib/types';
+	import { language } from '$lib/stores/language';
 
 	let settings = $state<Setting[]>([]);
 	let loading = $state(true);
@@ -203,6 +204,18 @@
 		>
 			{saving ? 'Saving...' : 'Save Changes'}
 		</button>
+	</div>
+
+	<!-- Language Selector -->
+	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5 mb-6">
+		<h3 class="text-lg font-semibold text-white mb-3">Language / Bahasa</h3>
+		<select
+			bind:value={$language}
+			class="bg-gray-900 border border-gray-700 text-gray-300 rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+		>
+			<option value="en">English</option>
+			<option value="id">Bahasa Indonesia</option>
+		</select>
 	</div>
 
 	{#if actionMsg}
