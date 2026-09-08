@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -27,6 +28,8 @@ type Service struct {
 	currentVer string
 	tasks      *taskrunner.Runner
 	httpClient *http.Client
+	updateMu   sync.Mutex
+	updateTask string
 }
 
 func NewService(exec executor.CommandExecutor, version string, tasks *taskrunner.Runner) *Service {
@@ -99,6 +102,24 @@ func (s *Service) Update(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get executable path: %w", err)
 	}
+	replacementPath := execPath + ".new"
+	backupPath := execPath + ".bak"
+	restartScriptPath := execPath + ".restart-update.sh"
+	rollbackPath := execPath + ".rollback"
+
+	s.updateMu.Lock()
+	defer s.updateMu.Unlock()
+	if s.updateTask != "" {
+		if task, ok := s.tasks.Get(s.updateTask); ok && task.Status == "running" {
+			return "", model.NewValidationError("a panel update is already running")
+		}
+		s.updateTask = ""
+	}
+	if _, err := os.Stat(restartScriptPath); err == nil {
+		return "", model.NewValidationError("a panel update restart is still in progress")
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("check update restart state: %w", err)
+	}
 
 	// Single bash script for entire update — avoids PATH/env issues between steps
 	script := fmt.Sprintf(`#!/bin/bash
@@ -127,30 +148,82 @@ rm -rf cmd/jenderal/web_build
 cp -r web/build cmd/jenderal/web_build
 
 echo ">>> Step 5: Compiling Go binary..."
-CGO_ENABLED=1 go build -o /tmp/jenderal-update ./cmd/jenderal 2>&1
+rm -f %s
+trap 'rm -f %s' EXIT
+CGO_ENABLED=1 go build -o %s ./cmd/jenderal 2>&1
 
-echo ">>> Step 6: Backing up current binary..."
-cp %s %s.bak
-
-echo ">>> Step 7: Replacing binary..."
-cp /tmp/jenderal-update %s
+echo ">>> Step 6: Preparing replacement binary..."
 chown jenderal:jenderal %s
 chmod +x %s
-rm -f /tmp/jenderal-update
 
-echo ">>> Step 8: Restarting service..."
-systemctl restart jenderal
+echo ">>> Step 7: Backing up current binary..."
+cp -f %s %s
 
-echo ">>> Update complete!"
+echo ">>> Step 8: Replacing binary atomically..."
+mv -f %s %s
+trap - EXIT
+
+echo ">>> Step 9: Scheduling verified service restart..."
+cat > %s <<'JENDERAL_RESTART_SCRIPT'
+#!/bin/bash
+set -e
+restart_script=%s
+binary=%s
+backup_binary=%s
+rollback_binary=%s
+
+cleanup() {
+    rm -f "$restart_script" "$rollback_binary"
+}
+trap cleanup EXIT
+
+if systemctl restart jenderal; then
+    sleep 5
+    if systemctl is-active --quiet jenderal; then
+        exit 0
+    fi
+fi
+
+echo "New Jenderal binary failed to stay active; restoring backup." >&2
+systemctl stop jenderal || true
+cp -f "$backup_binary" "$rollback_binary"
+chown jenderal:jenderal "$rollback_binary"
+chmod +x "$rollback_binary"
+mv -f "$rollback_binary" "$binary"
+systemctl start jenderal
+sleep 5
+systemctl is-active --quiet jenderal
+JENDERAL_RESTART_SCRIPT
+chmod 700 %s
+if ! systemd-run --quiet --collect --property=Type=exec --unit="jenderal-update-restart-$$" --on-active=5s /bin/bash %s; then
+    cp -f %s %s
+    chown jenderal:jenderal %s
+    chmod +x %s
+    mv -f %s %s
+    rm -f %s
+    exit 1
+fi
+
+echo ">>> Update complete! Service restart scheduled."
 `,
 		sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
 		sourceDir,
 		sourceDir,
-		execPath, execPath,
-		execPath, execPath, execPath,
+		replacementPath, replacementPath, replacementPath,
+		replacementPath, replacementPath,
+		execPath, backupPath,
+		replacementPath, execPath,
+		restartScriptPath,
+		restartScriptPath, execPath, backupPath, rollbackPath,
+		restartScriptPath, restartScriptPath,
+		backupPath, rollbackPath,
+		rollbackPath, rollbackPath,
+		rollbackPath, execPath,
+		restartScriptPath,
 	)
 
 	taskID := s.tasks.Run("Update Jenderal Panel", "bash", "-c", script)
+	s.updateTask = taskID
 
 	return taskID, nil
 }

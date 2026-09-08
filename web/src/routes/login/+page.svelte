@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import LogoMark from '$lib/components/LogoMark.svelte';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import { login, isAuthenticated } from '$lib/stores/auth';
 	import { onMount } from 'svelte';
 
@@ -32,6 +33,9 @@
 </script>
 
 <div class="login-shell flex min-h-screen items-center px-4 py-8 sm:px-6 lg:px-8">
+	<div class="absolute right-4 top-4 z-20 sm:right-6 sm:top-6">
+		<ThemeToggle />
+	</div>
 	<main
 		class="login-card relative z-10 mx-auto grid w-full max-w-6xl overflow-hidden rounded-[2rem] border border-white/10 lg:min-h-[680px] lg:grid-cols-[1.08fr_0.92fr]"
 	>

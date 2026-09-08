@@ -23,6 +23,14 @@ function cssColor(variable) {
 	return value;
 }
 
+function lightCssColor(variable) {
+	const lightTheme = appCss.match(/html\[data-theme=['"]light['"]\]\s*\{([\s\S]*?)\}/)?.[1];
+	assert.ok(lightTheme, 'light theme variables should be defined');
+	const value = lightTheme.match(new RegExp(`${variable}:\\s*#([0-9a-f]{6})`, 'i'))?.[1];
+	assert.ok(value, `${variable} should be a six-digit light theme color`);
+	return value;
+}
+
 function luminance(hex) {
 	const channels = hex.match(/.{2}/g).map((channel) => Number.parseInt(channel, 16) / 255);
 	const [red, green, blue] = channels.map((channel) =>
@@ -73,4 +81,20 @@ test('keeps muted microcopy readable on panel surfaces', () => {
 
 test('keeps neutral hover buttons readable with white text', () => {
 	assert.ok(contrast(cssColor('--color-gray-500'), 'ffffff') >= 4.5);
+});
+
+test('defines an accessible light theme for panel text and surfaces', () => {
+	assert.ok(contrast(lightCssColor('--color-gray-100'), lightCssColor('--color-gray-900')) >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-gray-200'), lightCssColor('--color-gray-900')) >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-gray-400'), lightCssColor('--color-gray-800')) >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-blue-400'), lightCssColor('--color-gray-800')) >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-red-400'), lightCssColor('--color-gray-800')) >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-green-400'), lightCssColor('--color-gray-800')) >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-yellow-400'), lightCssColor('--color-gray-800')) >= 4.5);
+});
+
+test('keeps light-theme action colors readable with white text', () => {
+	assert.ok(contrast(lightCssColor('--color-red-600'), 'ffffff') >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-green-600'), 'ffffff') >= 4.5);
+	assert.ok(contrast(lightCssColor('--color-yellow-600'), 'ffffff') >= 4.5);
 });

@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import LogoMark from '$lib/components/LogoMark.svelte';
+	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import { isAuthenticated, user, logout, checkAuth } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import '../app.css';
@@ -328,12 +329,15 @@
 						<p class="hidden text-[10px] uppercase tracking-[0.16em] text-gray-400 sm:block">Jenderal Panel</p>
 					</div>
 				</div>
-				<button
-					onclick={handleLogout}
-					class="cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] px-3.5 py-2 text-xs font-medium text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white"
-				>
-					Logout
-				</button>
+				<div class="flex items-center gap-2">
+					<ThemeToggle />
+					<button
+						onclick={handleLogout}
+						class="cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] px-3.5 py-2 text-xs font-medium text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white"
+					>
+						Logout
+					</button>
+				</div>
 			</header>
 
 			<!-- Page Content -->

@@ -7,6 +7,25 @@
 		<link rel="icon" type="image/png" href="/favicon.png" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 		<title>Jenderal Panel</title>
+		<script>
+			(function () {
+				let savedTheme = null;
+				try {
+					savedTheme = localStorage.getItem('jenderal-theme');
+				} catch {
+					// Continue with the system theme when browser storage is unavailable.
+				}
+				const theme = savedTheme === 'dark' || savedTheme === 'light'
+					? savedTheme
+					: (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+				document.documentElement.dataset.theme = theme;
+				document.documentElement.style.colorScheme = theme;
+				document.querySelector('meta[name="theme-color"]')?.setAttribute(
+					'content',
+					theme === 'dark' ? '#07111e' : '#f8fafc'
+				);
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">
