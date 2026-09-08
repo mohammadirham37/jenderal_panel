@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface EngineStatus {
@@ -37,6 +38,7 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
+	let currentTaskId = $state('');
 
 	// Create database form
 	let newDbName = $state('');
@@ -146,9 +148,9 @@
 		actionError = '';
 		actionInProgress = `install-${engineName}`;
 		try {
-			await api.post(`/api/v1/databases/engines/${engineName}/install`);
+			const result = await api.post<{ task_id: string }>(`/api/v1/databases/engines/${engineName}/install`);
+			currentTaskId = result.task_id;
 			actionMsg = `${engineLabel(engineName)} installation started.`;
-			await loadEngines();
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : `Failed to install ${engineLabel(engineName)}`;
 		} finally {
@@ -662,4 +664,6 @@
 			</div>
 		{/if}
 	</div>
+
+	<TaskProgress taskId={currentTaskId} onComplete={() => { currentTaskId = ''; loadEngines(); }} />
 </div>

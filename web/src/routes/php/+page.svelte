@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	interface PhpVersion {
 		version: string;
@@ -14,6 +15,7 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
+	let currentTaskId = $state('');
 
 	// Config editor
 	let configVersion = $state<string | null>(null);
@@ -47,16 +49,21 @@
 	async function installPhp(version: string) {
 		actionMsg = '';
 		actionError = '';
+		currentTaskId = '';
 		actionInProgress = `install-${version}`;
 		try {
-			await api.post(`/api/v1/php/${version}/install`);
-			actionMsg = `PHP ${version} installation started.`;
-			await loadPhp();
+			const result = await api.post<{ task_id: string }>(`/api/v1/php/${version}/install`);
+			currentTaskId = result.task_id;
+			actionMsg = `PHP ${version} installation started. See progress below.`;
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : `Failed to install PHP ${version}`;
-		} finally {
 			actionInProgress = null;
 		}
+	}
+
+	function onTaskComplete() {
+		actionInProgress = null;
+		loadPhp();
 	}
 
 	async function uninstallPhp(version: string) {
@@ -263,5 +270,9 @@
 				{/if}
 			</div>
 		{/if}
+	{/if}
+
+	{#if currentTaskId}
+		<TaskProgress taskId={currentTaskId} onComplete={onTaskComplete} />
 	{/if}
 </div>

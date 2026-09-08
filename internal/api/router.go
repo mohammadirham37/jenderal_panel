@@ -27,6 +27,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
@@ -64,6 +65,7 @@ type Dependencies struct {
 	FileManagerSvc *filemanager.Service
 	UpdateSvc      *update.Service
 	Exec           executor.CommandExecutor
+	Tasks          *taskrunner.Runner
 	StaticHandler  http.Handler
 }
 
@@ -87,13 +89,14 @@ func NewRouter(deps Dependencies) http.Handler {
 	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
 	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc)
-	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc)
+	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc, deps.Tasks)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
 	deployHandler := deployment.NewHandler(deps.DeploymentSvc, deps.AuditSvc)
 	cronHandler := cron.NewHandler(deps.CronSvc, deps.AuditSvc)
 	queueHandler := queue.NewHandler(deps.QueueSvc, deps.AuditSvc)
-	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc)
-	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc)
+	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc, deps.Tasks)
+	taskHandler := taskrunner.NewHandler(deps.Tasks)
+	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc, deps.Tasks)
 	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc)
 	backupHandler := backup.NewHandler(deps.BackupSvc, deps.AuditSvc)
 	alertHandler := alert.NewHandler(deps.AlertSvc, deps.AuditSvc)
@@ -442,6 +445,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/backup-schedules/{id}/enable", backupHandler.EnableSchedule)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
 				Post("/backup-schedules/{id}/disable", backupHandler.DisableSchedule)
+
+			// Tasks (background operations)
+			r.Get("/tasks", taskHandler.List)
+			r.Get("/tasks/{id}", taskHandler.Get)
 
 			// Alerts
 			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).

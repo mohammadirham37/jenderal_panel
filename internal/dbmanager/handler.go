@@ -9,17 +9,19 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Handler handles database management HTTP requests.
 type Handler struct {
 	svc   *Service
 	audit *audit.Service
+	tasks *taskrunner.Runner
 }
 
 // NewHandler creates a new database management Handler.
-func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
-	return &Handler{svc: svc, audit: auditSvc}
+func NewHandler(svc *Service, auditSvc *audit.Service, tasks *taskrunner.Runner) *Handler {
+	return &Handler{svc: svc, audit: auditSvc, tasks: tasks}
 }
 
 // ListEngines returns the status of all database engines.
@@ -32,14 +34,27 @@ func (h *Handler) ListEngines(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, statuses)
 }
 
-// InstallEngine installs a database engine.
+// InstallEngine installs a database engine via background task.
 func (h *Handler) InstallEngine(w http.ResponseWriter, r *http.Request) {
 	engine := chi.URLParam(r, "engine")
 
-	if err := h.svc.InstallEngine(r.Context(), engine); err != nil {
-		httputil.HandleError(w, err)
+	var pkg string
+	switch engine {
+	case "mysql":
+		pkg = "mysql-server"
+	case "postgresql":
+		pkg = "postgresql"
+	case "redis":
+		pkg = "redis-server"
+	default:
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "unknown engine: "+engine)
 		return
 	}
+
+	taskID := h.tasks.RunMultiple("Install "+engine, [][]string{
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", pkg},
+	})
 
 	user, _ := auth.UserFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
@@ -47,11 +62,11 @@ func (h *Handler) InstallEngine(w http.ResponseWriter, r *http.Request) {
 		Action: "install_engine",
 		Module: "dbmanager",
 		Target: engine,
-		Detail: fmt.Sprintf("installed database engine %s", engine),
+		Detail: "task:" + taskID,
 		IP:     r.RemoteAddr,
 	})
 
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
 // StartEngine starts a database engine service.

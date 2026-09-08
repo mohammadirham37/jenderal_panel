@@ -8,17 +8,19 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Handler handles PHP management HTTP requests.
 type Handler struct {
-	svc   *Service
-	audit *audit.Service
+	svc    *Service
+	audit  *audit.Service
+	tasks  *taskrunner.Runner
 }
 
 // NewHandler creates a new PHP HTTP handler.
-func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
-	return &Handler{svc: svc, audit: auditSvc}
+func NewHandler(svc *Service, auditSvc *audit.Service, tasks *taskrunner.Runner) *Handler {
+	return &Handler{svc: svc, audit: auditSvc, tasks: tasks}
 }
 
 // logAction writes an audit log entry for a mutating action.
@@ -44,15 +46,35 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, versions)
 }
 
-// Install installs the specified PHP version.
+// Install installs the specified PHP version via background task.
 func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
-	if err := h.svc.Install(r.Context(), version); err != nil {
+	if err := h.svc.validateVersion(version); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
-	h.logAction(r, "install_php", "php"+version, "installed PHP "+version)
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+
+	taskID := h.tasks.RunMultiple("Install PHP "+version, [][]string{
+		{"add-apt-repository", "-y", "ppa:ondrej/php"},
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120",
+			"php" + version + "-fpm",
+			"php" + version + "-cli",
+			"php" + version + "-common",
+			"php" + version + "-mysql",
+			"php" + version + "-pgsql",
+			"php" + version + "-mbstring",
+			"php" + version + "-xml",
+			"php" + version + "-curl",
+			"php" + version + "-zip",
+			"php" + version + "-gd",
+			"php" + version + "-intl",
+			"php" + version + "-bcmath",
+		},
+	})
+
+	h.logAction(r, "install_php", "php"+version, "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
 // Uninstall removes the specified PHP version.

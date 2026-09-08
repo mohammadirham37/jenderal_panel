@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	interface NodeVersion {
 		version: string;
@@ -38,6 +39,7 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 	let installingVersion = $state<string | null>(null);
+	let currentTaskId = $state('');
 
 	// Create form
 	let showCreateForm = $state(false);
@@ -106,9 +108,9 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post('/api/v1/nodejs/versions/install', { version });
+			const result = await api.post<{ task_id: string }>('/api/v1/nodejs/versions/install', { version });
+			currentTaskId = result.task_id;
 			actionMsg = `Node.js ${version} installation started.`;
-			await loadVersions();
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to install Node.js version';
 		} finally {
@@ -446,4 +448,6 @@
 			</div>
 		</div>
 	{/if}
+
+	<TaskProgress taskId={currentTaskId} onComplete={() => { currentTaskId = ''; loadVersions(); }} />
 </div>

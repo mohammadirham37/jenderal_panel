@@ -33,6 +33,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
@@ -147,6 +148,7 @@ func cmdServe() {
 	})
 	fileManagerSvc := filemanager.NewService(exec, auditSvc)
 	updateSvc := update.NewService(exec, version)
+	tasks := taskrunner.New()
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -185,6 +187,7 @@ func cmdServe() {
 		FileManagerSvc: fileManagerSvc,
 		UpdateSvc:      updateSvc,
 		Exec:           exec,
+		Tasks:          tasks,
 		DB:             db,
 		StaticHandler:  staticHandler(),
 	})

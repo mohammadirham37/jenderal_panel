@@ -9,17 +9,19 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Handler handles Node.js management HTTP requests.
 type Handler struct {
 	svc   *Service
 	audit *audit.Service
+	tasks *taskrunner.Runner
 }
 
 // NewHandler creates a new Node.js HTTP handler.
-func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
-	return &Handler{svc: svc, audit: auditSvc}
+func NewHandler(svc *Service, auditSvc *audit.Service, tasks *taskrunner.Runner) *Handler {
+	return &Handler{svc: svc, audit: auditSvc, tasks: tasks}
 }
 
 // logAction writes an audit log entry for a mutating action.
@@ -60,12 +62,13 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "version required")
 		return
 	}
-	if err := h.svc.Install(r.Context(), version); err != nil {
-		httputil.HandleError(w, err)
-		return
-	}
-	h.logAction(r, "install_nodejs", "nodejs-"+version, "installed Node.js "+version)
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	taskID := h.tasks.RunMultiple("Install Node.js "+version, [][]string{
+		{"apt-get", "update", "-qq"},
+		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "nodejs"},
+	})
+
+	h.logAction(r, "install_nodejs", "nodejs-"+version, "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
 // CreateApp handles POST /api/nodejs/apps.
