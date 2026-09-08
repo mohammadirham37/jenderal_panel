@@ -182,15 +182,27 @@ func (s *Service) List(ctx context.Context) ([]model.Website, error) {
 		if err != nil {
 			return nil, fmt.Errorf("scan website: %w", err)
 		}
-		domains, err := s.getDomains(ctx, w.ID)
+		websites = append(websites, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, fmt.Errorf("close website rows: %w", err)
+	}
+
+	// SQLite is configured with a single connection. Finish and close the
+	// website query before loading related domains so the nested queries can
+	// acquire that connection.
+	for i := range websites {
+		domains, err := s.getDomains(ctx, websites[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		w.Domains = domains
-		websites = append(websites, w)
+		websites[i].Domains = domains
 	}
 
-	return websites, rows.Err()
+	return websites, nil
 }
 
 // Update updates a website's mutable fields.
