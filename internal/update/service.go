@@ -100,39 +100,57 @@ func (s *Service) Update(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("get executable path: %w", err)
 	}
 
-	taskID := s.tasks.RunMultiple("Update Jenderal Panel", [][]string{
-		// Clone or pull source
-		{"bash", "-c", fmt.Sprintf(
-			"if [ -d %s/.git ]; then cd %s && git pull; else rm -rf %s && git clone --depth 1 %s %s; fi",
-			sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
-		)},
-		// Build frontend
-		{"bash", "-c", fmt.Sprintf(
-			"cd %s/web && npm install --loglevel=error && npm run build",
-			sourceDir,
-		)},
-		// Prepare embed
-		{"bash", "-c", fmt.Sprintf(
-			"cd %s && rm -rf cmd/jenderal/web_build && cp -r web/build cmd/jenderal/web_build",
-			sourceDir,
-		)},
-		// Build Go binary
-		{"bash", "-c", fmt.Sprintf(
-			"export PATH=/usr/local/go/bin:$PATH && cd %s && CGO_ENABLED=1 go build -o /tmp/jenderal-update ./cmd/jenderal",
-			sourceDir,
-		)},
-		// Backup current binary
-		{"cp", execPath, execPath + ".bak"},
-		// Replace binary
-		{"cp", "/tmp/jenderal-update", execPath},
-		// Set permissions
-		{"chown", "jenderal:jenderal", execPath},
-		{"chmod", "+x", execPath},
-		// Cleanup
-		{"rm", "-f", "/tmp/jenderal-update"},
-		// Restart service
-		{"systemctl", "restart", "jenderal"},
-	})
+	// Single bash script for entire update — avoids PATH/env issues between steps
+	script := fmt.Sprintf(`#!/bin/bash
+set -e
+export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
+export HOME=/root
+
+echo ">>> Step 1: Pulling latest source..."
+if [ -d %s/.git ]; then
+    cd %s && git pull 2>&1
+else
+    rm -rf %s
+    git clone --depth 1 %s %s 2>&1
+fi
+
+echo ">>> Step 2: Installing frontend dependencies..."
+cd %s/web
+npm install --loglevel=error 2>&1
+
+echo ">>> Step 3: Building frontend..."
+npm run build 2>&1
+
+echo ">>> Step 4: Preparing embed..."
+cd %s
+rm -rf cmd/jenderal/web_build
+cp -r web/build cmd/jenderal/web_build
+
+echo ">>> Step 5: Compiling Go binary..."
+CGO_ENABLED=1 go build -o /tmp/jenderal-update ./cmd/jenderal 2>&1
+
+echo ">>> Step 6: Backing up current binary..."
+cp %s %s.bak
+
+echo ">>> Step 7: Replacing binary..."
+cp /tmp/jenderal-update %s
+chown jenderal:jenderal %s
+chmod +x %s
+rm -f /tmp/jenderal-update
+
+echo ">>> Step 8: Restarting service..."
+systemctl restart jenderal
+
+echo ">>> Update complete!"
+`,
+		sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
+		sourceDir,
+		sourceDir,
+		execPath, execPath,
+		execPath, execPath, execPath,
+	)
+
+	taskID := s.tasks.Run("Update Jenderal Panel", "bash", "-c", script)
 
 	return taskID, nil
 }
