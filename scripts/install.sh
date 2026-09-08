@@ -240,7 +240,7 @@ step_create_user() {
 }
 
 step_create_dirs() {
-    mkdir -p /etc/jenderal/tls /var/lib/jenderal/backups /var/log/jenderal /opt/jenderal
+    mkdir -p /etc/jenderal/tls /var/lib/jenderal/backups /var/lib/jenderal/acme /var/lib/jenderal/acme-challenges /var/log/jenderal /opt/jenderal
     chown -R "$JENDERAL_USER":"$JENDERAL_USER" /var/lib/jenderal /var/log/jenderal /opt/jenderal
     log "Directories: OK"
 }

@@ -34,3 +34,12 @@ export function buildSSLInstallRequest(mode, values) {
 	}
 	return { path: '/api/v1/ssl/issue', body: base };
 }
+
+/**
+ * @param {{ status?: string, error_message?: string }} certificate
+ * @returns {string}
+ */
+export function certificateInstallError(certificate) {
+	if (certificate?.status !== 'failed') return '';
+	return certificate.error_message || 'Certificate installation failed';
+}

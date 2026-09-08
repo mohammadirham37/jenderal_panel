@@ -113,3 +113,111 @@ func TestRemoveDomainRejectsDomainWithCertificate(t *testing.T) {
 		t.Fatalf("domain count = %d, want 1", count)
 	}
 }
+
+func TestDeleteRemovesPerDomainSSLArtifacts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-ssl", "example.com", "static", "", "active")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO domains (id, website_id, name, type, created_at) VALUES ('alias-delete', 'ws-delete-ssl', 'www.example.com', 'alias', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, domain string }{{"cert-primary-delete", "example.com"}, {"cert-alias-delete", "www.example.com"}} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-delete-ssl', ?, 'custom', 'active', 0, ?, ?)`, item.id, item.domain, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removed := make(map[string]bool)
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "rm" && len(args) >= 2 {
+				removed[args[len(args)-1]] = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-ssl", false); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	for _, domain := range []string{"example.com", "www.example.com"} {
+		for _, path := range []string{
+			"/etc/nginx/sites-available/" + domain + ".ssl",
+			"/etc/nginx/sites-enabled/" + domain + ".ssl",
+			"/etc/nginx/sites-enabled/" + domain + ".ssl.suspended",
+			"/etc/jenderal/ssl/" + domain,
+		} {
+			if !removed[path] {
+				t.Errorf("SSL artifact was not removed: %s", path)
+			}
+		}
+	}
+	if !removed["/etc/nginx/sites-enabled/example.com.suspended"] {
+		t.Error("suspended primary HTTP symlink was not removed")
+	}
+}
+
+func TestSuspendAndEnableTogglePerDomainTLSVhosts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-suspend-ssl", "example.com", "static", "", "active")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, item := range []struct{ id, domain string }{{"cert-suspend-primary", "example.com"}, {"cert-suspend-alias", "www.example.com"}} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-suspend-ssl', ?, 'custom', 'active', 0, ?, ?)`, item.id, item.domain, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var moves [][2]string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "mv" && len(args) == 2 {
+				moves = append(moves, [2]string{args[0], args[1]})
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+	if err := svc.Suspend(context.Background(), "ws-suspend-ssl"); err != nil {
+		t.Fatalf("Suspend() error = %v", err)
+	}
+	if err := svc.Enable(context.Background(), "ws-suspend-ssl"); err != nil {
+		t.Fatalf("Enable() error = %v", err)
+	}
+
+	want := map[[2]string]bool{}
+	for _, path := range []string{
+		"/etc/nginx/sites-enabled/example.com",
+		"/etc/nginx/sites-enabled/example.com.ssl",
+		"/etc/nginx/sites-enabled/www.example.com.ssl",
+	} {
+		want[[2]string{path, path + ".suspended"}] = true
+		want[[2]string{path + ".suspended", path}] = true
+	}
+	for move := range want {
+		if !containsMove(moves, move) {
+			t.Errorf("missing move %q -> %q; moves = %v", move[0], move[1], moves)
+		}
+	}
+}
+
+func containsMove(moves [][2]string, want [2]string) bool {
+	for _, move := range moves {
+		if move == want {
+			return true
+		}
+	}
+	return false
+}

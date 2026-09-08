@@ -61,6 +61,22 @@ func TestRenderVhost_PHPUsesPackagedFastCGIParams(t *testing.T) {
 	}
 }
 
+func TestRenderVhostUsesDedicatedACMEChallengeRoot(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:            "example.com",
+		DocumentRoot:      "/home/web_example/public",
+		ACMEChallengeRoot: "/var/lib/jenderal/acme-challenges",
+		LogDir:            "/home/web_example/logs",
+		AppType:           "static",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "location ^~ /.well-known/acme-challenge/ {\n        root /var/lib/jenderal/acme-challenges;") {
+		t.Fatalf("ACME location does not use the dedicated challenge root:\n%s", output)
+	}
+}
+
 func TestRenderVhost_OmitsIPv6WhenUnavailable(t *testing.T) {
 	output, err := RenderVhost(VhostData{
 		Domain:       "example.com",

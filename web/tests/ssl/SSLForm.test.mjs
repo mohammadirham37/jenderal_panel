@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 
 let domainsForWebsite;
 let buildSSLInstallRequest;
+let certificateInstallError;
 try {
-	({ domainsForWebsite, buildSSLInstallRequest } = await import('../../src/lib/ssl-form.js'));
+	({ domainsForWebsite, buildSSLInstallRequest, certificateInstallError } = await import('../../src/lib/ssl-form.js'));
 } catch {}
 
 test('offers only domains registered to the selected website', () => {
@@ -18,6 +19,15 @@ test('offers only domains registered to the selected website', () => {
 		{ id: 'ws-2', domain: 'other.test', domains: [{ name: 'other.test' }] }
 	];
 	assert.deepEqual(domainsForWebsite(websites, 'ws-1'), ['example.com', 'www.example.com']);
+});
+
+test('surfaces a failed certificate response instead of reporting success', () => {
+	assert.equal(certificateInstallError({ status: 'active', error_message: '' }), '');
+	assert.equal(
+		certificateInstallError({ status: 'failed', error_message: 'ACME challenge failed' }),
+		'ACME challenge failed'
+	);
+	assert.equal(certificateInstallError({ status: 'failed', error_message: '' }), 'Certificate installation failed');
 });
 
 test('uses the existing lets encrypt issue endpoint', () => {

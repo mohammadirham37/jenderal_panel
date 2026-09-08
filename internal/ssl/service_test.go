@@ -3,6 +3,7 @@ package ssl
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	websiteconfig "github.com/mohammadirham37/jenderal_panel/internal/website"
 )
 
 // setupTestDB creates an in-memory SQLite database with all required tables.
@@ -135,6 +137,9 @@ func TestIssue_Success(t *testing.T) {
 			if domain != "example.com" {
 				t.Errorf("unexpected domain: %s", domain)
 			}
+			if webroot != websiteconfig.DefaultACMEChallengeRoot {
+				t.Errorf("webroot = %q, want %q", webroot, websiteconfig.DefaultACMEChallengeRoot)
+			}
 			return issuedCert, issuedKey, nil
 		},
 		RevokeFunc: func(certPEM []byte) error {
@@ -185,6 +190,106 @@ func TestIssue_Success(t *testing.T) {
 	}
 	if sslEnabled != 1 {
 		t.Errorf("expected ssl_enabled=1, got %d", sslEnabled)
+	}
+}
+
+func TestIssueSerializesWebsiteRequests(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-concurrent", "example.com")
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO domains (id, website_id, name, type, created_at) VALUES ('domain-concurrent-alias', 'ws-concurrent', 'www.example.com', 'alias', ?)`,
+		createdAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	primaryCert, primaryKey := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+	aliasCert, aliasKey := testCertificate(t, []string{"www.example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	acme := &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+		entered <- struct{}{}
+		<-release
+		if domain == "www.example.com" {
+			return aliasCert, aliasKey, nil
+		}
+		return primaryCert, primaryKey, nil
+	}}
+	svc := newTestService(t, db, acme)
+	results := make(chan error, 2)
+	go func() {
+		_, err := svc.Issue(context.Background(), "ws-concurrent", "example.com")
+		results <- err
+	}()
+	<-entered
+	go func() {
+		_, err := svc.Issue(context.Background(), "ws-concurrent", "www.example.com")
+		results <- err
+	}()
+	concurrent := false
+	select {
+	case <-entered:
+		concurrent = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	err1, err2 := <-results, <-results
+	if concurrent {
+		t.Fatal("SSL operations for the same website ran concurrently")
+	}
+	if err1 != nil || err2 != nil {
+		t.Fatalf("request errors = %v and %v, want both successful", err1, err2)
+	}
+}
+
+func TestIssueRollsBackNginxWhenDatabaseActivationFails(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-db-failure", "example.com")
+	if _, err := db.Exec(`
+		CREATE TRIGGER fail_ssl_state BEFORE UPDATE OF ssl_enabled ON websites
+		BEGIN SELECT RAISE(FAIL, 'forced ssl state failure'); END;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+	var restored bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			if name == "cp" && len(args) == 3 && args[0] == "-a" && strings.Contains(args[1], "jenderal_ssl_backup_") {
+				restored = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+		return certPEM, keyPEM, nil
+	}}, t.TempDir())
+	if _, err := svc.Issue(context.Background(), "ws-db-failure", "example.com"); err == nil {
+		t.Fatal("Issue() error = nil, want database activation failure")
+	}
+	if !restored {
+		t.Fatal("Nginx and certificate files were not rolled back")
+	}
+	var status string
+	var enabled int
+	if err := db.QueryRow(`SELECT status FROM ssl_certificates WHERE website_id = 'ws-db-failure'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT ssl_enabled FROM websites WHERE id = 'ws-db-failure'`).Scan(&enabled); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || enabled != 0 {
+		t.Fatalf("status = %q, ssl_enabled = %d; want failed and 0", status, enabled)
 	}
 }
 
@@ -453,6 +558,117 @@ func TestInstallCustomRejectsUnregisteredDomainBeforeSystemWrites(t *testing.T) 
 	}
 	if sudoCalls != 0 {
 		t.Fatalf("system calls = %d, want 0", sudoCalls)
+	}
+}
+
+func TestInstallCustomRejectsSuspendedWebsiteBeforeSystemWrites(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-suspended", "example.com")
+	if _, err := db.Exec(`UPDATE websites SET status = 'suspended' WHERE id = 'ws-suspended'`); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+	var sudoCalls int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCalls++
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{}, t.TempDir())
+	if _, err := svc.InstallCustom(context.Background(), "ws-suspended", "example.com", certPEM, keyPEM); err == nil {
+		t.Fatal("InstallCustom() accepted a suspended website")
+	}
+	if sudoCalls != 0 {
+		t.Fatalf("system calls = %d, want 0", sudoCalls)
+	}
+}
+
+func TestRevokeLetsEncryptStopsWhenCertificateCannotBeRead(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-revoke-read", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+		 VALUES ('cert-revoke-read', 'ws-revoke-read', 'example.com', 'letsencrypt', 'active', 1, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var revokeCalls int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "cat" {
+				return &executor.Result{ExitCode: 1, Stderr: "permission denied"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{RevokeFunc: func(certPEM []byte) error {
+		revokeCalls++
+		return nil
+	}}, t.TempDir())
+	if err := svc.Revoke(context.Background(), "cert-revoke-read"); err == nil {
+		t.Fatal("Revoke() succeeded without reading the certificate")
+	}
+	if revokeCalls != 0 {
+		t.Fatalf("ACME revoke calls = %d, want 0", revokeCalls)
+	}
+	restored, err := svc.Get(context.Background(), "cert-revoke-read")
+	if err != nil || restored.Status != "active" {
+		t.Fatalf("certificate status = %q, err = %v; want active", restored.Status, err)
+	}
+}
+
+func TestRevokeLetsEncryptNeverRestoresActiveStatusAfterRemoteRevocation(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-revoke-remote", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+		 VALUES ('cert-revoke-remote', 'ws-revoke-remote', 'example.com', 'letsencrypt', 'active', 1, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var nginxTests int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch name {
+			case "cat":
+				return &executor.Result{ExitCode: 0, Stdout: "certificate"}, nil
+			case "test":
+				return &executor.Result{ExitCode: 0}, nil
+			case "nginx":
+				nginxTests++
+				if nginxTests == 1 {
+					return &executor.Result{ExitCode: 1, Stderr: "removal failed"}, nil
+				}
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{RevokeFunc: func(certPEM []byte) error { return nil }}, t.TempDir())
+	if err := svc.Revoke(context.Background(), "cert-revoke-remote"); err == nil {
+		t.Fatal("Revoke() error = nil, want local removal failure")
+	}
+	cert, err := svc.Get(context.Background(), "cert-revoke-remote")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert.Status != "revoked" {
+		t.Fatalf("status = %q, want revoked after irreversible remote revocation", cert.Status)
 	}
 }
 

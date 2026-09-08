@@ -66,7 +66,11 @@ func (h *Handler) Issue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logAction(r, "issue_ssl", cert.ID, "issued SSL certificate for "+cert.Domain)
+	if cert.Status == "failed" {
+		h.logAction(r, "issue_ssl_failed", cert.ID, "SSL certificate issuance failed for "+cert.Domain)
+	} else {
+		h.logAction(r, "issue_ssl", cert.ID, "issued SSL certificate for "+cert.Domain)
+	}
 	httputil.JSON(w, http.StatusAccepted, cert)
 }
 
@@ -90,7 +94,11 @@ func (h *Handler) InstallCustom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logAction(r, "install_custom_ssl", cert.ID, "installed custom SSL certificate for "+cert.Domain+" (issuer: "+cert.Issuer+")")
+	if cert.Status == "failed" {
+		h.logAction(r, "install_custom_ssl_failed", cert.ID, "custom SSL certificate installation failed for "+cert.Domain+" (issuer: "+cert.Issuer+")")
+	} else {
+		h.logAction(r, "install_custom_ssl", cert.ID, "installed custom SSL certificate for "+cert.Domain+" (issuer: "+cert.Issuer+")")
+	}
 	httputil.JSON(w, http.StatusAccepted, cert)
 }
 

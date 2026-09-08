@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 
@@ -21,6 +22,7 @@ type siteRecord struct {
 	DocumentRoot  string
 	PHPVersion    string
 	AppType       string
+	Status        string
 	LogDir        string
 	Aliases       []string
 }
@@ -38,20 +40,26 @@ type backupEntry struct {
 	existed    bool
 }
 
+type activationSession struct {
+	service   *Service
+	backupDir string
+	backups   []backupEntry
+}
+
 func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain string) (siteRecord, error) {
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	var site siteRecord
 	var webUser string
 	var phpVersion sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.web_user
+		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.status, w.web_user
 		 FROM websites w
 		 JOIN domains d ON d.website_id = w.id
 		 WHERE w.id = ? AND d.name = ?`,
 		websiteID, domain,
 	).Scan(
 		&site.WebsiteID, &site.PrimaryDomain, &site.Domain, &site.DocumentRoot,
-		&phpVersion, &site.AppType, &webUser,
+		&phpVersion, &site.AppType, &site.Status, &webUser,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -85,6 +93,15 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 }
 
 func (s *Service) activateCertificate(ctx context.Context, req activationRequest) error {
+	session, err := s.beginCertificateActivation(ctx, req)
+	if err != nil {
+		return err
+	}
+	session.commit()
+	return nil
+}
+
+func (s *Service) beginCertificateActivation(ctx context.Context, req activationRequest) (*activationSession, error) {
 	domainDir := filepath.Join(s.certDir, req.Site.Domain)
 	certPath := filepath.Join(domainDir, "cert.pem")
 	keyPath := filepath.Join(domainDir, "key.pem")
@@ -95,47 +112,49 @@ func (s *Service) activateCertificate(ctx context.Context, req activationRequest
 
 	backupDir := "/tmp/jenderal_ssl_backup_" + ulid.Make().String()
 	if err := s.runSudoOK(ctx, "mkdir", "-m", "0700", backupDir); err != nil {
-		return fmt.Errorf("create SSL backup: %w", err)
+		return nil, fmt.Errorf("create SSL backup: %w", err)
 	}
-	defer func() { _, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir) }()
 
 	paths := []string{domainDir, httpConfPath, httpEnabledPath, tlsConfPath, tlsEnabledPath}
 	backups, err := s.snapshotPaths(ctx, backupDir, paths)
 	if err != nil {
-		return err
+		_, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir)
+		return nil, err
 	}
+	session := &activationSession{service: s, backupDir: backupDir, backups: backups}
 
-	rollback := func(cause error) error {
-		if restoreErr := s.restorePaths(ctx, backups); restoreErr != nil {
-			return fmt.Errorf("%v; rollback failed: %w", cause, restoreErr)
+	fail := func(cause error) (*activationSession, error) {
+		if restoreErr := session.rollback(); restoreErr != nil {
+			return nil, fmt.Errorf("%v; rollback failed: %w", cause, restoreErr)
 		}
-		return cause
+		return nil, cause
 	}
 
 	if err := s.runSudoOK(ctx, "mkdir", "-p", domainDir); err != nil {
-		return rollback(fmt.Errorf("create certificate directory: %w", err))
+		return fail(fmt.Errorf("create certificate directory: %w", err))
 	}
 	if err := s.installSystemFile(ctx, req.CertificatePEM, "0644", certPath); err != nil {
-		return rollback(fmt.Errorf("install certificate: %w", err))
+		return fail(fmt.Errorf("install certificate: %w", err))
 	}
 	if err := s.installSystemFile(ctx, req.PrivateKeyPEM, "0600", keyPath); err != nil {
-		return rollback(fmt.Errorf("install private key: %w", err))
+		return fail(fmt.Errorf("install private key: %w", err))
 	}
 
 	aliases := strings.Join(req.Site.Aliases, " ")
 	base := websiteconfig.VhostData{
-		Domain:          req.Site.PrimaryDomain,
-		Aliases:         aliases,
-		DocumentRoot:    req.Site.DocumentRoot,
-		LogDir:          req.Site.LogDir,
-		PHPVersion:      req.Site.PHPVersion,
-		AppType:         req.Site.AppType,
-		IPv6:            s.ipv6Available(),
-		RedirectDomains: req.RedirectDomains,
+		Domain:            req.Site.PrimaryDomain,
+		Aliases:           aliases,
+		DocumentRoot:      req.Site.DocumentRoot,
+		ACMEChallengeRoot: websiteconfig.DefaultACMEChallengeRoot,
+		LogDir:            req.Site.LogDir,
+		PHPVersion:        req.Site.PHPVersion,
+		AppType:           req.Site.AppType,
+		IPv6:              s.ipv6Available(),
+		RedirectDomains:   req.RedirectDomains,
 	}
 	httpConfig, err := websiteconfig.RenderVhost(base)
 	if err != nil {
-		return rollback(fmt.Errorf("render HTTP configuration: %w", err))
+		return fail(fmt.Errorf("render HTTP configuration: %w", err))
 	}
 	tlsConfig, err := websiteconfig.RenderTLSVhost(websiteconfig.TLSVhostData{
 		VhostData:       base,
@@ -144,49 +163,62 @@ func (s *Service) activateCertificate(ctx context.Context, req activationRequest
 		PrivateKeyPath:  keyPath,
 	})
 	if err != nil {
-		return rollback(fmt.Errorf("render HTTPS configuration: %w", err))
+		return fail(fmt.Errorf("render HTTPS configuration: %w", err))
 	}
 	if err := s.installSystemFile(ctx, []byte(httpConfig), "0644", httpConfPath); err != nil {
-		return rollback(fmt.Errorf("install HTTP configuration: %w", err))
+		return fail(fmt.Errorf("install HTTP configuration: %w", err))
 	}
 	if err := s.installSystemFile(ctx, []byte(tlsConfig), "0644", tlsConfPath); err != nil {
-		return rollback(fmt.Errorf("install HTTPS configuration: %w", err))
+		return fail(fmt.Errorf("install HTTPS configuration: %w", err))
 	}
 	if err := s.runSudoOK(ctx, "ln", "-sfn", httpConfPath, httpEnabledPath); err != nil {
-		return rollback(fmt.Errorf("enable HTTP configuration: %w", err))
+		return fail(fmt.Errorf("enable HTTP configuration: %w", err))
 	}
 	if err := s.runSudoOK(ctx, "ln", "-sfn", tlsConfPath, tlsEnabledPath); err != nil {
-		return rollback(fmt.Errorf("enable HTTPS configuration: %w", err))
+		return fail(fmt.Errorf("enable HTTPS configuration: %w", err))
 	}
 
 	result, err := s.exec.RunSudo(ctx, "nginx", "-t")
 	if err != nil {
-		return rollback(fmt.Errorf("nginx config test error: %w", err))
+		return fail(fmt.Errorf("nginx config test error: %w", err))
 	}
 	if result.ExitCode != 0 {
-		return rollback(fmt.Errorf("nginx config test failed: %s", strings.TrimSpace(result.Stderr)))
+		return fail(fmt.Errorf("nginx config test failed: %s", strings.TrimSpace(result.Stderr)))
 	}
 	result, err = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 	if err != nil {
-		return rollback(fmt.Errorf("reload nginx: %w", err))
+		return fail(fmt.Errorf("reload nginx: %w", err))
 	}
 	if result.ExitCode != 0 {
-		return rollback(fmt.Errorf("reload nginx: %s", strings.TrimSpace(result.Stderr)))
+		return fail(fmt.Errorf("reload nginx: %s", strings.TrimSpace(result.Stderr)))
 	}
 
-	return nil
+	return session, nil
+}
+
+func (a *activationSession) commit() {
+	_, _ = a.service.exec.RunSudo(context.Background(), "rm", "-rf", a.backupDir)
+}
+
+func (a *activationSession) rollback() error {
+	cleanupCtx, cancel := cleanupContext()
+	defer cancel()
+	err := a.service.restorePaths(cleanupCtx, a.backups)
+	_, _ = a.service.exec.RunSudo(context.Background(), "rm", "-rf", a.backupDir)
+	return err
 }
 
 func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectDomains []string) error {
 	config, err := websiteconfig.RenderVhost(websiteconfig.VhostData{
-		Domain:          site.PrimaryDomain,
-		Aliases:         strings.Join(site.Aliases, " "),
-		DocumentRoot:    site.DocumentRoot,
-		LogDir:          site.LogDir,
-		PHPVersion:      site.PHPVersion,
-		AppType:         site.AppType,
-		IPv6:            s.ipv6Available(),
-		RedirectDomains: redirectDomains,
+		Domain:            site.PrimaryDomain,
+		Aliases:           strings.Join(site.Aliases, " "),
+		DocumentRoot:      site.DocumentRoot,
+		ACMEChallengeRoot: websiteconfig.DefaultACMEChallengeRoot,
+		LogDir:            site.LogDir,
+		PHPVersion:        site.PHPVersion,
+		AppType:           site.AppType,
+		IPv6:              s.ipv6Available(),
+		RedirectDomains:   redirectDomains,
 	})
 	if err != nil {
 		return fmt.Errorf("render HTTP configuration: %w", err)
@@ -195,7 +227,11 @@ func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectD
 	if err := s.installSystemFile(ctx, []byte(config), "0644", confPath); err != nil {
 		return fmt.Errorf("install HTTP configuration: %w", err)
 	}
-	if err := s.runSudoOK(ctx, "ln", "-sfn", confPath, "/etc/nginx/sites-enabled/"+site.PrimaryDomain); err != nil {
+	enabledPath := "/etc/nginx/sites-enabled/" + site.PrimaryDomain
+	if site.Status == "suspended" {
+		enabledPath += ".suspended"
+	}
+	if err := s.runSudoOK(ctx, "ln", "-sfn", confPath, enabledPath); err != nil {
 		return fmt.Errorf("enable HTTP configuration: %w", err)
 	}
 	return nil
@@ -206,8 +242,10 @@ func (s *Service) removeCertificateConfig(ctx context.Context, site siteRecord, 
 		filepath.Join(s.certDir, site.Domain),
 		"/etc/nginx/sites-available/" + site.PrimaryDomain,
 		"/etc/nginx/sites-enabled/" + site.PrimaryDomain,
+		"/etc/nginx/sites-enabled/" + site.PrimaryDomain + ".suspended",
 		"/etc/nginx/sites-available/" + site.Domain + ".ssl",
 		"/etc/nginx/sites-enabled/" + site.Domain + ".ssl",
+		"/etc/nginx/sites-enabled/" + site.Domain + ".ssl.suspended",
 	}
 	backupDir := "/tmp/jenderal_ssl_backup_" + ulid.Make().String()
 	if err := s.runSudoOK(ctx, "mkdir", "-m", "0700", backupDir); err != nil {
@@ -220,13 +258,15 @@ func (s *Service) removeCertificateConfig(ctx context.Context, site siteRecord, 
 		return err
 	}
 	rollback := func(cause error) error {
-		if restoreErr := s.restorePaths(ctx, backups); restoreErr != nil {
+		cleanupCtx, cancel := cleanupContext()
+		defer cancel()
+		if restoreErr := s.restorePaths(cleanupCtx, backups); restoreErr != nil {
 			return fmt.Errorf("%v; rollback failed: %w", cause, restoreErr)
 		}
 		return cause
 	}
 
-	for _, path := range []string{paths[0], paths[3], paths[4]} {
+	for _, path := range []string{paths[0], paths[4], paths[5], paths[6]} {
 		if err := s.runSudoOK(ctx, "rm", "-rf", path); err != nil {
 			return rollback(fmt.Errorf("remove %s: %w", path, err))
 		}
@@ -245,6 +285,10 @@ func (s *Service) removeCertificateConfig(ctx context.Context, site siteRecord, 
 		return rollback(fmt.Errorf("reload nginx: %w", err))
 	}
 	return nil
+}
+
+func cleanupContext() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), 2*time.Minute)
 }
 
 func (s *Service) snapshotPaths(ctx context.Context, backupDir string, paths []string) ([]backupEntry, error) {

@@ -8,15 +8,18 @@ import (
 
 // VhostData holds variables for rendering an Nginx virtual host configuration.
 type VhostData struct {
-	Domain          string
-	Aliases         string
-	DocumentRoot    string
-	LogDir          string
-	PHPVersion      string
-	AppType         string
-	IPv6            bool
-	RedirectDomains []string
+	Domain            string
+	Aliases           string
+	DocumentRoot      string
+	ACMEChallengeRoot string
+	LogDir            string
+	PHPVersion        string
+	AppType           string
+	IPv6              bool
+	RedirectDomains   []string
 }
+
+const DefaultACMEChallengeRoot = "/var/lib/jenderal/acme-challenges"
 
 // TLSVhostData holds the website and certificate data for one HTTPS server.
 type TLSVhostData struct {
@@ -48,6 +51,7 @@ const vhostPHPTemplate = `{{ if .ApplicationDomains }}server {
     error_log {{ .LogDir }}/error.log;
 
     location ^~ /.well-known/acme-challenge/ {
+        root {{ .ACMEChallengeRoot }};
         try_files $uri =404;
     }
 
@@ -76,6 +80,7 @@ server {
     root {{ $.DocumentRoot }};
 
     location ^~ /.well-known/acme-challenge/ {
+        root {{ $.ACMEChallengeRoot }};
         try_files $uri =404;
     }
 
@@ -98,6 +103,7 @@ const vhostStaticTemplate = `{{ if .ApplicationDomains }}server {
     error_log {{ .LogDir }}/error.log;
 
     location ^~ /.well-known/acme-challenge/ {
+        root {{ .ACMEChallengeRoot }};
         try_files $uri =404;
     }
 
@@ -120,6 +126,7 @@ server {
     root {{ $.DocumentRoot }};
 
     location ^~ /.well-known/acme-challenge/ {
+        root {{ $.ACMEChallengeRoot }};
         try_files $uri =404;
     }
 
@@ -241,6 +248,9 @@ type httpVhostData struct {
 }
 
 func prepareHTTPVhostData(data VhostData) httpVhostData {
+	if data.ACMEChallengeRoot == "" {
+		data.ACMEChallengeRoot = data.DocumentRoot
+	}
 	allDomains := uniqueDomains(append([]string{data.Domain}, strings.Fields(data.Aliases)...))
 	known := make(map[string]struct{}, len(allDomains))
 	for _, domain := range allDomains {

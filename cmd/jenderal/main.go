@@ -148,7 +148,9 @@ func cmdServe() {
 	firewallSvc := firewall.NewService(exec, auditSvc)
 	processSvc := process.NewService(exec)
 	logSvc := system.NewLogService(exec)
-	acmeClient := ssl.NewLegoClient(os.Getenv("JENDERAL_ACME_EMAIL"), "/etc/jenderal/ssl")
+	var acmeEmail string
+	_ = db.QueryRow(`SELECT email FROM users WHERE is_active = 1 ORDER BY created_at LIMIT 1`).Scan(&acmeEmail)
+	acmeClient := ssl.NewLegoClient(acmeEmail, "/var/lib/jenderal/acme")
 	sslSvc := ssl.NewService(db, exec, auditSvc, acmeClient, "/etc/jenderal/ssl")
 	renewalWorker := ssl.NewRenewalWorker(sslSvc)
 	deploySvc := deployment.NewService(db, exec, auditSvc)

@@ -141,13 +141,14 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 
 	// Render and write nginx vhost config.
 	vhostData := VhostData{
-		Domain:       w.Domain,
-		Aliases:      strings.Join(aliases, " "),
-		DocumentRoot: w.DocumentRoot,
-		LogDir:       logDir,
-		PHPVersion:   w.PHPVersion,
-		AppType:      w.AppType,
-		IPv6:         p.ipv6Available(),
+		Domain:            w.Domain,
+		Aliases:           strings.Join(aliases, " "),
+		DocumentRoot:      w.DocumentRoot,
+		ACMEChallengeRoot: DefaultACMEChallengeRoot,
+		LogDir:            logDir,
+		PHPVersion:        w.PHPVersion,
+		AppType:           w.AppType,
+		IPv6:              p.ipv6Available(),
 	}
 
 	vhostContent, err := RenderVhost(vhostData)

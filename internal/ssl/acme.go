@@ -125,6 +125,9 @@ func (c *LegoClient) loadOrCreateAccount() (*legoUser, error) {
 // ObtainCertificate requests a new certificate from the ACME CA using the
 // HTTP-01 challenge with a webroot provider.
 func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, []byte, error) {
+	if err := os.MkdirAll(webroot, 0755); err != nil {
+		return nil, nil, fmt.Errorf("create HTTP-01 webroot: %w", err)
+	}
 	user, err := c.loadOrCreateAccount()
 	if err != nil {
 		return nil, nil, err

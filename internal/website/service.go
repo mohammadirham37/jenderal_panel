@@ -239,11 +239,22 @@ func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error
 	if err != nil {
 		return err
 	}
+	sslDomains, err := s.sslDomains(ctx, id)
+	if err != nil {
+		return err
+	}
+	for _, domain := range sslDomains {
+		_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+domain+".ssl")
+		_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+domain+".ssl.suspended")
+		_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-available/"+domain+".ssl")
+		_, _ = s.exec.RunSudo(ctx, "rm", "-rf", "/etc/jenderal/ssl/"+domain)
+	}
 
 	// Remove nginx config.
 	confPath := "/etc/nginx/sites-available/" + w.Domain
 	_, _ = s.exec.RunSudo(ctx, "rm", "-f", confPath)
 	_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+w.Domain)
+	_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+w.Domain+".suspended")
 	_, _ = s.exec.RunSudo(ctx, "rm", "-f", confPath+".suspended")
 
 	// Remove FPM pool config.
@@ -288,16 +299,13 @@ func (s *Service) Suspend(ctx context.Context, id string) error {
 		return model.NewValidationError("website is already suspended")
 	}
 
-	confPath := "/etc/nginx/sites-enabled/" + w.Domain
-	result, err := s.exec.RunSudo(ctx, "mv", confPath, confPath+".suspended")
-	if err != nil {
+	if err := s.moveWebsiteConfigs(ctx, w, true); err != nil {
 		return fmt.Errorf("suspend website: %w", err)
 	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("suspend website: %s", strings.TrimSpace(result.Stderr))
+	if err := s.reloadNginx(ctx); err != nil {
+		s.restoreWebsiteConfigs(w, true)
+		return fmt.Errorf("suspend website: %w", err)
 	}
-
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
@@ -305,6 +313,7 @@ func (s *Service) Suspend(ctx context.Context, id string) error {
 		"suspended", now, id,
 	)
 	if err != nil {
+		s.restoreWebsiteConfigs(w, true)
 		return fmt.Errorf("update status: %w", err)
 	}
 
@@ -321,16 +330,13 @@ func (s *Service) Enable(ctx context.Context, id string) error {
 		return model.NewValidationError("website is not suspended")
 	}
 
-	confPath := "/etc/nginx/sites-enabled/" + w.Domain
-	result, err := s.exec.RunSudo(ctx, "mv", confPath+".suspended", confPath)
-	if err != nil {
+	if err := s.moveWebsiteConfigs(ctx, w, false); err != nil {
 		return fmt.Errorf("enable website: %w", err)
 	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("enable website: %s", strings.TrimSpace(result.Stderr))
+	if err := s.reloadNginx(ctx); err != nil {
+		s.restoreWebsiteConfigs(w, false)
+		return fmt.Errorf("enable website: %w", err)
 	}
-
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
@@ -338,6 +344,7 @@ func (s *Service) Enable(ctx context.Context, id string) error {
 		"active", now, id,
 	)
 	if err != nil {
+		s.restoreWebsiteConfigs(w, false)
 		return fmt.Errorf("update status: %w", err)
 	}
 
@@ -589,14 +596,15 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 	}
 
 	vhostData := VhostData{
-		Domain:          w.Domain,
-		Aliases:         strings.Join(aliases, " "),
-		DocumentRoot:    w.DocumentRoot,
-		LogDir:          logDir,
-		PHPVersion:      w.PHPVersion,
-		AppType:         w.AppType,
-		IPv6:            s.ipv6Available(),
-		RedirectDomains: redirectDomains,
+		Domain:            w.Domain,
+		Aliases:           strings.Join(aliases, " "),
+		DocumentRoot:      w.DocumentRoot,
+		ACMEChallengeRoot: DefaultACMEChallengeRoot,
+		LogDir:            logDir,
+		PHPVersion:        w.PHPVersion,
+		AppType:           w.AppType,
+		IPv6:              s.ipv6Available(),
+		RedirectDomains:   redirectDomains,
 	}
 
 	content, err := RenderVhost(vhostData)
@@ -646,6 +654,79 @@ func (s *Service) activeSSLDomains(ctx context.Context, websiteID string) ([]str
 		return nil, fmt.Errorf("get active SSL domains: %w", err)
 	}
 	return domains, nil
+}
+
+func (s *Service) sslDomains(ctx context.Context, websiteID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT domain FROM ssl_certificates WHERE website_id = ? ORDER BY domain`,
+		websiteID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get website SSL domains: %w", err)
+	}
+	defer rows.Close()
+
+	var domains []string
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, fmt.Errorf("scan website SSL domain: %w", err)
+		}
+		domains = append(domains, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get website SSL domains: %w", err)
+	}
+	return domains, nil
+}
+
+func (s *Service) moveWebsiteConfigs(ctx context.Context, w model.Website, suspend bool) error {
+	sslDomains, err := s.activeSSLDomains(ctx, w.ID)
+	if err != nil {
+		return err
+	}
+	paths := []string{"/etc/nginx/sites-enabled/" + w.Domain}
+	for _, domain := range sslDomains {
+		paths = append(paths, "/etc/nginx/sites-enabled/"+domain+".ssl")
+	}
+
+	moved := make([][2]string, 0, len(paths))
+	for _, path := range paths {
+		from, to := path, path+".suspended"
+		if !suspend {
+			from, to = to, from
+		}
+		result, moveErr := s.exec.RunSudo(ctx, "mv", from, to)
+		if moveErr != nil || result.ExitCode != 0 {
+			for i := len(moved) - 1; i >= 0; i-- {
+				_, _ = s.exec.RunSudo(ctx, "mv", moved[i][1], moved[i][0])
+			}
+			if moveErr != nil {
+				return moveErr
+			}
+			return fmt.Errorf("move %s: %s", from, strings.TrimSpace(result.Stderr))
+		}
+		moved = append(moved, [2]string{from, to})
+	}
+	return nil
+}
+
+func (s *Service) reloadNginx(ctx context.Context) error {
+	result, err := s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("reload nginx: %s", strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
+func (s *Service) restoreWebsiteConfigs(w model.Website, previousSuspend bool) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	_ = s.moveWebsiteConfigs(cleanupCtx, w, !previousSuspend)
+	_ = s.reloadNginx(cleanupCtx)
 }
 
 // getDomains returns all domains for a website.

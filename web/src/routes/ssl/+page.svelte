@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
-	import { buildSSLInstallRequest, domainsForWebsite } from '$lib/ssl-form.js';
+	import { buildSSLInstallRequest, certificateInstallError, domainsForWebsite } from '$lib/ssl-form.js';
 
 	interface SSLCertificate {
 		id: string;
@@ -158,7 +158,9 @@
 				certificatePEM,
 				privateKeyPEM
 			});
-			await api.post(request.path, request.body);
+			const installed = await api.post<SSLCertificate>(request.path, request.body);
+			const installError = certificateInstallError(installed);
+			if (installError) throw new Error(installError);
 			actionMsg = installMode === 'custom'
 				? `Custom SSL certificate installed for "${issueDomain}".`
 				: `Let's Encrypt certificate installed for "${issueDomain}".`;
@@ -167,8 +169,6 @@
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to install certificate';
 		} finally {
-			certificatePEM = '';
-			privateKeyPEM = '';
 			issuing = false;
 		}
 	}

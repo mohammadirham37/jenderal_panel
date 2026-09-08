@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -14,6 +15,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	websiteconfig "github.com/mohammadirham37/jenderal_panel/internal/website"
 )
 
 // Service manages SSL certificate lifecycle: issuance, renewal, revocation and deletion.
@@ -24,6 +26,7 @@ type Service struct {
 	acme          ACMEClient
 	certDir       string
 	ipv6Available func() bool
+	mutationMu    sync.Mutex
 }
 
 // NewService creates a new SSL management service.
@@ -50,6 +53,9 @@ func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Servi
 //
 // On failure the record is updated to status=failed with an error message.
 func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SSLCertificate, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if domain == "" {
 		return model.SSLCertificate{}, model.NewValidationError("domain is required")
@@ -61,6 +67,9 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 	site, err := s.loadSiteForDomain(ctx, websiteID, domain)
 	if err != nil {
 		return model.SSLCertificate{}, err
+	}
+	if site.Status != "active" {
+		return model.SSLCertificate{}, model.NewValidationError("SSL certificates can only be installed on an active website")
 	}
 	if existing, found, err := s.findCertificateByDomain(ctx, websiteID, domain); err != nil {
 		return model.SSLCertificate{}, err
@@ -87,7 +96,7 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 		return model.SSLCertificate{}, err
 	}
 
-	certPEM, keyPEM, err := s.acme.ObtainCertificate(domain, site.DocumentRoot)
+	certPEM, keyPEM, err := s.acme.ObtainCertificate(domain, websiteconfig.DefaultACMEChallengeRoot)
 	if err != nil {
 		msg := fmt.Sprintf("obtain certificate: %v", err)
 		s.markFailed(ctx, cert.ID, msg)
@@ -109,7 +118,8 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 	if err != nil {
 		return model.SSLCertificate{}, err
 	}
-	if err := s.activateCertificate(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains}); err != nil {
+	activation, err := s.beginCertificateActivation(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains})
+	if err != nil {
 		msg := fmt.Sprintf("enable HTTPS: %v", err)
 		s.markFailed(ctx, cert.ID, msg)
 		cert.Status = "failed"
@@ -117,32 +127,29 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 		return cert, nil
 	}
 
-	expiresStr := metadata.NotAfter.Format(time.RFC3339)
-	updatedStr := time.Now().UTC().Format(time.RFC3339)
-
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE ssl_certificates SET status = ?, expires_at = ?, updated_at = ? WHERE id = ?`,
-		"active", expiresStr, updatedStr, cert.ID,
-	)
-	if err != nil {
-		return model.SSLCertificate{}, fmt.Errorf("update ssl certificate: %w", err)
+	updatedAt := time.Now().UTC()
+	if err := s.commitActiveCertificate(ctx, cert.ID, websiteID, "letsencrypt", metadata.NotAfter, true, updatedAt); err != nil {
+		rollbackErr := activation.rollback()
+		s.markFailed(ctx, cert.ID, err.Error())
+		if rollbackErr != nil {
+			return model.SSLCertificate{}, fmt.Errorf("%v; rollback failed: %w", err, rollbackErr)
+		}
+		return model.SSLCertificate{}, err
 	}
-
-	// Update website ssl_enabled flag.
-	_, _ = s.db.ExecContext(ctx,
-		`UPDATE websites SET ssl_enabled = 1, updated_at = ? WHERE id = ?`,
-		updatedStr, websiteID,
-	)
+	activation.commit()
 
 	cert.Status = "active"
 	cert.ExpiresAt = metadata.NotAfter
-	cert.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+	cert.UpdatedAt = updatedAt
 
 	return cert, nil
 }
 
 // Renew renews an existing certificate by re-obtaining it from the ACME CA.
 func (s *Service) Renew(ctx context.Context, certID string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	cert, err := s.Get(ctx, certID)
 	if err != nil {
 		return err
@@ -155,8 +162,11 @@ func (s *Service) Renew(ctx context.Context, certID string) error {
 	if err != nil {
 		return err
 	}
+	if site.Status != "active" {
+		return model.NewValidationError("SSL certificates can only be renewed on an active website")
+	}
 
-	certPEM, keyPEM, err := s.acme.ObtainCertificate(cert.Domain, site.DocumentRoot)
+	certPEM, keyPEM, err := s.acme.ObtainCertificate(cert.Domain, websiteconfig.DefaultACMEChallengeRoot)
 	if err != nil {
 		return fmt.Errorf("renew certificate: %w", err)
 	}
@@ -168,20 +178,19 @@ func (s *Service) Renew(ctx context.Context, certID string) error {
 	if err != nil {
 		return err
 	}
-	if err := s.activateCertificate(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains}); err != nil {
+	activation, err := s.beginCertificateActivation(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains})
+	if err != nil {
 		return err
 	}
 
-	expiresStr := metadata.NotAfter.Format(time.RFC3339)
-	updatedStr := time.Now().UTC().Format(time.RFC3339)
-
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE ssl_certificates SET status = ?, expires_at = ?, error_message = NULL, updated_at = ? WHERE id = ?`,
-		"active", expiresStr, updatedStr, certID,
-	)
-	if err != nil {
-		return fmt.Errorf("update ssl certificate: %w", err)
+	updatedAt := time.Now().UTC()
+	if err := s.commitActiveCertificate(ctx, cert.ID, cert.WebsiteID, cert.Issuer, metadata.NotAfter, cert.AutoRenew, updatedAt); err != nil {
+		if rollbackErr := activation.rollback(); rollbackErr != nil {
+			return fmt.Errorf("%v; rollback failed: %w", err, rollbackErr)
+		}
+		return err
 	}
+	activation.commit()
 
 	return nil
 }
@@ -189,40 +198,73 @@ func (s *Service) Renew(ctx context.Context, certID string) error {
 // Revoke revokes a certificate, removes cert files, reverts nginx to HTTP-only,
 // and updates the database status to revoked.
 func (s *Service) Revoke(ctx context.Context, certID string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	cert, err := s.Get(ctx, certID)
 	if err != nil {
 		return err
 	}
+	updatedStr := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE ssl_certificates SET status = 'revoking', updated_at = ? WHERE id = ?`,
+		updatedStr, certID,
+	); err != nil {
+		return fmt.Errorf("prepare certificate revocation: %w", err)
+	}
 
+	remotelyRevoked := false
 	if cert.Issuer == "letsencrypt" {
 		certPath := filepath.Join(s.certDir, cert.Domain, "cert.pem")
 		readResult, readErr := s.exec.RunSudo(ctx, "cat", certPath)
-		if readErr == nil && readResult.ExitCode == 0 {
-			if revokeErr := s.acme.RevokeCertificate([]byte(readResult.Stdout)); revokeErr != nil {
-				return fmt.Errorf("revoke certificate: %w", revokeErr)
-			}
+		if readErr != nil {
+			_ = s.restoreCertificateRecord(ctx, cert)
+			return fmt.Errorf("read certificate for revocation: %w", readErr)
+		}
+		if readResult.ExitCode != 0 {
+			_ = s.restoreCertificateRecord(ctx, cert)
+			return fmt.Errorf("read certificate for revocation: %s", strings.TrimSpace(readResult.Stderr))
+		}
+		if revokeErr := s.acme.RevokeCertificate([]byte(readResult.Stdout)); revokeErr != nil {
+			_ = s.restoreCertificateRecord(ctx, cert)
+			return fmt.Errorf("revoke certificate: %w", revokeErr)
+		}
+		remotelyRevoked = true
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE ssl_certificates SET status = 'revoked', updated_at = ? WHERE id = ?`,
+			updatedStr, certID,
+		); err != nil {
+			return fmt.Errorf("record remote certificate revocation: %w", err)
 		}
 	}
 
-	updatedStr := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE ssl_certificates SET status = ?, updated_at = ? WHERE id = ?`,
-		"revoked", updatedStr, certID,
-	)
-	if err != nil {
-		return fmt.Errorf("update ssl certificate: %w", err)
-	}
 	site, err := s.loadSiteForDomain(ctx, cert.WebsiteID, cert.Domain)
 	if err != nil {
+		if !remotelyRevoked {
+			_ = s.restoreCertificateRecord(ctx, cert)
+		}
 		return err
 	}
 	remaining, err := s.activeDomains(ctx, cert.WebsiteID, "")
 	if err != nil {
+		if !remotelyRevoked {
+			_ = s.restoreCertificateRecord(ctx, cert)
+		}
 		return err
 	}
 	if err := s.removeCertificateConfig(ctx, site, remaining); err != nil {
-		_ = s.restoreCertificateRecord(ctx, cert)
+		if !remotelyRevoked {
+			_ = s.restoreCertificateRecord(ctx, cert)
+		}
 		return err
+	}
+	if !remotelyRevoked {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE ssl_certificates SET status = 'revoked', updated_at = ? WHERE id = ?`,
+			updatedStr, certID,
+		); err != nil {
+			return fmt.Errorf("update ssl certificate: %w", err)
+		}
 	}
 	if err := s.setWebsiteSSLState(ctx, cert.WebsiteID); err != nil {
 		return err
@@ -234,6 +276,9 @@ func (s *Service) Revoke(ctx context.Context, certID string) error {
 // Delete removes a certificate entirely: removes files, reverts nginx, and
 // deletes the database record.
 func (s *Service) Delete(ctx context.Context, certID string) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	cert, err := s.Get(ctx, certID)
 	if err != nil {
 		return err

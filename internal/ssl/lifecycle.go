@@ -14,6 +14,9 @@ import (
 
 // InstallCustom validates and installs operator-provided certificate material.
 func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, certPEM, keyPEM []byte) (model.SSLCertificate, error) {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if websiteID == "" {
 		return model.SSLCertificate{}, model.NewValidationError("website_id is required")
@@ -21,6 +24,9 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 	site, err := s.loadSiteForDomain(ctx, websiteID, domain)
 	if err != nil {
 		return model.SSLCertificate{}, err
+	}
+	if site.Status != "active" {
+		return model.SSLCertificate{}, model.NewValidationError("SSL certificates can only be installed on an active website")
 	}
 	metadata, err := validateCertificateMaterial(certPEM, keyPEM, domain, time.Now().UTC())
 	if err != nil {
@@ -46,7 +52,8 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 	if err != nil {
 		return model.SSLCertificate{}, err
 	}
-	if err := s.activateCertificate(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains}); err != nil {
+	activation, err := s.beginCertificateActivation(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains})
+	if err != nil {
 		if found {
 			if restoreErr := s.restoreCertificateRecord(ctx, existing); restoreErr != nil {
 				return model.SSLCertificate{}, fmt.Errorf("install custom certificate: %v; restore record: %w", err, restoreErr)
@@ -61,18 +68,19 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 	}
 
 	updated := time.Now().UTC()
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE ssl_certificates
-		 SET issuer = 'custom', status = 'active', expires_at = ?, auto_renew = 0,
-		     error_message = NULL, updated_at = ? WHERE id = ?`,
-		metadata.NotAfter.Format(time.RFC3339), updated.Format(time.RFC3339), cert.ID,
-	)
-	if err != nil {
-		return model.SSLCertificate{}, fmt.Errorf("activate custom certificate record: %w", err)
-	}
-	if err := s.setWebsiteSSLState(ctx, websiteID); err != nil {
+	if err := s.commitActiveCertificate(ctx, cert.ID, websiteID, "custom", metadata.NotAfter, false, updated); err != nil {
+		rollbackErr := activation.rollback()
+		if found {
+			_ = s.restoreCertificateRecord(ctx, existing)
+		} else {
+			s.markFailed(ctx, cert.ID, err.Error())
+		}
+		if rollbackErr != nil {
+			return model.SSLCertificate{}, fmt.Errorf("%v; rollback failed: %w", err, rollbackErr)
+		}
 		return model.SSLCertificate{}, err
 	}
+	activation.commit()
 	cert.Status = "active"
 	cert.ExpiresAt = metadata.NotAfter
 	cert.UpdatedAt = updated
@@ -81,6 +89,9 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 
 // SetAutoRenew changes renewal policy for a Let's Encrypt certificate.
 func (s *Service) SetAutoRenew(ctx context.Context, certID string, enabled bool) error {
+	s.mutationMu.Lock()
+	defer s.mutationMu.Unlock()
+
 	cert, err := s.Get(ctx, certID)
 	if err != nil {
 		return err
@@ -148,7 +159,9 @@ func (s *Service) savePendingCertificate(ctx context.Context, cert model.SSLCert
 }
 
 func (s *Service) restoreCertificateRecord(ctx context.Context, cert model.SSLCertificate) error {
-	_, err := s.db.ExecContext(ctx,
+	cleanupCtx, cancel := cleanupContext()
+	defer cancel()
+	_, err := s.db.ExecContext(cleanupCtx,
 		`UPDATE ssl_certificates SET issuer = ?, status = ?, expires_at = ?, auto_renew = ?, error_message = ?, updated_at = ? WHERE id = ?`,
 		cert.Issuer, cert.Status, nullableTime(cert.ExpiresAt), boolToInt(cert.AutoRenew), nullableString(cert.ErrorMessage), cert.UpdatedAt.Format(time.RFC3339), cert.ID,
 	)
@@ -201,6 +214,37 @@ func (s *Service) setWebsiteSSLState(ctx context.Context, websiteID string) erro
 	)
 	if err != nil {
 		return fmt.Errorf("update website SSL state: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) commitActiveCertificate(ctx context.Context, certID, websiteID, issuer string, expiresAt time.Time, autoRenew bool, updatedAt time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin certificate activation: %w", err)
+	}
+	defer tx.Rollback()
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE ssl_certificates
+		 SET issuer = ?, status = 'active', expires_at = ?, auto_renew = ?, error_message = NULL, updated_at = ?
+		 WHERE id = ?`,
+		issuer, expiresAt.UTC().Format(time.RFC3339), boolToInt(autoRenew), updatedAt.UTC().Format(time.RFC3339), certID,
+	)
+	if err != nil {
+		return fmt.Errorf("activate certificate record: %w", err)
+	}
+	if count, _ := result.RowsAffected(); count == 0 {
+		return model.ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE websites SET ssl_enabled = 1, updated_at = ? WHERE id = ?`,
+		updatedAt.UTC().Format(time.RFC3339), websiteID,
+	); err != nil {
+		return fmt.Errorf("update website SSL state: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit certificate activation: %w", err)
 	}
 	return nil
 }
