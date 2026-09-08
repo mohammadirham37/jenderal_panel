@@ -19,39 +19,39 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
-	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
+	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
-	"github.com/mohammadirham37/jenderal_panel/internal/notification"
+	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
-	"github.com/mohammadirham37/jenderal_panel/internal/website"
-	"github.com/mohammadirham37/jenderal_panel/internal/settings"
-	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/user"
+	"github.com/mohammadirham37/jenderal_panel/internal/website"
 )
 
 type Dependencies struct {
-	DB            *sql.DB
-	Logger        *slog.Logger
-	AuthSvc       *auth.Service
-	RBAC          *auth.RBAC
-	AuditSvc      *audit.Service
-	SystemInfo    *system.Info
-	Metrics       *system.MetricsCollector
-	ServiceMgr    service.ServiceManager
-	SettingsSvc   *settings.Service
-	NginxSvc      *nginx.Service
-	FirewallSvc   *firewall.Service
-	ProcessSvc    *process.Service
-	LogSvc        *system.LogService
-	WebsiteSvc    *website.Service
-	PHPSvc        *php.Service
+	DB             *sql.DB
+	Logger         *slog.Logger
+	AuthSvc        *auth.Service
+	RBAC           *auth.RBAC
+	AuditSvc       *audit.Service
+	SystemInfo     *system.Info
+	Metrics        *system.MetricsCollector
+	ServiceMgr     service.ServiceManager
+	SettingsSvc    *settings.Service
+	NginxSvc       *nginx.Service
+	FirewallSvc    *firewall.Service
+	ProcessSvc     *process.Service
+	LogSvc         *system.LogService
+	WebsiteSvc     *website.Service
+	PHPSvc         *php.Service
 	SSLSvc         *ssl.Service
 	DeploymentSvc  *deployment.Service
 	CronSvc        *cron.Service
@@ -273,10 +273,14 @@ func NewRouter(deps Dependencies) http.Handler {
 			// SSL
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
 				Post("/ssl/issue", sslHandler.Issue)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Post("/ssl/custom", sslHandler.InstallCustom)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.view")).
 				Get("/ssl", sslHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.view")).
 				Get("/ssl/{id}", sslHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Put("/ssl/{id}", sslHandler.Update)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
 				Post("/ssl/{id}/renew", sslHandler.Renew)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).

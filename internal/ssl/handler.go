@@ -40,6 +40,17 @@ type issueRequest struct {
 	Domain    string `json:"domain"`
 }
 
+type customRequest struct {
+	WebsiteID      string `json:"website_id"`
+	Domain         string `json:"domain"`
+	CertificatePEM string `json:"certificate_pem"`
+	PrivateKeyPEM  string `json:"private_key_pem"`
+}
+
+type autoRenewRequest struct {
+	AutoRenew bool `json:"auto_renew"`
+}
+
 // Issue handles POST /api/ssl/certificates. It returns 202 Accepted because
 // certificate issuance may involve ACME challenges.
 func (h *Handler) Issue(w http.ResponseWriter, r *http.Request) {
@@ -56,6 +67,30 @@ func (h *Handler) Issue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logAction(r, "issue_ssl", cert.ID, "issued SSL certificate for "+cert.Domain)
+	httputil.JSON(w, http.StatusAccepted, cert)
+}
+
+// InstallCustom handles POST /api/v1/ssl/custom.
+func (h *Handler) InstallCustom(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+	var req customRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	cert, err := h.svc.InstallCustom(
+		r.Context(), req.WebsiteID, req.Domain,
+		[]byte(req.CertificatePEM), []byte(req.PrivateKeyPEM),
+	)
+	req.CertificatePEM = ""
+	req.PrivateKeyPEM = ""
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "install_custom_ssl", cert.ID, "installed custom SSL certificate for "+cert.Domain+" (issuer: "+cert.Issuer+")")
 	httputil.JSON(w, http.StatusAccepted, cert)
 }
 
@@ -78,6 +113,23 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.JSON(w, http.StatusOK, cert)
+}
+
+// Update handles PUT /api/v1/ssl/{id}.
+func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req autoRenewRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.SetAutoRenew(r.Context(), id, req.AutoRenew); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "update_ssl", id, "updated SSL auto-renew setting")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // Renew handles POST /api/ssl/certificates/{id}/renew.
