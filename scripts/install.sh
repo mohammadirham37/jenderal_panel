@@ -233,33 +233,53 @@ install_dependencies() {
     log "Updating package lists..."
     apt-get update -qq > /dev/null 2>&1
 
-    log "Installing dependencies..."
+    # Fix any broken dpkg state first
+    dpkg --configure -a > /dev/null 2>&1 || true
+    apt-get install -f -y > /dev/null 2>&1 || true
 
-    # Install packages except nginx first (nginx may fail on IPv6-less systems)
-    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-        curl wget sqlite3 ufw openssl gcc make \
+    # Pre-fix nginx IPv6 issue before install
+    # On systems without IPv6, nginx default config fails on [::]:80
+    if [[ ! -f /proc/net/if_inet6 ]]; then
+        log "IPv6 not available, pre-configuring nginx..."
+        mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+        # If default config exists with IPv6, fix it
+        for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
+            if [[ -f "$f" ]]; then
+                sed -i 's/listen \[::\]:80/#listen [::]:80/g' "$f"
+                sed -i 's/listen \[::\]:443/#listen [::]:443/g' "$f"
+            fi
+        done
+    fi
+
+    log "Installing dependencies..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        curl wget sqlite3 ufw openssl gcc make git \
         software-properties-common apt-transport-https \
-        > /dev/null 2>&1 || {
-        error "Failed to install base dependencies. Check apt-get output."
+        2>&1 | tail -5 || {
+        warn "Some base packages may have failed, continuing..."
     }
 
-    # Install nginx separately, fix IPv6 issue if needed
-    if ! dpkg -l nginx 2>/dev/null | grep -q "^ii"; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>/dev/null || {
-            # Fix IPv6 listen issue on systems without IPv6 support
-            warn "Nginx install failed, fixing IPv6 config..."
-            if [[ -f /etc/nginx/sites-enabled/default ]]; then
-                sed -i 's/listen \[::\]:80/#listen [::]:80/' /etc/nginx/sites-enabled/default
-                sed -i 's/listen \[::\]:443/#listen [::]:443/' /etc/nginx/sites-enabled/default
+    # Install nginx
+    log "Installing nginx..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 | tail -5 || {
+        warn "Nginx install had issues, attempting fix..."
+        # Fix IPv6 after nginx installs its config
+        for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
+            if [[ -f "$f" ]]; then
+                sed -i 's/listen \[::\]:80/#listen [::]:80/g' "$f"
+                sed -i 's/listen \[::\]:443/#listen [::]:443/g' "$f"
             fi
-            if [[ -f /etc/nginx/sites-available/default ]]; then
-                sed -i 's/listen \[::\]:80/#listen [::]:80/' /etc/nginx/sites-available/default
-                sed -i 's/listen \[::\]:443/#listen [::]:443/' /etc/nginx/sites-available/default
-            fi
-            dpkg --configure -a > /dev/null 2>&1
-            systemctl start nginx 2>/dev/null || true
-            log "Nginx IPv6 issue fixed"
-        }
+        done
+        dpkg --configure -a 2>&1 | tail -3 || true
+        systemctl start nginx 2>/dev/null || true
+    }
+
+    # Verify nginx is working
+    if nginx -t > /dev/null 2>&1; then
+        systemctl start nginx 2>/dev/null || true
+        log "Nginx: OK"
+    else
+        warn "Nginx config test failed, but continuing installation"
     fi
 
     log "Dependencies installed"
