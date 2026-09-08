@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
+	import { decodeTerminalMessage } from '$lib/terminal-message.js';
 
 	let output = $state('');
 	let command = $state('');
@@ -21,8 +22,9 @@
 		};
 
 		ws.onmessage = (event) => {
-			output += event.data;
-			if (!event.data.endsWith('\n')) {
+			const message = decodeTerminalMessage(event.data);
+			output += message;
+			if (!message.endsWith('\n')) {
 				output += '\n';
 			}
 			scrollToBottom();
