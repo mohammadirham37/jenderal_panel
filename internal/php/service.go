@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -13,6 +14,57 @@ import (
 
 // supportedVersions lists the PHP versions that the panel can manage.
 var supportedVersions = []string{"8.1", "8.2", "8.3", "8.4"}
+
+const phpRepositorySetupScript = `set -euo pipefail
+keyring=/usr/share/keyrings/ondrej-php.gpg
+source_list=/etc/apt/sources.list.d/ondrej-php.list
+fingerprint=B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6
+key_url='https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6'
+
+. /etc/os-release
+case "${VERSION_CODENAME:-}" in
+    jammy|noble) ;;
+    *) echo "Unsupported Ubuntu codename: ${VERSION_CODENAME:-unknown}" >&2; exit 1 ;;
+esac
+
+key_fingerprint() {
+    gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }'
+}
+
+primary_key_count() {
+    gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "pub" { count++ } END { print count + 0 }'
+}
+
+key_is_valid() {
+    [ "$(primary_key_count "$1")" = "1" ] && [ "$(key_fingerprint "$1")" = "$fingerprint" ]
+}
+
+if [ ! -f "$keyring" ] || ! key_is_valid "$keyring"; then
+    tmp_key="$(mktemp)"
+    tmp_keyring="$(mktemp)"
+    cleanup() { rm -f "$tmp_key" "$tmp_keyring"; }
+    trap cleanup EXIT
+
+    curl --fail --silent --show-error --location \
+        --connect-timeout 10 --max-time 60 --retry 2 --retry-all-errors \
+        "$key_url" --output "$tmp_key"
+
+    if ! key_is_valid "$tmp_key"; then
+        echo "Unexpected Ondrej PHP signing key: fingerprint=$(key_fingerprint "$tmp_key"), primary_keys=$(primary_key_count "$tmp_key")" >&2
+        exit 1
+    fi
+
+    gpg --batch --yes --dearmor --output "$tmp_keyring" "$tmp_key"
+    install -o root -g root -m 0644 "$tmp_keyring" "$keyring"
+fi
+
+rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list \
+    /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources
+printf 'deb [signed-by=/usr/share/keyrings/ondrej-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu %s main\n' \
+    "$VERSION_CODENAME" > "$source_list"
+`
+
+const phpInstallStepTimeout = 15 * time.Minute
 
 // Service manages PHP-FPM installations and configuration.
 type Service struct {
@@ -77,34 +129,60 @@ func (s *Service) Install(ctx context.Context, version string) error {
 		return err
 	}
 
-	// Add ondrej/php PPA if not already present (required for multiple PHP versions)
-	s.exec.RunSudo(ctx, "add-apt-repository", "-y", "ppa:ondrej/php")
-	s.exec.RunSudo(ctx, "apt-get", "update")
-
-	packages := []string{
-		"install", "-y",
-		"php" + version + "-fpm",
-		"php" + version + "-cli",
-		"php" + version + "-common",
-		"php" + version + "-mysql",
-		"php" + version + "-pgsql",
-		"php" + version + "-mbstring",
-		"php" + version + "-xml",
-		"php" + version + "-curl",
-		"php" + version + "-zip",
-		"php" + version + "-gd",
-		"php" + version + "-intl",
-		"php" + version + "-bcmath",
-	}
-
-	result, err := s.exec.RunSudo(ctx, "apt-get", packages...)
-	if err != nil {
-		return fmt.Errorf("install php %s: %w", version, err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("install php %s: %s", version, strings.TrimSpace(result.Stderr))
+	for step, command := range s.installCommands(version) {
+		stepCtx, cancel := context.WithTimeout(ctx, phpInstallStepTimeout)
+		result, err := s.exec.RunSudo(stepCtx, command[0], command[1:]...)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("install php %s step %d: %w", version, step+1, err)
+		}
+		if result.ExitCode != 0 {
+			detail := strings.TrimSpace(result.Stderr)
+			if detail == "" {
+				detail = strings.TrimSpace(result.Stdout)
+			}
+			return fmt.Errorf("install php %s step %d: %s", version, step+1, detail)
+		}
 	}
 	return nil
+}
+
+func (s *Service) installCommands(version string) [][]string {
+	aptTimeouts := []string{
+		"-o", "Acquire::Retries=2",
+		"-o", "Acquire::http::Timeout=30",
+		"-o", "Acquire::https::Timeout=30",
+	}
+	updateArgs := append([]string{"update", "-qq"}, aptTimeouts...)
+	installArgs := []string{
+		"install", "-y", "-o", "DPkg::Lock::Timeout=120",
+	}
+	installArgs = append(installArgs, aptTimeouts...)
+	installArgs = append(installArgs,
+		"php"+version+"-fpm",
+		"php"+version+"-cli",
+		"php"+version+"-common",
+		"php"+version+"-mysql",
+		"php"+version+"-pgsql",
+		"php"+version+"-mbstring",
+		"php"+version+"-xml",
+		"php"+version+"-curl",
+		"php"+version+"-zip",
+		"php"+version+"-gd",
+		"php"+version+"-intl",
+		"php"+version+"-bcmath",
+	)
+	dependencyArgs := []string{"install", "-y", "-o", "DPkg::Lock::Timeout=120"}
+	dependencyArgs = append(dependencyArgs, aptTimeouts...)
+	dependencyArgs = append(dependencyArgs, "ca-certificates", "curl", "gnupg")
+
+	return [][]string{
+		append([]string{"apt-get"}, updateArgs...),
+		append([]string{"apt-get"}, dependencyArgs...),
+		{"bash", "-c", phpRepositorySetupScript},
+		append([]string{"apt-get"}, updateArgs...),
+		append([]string{"apt-get"}, installArgs...),
+	}
 }
 
 // Uninstall removes the specified PHP version packages.

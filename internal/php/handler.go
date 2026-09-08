@@ -54,26 +54,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID := h.tasks.RunMultiple("Install PHP "+version, [][]string{
-		{"apt-get", "update", "-qq"},
-		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "software-properties-common", "ca-certificates"},
-		{"add-apt-repository", "-y", "ppa:ondrej/php"},
-		{"apt-get", "update", "-qq"},
-		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120",
-			"php" + version + "-fpm",
-			"php" + version + "-cli",
-			"php" + version + "-common",
-			"php" + version + "-mysql",
-			"php" + version + "-pgsql",
-			"php" + version + "-mbstring",
-			"php" + version + "-xml",
-			"php" + version + "-curl",
-			"php" + version + "-zip",
-			"php" + version + "-gd",
-			"php" + version + "-intl",
-			"php" + version + "-bcmath",
-		},
-	})
+	taskID := h.tasks.RunMultiple("Install PHP "+version, h.svc.installCommands(version))
 
 	h.logAction(r, "install_php", "php"+version, "task:"+taskID)
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})

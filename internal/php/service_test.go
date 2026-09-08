@@ -3,6 +3,7 @@ package php
 import (
 	"context"
 	"errors"
+	osexec "os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -167,6 +168,94 @@ func TestInstall_ValidVersion(t *testing.T) {
 		if !strings.Contains(argsStr, pkg) {
 			t.Errorf("expected args to contain %q", pkg)
 		}
+	}
+}
+
+func TestInstallConfiguresPPADirectlyWithoutLaunchpadAPI(t *testing.T) {
+	type command struct {
+		name string
+		args []string
+	}
+	var commands []command
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			commands = append(commands, command{name: name, args: append([]string(nil), args...)})
+			return mockResult("", "", 0), nil
+		},
+	}
+
+	svc := NewService(mock, nil)
+	if err := svc.Install(context.Background(), "8.3"); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+
+	var repositoryScript string
+	for _, cmd := range commands {
+		if cmd.name == "add-apt-repository" {
+			t.Fatal("Install() still depends on the Launchpad API through add-apt-repository")
+		}
+		if cmd.name == "bash" && len(cmd.args) == 2 && cmd.args[0] == "-c" {
+			repositoryScript = cmd.args[1]
+		}
+		if cmd.name == "apt-get" {
+			args := strings.Join(cmd.args, " ")
+			if !strings.Contains(args, "Acquire::https::Timeout=30") {
+				t.Errorf("apt command has no stalled HTTPS connection timeout: apt-get %s", args)
+			}
+		}
+	}
+	if repositoryScript == "" {
+		t.Fatal("Install() did not configure the PHP repository directly")
+	}
+
+	for _, required := range []string{
+		"https://ppa.launchpadcontent.net/ondrej/php/ubuntu",
+		"B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6",
+		"signed-by=/usr/share/keyrings/ondrej-php.gpg",
+		"--connect-timeout 10",
+		"--max-time 60",
+		"primary_key_count",
+		"ondrej-ubuntu-php-*.sources",
+	} {
+		if !strings.Contains(repositoryScript, required) {
+			t.Errorf("repository setup script missing %q", required)
+		}
+	}
+	if strings.Index(repositoryScript, ". /etc/os-release") > strings.Index(repositoryScript, "curl --fail") {
+		t.Error("repository setup downloads a key before validating the Ubuntu codename")
+	}
+}
+
+func TestPHPRepositorySetupScriptIsValidBash(t *testing.T) {
+	cmd := osexec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader(phpRepositorySetupScript)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("repository setup script has invalid bash syntax: %v\n%s", err, output)
+	}
+}
+
+func TestInstallAllowsBoundedTimeForAptSteps(t *testing.T) {
+	var shortestDeadline time.Duration
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			deadline, ok := ctx.Deadline()
+			if !ok {
+				t.Errorf("%s has no explicit deadline", name)
+			} else {
+				remaining := time.Until(deadline)
+				if shortestDeadline == 0 || remaining < shortestDeadline {
+					shortestDeadline = remaining
+				}
+			}
+			return mockResult("", "", 0), nil
+		},
+	}
+
+	if err := NewService(mock, nil).Install(context.Background(), "8.3"); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if shortestDeadline < 14*time.Minute {
+		t.Fatalf("shortest install step deadline = %s, want approximately 15 minutes", shortestDeadline)
 	}
 }
 
