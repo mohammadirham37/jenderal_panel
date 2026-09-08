@@ -163,17 +163,32 @@ step_install_deps() {
         curl wget git gcc g++ make sqlite3 openssl ufw \
         software-properties-common 2>&1 | grep -E "^E:|upgraded|newly" || true
 
-    # Install nginx — handle IPv6 failure gracefully
-    if ! dpkg -l nginx 2>/dev/null | grep -q "^ii"; then
-        DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 || {
-            # Fix IPv6 config and retry
-            for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
-                [[ -f "$f" ]] && sed -i 's/listen \[::\]/#listen [::]/' "$f" 2>/dev/null || true
-            done
-            dpkg --configure -a 2>/dev/null || true
-            systemctl start nginx 2>/dev/null || true
-        }
+    # Install nginx — handle IPv6 failure on systems without IPv6
+    log "Installing nginx..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nginx 2>&1 || true
+
+    # Fix IPv6 listen directive if nginx failed to start
+    if ! systemctl is-active --quiet nginx 2>/dev/null; then
+        log "Fixing nginx IPv6 configuration..."
+        for f in /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default; do
+            if [[ -f "$f" ]]; then
+                sed -i 's/listen \[::\]:80 default_server;/#listen [::]:80 default_server;/' "$f"
+                sed -i 's/listen \[::\]:443 ssl default_server;/#listen [::]:443 ssl default_server;/' "$f"
+                sed -i 's/listen \[::\]:80;/#listen [::]:80;/' "$f"
+                sed -i 's/listen \[::\]:443;/#listen [::]:443;/' "$f"
+            fi
+        done
+        dpkg --configure -a 2>&1 || true
+        apt-get install -f -y 2>&1 || true
+        systemctl start nginx 2>/dev/null || true
     fi
+
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        log "Nginx: running"
+    else
+        warn "Nginx not running, but continuing..."
+    fi
+
     log "System packages: OK"
 }
 
