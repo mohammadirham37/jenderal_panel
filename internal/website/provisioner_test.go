@@ -59,6 +59,18 @@ func setupTestDB(t *testing.T) *sql.DB {
 		ip_address TEXT,
 		created_at TEXT NOT NULL
 	);
+	CREATE TABLE IF NOT EXISTS ssl_certificates (
+		id            TEXT PRIMARY KEY,
+		website_id    TEXT NOT NULL REFERENCES websites(id) ON DELETE CASCADE,
+		domain        TEXT NOT NULL,
+		issuer        TEXT NOT NULL DEFAULT 'letsencrypt',
+		status        TEXT NOT NULL DEFAULT 'pending',
+		expires_at    TEXT,
+		auto_renew    INTEGER NOT NULL DEFAULT 1,
+		error_message TEXT,
+		created_at    TEXT NOT NULL,
+		updated_at    TEXT NOT NULL
+	);
 	`
 	_, err = db.Exec(schema)
 	if err != nil {

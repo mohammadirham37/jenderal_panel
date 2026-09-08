@@ -15,6 +15,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 )
 
 // domainRegex validates domain names: alphanumeric, hyphens, dots.
@@ -35,15 +36,16 @@ type UpdateRequest struct {
 
 // Service manages website CRUD operations and lifecycle.
 type Service struct {
-	db    *sql.DB
-	exec  executor.CommandExecutor
-	audit *audit.Service
-	prov  *Provisioner
+	db            *sql.DB
+	exec          executor.CommandExecutor
+	audit         *audit.Service
+	prov          *Provisioner
+	ipv6Available func() bool
 }
 
 // NewService creates a new website management service.
 func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service) *Service {
-	return &Service{db: db, exec: exec, audit: auditSvc}
+	return &Service{db: db, exec: exec, audit: auditSvc, ipv6Available: nginxconfig.IPv6Available}
 }
 
 // SetProvisioner sets the provisioner after creation to break circular
@@ -477,11 +479,11 @@ func (s *Service) AddDomain(ctx context.Context, websiteID, name, domainType str
 // RemoveDomain removes a domain from a website. Primary domains cannot be removed.
 func (s *Service) RemoveDomain(ctx context.Context, websiteID, domainID string) error {
 	// Check domain type.
-	var domainType string
+	var domainName, domainType string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT type FROM domains WHERE id = ? AND website_id = ?`,
+		`SELECT name, type FROM domains WHERE id = ? AND website_id = ?`,
 		domainID, websiteID,
-	).Scan(&domainType)
+	).Scan(&domainName, &domainType)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return model.ErrNotFound
@@ -491,6 +493,16 @@ func (s *Service) RemoveDomain(ctx context.Context, websiteID, domainID string) 
 
 	if domainType == "primary" {
 		return model.NewValidationError("cannot remove primary domain")
+	}
+	var certificateCount int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ssl_certificates WHERE website_id = ? AND domain = ?`,
+		websiteID, domainName,
+	).Scan(&certificateCount); err != nil {
+		return fmt.Errorf("check domain SSL certificate: %w", err)
+	}
+	if certificateCount > 0 {
+		return model.NewValidationError("delete the domain's SSL certificate before removing the domain")
 	}
 
 	_, err = s.db.ExecContext(ctx,
@@ -571,14 +583,20 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 	}
 
 	logDir := "/home/" + w.WebUser + "/logs"
+	redirectDomains, err := s.activeSSLDomains(ctx, w.ID)
+	if err != nil {
+		return err
+	}
 
 	vhostData := VhostData{
-		Domain:       w.Domain,
-		Aliases:      strings.Join(aliases, " "),
-		DocumentRoot: w.DocumentRoot,
-		LogDir:       logDir,
-		PHPVersion:   w.PHPVersion,
-		AppType:      w.AppType,
+		Domain:          w.Domain,
+		Aliases:         strings.Join(aliases, " "),
+		DocumentRoot:    w.DocumentRoot,
+		LogDir:          logDir,
+		PHPVersion:      w.PHPVersion,
+		AppType:         w.AppType,
+		IPv6:            s.ipv6Available(),
+		RedirectDomains: redirectDomains,
 	}
 
 	content, err := RenderVhost(vhostData)
@@ -604,6 +622,30 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
 	return nil
+}
+
+func (s *Service) activeSSLDomains(ctx context.Context, websiteID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT domain FROM ssl_certificates WHERE website_id = ? AND status = 'active' ORDER BY created_at`,
+		websiteID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get active SSL domains: %w", err)
+	}
+	defer rows.Close()
+
+	var domains []string
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, fmt.Errorf("scan active SSL domain: %w", err)
+		}
+		domains = append(domains, domain)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get active SSL domains: %w", err)
+	}
+	return domains, nil
 }
 
 // getDomains returns all domains for a website.
