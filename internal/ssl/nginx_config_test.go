@@ -114,3 +114,46 @@ func TestActivationRollbackWhenNginxTestFails(t *testing.T) {
 		t.Fatalf("nginx test calls = %d, want candidate and restored validation", nginxTests)
 	}
 }
+
+func TestRemoveCertificateConfigRollsBackWhenNginxTestFails(t *testing.T) {
+	var nginxTests int
+	var restoredPaths []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch name {
+			case "test":
+				return &executor.Result{ExitCode: 0}, nil
+			case "nginx":
+				nginxTests++
+				if nginxTests == 1 {
+					return &executor.Result{ExitCode: 1, Stderr: "removal invalid"}, nil
+				}
+			case "cp":
+				if len(args) == 3 && args[0] == "-a" && strings.Contains(args[1], "jenderal_ssl_backup_") {
+					restoredPaths = append(restoredPaths, args[2])
+				}
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	svc := NewService(nil, mock, nil, nil, "/etc/jenderal/ssl")
+	svc.ipv6Available = func() bool { return false }
+	err := svc.removeCertificateConfig(context.Background(), siteRecord{
+		WebsiteID: "ws-1", PrimaryDomain: "example.com", Domain: "www.example.com",
+		DocumentRoot: "/home/web_example/public", AppType: "static", LogDir: "/home/web_example/logs",
+		Aliases: []string{"www.example.com"},
+	}, []string{"example.com"})
+	if err == nil || !strings.Contains(err.Error(), "removal invalid") {
+		t.Fatalf("removeCertificateConfig() error = %v, want nginx failure", err)
+	}
+	if len(restoredPaths) != 5 {
+		t.Fatalf("restored paths = %v, want certificate, HTTP, and TLS paths", restoredPaths)
+	}
+	if nginxTests != 2 {
+		t.Fatalf("nginx test calls = %d, want candidate and restored validation", nginxTests)
+	}
+}

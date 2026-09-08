@@ -177,6 +177,76 @@ func (s *Service) activateCertificate(ctx context.Context, req activationRequest
 	return nil
 }
 
+func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectDomains []string) error {
+	config, err := websiteconfig.RenderVhost(websiteconfig.VhostData{
+		Domain:          site.PrimaryDomain,
+		Aliases:         strings.Join(site.Aliases, " "),
+		DocumentRoot:    site.DocumentRoot,
+		LogDir:          site.LogDir,
+		PHPVersion:      site.PHPVersion,
+		AppType:         site.AppType,
+		IPv6:            s.ipv6Available(),
+		RedirectDomains: redirectDomains,
+	})
+	if err != nil {
+		return fmt.Errorf("render HTTP configuration: %w", err)
+	}
+	confPath := "/etc/nginx/sites-available/" + site.PrimaryDomain
+	if err := s.installSystemFile(ctx, []byte(config), "0644", confPath); err != nil {
+		return fmt.Errorf("install HTTP configuration: %w", err)
+	}
+	if err := s.runSudoOK(ctx, "ln", "-sfn", confPath, "/etc/nginx/sites-enabled/"+site.PrimaryDomain); err != nil {
+		return fmt.Errorf("enable HTTP configuration: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) removeCertificateConfig(ctx context.Context, site siteRecord, redirectDomains []string) error {
+	paths := []string{
+		filepath.Join(s.certDir, site.Domain),
+		"/etc/nginx/sites-available/" + site.PrimaryDomain,
+		"/etc/nginx/sites-enabled/" + site.PrimaryDomain,
+		"/etc/nginx/sites-available/" + site.Domain + ".ssl",
+		"/etc/nginx/sites-enabled/" + site.Domain + ".ssl",
+	}
+	backupDir := "/tmp/jenderal_ssl_backup_" + ulid.Make().String()
+	if err := s.runSudoOK(ctx, "mkdir", "-m", "0700", backupDir); err != nil {
+		return fmt.Errorf("create SSL backup: %w", err)
+	}
+	defer func() { _, _ = s.exec.RunSudo(context.Background(), "rm", "-rf", backupDir) }()
+
+	backups, err := s.snapshotPaths(ctx, backupDir, paths)
+	if err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		if restoreErr := s.restorePaths(ctx, backups); restoreErr != nil {
+			return fmt.Errorf("%v; rollback failed: %w", cause, restoreErr)
+		}
+		return cause
+	}
+
+	for _, path := range []string{paths[0], paths[3], paths[4]} {
+		if err := s.runSudoOK(ctx, "rm", "-rf", path); err != nil {
+			return rollback(fmt.Errorf("remove %s: %w", path, err))
+		}
+	}
+	if err := s.syncHTTPConfig(ctx, site, redirectDomains); err != nil {
+		return rollback(err)
+	}
+	result, err := s.exec.RunSudo(ctx, "nginx", "-t")
+	if err != nil {
+		return rollback(fmt.Errorf("test nginx configuration: %w", err))
+	}
+	if result.ExitCode != 0 {
+		return rollback(fmt.Errorf("nginx config test failed: %s", strings.TrimSpace(result.Stderr)))
+	}
+	if err := s.runSudoOK(ctx, "systemctl", "reload", "nginx"); err != nil {
+		return rollback(fmt.Errorf("reload nginx: %w", err))
+	}
+	return nil
+}
+
 func (s *Service) snapshotPaths(ctx context.Context, backupDir string, paths []string) ([]backupEntry, error) {
 	entries := make([]backupEntry, 0, len(paths))
 	for i, path := range paths {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -59,14 +58,17 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 		return model.SSLCertificate{}, model.NewValidationError("website_id is required")
 	}
 
-	// Look up the website's document root.
-	docRoot, err := s.getWebsiteDocRoot(ctx, websiteID)
+	site, err := s.loadSiteForDomain(ctx, websiteID, domain)
 	if err != nil {
 		return model.SSLCertificate{}, err
 	}
+	if existing, found, err := s.findCertificateByDomain(ctx, websiteID, domain); err != nil {
+		return model.SSLCertificate{}, err
+	} else if found && (existing.Status == "active" || existing.Status == "pending" || existing.Status == "issuing") {
+		return model.SSLCertificate{}, model.NewValidationError("an SSL certificate is already active or being installed for this domain")
+	}
 
 	now := time.Now().UTC()
-	nowStr := now.Format(time.RFC3339)
 	certID := ulid.Make().String()
 
 	cert := model.SSLCertificate{
@@ -80,70 +82,47 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 		UpdatedAt: now,
 	}
 
-	// 1. Insert pending record.
-	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		cert.ID, cert.WebsiteID, cert.Domain, cert.Issuer, cert.Status,
-		boolToInt(cert.AutoRenew), nowStr, nowStr,
-	)
+	cert, err = s.savePendingCertificate(ctx, cert)
 	if err != nil {
-		return model.SSLCertificate{}, fmt.Errorf("insert ssl certificate: %w", err)
+		return model.SSLCertificate{}, err
 	}
 
-	// 2. Create cert directory.
-	domainDir := filepath.Join(s.certDir, domain)
-	result, err := s.exec.RunSudo(ctx, "mkdir", "-p", domainDir)
-	if err != nil {
-		s.markFailed(ctx, certID, fmt.Sprintf("create cert dir: %v", err))
-		cert.Status = "failed"
-		cert.ErrorMessage = fmt.Sprintf("create cert dir: %v", err)
-		return cert, nil
-	}
-	if result.ExitCode != 0 {
-		msg := fmt.Sprintf("create cert dir: %s", strings.TrimSpace(result.Stderr))
-		s.markFailed(ctx, certID, msg)
-		cert.Status = "failed"
-		cert.ErrorMessage = msg
-		return cert, nil
-	}
-
-	// 3. Obtain certificate from ACME.
-	certPEM, keyPEM, err := s.acme.ObtainCertificate(domain, docRoot)
+	certPEM, keyPEM, err := s.acme.ObtainCertificate(domain, site.DocumentRoot)
 	if err != nil {
 		msg := fmt.Sprintf("obtain certificate: %v", err)
-		s.markFailed(ctx, certID, msg)
+		s.markFailed(ctx, cert.ID, msg)
 		cert.Status = "failed"
 		cert.ErrorMessage = msg
 		return cert, nil
 	}
 
-	// 4. Write cert and key files.
-	if err := s.writeCertFiles(ctx, domainDir, certPEM, keyPEM); err != nil {
-		msg := fmt.Sprintf("write cert files: %v", err)
-		s.markFailed(ctx, certID, msg)
+	metadata, err := validateCertificateMaterial(certPEM, keyPEM, domain, time.Now().UTC())
+	if err != nil {
+		msg := err.Error()
+		s.markFailed(ctx, cert.ID, msg)
 		cert.Status = "failed"
 		cert.ErrorMessage = msg
 		return cert, nil
 	}
 
-	// 5. Update nginx to HTTPS and reload.
-	if err := s.enableHTTPS(ctx, domain, domainDir); err != nil {
+	redirectDomains, err := s.activeDomains(ctx, websiteID, domain)
+	if err != nil {
+		return model.SSLCertificate{}, err
+	}
+	if err := s.activateCertificate(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains}); err != nil {
 		msg := fmt.Sprintf("enable HTTPS: %v", err)
-		s.markFailed(ctx, certID, msg)
+		s.markFailed(ctx, cert.ID, msg)
 		cert.Status = "failed"
 		cert.ErrorMessage = msg
 		return cert, nil
 	}
 
-	// 6. Mark active.
-	expiresAt := now.Add(90 * 24 * time.Hour) // Let's Encrypt certs are valid for ~90 days.
-	expiresStr := expiresAt.Format(time.RFC3339)
+	expiresStr := metadata.NotAfter.Format(time.RFC3339)
 	updatedStr := time.Now().UTC().Format(time.RFC3339)
 
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE ssl_certificates SET status = ?, expires_at = ?, updated_at = ? WHERE id = ?`,
-		"active", expiresStr, updatedStr, certID,
+		"active", expiresStr, updatedStr, cert.ID,
 	)
 	if err != nil {
 		return model.SSLCertificate{}, fmt.Errorf("update ssl certificate: %w", err)
@@ -156,7 +135,7 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 	)
 
 	cert.Status = "active"
-	cert.ExpiresAt = expiresAt
+	cert.ExpiresAt = metadata.NotAfter
 	cert.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 
 	return cert, nil
@@ -168,32 +147,32 @@ func (s *Service) Renew(ctx context.Context, certID string) error {
 	if err != nil {
 		return err
 	}
+	if cert.Issuer != "letsencrypt" {
+		return model.NewValidationError("only Let's Encrypt certificates can be renewed automatically")
+	}
 
-	docRoot, err := s.getWebsiteDocRoot(ctx, cert.WebsiteID)
+	site, err := s.loadSiteForDomain(ctx, cert.WebsiteID, cert.Domain)
 	if err != nil {
 		return err
 	}
 
-	domainDir := filepath.Join(s.certDir, cert.Domain)
-
-	certPEM, keyPEM, err := s.acme.ObtainCertificate(cert.Domain, docRoot)
+	certPEM, keyPEM, err := s.acme.ObtainCertificate(cert.Domain, site.DocumentRoot)
 	if err != nil {
-		msg := fmt.Sprintf("renew certificate: %v", err)
-		s.markFailed(ctx, certID, msg)
 		return fmt.Errorf("renew certificate: %w", err)
 	}
-
-	if err := s.writeCertFiles(ctx, domainDir, certPEM, keyPEM); err != nil {
-		msg := fmt.Sprintf("write cert files: %v", err)
-		s.markFailed(ctx, certID, msg)
-		return fmt.Errorf("write cert files: %w", err)
+	metadata, err := validateCertificateMaterial(certPEM, keyPEM, cert.Domain, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	redirectDomains, err := s.activeDomains(ctx, cert.WebsiteID, cert.Domain)
+	if err != nil {
+		return err
+	}
+	if err := s.activateCertificate(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains}); err != nil {
+		return err
 	}
 
-	// Reload nginx to pick up new cert.
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
-
-	expiresAt := time.Now().UTC().Add(90 * 24 * time.Hour)
-	expiresStr := expiresAt.Format(time.RFC3339)
+	expiresStr := metadata.NotAfter.Format(time.RFC3339)
 	updatedStr := time.Now().UTC().Format(time.RFC3339)
 
 	_, err = s.db.ExecContext(ctx,
@@ -215,24 +194,16 @@ func (s *Service) Revoke(ctx context.Context, certID string) error {
 		return err
 	}
 
-	domainDir := filepath.Join(s.certDir, cert.Domain)
-	certPath := filepath.Join(domainDir, "cert.pem")
-
-	// Read the certificate file to pass to ACME revocation.
-	readResult, err := s.exec.RunSudo(ctx, "cat", certPath)
-	if err == nil && readResult.ExitCode == 0 {
-		if revokeErr := s.acme.RevokeCertificate([]byte(readResult.Stdout)); revokeErr != nil {
-			return fmt.Errorf("revoke certificate: %w", revokeErr)
+	if cert.Issuer == "letsencrypt" {
+		certPath := filepath.Join(s.certDir, cert.Domain, "cert.pem")
+		readResult, readErr := s.exec.RunSudo(ctx, "cat", certPath)
+		if readErr == nil && readResult.ExitCode == 0 {
+			if revokeErr := s.acme.RevokeCertificate([]byte(readResult.Stdout)); revokeErr != nil {
+				return fmt.Errorf("revoke certificate: %w", revokeErr)
+			}
 		}
 	}
 
-	// Remove cert files.
-	_, _ = s.exec.RunSudo(ctx, "rm", "-rf", domainDir)
-
-	// Revert nginx to HTTP-only.
-	s.disableHTTPS(ctx, cert.Domain)
-
-	// Update DB.
 	updatedStr := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE ssl_certificates SET status = ?, updated_at = ? WHERE id = ?`,
@@ -241,12 +212,21 @@ func (s *Service) Revoke(ctx context.Context, certID string) error {
 	if err != nil {
 		return fmt.Errorf("update ssl certificate: %w", err)
 	}
-
-	// Clear website ssl_enabled flag.
-	_, _ = s.db.ExecContext(ctx,
-		`UPDATE websites SET ssl_enabled = 0, updated_at = ? WHERE id = ?`,
-		updatedStr, cert.WebsiteID,
-	)
+	site, err := s.loadSiteForDomain(ctx, cert.WebsiteID, cert.Domain)
+	if err != nil {
+		return err
+	}
+	remaining, err := s.activeDomains(ctx, cert.WebsiteID, "")
+	if err != nil {
+		return err
+	}
+	if err := s.removeCertificateConfig(ctx, site, remaining); err != nil {
+		_ = s.restoreCertificateRecord(ctx, cert)
+		return err
+	}
+	if err := s.setWebsiteSSLState(ctx, cert.WebsiteID); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -259,26 +239,30 @@ func (s *Service) Delete(ctx context.Context, certID string) error {
 		return err
 	}
 
-	domainDir := filepath.Join(s.certDir, cert.Domain)
-
-	// Remove cert files.
-	_, _ = s.exec.RunSudo(ctx, "rm", "-rf", domainDir)
-
-	// Revert nginx to HTTP-only.
-	s.disableHTTPS(ctx, cert.Domain)
-
-	// Delete DB record.
-	_, err = s.db.ExecContext(ctx, `DELETE FROM ssl_certificates WHERE id = ?`, certID)
+	_, err = s.db.ExecContext(ctx, `UPDATE ssl_certificates SET status = 'deleting' WHERE id = ?`, certID)
 	if err != nil {
+		return fmt.Errorf("prepare ssl certificate deletion: %w", err)
+	}
+	site, err := s.loadSiteForDomain(ctx, cert.WebsiteID, cert.Domain)
+	if err != nil {
+		_ = s.restoreCertificateRecord(ctx, cert)
+		return err
+	}
+	remaining, err := s.activeDomains(ctx, cert.WebsiteID, "")
+	if err != nil {
+		_ = s.restoreCertificateRecord(ctx, cert)
+		return err
+	}
+	if err := s.removeCertificateConfig(ctx, site, remaining); err != nil {
+		_ = s.restoreCertificateRecord(ctx, cert)
+		return err
+	}
+	if _, err = s.db.ExecContext(ctx, `DELETE FROM ssl_certificates WHERE id = ?`, certID); err != nil {
 		return fmt.Errorf("delete ssl certificate: %w", err)
 	}
-
-	// Clear website ssl_enabled flag.
-	updatedStr := time.Now().UTC().Format(time.RFC3339)
-	_, _ = s.db.ExecContext(ctx,
-		`UPDATE websites SET ssl_enabled = 0, updated_at = ? WHERE id = ?`,
-		updatedStr, cert.WebsiteID,
-	)
+	if err := s.setWebsiteSSLState(ctx, cert.WebsiteID); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -359,7 +343,7 @@ func (s *Service) GetExpiringCerts(ctx context.Context, days int) ([]model.SSLCe
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, created_at, updated_at
 		 FROM ssl_certificates
-		 WHERE auto_renew = 1 AND status = 'active' AND expires_at <= ?
+		 WHERE issuer = 'letsencrypt' AND auto_renew = 1 AND status = 'active' AND expires_at <= ?
 		 ORDER BY expires_at ASC`, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("get expiring certificates: %w", err)
@@ -388,136 +372,6 @@ func (s *Service) markFailed(ctx context.Context, certID, errMsg string) {
 		`UPDATE ssl_certificates SET status = ?, error_message = ?, updated_at = ? WHERE id = ?`,
 		"failed", errMsg, now, certID,
 	)
-}
-
-// getWebsiteDocRoot queries the website table for the document_root of the given website ID.
-func (s *Service) getWebsiteDocRoot(ctx context.Context, websiteID string) (string, error) {
-	var docRoot string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT document_root FROM websites WHERE id = ?`, websiteID,
-	).Scan(&docRoot)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", model.ErrNotFound
-		}
-		return "", fmt.Errorf("get website document root: %w", err)
-	}
-	return docRoot, nil
-}
-
-// writeCertFiles writes the certificate and key PEM data to the given directory
-// using sudo so that root-owned directories are accessible.
-func (s *Service) writeCertFiles(ctx context.Context, domainDir string, certPEM, keyPEM []byte) error {
-	certPath := filepath.Join(domainDir, "cert.pem")
-	keyPath := filepath.Join(domainDir, "key.pem")
-
-	// Write to temp files first, then move with sudo.
-	certTmp := "/tmp/jenderal_ssl_cert.tmp"
-	keyTmp := "/tmp/jenderal_ssl_key.tmp"
-
-	if err := os.WriteFile(certTmp, certPEM, 0600); err != nil {
-		return fmt.Errorf("write temp cert: %w", err)
-	}
-	if err := os.WriteFile(keyTmp, keyPEM, 0600); err != nil {
-		return fmt.Errorf("write temp key: %w", err)
-	}
-
-	// Copy cert.
-	result, err := s.exec.RunSudo(ctx, "cp", certTmp, certPath)
-	if err != nil {
-		return fmt.Errorf("copy cert: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("copy cert: %s", strings.TrimSpace(result.Stderr))
-	}
-
-	// Copy key.
-	result, err = s.exec.RunSudo(ctx, "cp", keyTmp, keyPath)
-	if err != nil {
-		return fmt.Errorf("copy key: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("copy key: %s", strings.TrimSpace(result.Stderr))
-	}
-
-	// Set secure permissions on the key.
-	_, _ = s.exec.RunSudo(ctx, "chmod", "600", keyPath)
-	_, _ = s.exec.RunSudo(ctx, "chmod", "644", certPath)
-
-	return nil
-}
-
-// enableHTTPS generates an HTTPS nginx snippet, writes it to the site config,
-// validates nginx, and reloads.
-func (s *Service) enableHTTPS(ctx context.Context, domain, domainDir string) error {
-	certPath := filepath.Join(domainDir, "cert.pem")
-	keyPath := filepath.Join(domainDir, "key.pem")
-
-	// Build the SSL snippet to append to the nginx config.
-	sslSnippet := fmt.Sprintf(`
-# SSL configuration managed by Jenderal Panel
-server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
-
-    server_name %s;
-
-    ssl_certificate %s;
-    ssl_certificate_key %s;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-    ssl_prefer_server_ciphers on;
-
-    include /etc/nginx/sites-available/%s;
-}
-`, domain, certPath, keyPath, domain+".location")
-
-	// Write SSL config.
-	sslConfPath := "/etc/nginx/sites-available/" + domain + ".ssl"
-	tmpPath := "/tmp/jenderal_ssl_vhost.tmp"
-
-	if err := os.WriteFile(tmpPath, []byte(sslSnippet), 0644); err != nil {
-		return fmt.Errorf("write temp ssl config: %w", err)
-	}
-
-	result, err := s.exec.RunSudo(ctx, "cp", tmpPath, sslConfPath)
-	if err != nil {
-		return fmt.Errorf("write ssl config: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("write ssl config: %s", strings.TrimSpace(result.Stderr))
-	}
-
-	// Enable the SSL config.
-	enabledPath := "/etc/nginx/sites-enabled/" + domain + ".ssl"
-	_, _ = s.exec.RunSudo(ctx, "ln", "-sf", sslConfPath, enabledPath)
-
-	// Validate nginx configuration.
-	testResult, err := s.exec.RunSudo(ctx, "nginx", "-t")
-	if err != nil {
-		return fmt.Errorf("test nginx config: %w", err)
-	}
-	if testResult.ExitCode != 0 {
-		// Roll back: remove the SSL config.
-		_, _ = s.exec.RunSudo(ctx, "rm", "-f", sslConfPath)
-		_, _ = s.exec.RunSudo(ctx, "rm", "-f", enabledPath)
-		return fmt.Errorf("nginx config test failed: %s", strings.TrimSpace(testResult.Stderr))
-	}
-
-	// Reload nginx.
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
-
-	return nil
-}
-
-// disableHTTPS removes the SSL nginx config and reloads nginx.
-func (s *Service) disableHTTPS(ctx context.Context, domain string) {
-	sslConfPath := "/etc/nginx/sites-available/" + domain + ".ssl"
-	enabledPath := "/etc/nginx/sites-enabled/" + domain + ".ssl"
-
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", sslConfPath)
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", enabledPath)
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 }
 
 // scanCert scans a single SSL certificate row from *sql.Row.

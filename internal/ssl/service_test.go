@@ -121,24 +121,21 @@ func newTestService(t *testing.T, db *sql.DB, acme ACMEClient) *Service {
 	return NewService(db, mock, auditSvc, acme, "/tmp/jenderal_ssl_test")
 }
 
-// fakeCertPEM and fakeKeyPEM are dummy PEM bytes for testing.
-var (
-	fakeCertPEM = []byte("-----BEGIN CERTIFICATE-----\nfake-cert-data\n-----END CERTIFICATE-----\n")
-	fakeKeyPEM  = []byte("-----BEGIN RSA PRIVATE KEY-----\nfake-key-data\n-----END RSA PRIVATE KEY-----\n")
-)
-
 func TestIssue_Success(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 
 	insertTestWebsite(t, db, "ws-001", "example.com")
+	issuedAt := time.Now().UTC().Truncate(time.Second)
+	wantNotAfter := issuedAt.Add(60 * 24 * time.Hour)
+	issuedCert, issuedKey := testCertificate(t, []string{"example.com"}, issuedAt.Add(-time.Hour), wantNotAfter)
 
 	acme := &MockACMEClient{
 		ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
 			if domain != "example.com" {
 				t.Errorf("unexpected domain: %s", domain)
 			}
-			return fakeCertPEM, fakeKeyPEM, nil
+			return issuedCert, issuedKey, nil
 		},
 		RevokeFunc: func(certPEM []byte) error {
 			return nil
@@ -164,8 +161,8 @@ func TestIssue_Success(t *testing.T) {
 	if cert.Issuer != "letsencrypt" {
 		t.Errorf("expected issuer 'letsencrypt', got %q", cert.Issuer)
 	}
-	if cert.ExpiresAt.IsZero() {
-		t.Error("expected non-zero expires_at")
+	if !cert.ExpiresAt.Equal(wantNotAfter) {
+		t.Errorf("expires_at = %v, want %v", cert.ExpiresAt, wantNotAfter)
 	}
 	if !cert.AutoRenew {
 		t.Error("expected auto_renew to be true")
@@ -272,7 +269,9 @@ func TestList(t *testing.T) {
 
 	acme := &MockACMEClient{
 		ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
-			return fakeCertPEM, fakeKeyPEM, nil
+			now := time.Now().UTC().Truncate(time.Second)
+			certPEM, keyPEM := testCertificate(t, []string{domain}, now.Add(-time.Hour), now.Add(60*24*time.Hour))
+			return certPEM, keyPEM, nil
 		},
 		RevokeFunc: func(certPEM []byte) error {
 			return nil
@@ -344,7 +343,9 @@ func TestGetExpiringCerts(t *testing.T) {
 
 	acme := &MockACMEClient{
 		ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
-			return fakeCertPEM, fakeKeyPEM, nil
+			now := time.Now().UTC().Truncate(time.Second)
+			certPEM, keyPEM := testCertificate(t, []string{domain}, now.Add(-time.Hour), now.Add(60*24*time.Hour))
+			return certPEM, keyPEM, nil
 		},
 		RevokeFunc: func(certPEM []byte) error {
 			return nil
@@ -373,7 +374,9 @@ func TestCount(t *testing.T) {
 
 	acme := &MockACMEClient{
 		ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
-			return fakeCertPEM, fakeKeyPEM, nil
+			now := time.Now().UTC().Truncate(time.Second)
+			certPEM, keyPEM := testCertificate(t, []string{domain}, now.Add(-time.Hour), now.Add(60*24*time.Hour))
+			return certPEM, keyPEM, nil
 		},
 		RevokeFunc: func(certPEM []byte) error {
 			return nil
@@ -401,6 +404,242 @@ func TestCount(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("expected count 1, got %d", count)
+	}
+}
+
+func TestInstallCustom(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-custom", "example.com")
+
+	now := time.Now().UTC().Truncate(time.Second)
+	wantNotAfter := now.Add(45 * 24 * time.Hour)
+	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), wantNotAfter)
+	svc := newTestService(t, db, &MockACMEClient{})
+
+	cert, err := svc.InstallCustom(context.Background(), "ws-custom", "example.com", certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("InstallCustom() error = %v", err)
+	}
+	if cert.Issuer != "custom" || cert.AutoRenew {
+		t.Fatalf("unexpected custom metadata: %#v", cert)
+	}
+	if !cert.ExpiresAt.Equal(wantNotAfter) {
+		t.Fatalf("expires_at = %v, want %v", cert.ExpiresAt, wantNotAfter)
+	}
+}
+
+func TestInstallCustomRejectsUnregisteredDomainBeforeSystemWrites(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-owner", "example.com")
+
+	now := time.Now().UTC().Truncate(time.Second)
+	certPEM, keyPEM := testCertificate(t, []string{"other.example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+	var sudoCalls int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCalls++
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{}, t.TempDir())
+
+	if _, err := svc.InstallCustom(context.Background(), "ws-owner", "other.example.com", certPEM, keyPEM); err == nil {
+		t.Fatal("InstallCustom() accepted an unregistered domain")
+	}
+	if sudoCalls != 0 {
+		t.Fatalf("system calls = %d, want 0", sudoCalls)
+	}
+}
+
+func TestSetAutoRenewRejectsCustom(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-renew", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+		 VALUES (?, ?, ?, 'custom', 'active', ?, 0, ?, ?)`,
+		"cert-custom", "ws-renew", "example.com", now, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := newTestService(t, db, &MockACMEClient{})
+	if err := svc.SetAutoRenew(context.Background(), "cert-custom", true); err == nil {
+		t.Fatal("SetAutoRenew() accepted a custom certificate")
+	}
+}
+
+func TestRenewCustomDoesNotCallACME(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-custom-renew", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+		 VALUES (?, ?, ?, 'custom', 'active', ?, 0, ?, ?)`,
+		"cert-custom-renew", "ws-custom-renew", "example.com", now, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var obtainCalls int
+	acme := &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+		obtainCalls++
+		return nil, nil, nil
+	}}
+	svc := newTestService(t, db, acme)
+	if err := svc.Renew(context.Background(), "cert-custom-renew"); err == nil {
+		t.Fatal("Renew() accepted a custom certificate")
+	}
+	if obtainCalls != 0 {
+		t.Fatalf("ACME obtain calls = %d, want 0", obtainCalls)
+	}
+}
+
+func TestCustomReplacementRestoresActiveRecordOnNginxFailure(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-replace", "example.com")
+	oldExpiry := time.Now().UTC().Truncate(time.Second).Add(10 * 24 * time.Hour)
+	nowStr := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+		 VALUES (?, ?, ?, 'custom', 'active', ?, 0, ?, ?)`,
+		"cert-replace", "ws-replace", "example.com", oldExpiry.Format(time.RFC3339), nowStr, nowStr,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var nginxTests int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			if name == "nginx" {
+				nginxTests++
+				if nginxTests == 1 {
+					return &executor.Result{ExitCode: 1, Stderr: "replacement invalid"}, nil
+				}
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{}, t.TempDir())
+	issuedAt := time.Now().UTC().Truncate(time.Second)
+	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, issuedAt.Add(-time.Hour), issuedAt.Add(30*24*time.Hour))
+
+	if _, err := svc.InstallCustom(context.Background(), "ws-replace", "example.com", certPEM, keyPEM); err == nil {
+		t.Fatal("InstallCustom() error = nil, want replacement failure")
+	}
+	restored, err := svc.Get(context.Background(), "cert-replace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != "active" || !restored.ExpiresAt.Equal(oldExpiry) {
+		t.Fatalf("record was not restored: %#v", restored)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ssl_certificates WHERE website_id = ? AND domain = ?`, "ws-replace", "example.com").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("certificate rows = %d, want 1", count)
+	}
+}
+
+func TestRevokeCustomDoesNotCallACME(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-revoke", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+		 VALUES (?, ?, ?, 'custom', 'active', ?, 0, ?, ?)`,
+		"cert-custom", "ws-revoke", "example.com", now, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var revoked bool
+	acme := &MockACMEClient{RevokeFunc: func(certPEM []byte) error { revoked = true; return nil }}
+	svc := newTestService(t, db, acme)
+	if err := svc.Revoke(context.Background(), "cert-custom"); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+	if revoked {
+		t.Fatal("custom certificate was sent to ACME revocation")
+	}
+}
+
+func TestDeleteKeepsWebsiteSSLWhenAnotherCertificateIsActive(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-multi", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO domains (id, website_id, name, type, created_at) VALUES (?, ?, ?, 'alias', ?)`,
+		"dom-multi-alias", "ws-multi", "www.example.com", now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET ssl_enabled = 1 WHERE id = ?`, "ws-multi"); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct{ id, domain string }{{"cert-primary", "example.com"}, {"cert-alias", "www.example.com"}} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+			 VALUES (?, ?, ?, 'letsencrypt', 'active', ?, 1, ?, ?)`,
+			item.id, "ws-multi", item.domain, now, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	svc := newTestService(t, db, &MockACMEClient{})
+	if err := svc.Delete(context.Background(), "cert-alias"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	var enabled int
+	if err := db.QueryRow(`SELECT ssl_enabled FROM websites WHERE id = ?`, "ws-multi").Scan(&enabled); err != nil {
+		t.Fatal(err)
+	}
+	if enabled != 1 {
+		t.Fatalf("ssl_enabled = %d, want 1", enabled)
+	}
+}
+
+func TestGetExpiringCertsExcludesCustomIssuer(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-expiring-issuer", "example.com")
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	expires := now.Add(24 * time.Hour).Format(time.RFC3339)
+	for _, item := range []struct{ id, issuer string }{{"cert-le", "letsencrypt"}, {"cert-custom", "custom"}} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, 'active', ?, 1, ?, ?)`,
+			item.id, "ws-expiring-issuer", item.id+".example.com", item.issuer, expires, nowStr, nowStr,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := newTestService(t, db, &MockACMEClient{})
+	certs, err := svc.GetExpiringCerts(context.Background(), 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(certs) != 1 || certs[0].ID != "cert-le" {
+		t.Fatalf("expiring certificates = %#v, want only cert-le", certs)
 	}
 }
 
