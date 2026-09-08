@@ -44,8 +44,8 @@ func Run(cfg config.ServerConfig, handler http.Handler, logger *slog.Logger) err
 	go func() {
 		var serveErr error
 		if cfg.TLS.Enabled && cfg.TLS.Cert != "" {
-			tlsLn := tls.NewListener(ln, srv.TLSConfig)
-			serveErr = srv.ServeTLS(tlsLn, cfg.TLS.Cert, cfg.TLS.Key)
+			// ServeTLS handles TLS on a plain listener
+			serveErr = srv.ServeTLS(ln, cfg.TLS.Cert, cfg.TLS.Key)
 		} else {
 			serveErr = srv.Serve(ln)
 		}
