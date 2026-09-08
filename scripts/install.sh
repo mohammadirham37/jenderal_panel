@@ -345,38 +345,79 @@ download_binary() {
 }
 
 build_from_source() {
-    # Check if Go is installed
+    # Install Go if not available
+    export PATH=$PATH:/usr/local/go/bin
     if ! command -v go &>/dev/null; then
         log "Installing Go..."
-        local go_ver="1.23.0"
-        curl -fsSL "https://go.dev/dl/go${go_ver}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz
+        local go_ver="1.23.4"
+        if ! curl -fsSL "https://go.dev/dl/go${go_ver}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz; then
+            error "Failed to download Go ${go_ver}"
+        fi
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go.tar.gz
-        export PATH=$PATH:/usr/local/go/bin
         rm -f /tmp/go.tar.gz
+
+        if ! /usr/local/go/bin/go version > /dev/null 2>&1; then
+            error "Go installation failed"
+        fi
+        log "Go $(/usr/local/go/bin/go version | awk '{print $3}') installed"
+    else
+        log "Go $(go version | awk '{print $3}') already installed"
     fi
 
-    # Check if Node.js is installed
+    # Install Node.js if not available
     if ! command -v node &>/dev/null; then
         log "Installing Node.js..."
-        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - > /dev/null 2>&1
-        apt-get install -y -qq nodejs > /dev/null 2>&1
+        # Try NodeSource first, fallback to apt
+        if curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | bash - > /dev/null 2>&1; then
+            apt-get install -y nodejs > /dev/null 2>&1
+        else
+            warn "NodeSource failed, trying apt..."
+            apt-get install -y nodejs npm > /dev/null 2>&1
+        fi
+
+        if ! command -v node &>/dev/null; then
+            error "Node.js installation failed"
+        fi
+        log "Node.js $(node --version) installed"
+    else
+        log "Node.js $(node --version) already installed"
     fi
 
-    log "Building from source..."
+    # Install build dependencies
+    apt-get install -y -qq gcc g++ make git > /dev/null 2>&1 || true
+
+    log "Building from source (this may take a few minutes)..."
     local build_dir="/tmp/jenderal-build-$$"
-    git clone --depth 1 "https://github.com/${JENDERAL_REPO}.git" "$build_dir"
-    cd "$build_dir"
+
+    if ! git clone --depth 1 "https://github.com/${JENDERAL_REPO}.git" "$build_dir" 2>&1; then
+        error "Failed to clone repository"
+    fi
 
     # Build frontend
-    cd web && npm install --silent && npm run build && cd ..
+    log "Building frontend..."
+    cd "$build_dir/web"
+    if ! npm install 2>&1 | tail -3; then
+        error "npm install failed"
+    fi
+    if ! npm run build 2>&1 | tail -3; then
+        error "Frontend build failed"
+    fi
 
     # Copy frontend build for embedding
+    cd "$build_dir"
     rm -rf cmd/jenderal/web_build
     cp -r web/build cmd/jenderal/web_build
 
     # Build Go binary
-    CGO_ENABLED=1 go build -ldflags "-X main.version=${JENDERAL_VERSION}" -o "$JENDERAL_BIN" ./cmd/jenderal
+    log "Compiling Go binary..."
+    if ! CGO_ENABLED=1 /usr/local/go/bin/go build \
+        -ldflags "-X main.version=${JENDERAL_VERSION}" \
+        -o "$JENDERAL_BIN" \
+        ./cmd/jenderal 2>&1 | tail -5; then
+        error "Go build failed"
+    fi
+
     chmod +x "$JENDERAL_BIN"
     chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_BIN"
 
