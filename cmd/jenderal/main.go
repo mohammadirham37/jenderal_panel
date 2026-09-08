@@ -4,10 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -192,25 +189,22 @@ func cmdServe() {
 		StaticHandler:  staticHandler(),
 	})
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	// Background workers use a context that cancels on process exit
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	defer bgCancel()
 
-	metricsCollector.Start(ctx)
-	provisioner.Start(ctx)
-	renewalWorker.Start(ctx)
-	deploySvc.Start(ctx)
-	backupScheduler.Start(ctx)
-	alertChecker.Start(ctx)
+	metricsCollector.Start(bgCtx)
+	provisioner.Start(bgCtx)
+	renewalWorker.Start(bgCtx)
+	deploySvc.Start(bgCtx)
+	backupScheduler.Start(bgCtx)
+	alertChecker.Start(bgCtx)
 
-	srv := server.New(cfg.Server, router, logger)
-	fmt.Fprintf(os.Stderr, "Starting server on %s:%d (tls=%v)\n", cfg.Server.Host, cfg.Server.Port, cfg.Server.TLS.Enabled)
-	if err := server.ListenAndServe(ctx, srv, cfg.Server, logger); err != nil {
-		if err != http.ErrServerClosed {
-			fmt.Fprintf(os.Stderr, "SERVER ERROR: %v\n", err)
-			os.Exit(1)
-		}
+	// Server handles its own signal catching — blocks until shutdown
+	if err := server.Run(cfg.Server, router, logger); err != nil {
+		fmt.Fprintf(os.Stderr, "SERVER ERROR: %v\n", err)
+		os.Exit(1)
 	}
-	fmt.Fprintln(os.Stderr, "Server stopped.")
 }
 
 func cmdMigrate() {
