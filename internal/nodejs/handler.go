@@ -54,16 +54,15 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Version string `json:"version"`
 		}
-		if err := httputil.DecodeJSON(r, &req); err == nil {
+		if err := httputil.DecodeJSON(r, &req); err == nil && req.Version != "" {
 			version = req.Version
 		}
 	}
 	if version == "" {
-		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "version required")
-		return
+		version = "20" // default LTS
 	}
 	taskID := h.tasks.RunMultiple("Install Node.js "+version, [][]string{
-		{"apt-get", "update", "-qq"},
+		{"bash", "-c", "curl -fsSL https://deb.nodesource.com/setup_" + version + ".x | bash -"},
 		{"apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "nodejs"},
 	})
 
