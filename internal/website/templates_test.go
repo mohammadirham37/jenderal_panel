@@ -61,6 +61,95 @@ func TestRenderVhost_PHPUsesPackagedFastCGIParams(t *testing.T) {
 	}
 }
 
+func TestRenderVhost_OmitsIPv6WhenUnavailable(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:       "example.com",
+		DocumentRoot: "/srv/example",
+		LogDir:       "/var/log/example",
+		AppType:      "static",
+		IPv6:         false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output, "listen [::]:80;") {
+		t.Fatalf("unexpected IPv6 listener:\n%s", output)
+	}
+}
+
+func TestRenderVhost_IncludesIPv6WhenAvailable(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:       "example.com",
+		DocumentRoot: "/srv/example",
+		LogDir:       "/var/log/example",
+		AppType:      "static",
+		IPv6:         true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output, "listen [::]:80;") {
+		t.Fatalf("missing IPv6 listener:\n%s", output)
+	}
+}
+
+func TestRenderTLSVhost_RoutesAliasThroughPrimaryPHPPool(t *testing.T) {
+	output, err := RenderTLSVhost(TLSVhostData{
+		VhostData: VhostData{
+			Domain:       "example.com",
+			DocumentRoot: "/srv/example",
+			LogDir:       "/var/log/example",
+			PHPVersion:   "8.3",
+			AppType:      "php",
+			IPv6:         false,
+		},
+		TLSDomain:       "www.example.com",
+		CertificatePath: "/etc/jenderal/ssl/www.example.com/cert.pem",
+		PrivateKeyPath:  "/etc/jenderal/ssl/www.example.com/key.pem",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []string{
+		"listen 443 ssl;",
+		"server_name www.example.com;",
+		"php8.3-fpm-example.com.sock",
+	}
+	for _, check := range checks {
+		if !strings.Contains(output, check) {
+			t.Errorf("missing %q:\n%s", check, output)
+		}
+	}
+	if strings.Contains(output, "listen [::]:443") {
+		t.Fatalf("unexpected IPv6 listener:\n%s", output)
+	}
+}
+
+func TestRenderVhost_SeparatesHTTPSRedirectDomains(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:          "example.com",
+		Aliases:         "www.example.com api.example.com",
+		DocumentRoot:    "/srv/example",
+		LogDir:          "/var/log/example",
+		AppType:         "static",
+		RedirectDomains: []string{"www.example.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []string{
+		"server_name example.com api.example.com;",
+		"server_name www.example.com;",
+		"location ^~ /.well-known/acme-challenge/",
+		"return 301 https://$host$request_uri;",
+	}
+	for _, check := range checks {
+		if !strings.Contains(output, check) {
+			t.Errorf("missing %q:\n%s", check, output)
+		}
+	}
+}
+
 func TestRenderVhost_Static(t *testing.T) {
 	data := VhostData{
 		Domain:       "static.example.com",

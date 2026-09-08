@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"database/sql"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -149,6 +150,38 @@ func TestProvision_Success(t *testing.T) {
 	}
 	if errMsg != "" {
 		t.Errorf("expected empty error_message, got %q", errMsg)
+	}
+}
+
+func TestProvisionUsesDetectedIPv6Capability(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	insertTestWebsite(t, db, "ws-ipv6", "ipv6.example.com", "static", "", "pending")
+
+	var vhost string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Duration: time.Millisecond}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "cp" && len(args) == 2 && args[1] == "/etc/nginx/sites-available/ipv6.example.com" {
+				content, err := os.ReadFile(args[0])
+				if err != nil {
+					t.Fatalf("read rendered vhost: %v", err)
+				}
+				vhost = string(content)
+			}
+			return &executor.Result{ExitCode: 0, Duration: time.Millisecond}, nil
+		},
+	}
+
+	prov := NewProvisioner(db, mock, nil)
+	prov.ipv6Available = func() bool { return true }
+	prov.provision(context.Background(), "ws-ipv6")
+
+	if !strings.Contains(vhost, "listen [::]:80;") {
+		t.Fatalf("provisioned vhost did not use detected IPv6 support:\n%s", vhost)
 	}
 }
 

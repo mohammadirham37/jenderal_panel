@@ -10,23 +10,26 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 )
 
 // Provisioner handles background provisioning of websites.
 type Provisioner struct {
-	db    *sql.DB
-	exec  executor.CommandExecutor
-	audit *audit.Service
-	queue chan string
+	db            *sql.DB
+	exec          executor.CommandExecutor
+	audit         *audit.Service
+	queue         chan string
+	ipv6Available func() bool
 }
 
 // NewProvisioner creates a new Provisioner with a buffered queue channel.
 func NewProvisioner(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service) *Provisioner {
 	return &Provisioner{
-		db:    db,
-		exec:  exec,
-		audit: auditSvc,
-		queue: make(chan string, 100),
+		db:            db,
+		exec:          exec,
+		audit:         auditSvc,
+		queue:         make(chan string, 100),
+		ipv6Available: nginxconfig.IPv6Available,
 	}
 }
 
@@ -144,6 +147,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		LogDir:       logDir,
 		PHPVersion:   w.PHPVersion,
 		AppType:      w.AppType,
+		IPv6:         p.ipv6Available(),
 	}
 
 	vhostContent, err := RenderVhost(vhostData)
