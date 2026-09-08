@@ -31,39 +31,41 @@ func NewMetricsCollector(db *sql.DB, cfg config.MetricsConfig) *MetricsCollector
 
 // Start begins background collection. It blocks until ctx is cancelled.
 func (mc *MetricsCollector) Start(ctx context.Context) {
-	collectTicker := time.NewTicker(mc.cfg.CollectInterval)
-	storeTicker := time.NewTicker(mc.cfg.StoreInterval)
-	cleanupTicker := time.NewTicker(24 * time.Hour)
-	defer collectTicker.Stop()
-	defer storeTicker.Stop()
-	defer cleanupTicker.Stop()
+	go func() {
+		collectTicker := time.NewTicker(mc.cfg.CollectInterval)
+		storeTicker := time.NewTicker(mc.cfg.StoreInterval)
+		cleanupTicker := time.NewTicker(24 * time.Hour)
+		defer collectTicker.Stop()
+		defer storeTicker.Stop()
+		defer cleanupTicker.Stop()
 
-	// Collect once immediately.
-	m := mc.collect()
-	mc.buffer.Add(m)
+		// Collect once immediately.
+		m := mc.collect()
+		mc.buffer.Add(m)
 
-	var lastStored model.ServerMetrics
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-collectTicker.C:
-			m := mc.collect()
-			mc.buffer.Add(m)
-		case <-storeTicker.C:
-			latest := mc.buffer.Latest()
-			if latest.Timestamp.IsZero() {
-				continue
-			}
-			if latest.Timestamp.Equal(lastStored.Timestamp) {
-				continue
-			}
-			_ = mc.store(ctx, latest)
-			lastStored = latest
+		var lastStored model.ServerMetrics
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-collectTicker.C:
+				m := mc.collect()
+				mc.buffer.Add(m)
+			case <-storeTicker.C:
+				latest := mc.buffer.Latest()
+				if latest.Timestamp.IsZero() {
+					continue
+				}
+				if latest.Timestamp.Equal(lastStored.Timestamp) {
+					continue
+				}
+				_ = mc.store(ctx, latest)
+				lastStored = latest
 		case <-cleanupTicker.C:
 			mc.cleanup(ctx)
 		}
 	}
+	}()
 }
 
 // Buffer returns the in-memory ring buffer.
