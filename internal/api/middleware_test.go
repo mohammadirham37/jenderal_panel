@@ -1,9 +1,14 @@
 package api
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
 )
 
 func TestRequestIDMiddleware(t *testing.T) {
@@ -53,5 +58,42 @@ func TestRecovererMiddleware(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", rec.Code)
+	}
+}
+
+func TestLoggingMiddleware_PreservesWebSocketUpgrade(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	handler := LoggingMiddleware(slog.New(slog.NewTextHandler(io.Discard, nil)))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		if err := conn.WriteMessage(websocket.TextMessage, []byte("connected")); err != nil {
+			t.Errorf("write websocket message: %v", err)
+		}
+	}))
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	url := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, response, err := websocket.DefaultDialer.Dial(url, nil)
+	if response != nil {
+		defer response.Body.Close()
+	}
+	if err != nil {
+		t.Fatalf("dial websocket through logging middleware: %v", err)
+	}
+	defer conn.Close()
+
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read websocket message: %v", err)
+	}
+	if got := string(message); got != "connected" {
+		t.Fatalf("message = %q, want connected", got)
 	}
 }

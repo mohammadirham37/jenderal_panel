@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bufio"
 	"log/slog"
+	"net"
 	"net/http"
 	"time"
 
@@ -66,4 +68,16 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.status = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack preserves WebSocket and other upgraded connections through the
+// logging wrapper. Optional ResponseWriter interfaces are otherwise hidden by
+// the wrapper, causing Gorilla WebSocket upgrades to fail before the handler
+// can accept the connection.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, readWriter, err := http.NewResponseController(rw.ResponseWriter).Hijack()
+	if err == nil {
+		rw.status = http.StatusSwitchingProtocols
+	}
+	return conn, readWriter, err
 }
