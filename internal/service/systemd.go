@@ -58,10 +58,14 @@ func (s *Systemd) Start(ctx context.Context, name string) error {
 	}
 	result, err := s.exec.RunSudo(ctx, "systemctl", "start", name)
 	if err != nil {
-		return fmt.Errorf("start %s: %w", name, err)
+		return model.NewDomainError("SERVICE_ERROR", fmt.Sprintf("failed to start %s: %v", name, err), err)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("start %s: %s", name, strings.TrimSpace(result.Stderr))
+		msg := strings.TrimSpace(result.Stderr)
+		if msg == "" {
+			msg = fmt.Sprintf("service %s is not installed or failed to start", name)
+		}
+		return model.NewDomainError("SERVICE_ERROR", msg, nil)
 	}
 	return nil
 }
@@ -73,10 +77,14 @@ func (s *Systemd) Stop(ctx context.Context, name string) error {
 	}
 	result, err := s.exec.RunSudo(ctx, "systemctl", "stop", name)
 	if err != nil {
-		return fmt.Errorf("stop %s: %w", name, err)
+		return model.NewDomainError("SERVICE_ERROR", fmt.Sprintf("failed to stop %s: %v", name, err), err)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("stop %s: %s", name, strings.TrimSpace(result.Stderr))
+		msg := strings.TrimSpace(result.Stderr)
+		if msg == "" {
+			msg = fmt.Sprintf("service %s is not installed or failed to stop", name)
+		}
+		return model.NewDomainError("SERVICE_ERROR", msg, nil)
 	}
 	return nil
 }
@@ -88,10 +96,14 @@ func (s *Systemd) Restart(ctx context.Context, name string) error {
 	}
 	result, err := s.exec.RunSudo(ctx, "systemctl", "restart", name)
 	if err != nil {
-		return fmt.Errorf("restart %s: %w", name, err)
+		return model.NewDomainError("SERVICE_ERROR", fmt.Sprintf("failed to restart %s: %v", name, err), err)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("restart %s: %s", name, strings.TrimSpace(result.Stderr))
+		msg := strings.TrimSpace(result.Stderr)
+		if msg == "" {
+			msg = fmt.Sprintf("service %s is not installed or failed to restart", name)
+		}
+		return model.NewDomainError("SERVICE_ERROR", msg, nil)
 	}
 	return nil
 }
@@ -103,10 +115,14 @@ func (s *Systemd) Reload(ctx context.Context, name string) error {
 	}
 	result, err := s.exec.RunSudo(ctx, "systemctl", "reload", name)
 	if err != nil {
-		return fmt.Errorf("reload %s: %w", name, err)
+		return model.NewDomainError("SERVICE_ERROR", fmt.Sprintf("failed to reload %s: %v", name, err), err)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("reload %s: %s", name, strings.TrimSpace(result.Stderr))
+		msg := strings.TrimSpace(result.Stderr)
+		if msg == "" {
+			msg = fmt.Sprintf("service %s is not installed or failed to reload", name)
+		}
+		return model.NewDomainError("SERVICE_ERROR", msg, nil)
 	}
 	return nil
 }

@@ -75,6 +75,8 @@ func domainErrorToStatus(code string) int {
 		return http.StatusTooManyRequests
 	case "SERVICE_NOT_ALLOWED":
 		return http.StatusForbidden
+	case "SERVICE_ERROR", "NGINX_CONFIG_INVALID", "SSH_WARNING":
+		return http.StatusBadRequest
 	case "USER_INACTIVE":
 		return http.StatusForbidden
 	default:
