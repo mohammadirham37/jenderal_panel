@@ -8,10 +8,12 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 
+	legoacme "github.com/go-acme/lego/v4/acme"
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge"
@@ -203,11 +205,16 @@ func (c *LegoClient) RevokeCertificate(certPEM []byte) error {
 		user.Registration = reg
 	}
 
-	if err := client.Certificate.Revoke(certPEM); err != nil {
+	if err := client.Certificate.Revoke(certPEM); err != nil && !isAlreadyRevokedError(err) {
 		return fmt.Errorf("revoke certificate: %w", err)
 	}
 
 	return nil
+}
+
+func isAlreadyRevokedError(err error) bool {
+	var problem *legoacme.ProblemDetails
+	return errors.As(err, &problem) && problem.Type == "urn:ietf:params:acme:error:alreadyRevoked"
 }
 
 // ----------------------------------------------------------------

@@ -11,6 +11,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 )
 
 // Provisioner handles background provisioning of websites.
@@ -20,6 +21,7 @@ type Provisioner struct {
 	audit         *audit.Service
 	queue         chan string
 	ipv6Available func() bool
+	mutations     *siteops.Coordinator
 }
 
 // NewProvisioner creates a new Provisioner with a buffered queue channel.
@@ -30,6 +32,7 @@ func NewProvisioner(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.S
 		audit:         auditSvc,
 		queue:         make(chan string, 100),
 		ipv6Available: nginxconfig.IPv6Available,
+		mutations:     siteops.Default,
 	}
 }
 
@@ -59,6 +62,9 @@ func (p *Provisioner) Queue(websiteID string) {
 
 // provision executes the full provisioning pipeline for a website.
 func (p *Provisioner) provision(ctx context.Context, websiteID string) {
+	unlock := p.mutations.Lock(websiteID)
+	defer unlock()
+
 	// Load website from DB.
 	w, err := p.loadWebsite(ctx, websiteID)
 	if err != nil {

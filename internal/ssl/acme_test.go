@@ -1,10 +1,12 @@
 package ssl
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	legoacme "github.com/go-acme/lego/v4/acme"
 	"github.com/go-acme/lego/v4/lego"
 )
 
@@ -45,5 +47,15 @@ func TestACMEDirectoryURLAllowsExplicitOverride(t *testing.T) {
 func TestNewHTTP01ProviderRejectsMissingWebroot(t *testing.T) {
 	if _, err := newHTTP01Provider(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("newHTTP01Provider() accepted a missing webroot")
+	}
+}
+
+func TestAlreadyRevokedACMEErrorIsIdempotent(t *testing.T) {
+	err := fmt.Errorf("wrapped: %w", &legoacme.ProblemDetails{Type: "urn:ietf:params:acme:error:alreadyRevoked"})
+	if !isAlreadyRevokedError(err) {
+		t.Fatal("already-revoked ACME response was not recognized")
+	}
+	if isAlreadyRevokedError(fmt.Errorf("network unavailable")) {
+		t.Fatal("unrelated ACME error was treated as already revoked")
 	}
 }

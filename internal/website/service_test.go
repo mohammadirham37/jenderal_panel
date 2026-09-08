@@ -163,6 +163,102 @@ func TestDeleteRemovesPerDomainSSLArtifacts(t *testing.T) {
 	}
 }
 
+func TestDeleteIgnoresUnregisteredHistoricalCertificateDomain(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-unsafe", "example.com", "static", "", "active")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+		 VALUES ('cert-unsafe', 'ws-delete-unsafe', '../../tmp/owned', 'custom', 'active', 0, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var removed []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "rm" {
+				removed = append(removed, args[len(args)-1])
+			}
+			if name == "id" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-unsafe", false); err == nil {
+		t.Fatal("Delete() error = nil, want unregistered certificate rejection")
+	}
+	for _, path := range removed {
+		if strings.Contains(path, "tmp/owned") {
+			t.Fatalf("Delete() used unsafe historical certificate path %q", path)
+		}
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites WHERE id = 'ws-delete-unsafe'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("website rows = %d, want retained recovery metadata", count)
+	}
+}
+
+func TestDeleteRetainsDatabaseStateWhenSystemCleanupFails(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-fail", "example.com", "static", "", "active")
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "rm" && args[len(args)-1] == "/etc/nginx/sites-available/example.com" {
+				return &executor.Result{ExitCode: 1, Stderr: "permission denied"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-fail", false); err == nil {
+		t.Fatal("Delete() error = nil, want cleanup failure")
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites WHERE id = 'ws-delete-fail'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("website rows = %d, want retained metadata", count)
+	}
+}
+
+func TestDeleteRejectsStoredSystemUserOutsideWebsiteOwnership(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-root", "example.com", "static", "", "active")
+	if _, err := db.Exec(`UPDATE websites SET web_user = 'root' WHERE id = 'ws-delete-root'`); err != nil {
+		t.Fatal(err)
+	}
+	var sudoCalls int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCalls++
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-root", true); err == nil {
+		t.Fatal("Delete() error = nil, want foreign system user rejection")
+	}
+	if sudoCalls != 0 {
+		t.Fatalf("system calls = %d, want 0", sudoCalls)
+	}
+}
+
 func TestSuspendAndEnableTogglePerDomainTLSVhosts(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -210,6 +306,40 @@ func TestSuspendAndEnableTogglePerDomainTLSVhosts(t *testing.T) {
 		if !containsMove(moves, move) {
 			t.Errorf("missing move %q -> %q; moves = %v", move[0], move[1], moves)
 		}
+	}
+}
+
+func TestSuspendMovesDuplicateCertificateDomainOnce(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-suspend-duplicate", "example.com", "static", "", "active")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range []string{"cert-duplicate-a", "cert-duplicate-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-suspend-duplicate', 'example.com', 'custom', 'active', 0, ?, ?)`, id, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var tlsMoves int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "mv" && len(args) == 2 && args[0] == "/etc/nginx/sites-enabled/example.com.ssl" {
+				tlsMoves++
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Suspend(context.Background(), "ws-suspend-duplicate"); err != nil {
+		t.Fatalf("Suspend() error = %v", err)
+	}
+	if tlsMoves != 1 {
+		t.Fatalf("TLS config moves = %d, want 1", tlsMoves)
 	}
 }
 

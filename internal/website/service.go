@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,10 +17,13 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 )
 
 // domainRegex validates domain names: alphanumeric, hyphens, dots.
 var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$`)
+var webUserRegex = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
+var phpVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
 // CreateRequest holds the data for creating a new website.
 type CreateRequest struct {
@@ -41,11 +45,12 @@ type Service struct {
 	audit         *audit.Service
 	prov          *Provisioner
 	ipv6Available func() bool
+	mutations     *siteops.Coordinator
 }
 
 // NewService creates a new website management service.
 func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service) *Service {
-	return &Service{db: db, exec: exec, audit: auditSvc, ipv6Available: nginxconfig.IPv6Available}
+	return &Service{db: db, exec: exec, audit: auditSvc, ipv6Available: nginxconfig.IPv6Available, mutations: siteops.Default}
 }
 
 // SetProvisioner sets the provisioner after creation to break circular
@@ -209,6 +214,8 @@ func (s *Service) List(ctx context.Context) ([]model.Website, error) {
 
 // Update updates a website's mutable fields.
 func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) error {
+	unlock := s.mutations.Lock(id)
+	defer unlock()
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -235,49 +242,97 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 
 // Delete removes a website record and optionally its files.
 func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error {
+	unlock := s.mutations.Lock(id)
+	defer unlock()
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return err
+	}
+	if !safeDomainComponent(w.Domain) {
+		return fmt.Errorf("delete website: unsafe stored domain %q", w.Domain)
+	}
+	if !webUserRegex.MatchString(w.WebUser) || filepath.Base(w.WebUser) != w.WebUser || w.WebUser != DomainToUser(w.Domain) {
+		return fmt.Errorf("delete website: unsafe stored web user %q", w.WebUser)
+	}
+	if w.PHPVersion != "" && !phpVersionRegex.MatchString(w.PHPVersion) {
+		return fmt.Errorf("delete website: unsafe stored PHP version %q", w.PHPVersion)
 	}
 	sslDomains, err := s.sslDomains(ctx, id)
 	if err != nil {
 		return err
 	}
 	for _, domain := range sslDomains {
-		_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+domain+".ssl")
-		_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+domain+".ssl.suspended")
-		_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-available/"+domain+".ssl")
-		_, _ = s.exec.RunSudo(ctx, "rm", "-rf", "/etc/jenderal/ssl/"+domain)
+		if !safeDomainComponent(domain) {
+			return fmt.Errorf("delete website: unsafe stored certificate domain %q", domain)
+		}
+	}
+	for _, domain := range sslDomains {
+		for _, path := range []string{
+			filepath.Join("/etc/nginx/sites-enabled", domain+".ssl"),
+			filepath.Join("/etc/nginx/sites-enabled", domain+".ssl.suspended"),
+			filepath.Join("/etc/nginx/sites-available", domain+".ssl"),
+		} {
+			if err := s.runSudoOK(ctx, "rm", "-f", path); err != nil {
+				return fmt.Errorf("delete website SSL config: %w", err)
+			}
+		}
+		if err := s.runSudoOK(ctx, "rm", "-rf", filepath.Join("/etc/jenderal/ssl", domain)); err != nil {
+			return fmt.Errorf("delete website certificate: %w", err)
+		}
 	}
 
 	// Remove nginx config.
-	confPath := "/etc/nginx/sites-available/" + w.Domain
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", confPath)
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+w.Domain)
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+w.Domain+".suspended")
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", confPath+".suspended")
+	confPath := filepath.Join("/etc/nginx/sites-available", w.Domain)
+	for _, path := range []string{
+		confPath,
+		filepath.Join("/etc/nginx/sites-enabled", w.Domain),
+		filepath.Join("/etc/nginx/sites-enabled", w.Domain+".suspended"),
+		confPath + ".suspended",
+	} {
+		if err := s.runSudoOK(ctx, "rm", "-f", path); err != nil {
+			return fmt.Errorf("delete website nginx config: %w", err)
+		}
+	}
 
 	// Remove FPM pool config.
 	if w.PHPVersion != "" {
-		poolPath := "/etc/php/" + w.PHPVersion + "/fpm/pool.d/" + w.Domain + ".conf"
-		_, _ = s.exec.RunSudo(ctx, "rm", "-f", poolPath)
+		poolPath := filepath.Join("/etc/php", w.PHPVersion, "fpm/pool.d", w.Domain+".conf")
+		if err := s.runSudoOK(ctx, "rm", "-f", poolPath); err != nil {
+			return fmt.Errorf("delete website PHP-FPM config: %w", err)
+		}
 	}
 
 	// Optionally remove user home directory.
 	if removeFiles {
-		homeDir := "/home/" + w.WebUser
-		_, _ = s.exec.RunSudo(ctx, "rm", "-rf", homeDir)
+		homeDir := filepath.Join("/home", w.WebUser)
+		if err := s.runSudoOK(ctx, "rm", "-rf", homeDir); err != nil {
+			return fmt.Errorf("delete website files: %w", err)
+		}
 	}
 
-	// Remove system user.
-	_, _ = s.exec.RunSudo(ctx, "userdel", w.WebUser)
+	// Remove the system user if it still exists, keeping retries idempotent.
+	userResult, err := s.exec.RunSudo(ctx, "id", "-u", w.WebUser)
+	if err != nil {
+		return fmt.Errorf("check website user: %w", err)
+	}
+	if userResult.ExitCode == 0 {
+		if err := s.runSudoOK(ctx, "userdel", w.WebUser); err != nil {
+			return fmt.Errorf("delete website user: %w", err)
+		}
+	} else if userResult.ExitCode != 1 {
+		return fmt.Errorf("check website user: %s", strings.TrimSpace(userResult.Stderr))
+	}
 
 	// Reload nginx.
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
+	if err := s.reloadNginx(ctx); err != nil {
+		return fmt.Errorf("delete website: %w", err)
+	}
 
 	// Restart PHP-FPM if applicable.
 	if w.PHPVersion != "" {
-		_, _ = s.exec.RunSudo(ctx, "systemctl", "restart", "php"+w.PHPVersion+"-fpm")
+		if err := s.runSudoOK(ctx, "systemctl", "restart", "php"+w.PHPVersion+"-fpm"); err != nil {
+			return fmt.Errorf("restart PHP-FPM after deleting website: %w", err)
+		}
 	}
 
 	// Delete DB records (domains cascade).
@@ -291,6 +346,8 @@ func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error
 
 // Suspend suspends a website by renaming its nginx config.
 func (s *Service) Suspend(ctx context.Context, id string) error {
+	unlock := s.mutations.Lock(id)
+	defer unlock()
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -322,6 +379,8 @@ func (s *Service) Suspend(ctx context.Context, id string) error {
 
 // Enable re-enables a suspended website.
 func (s *Service) Enable(ctx context.Context, id string) error {
+	unlock := s.mutations.Lock(id)
+	defer unlock()
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -353,6 +412,8 @@ func (s *Service) Enable(ctx context.Context, id string) error {
 
 // Retry resets a failed website to pending and re-queues provisioning.
 func (s *Service) Retry(ctx context.Context, id string) error {
+	unlock := s.mutations.Lock(id)
+	defer unlock()
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -397,6 +458,8 @@ func (s *Service) GetConfig(ctx context.Context, id string) (string, error) {
 
 // SaveConfig saves an Nginx vhost configuration with validation and rollback.
 func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
+	unlock := s.mutations.Lock(id)
+	defer unlock()
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -404,11 +467,18 @@ func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
 
 	confPath := "/etc/nginx/sites-available/" + w.Domain
 	bakPath := confPath + ".bak"
-	tmpPath := "/tmp/jenderal_website_vhost.tmp"
-
-	// Write to temp file.
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+	tmpFile, err := os.CreateTemp("", "jenderal_website_vhost_*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.WriteString(content); err != nil {
+		tmpFile.Close()
 		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
 	}
 
 	// Backup current config.
@@ -443,6 +513,8 @@ func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
 
 // AddDomain adds an alias or subdomain to a website and regenerates the nginx config.
 func (s *Service) AddDomain(ctx context.Context, websiteID, name, domainType string) error {
+	unlock := s.mutations.Lock(websiteID)
+	defer unlock()
 	name = strings.TrimSpace(strings.ToLower(name))
 	if name == "" {
 		return model.NewValidationError("domain name is required")
@@ -485,6 +557,8 @@ func (s *Service) AddDomain(ctx context.Context, websiteID, name, domainType str
 
 // RemoveDomain removes a domain from a website. Primary domains cannot be removed.
 func (s *Service) RemoveDomain(ctx context.Context, websiteID, domainID string) error {
+	unlock := s.mutations.Lock(websiteID)
+	defer unlock()
 	// Check domain type.
 	var domainName, domainType string
 	err := s.db.QueryRowContext(ctx,
@@ -613,10 +687,18 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 	}
 
 	confPath := "/etc/nginx/sites-available/" + w.Domain
-	tmpPath := "/tmp/jenderal_website_regen.tmp"
-
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
+	tmpFile, err := os.CreateTemp("", "jenderal_website_regen_*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.WriteString(content); err != nil {
+		tmpFile.Close()
 		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
 	}
 
 	result, err := s.exec.RunSudo(ctx, "cp", tmpPath, confPath)
@@ -634,7 +716,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 
 func (s *Service) activeSSLDomains(ctx context.Context, websiteID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT domain FROM ssl_certificates WHERE website_id = ? AND status = 'active' ORDER BY created_at`,
+		`SELECT DISTINCT domain FROM ssl_certificates WHERE website_id = ? AND status = 'active' ORDER BY domain`,
 		websiteID,
 	)
 	if err != nil {
@@ -658,7 +740,10 @@ func (s *Service) activeSSLDomains(ctx context.Context, websiteID string) ([]str
 
 func (s *Service) sslDomains(ctx context.Context, websiteID string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT DISTINCT domain FROM ssl_certificates WHERE website_id = ? ORDER BY domain`,
+		`SELECT DISTINCT sc.domain, CASE WHEN d.id IS NULL THEN 0 ELSE 1 END
+		 FROM ssl_certificates AS sc
+		 LEFT JOIN domains AS d ON d.website_id = sc.website_id AND d.name = sc.domain
+		 WHERE sc.website_id = ? ORDER BY sc.domain`,
 		websiteID,
 	)
 	if err != nil {
@@ -669,8 +754,12 @@ func (s *Service) sslDomains(ctx context.Context, websiteID string) ([]string, e
 	var domains []string
 	for rows.Next() {
 		var domain string
-		if err := rows.Scan(&domain); err != nil {
+		var registered int
+		if err := rows.Scan(&domain, &registered); err != nil {
 			return nil, fmt.Errorf("scan website SSL domain: %w", err)
+		}
+		if registered == 0 {
+			return nil, fmt.Errorf("delete website: certificate domain %q is not registered to the website", domain)
 		}
 		domains = append(domains, domain)
 	}
@@ -720,6 +809,25 @@ func (s *Service) reloadNginx(ctx context.Context) error {
 		return fmt.Errorf("reload nginx: %s", strings.TrimSpace(result.Stderr))
 	}
 	return nil
+}
+
+func (s *Service) runSudoOK(ctx context.Context, name string, args ...string) error {
+	result, err := s.exec.RunSudo(ctx, name, args...)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		message := strings.TrimSpace(result.Stderr)
+		if message == "" {
+			message = fmt.Sprintf("exit status %d", result.ExitCode)
+		}
+		return fmt.Errorf("%s: %s", name, message)
+	}
+	return nil
+}
+
+func safeDomainComponent(domain string) bool {
+	return domainRegex.MatchString(domain) && filepath.Base(domain) == domain && domain != "." && domain != ".."
 }
 
 func (s *Service) restoreWebsiteConfigs(w model.Website, previousSuspend bool) {

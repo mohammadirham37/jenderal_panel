@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	websiteconfig "github.com/mohammadirham37/jenderal_panel/internal/website"
 )
 
@@ -190,6 +192,60 @@ func TestIssue_Success(t *testing.T) {
 	}
 	if sslEnabled != 1 {
 		t.Errorf("expected ssl_enabled=1, got %d", sslEnabled)
+	}
+}
+
+func TestIssueMarksPendingRecordFailedWhenRequestEndsAfterACME(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-issue-canceled", "example.com")
+	issuedAt := time.Now().UTC().Truncate(time.Second)
+	issuedCert, issuedKey := testCertificate(t, []string{"example.com"}, issuedAt.Add(-time.Hour), issuedAt.Add(24*time.Hour))
+	ctx, cancel := context.WithCancel(context.Background())
+	svc := newTestService(t, db, &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+		cancel()
+		return issuedCert, issuedKey, nil
+	}})
+	if _, err := svc.Issue(ctx, "ws-issue-canceled", "example.com"); err == nil {
+		t.Fatal("Issue() error = nil, want canceled revalidation")
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM ssl_certificates WHERE website_id = 'ws-issue-canceled'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("certificate status = %q, want failed", status)
+	}
+}
+
+func TestRecoverPendingReplacementRestoresPreviousRecord(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-recover-replacement", "example.com")
+	now := time.Now().UTC().Truncate(time.Second)
+	previous := model.SSLCertificate{
+		ID: "cert-recover", WebsiteID: "ws-recover-replacement", Domain: "example.com",
+		Issuer: "custom", Status: "active", ExpiresAt: now.Add(24 * time.Hour),
+		CreatedAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+	}
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 'issuing', ?, 0, ?, ?)`,
+		previous.ID, previous.WebsiteID, previous.Domain, previous.Issuer,
+		previous.ExpiresAt.Format(time.RFC3339), previous.CreatedAt.Format(time.RFC3339), now.Format(time.RFC3339),
+	); err != nil {
+		t.Fatal(err)
+	}
+	svc := newTestService(t, db, &MockACMEClient{})
+	if err := svc.recoverPendingFailure(previous.ID, context.Canceled, previous, true); err != context.Canceled {
+		t.Fatalf("recoverPendingFailure() error = %v, want context canceled", err)
+	}
+	restored, err := svc.Get(context.Background(), previous.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != "active" || restored.Issuer != "custom" || !restored.ExpiresAt.Equal(previous.ExpiresAt) {
+		t.Fatalf("restored certificate = %#v", restored)
 	}
 }
 
@@ -669,6 +725,306 @@ func TestRevokeLetsEncryptNeverRestoresActiveStatusAfterRemoteRevocation(t *test
 	}
 	if cert.Status != "revoked" {
 		t.Fatalf("status = %q, want revoked after irreversible remote revocation", cert.Status)
+	}
+
+	if err := svc.Revoke(context.Background(), "cert-revoke-remote"); err != nil {
+		t.Fatalf("Revoke() retry error = %v", err)
+	}
+}
+
+func TestRevokeRetryDoesNotCallACMEAgain(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-revoke-retry", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+		 VALUES ('cert-revoke-retry', 'ws-revoke-retry', 'example.com', 'letsencrypt', 'revoked', 1, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var revokeCalls int
+	svc := NewService(db, newMockExecutor(), nil, &MockACMEClient{RevokeFunc: func(certPEM []byte) error {
+		revokeCalls++
+		return nil
+	}}, t.TempDir())
+	if err := svc.Revoke(context.Background(), "cert-revoke-retry"); err != nil {
+		t.Fatalf("Revoke() retry error = %v", err)
+	}
+	if revokeCalls != 0 {
+		t.Fatalf("ACME revoke calls = %d, want 0", revokeCalls)
+	}
+}
+
+func TestRevokeFinishesCleanupAfterRequestCancellationAtCA(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-revoke-cancel", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+		 VALUES ('cert-revoke-cancel', 'ws-revoke-cancel', 'example.com', 'letsencrypt', 'active', 1, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	mock := newMockExecutor()
+	mock.RunSudoFunc = func(callCtx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "cat" {
+			return &executor.Result{ExitCode: 0, Stdout: "certificate"}, nil
+		}
+		if callCtx.Err() != nil {
+			t.Fatalf("post-CA command %s received canceled context", name)
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{RevokeFunc: func(certPEM []byte) error {
+		cancel()
+		return nil
+	}}, t.TempDir())
+	if err := svc.Revoke(ctx, "cert-revoke-cancel"); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+	cert, err := svc.Get(context.Background(), "cert-revoke-cancel")
+	if err != nil || cert.Status != "revoked" {
+		t.Fatalf("certificate status = %q, err = %v; want revoked", cert.Status, err)
+	}
+}
+
+func TestDeleteDuplicateCertificateKeepsSharedArtifacts(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-duplicate", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range []string{"cert-duplicate-a", "cert-duplicate-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-delete-duplicate', 'example.com', 'custom', 'active', 0, ?, ?)`, id, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.Exec(`UPDATE websites SET ssl_enabled = 1 WHERE id = 'ws-delete-duplicate'`); err != nil {
+		t.Fatal(err)
+	}
+	var removedSharedArtifact bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "rm" {
+				removedSharedArtifact = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{}, t.TempDir())
+	if err := svc.Delete(context.Background(), "cert-duplicate-a"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if removedSharedArtifact {
+		t.Fatal("Delete() removed shared TLS artifacts while another active row exists")
+	}
+	var remainingID string
+	if err := db.QueryRow(`SELECT id FROM ssl_certificates WHERE website_id = 'ws-delete-duplicate'`).Scan(&remainingID); err != nil {
+		t.Fatal(err)
+	}
+	if remainingID != "cert-duplicate-b" {
+		t.Fatalf("remaining certificate = %q, want canonical cert-duplicate-b", remainingID)
+	}
+	var sslEnabled int
+	if err := db.QueryRow(`SELECT ssl_enabled FROM websites WHERE id = 'ws-delete-duplicate'`).Scan(&sslEnabled); err != nil {
+		t.Fatal(err)
+	}
+	if sslEnabled != 1 {
+		t.Fatalf("ssl_enabled = %d, want 1", sslEnabled)
+	}
+}
+
+func TestDeleteCurrentCertificateRejectsHistoricalDuplicates(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-current", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range []string{"cert-current-a", "cert-current-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-delete-current', 'example.com', 'custom', 'active', 0, ?, ?)`, id, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var sudoCalls int
+	mock := newMockExecutor()
+	mock.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		sudoCalls++
+		return &executor.Result{ExitCode: 0}, nil
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{}, t.TempDir())
+	if err := svc.Delete(context.Background(), "cert-current-b"); err == nil {
+		t.Fatal("Delete() error = nil, want current duplicate rejection")
+	}
+	if sudoCalls != 0 {
+		t.Fatalf("system calls = %d, want 0", sudoCalls)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ssl_certificates WHERE website_id = 'ws-delete-current'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("certificate rows = %d, want 2", count)
+	}
+}
+
+func TestRevokeDuplicateCertificateKeepsSharedArtifactsAndSkipsACME(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-revoke-duplicate", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range []string{"cert-duplicate-a", "cert-duplicate-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-revoke-duplicate', 'example.com', 'letsencrypt', 'active', 1, ?, ?)`, id, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var revokeCalls, sudoCalls int
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCalls++
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, &MockACMEClient{RevokeFunc: func(certPEM []byte) error {
+		revokeCalls++
+		return nil
+	}}, t.TempDir())
+	if err := svc.Revoke(context.Background(), "cert-duplicate-a"); err == nil {
+		t.Fatal("Revoke() error = nil, want historical duplicate rejection")
+	}
+	if revokeCalls != 0 || sudoCalls != 0 {
+		t.Fatalf("duplicate revoke performed shared operations: ACME=%d sudo=%d", revokeCalls, sudoCalls)
+	}
+	cert, err := svc.Get(context.Background(), "cert-duplicate-a")
+	if err != nil || cert.Status != "active" {
+		t.Fatalf("historical certificate status = %q, err = %v; want active", cert.Status, err)
+	}
+}
+
+func TestRenewRejectsHistoricalDuplicate(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-renew-duplicate", "example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, id := range []string{"cert-renew-a", "cert-renew-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-renew-duplicate', 'example.com', 'letsencrypt', 'active', 1, ?, ?)`, id, now, now,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var obtainCalls int
+	svc := NewService(db, newMockExecutor(), nil, &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+		obtainCalls++
+		return nil, nil, nil
+	}}, t.TempDir())
+	if err := svc.Renew(context.Background(), "cert-renew-a"); err == nil {
+		t.Fatal("Renew() error = nil, want historical duplicate rejection")
+	}
+	if obtainCalls != 0 {
+		t.Fatalf("ACME obtain calls = %d, want 0", obtainCalls)
+	}
+}
+
+func TestIssueAndSuspendShareWebsiteMutationLock(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	insertTestWebsite(t, db, "ws-lock", "example.com")
+	issuedAt := time.Now().UTC().Truncate(time.Second)
+	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, issuedAt.Add(-time.Hour), issuedAt.Add(30*24*time.Hour))
+
+	acmeStarted := make(chan struct{})
+	releaseACME := make(chan struct{})
+	var sequenceMu sync.Mutex
+	var sequence []string
+	mock := newMockExecutor()
+	mock.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "ln" || name == "mv" {
+			sequenceMu.Lock()
+			sequence = append(sequence, name)
+			sequenceMu.Unlock()
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	}
+	sslSvc := NewService(db, mock, nil, &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+		close(acmeStarted)
+		<-releaseACME
+		return certPEM, keyPEM, nil
+	}}, t.TempDir())
+	websiteSvc := websiteconfig.NewService(db, mock, nil)
+
+	issueDone := make(chan error, 1)
+	go func() {
+		_, err := sslSvc.Issue(context.Background(), "ws-lock", "example.com")
+		issueDone <- err
+	}()
+	<-acmeStarted
+	suspendDone := make(chan error, 1)
+	go func() { suspendDone <- websiteSvc.Suspend(context.Background(), "ws-lock") }()
+	select {
+	case err := <-suspendDone:
+		t.Fatalf("Suspend() completed before issuance released the shared lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseACME)
+	if err := <-issueDone; err != nil {
+		t.Fatalf("Issue() error = %v", err)
+	}
+	if err := <-suspendDone; err != nil {
+		t.Fatalf("Suspend() error = %v", err)
+	}
+	sequenceMu.Lock()
+	defer sequenceMu.Unlock()
+	seenMove := false
+	for _, operation := range sequence {
+		if operation == "mv" {
+			seenMove = true
+		}
+		if operation == "ln" && seenMove {
+			t.Fatalf("certificate activation re-enabled config after suspension: %v", sequence)
+		}
+	}
+}
+
+func TestGetExpiringCertsReturnsOnlyCanonicalDuplicate(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-expiring-duplicate", "example.com")
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	expires := now.Add(24 * time.Hour).Format(time.RFC3339)
+	for _, id := range []string{"cert-expiring-a", "cert-expiring-b"} {
+		if _, err := db.Exec(
+			`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, expires_at, auto_renew, created_at, updated_at)
+			 VALUES (?, 'ws-expiring-duplicate', 'example.com', 'letsencrypt', 'active', ?, 1, ?, ?)`, id, expires, nowStr, nowStr,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	svc := newTestService(t, db, &MockACMEClient{})
+	certs, err := svc.GetExpiringCerts(context.Background(), 14)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(certs) != 1 || certs[0].ID != "cert-expiring-b" {
+		t.Fatalf("expiring certificates = %#v, want canonical cert-expiring-b", certs)
 	}
 }
 

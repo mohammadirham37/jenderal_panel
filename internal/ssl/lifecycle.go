@@ -14,13 +14,12 @@ import (
 
 // InstallCustom validates and installs operator-provided certificate material.
 func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, certPEM, keyPEM []byte) (model.SSLCertificate, error) {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
-
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if websiteID == "" {
 		return model.SSLCertificate{}, model.NewValidationError("website_id is required")
 	}
+	unlock := s.mutations.Lock(websiteID)
+	defer unlock()
 	site, err := s.loadSiteForDomain(ctx, websiteID, domain)
 	if err != nil {
 		return model.SSLCertificate{}, err
@@ -48,20 +47,26 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 		return model.SSLCertificate{}, err
 	}
 
+	site, err = s.loadSiteForDomain(ctx, websiteID, domain)
+	if err != nil {
+		return model.SSLCertificate{}, s.recoverPendingFailure(cert.ID, err, existing, found)
+	}
+	if site.Status != "active" {
+		return model.SSLCertificate{}, s.recoverPendingFailure(cert.ID, model.NewValidationError("SSL certificates can only be installed on an active website"), existing, found)
+	}
 	redirectDomains, err := s.activeDomains(ctx, websiteID, domain)
 	if err != nil {
-		return model.SSLCertificate{}, err
+		return model.SSLCertificate{}, s.recoverPendingFailure(cert.ID, err, existing, found)
 	}
 	activation, err := s.beginCertificateActivation(ctx, activationRequest{Site: site, CertificatePEM: certPEM, PrivateKeyPEM: keyPEM, RedirectDomains: redirectDomains})
 	if err != nil {
+		message := fmt.Sprintf("install custom certificate: %v", err)
+		if recoveryErr := s.recoverPendingCertificate(cert.ID, message, existing, found); recoveryErr != nil {
+			return model.SSLCertificate{}, fmt.Errorf("%s; recover certificate record: %w", message, recoveryErr)
+		}
 		if found {
-			if restoreErr := s.restoreCertificateRecord(ctx, existing); restoreErr != nil {
-				return model.SSLCertificate{}, fmt.Errorf("install custom certificate: %v; restore record: %w", err, restoreErr)
-			}
 			return model.SSLCertificate{}, fmt.Errorf("install custom certificate: %w", err)
 		}
-		message := fmt.Sprintf("install custom certificate: %v", err)
-		s.markFailed(ctx, cert.ID, message)
 		cert.Status = "failed"
 		cert.ErrorMessage = message
 		return cert, nil
@@ -70,13 +75,12 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 	updated := time.Now().UTC()
 	if err := s.commitActiveCertificate(ctx, cert.ID, websiteID, "custom", metadata.NotAfter, false, updated); err != nil {
 		rollbackErr := activation.rollback()
-		if found {
-			_ = s.restoreCertificateRecord(ctx, existing)
-		} else {
-			s.markFailed(ctx, cert.ID, err.Error())
-		}
+		recoveryErr := s.recoverPendingCertificate(cert.ID, err.Error(), existing, found)
 		if rollbackErr != nil {
 			return model.SSLCertificate{}, fmt.Errorf("%v; rollback failed: %w", err, rollbackErr)
+		}
+		if recoveryErr != nil {
+			return model.SSLCertificate{}, fmt.Errorf("%v; recover certificate record: %w", err, recoveryErr)
 		}
 		return model.SSLCertificate{}, err
 	}
@@ -89,10 +93,13 @@ func (s *Service) InstallCustom(ctx context.Context, websiteID, domain string, c
 
 // SetAutoRenew changes renewal policy for a Let's Encrypt certificate.
 func (s *Service) SetAutoRenew(ctx context.Context, certID string, enabled bool) error {
-	s.mutationMu.Lock()
-	defer s.mutationMu.Unlock()
-
 	cert, err := s.Get(ctx, certID)
+	if err != nil {
+		return err
+	}
+	unlock := s.mutations.Lock(cert.WebsiteID)
+	defer unlock()
+	cert, err = s.Get(ctx, certID)
 	if err != nil {
 		return err
 	}
@@ -115,7 +122,7 @@ func (s *Service) SetAutoRenew(ctx context.Context, certID string, enabled bool)
 func (s *Service) findCertificateByDomain(ctx context.Context, websiteID, domain string) (model.SSLCertificate, bool, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, created_at, updated_at
-		 FROM ssl_certificates WHERE website_id = ? AND domain = ? ORDER BY created_at DESC LIMIT 1`,
+		 FROM ssl_certificates WHERE website_id = ? AND domain = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
 		websiteID, domain,
 	)
 	cert, err := scanCert(row)
@@ -198,6 +205,31 @@ func (s *Service) activeDomains(ctx context.Context, websiteID, includeDomain st
 		}
 	}
 	return domains, nil
+}
+
+func (s *Service) activeCertificateOwner(ctx context.Context, websiteID, domain string) (string, int, error) {
+	var ownerID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM ssl_certificates
+		 WHERE website_id = ? AND domain = ? AND status = 'active'
+		 ORDER BY created_at DESC, id DESC LIMIT 1`,
+		websiteID, domain,
+	).Scan(&ownerID)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
+	}
+	if err != nil {
+		return "", 0, fmt.Errorf("find active certificate owner: %w", err)
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM ssl_certificates
+		 WHERE website_id = ? AND domain = ? AND status = 'active'`,
+		websiteID, domain,
+	).Scan(&count); err != nil {
+		return "", 0, fmt.Errorf("count active certificate duplicates: %w", err)
+	}
+	return ownerID, count, nil
 }
 
 func (s *Service) setWebsiteSSLState(ctx context.Context, websiteID string) error {
