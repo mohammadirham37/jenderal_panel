@@ -2,6 +2,8 @@ package update
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,10 +13,62 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return fn(req)
+}
+
+func githubCommitClient(sha string) *http.Client {
+	return &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"sha":"` + sha + `","html_url":"https://github.com/example/commit/` + sha + `"}`
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})}
+}
+
 func TestNewService(t *testing.T) {
 	svc := NewService(nil, "0.1.0", nil)
 	if svc.currentVer != "0.1.0" {
 		t.Errorf("currentVer = %q, want 0.1.0", svc.currentVer)
+	}
+}
+
+func TestCheckHidesUpdateWhenRunningRevisionMatchesLatest(t *testing.T) {
+	const revision = "1234567890abcdef1234567890abcdef12345678"
+	svc := NewService(nil, revision, nil)
+	svc.httpClient = githubCommitClient(revision)
+
+	info, err := svc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if info.UpdateAvail {
+		t.Fatal("Check() reports an update for the commit already running")
+	}
+	if info.CurrentVersion != "12345678" {
+		t.Fatalf("CurrentVersion = %q, want 12345678", info.CurrentVersion)
+	}
+	if info.LatestVersion != "12345678" {
+		t.Fatalf("LatestVersion = %q, want 12345678", info.LatestVersion)
+	}
+}
+
+func TestCheckOffersUpdateWhenRunningRevisionIsOlder(t *testing.T) {
+	const currentRevision = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const latestRevision = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	svc := NewService(nil, currentRevision, nil)
+	svc.httpClient = githubCommitClient(latestRevision)
+
+	info, err := svc.Check(context.Background())
+	if err != nil {
+		t.Fatalf("Check() error = %v", err)
+	}
+	if !info.UpdateAvail {
+		t.Fatal("Check() hides an available update")
 	}
 }
 

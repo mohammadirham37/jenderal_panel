@@ -5,40 +5,41 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
-	"github.com/mohammadirham37/jenderal_panel/internal/api"
 	"github.com/mohammadirham37/jenderal_panel/internal/alert"
+	"github.com/mohammadirham37/jenderal_panel/internal/api"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
-	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
-	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
+	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
-	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
+	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
-	"github.com/mohammadirham37/jenderal_panel/internal/notification"
+	"github.com/mohammadirham37/jenderal_panel/internal/service"
+	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
-	"github.com/mohammadirham37/jenderal_panel/internal/service"
-	"github.com/mohammadirham37/jenderal_panel/internal/settings"
-	"github.com/mohammadirham37/jenderal_panel/internal/system"
 )
 
 var version = "dev"
@@ -61,7 +62,7 @@ func main() {
 		}
 		cmdAdminCreate()
 	case "version":
-		fmt.Printf("Jenderal Panel %s\n", version)
+		fmt.Printf("Jenderal Panel %s\n", buildVersion())
 	default:
 		printUsage()
 		os.Exit(1)
@@ -76,7 +77,24 @@ Usage:
   jenderal migrate            Run database migrations
   jenderal admin create       Create admin user
   jenderal version            Print version
-`, version)
+`, buildVersion())
+}
+
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return version
+	}
+	return resolveVersion(version, info.Settings)
+}
+
+func resolveVersion(linkedVersion string, settings []debug.BuildSetting) string {
+	for _, setting := range settings {
+		if setting.Key == "vcs.revision" && setting.Value != "" {
+			return setting.Value
+		}
+	}
+	return linkedVersion
 }
 
 func getConfigPath() string {
@@ -148,7 +166,7 @@ func cmdServe() {
 	})
 	fileManagerSvc := filemanager.NewService(exec, auditSvc)
 	tasks := taskrunner.New()
-	updateSvc := update.NewService(exec, version, tasks)
+	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -160,20 +178,20 @@ func cmdServe() {
 	}
 
 	router := api.NewRouter(api.Dependencies{
-		Logger:        logger,
-		AuthSvc:       authSvc,
-		RBAC:          rbac,
-		AuditSvc:      auditSvc,
-		SystemInfo:    systemInfo,
-		Metrics:       metricsCollector,
-		ServiceMgr:    serviceMgr,
-		SettingsSvc:   settingsSvc,
-		NginxSvc:      nginxSvc,
-		FirewallSvc:   firewallSvc,
-		ProcessSvc:    processSvc,
-		LogSvc:        logSvc,
-		WebsiteSvc:    websiteSvc,
-		PHPSvc:        phpSvc,
+		Logger:         logger,
+		AuthSvc:        authSvc,
+		RBAC:           rbac,
+		AuditSvc:       auditSvc,
+		SystemInfo:     systemInfo,
+		Metrics:        metricsCollector,
+		ServiceMgr:     serviceMgr,
+		SettingsSvc:    settingsSvc,
+		NginxSvc:       nginxSvc,
+		FirewallSvc:    firewallSvc,
+		ProcessSvc:     processSvc,
+		LogSvc:         logSvc,
+		WebsiteSvc:     websiteSvc,
+		PHPSvc:         phpSvc,
 		SSLSvc:         sslSvc,
 		DeploymentSvc:  deploySvc,
 		CronSvc:        cronSvc,

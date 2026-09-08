@@ -44,7 +44,7 @@ func NewService(exec executor.CommandExecutor, version string, tasks *taskrunner
 // Check returns current version and latest commit from GitHub.
 func (s *Service) Check(ctx context.Context) (model.UpdateInfo, error) {
 	info := model.UpdateInfo{
-		CurrentVersion: s.currentVer,
+		CurrentVersion: displayVersion(s.currentVer),
 	}
 
 	// Get latest commit hash from main branch
@@ -77,22 +77,32 @@ func (s *Service) Check(ctx context.Context) (model.UpdateInfo, error) {
 		return info, err
 	}
 
-	info.LatestVersion = commit.SHA[:8]
-	info.ReleaseURL = commit.HTMLURL
-	info.UpdateAvail = true // Always allow update from source
-
-	// Check if source dir exists and compare
-	if _, err := os.Stat(sourceDir + "/.git"); err == nil {
-		result, err := s.exec.Run(ctx, "git", "-C", sourceDir, "rev-parse", "--short", "HEAD")
-		if err == nil && result.ExitCode == 0 {
-			localHash := strings.TrimSpace(result.Stdout)
-			if localHash == info.LatestVersion {
-				info.UpdateAvail = false
-			}
-		}
+	latestRevision := strings.TrimSpace(commit.SHA)
+	if len(latestRevision) < 8 {
+		return info, fmt.Errorf("GitHub API returned an invalid commit SHA")
 	}
+	info.LatestVersion = displayVersion(latestRevision)
+	info.ReleaseURL = commit.HTMLURL
+	info.UpdateAvail = !strings.EqualFold(strings.TrimSpace(s.currentVer), latestRevision)
 
 	return info, nil
+}
+
+func displayVersion(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 8 && isHexRevision(value) {
+		return value[:8]
+	}
+	return value
+}
+
+func isHexRevision(value string) bool {
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') && (char < 'A' || char > 'F') {
+			return false
+		}
+	}
+	return value != ""
 }
 
 // Update pulls latest source, rebuilds, and replaces binary.
