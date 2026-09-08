@@ -8,8 +8,12 @@
 export function decodeTerminalMessage(message) {
 	try {
 		const response = JSON.parse(message);
-		if (response && typeof response === 'object' && typeof response.output === 'string') {
-			return response.output;
+		if (
+			response &&
+			typeof response === 'object' &&
+			(response.type === 'output' || response.type === 'error')
+		) {
+			return typeof response.output === 'string' ? response.output : '';
 		}
 	} catch {
 		// Plain-text messages are valid for compatibility with older servers.

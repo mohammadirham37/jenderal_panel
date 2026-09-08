@@ -24,3 +24,8 @@ test('preserves plain text terminal messages for compatibility', () => {
 	assert.equal(typeof decodeTerminalMessage, 'function', 'expected a terminal message decoder');
 	assert.equal(decodeTerminalMessage('legacy output'), 'legacy output');
 });
+
+test('renders no text when a structured terminal response has no output', () => {
+	assert.equal(typeof decodeTerminalMessage, 'function', 'expected a terminal message decoder');
+	assert.equal(decodeTerminalMessage('{"type":"output","exit_code":1}'), '');
+});
