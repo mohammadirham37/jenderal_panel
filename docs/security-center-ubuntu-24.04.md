@@ -7,6 +7,12 @@ administrator must explicitly start each installation from Security Center.
 
 ## Safe setup
 
+The **Setup** tab provides an eight-part review flow for assessment, management
+CIDRs, Fail2ban, malware, Traffic Guard Observe, proxy guidance, notifications,
+and final Apply. It stores the review hash, task ID, and every completed step in
+SQLite. If a later step fails or the panel restarts, use **Resume from
+checkpoint**; already completed steps are not repeated.
+
 1. Keep the VPS provider console open before testing SSH protection.
 2. Open **Security Center → Fail2ban**.
 3. Install Fail2ban and wait for the persistent task to complete.
@@ -20,6 +26,14 @@ administrator must explicitly start each installation from Security Center.
 
 All Safe-mode bans are temporary. The panel does not alter `sshd_config`, the
 SSH port, authentication methods, or UFW rules as part of Fail2ban setup.
+
+The Overview posture check is read-only. It reports explicit `unknown` states
+when an optional command is unavailable and provides guidance for UFW,
+AppArmor, effective SSH settings, Nginx configuration, and Ubuntu security
+updates. Its Good/Needs Attention/Critical label is an explainable summary, not
+a security guarantee. Findings are reconciled every five minutes and resolved
+findings produce at most one recovery notification when the original event was
+notified.
 
 ## Task recovery behavior
 

@@ -239,6 +239,8 @@ step_create_user() {
 step_create_dirs() {
     mkdir -p /etc/jenderal/tls /var/lib/jenderal/backups /var/lib/jenderal/acme /var/lib/jenderal/acme-challenges /var/log/jenderal /opt/jenderal
     chown -R "$JENDERAL_USER":"$JENDERAL_USER" /var/lib/jenderal /var/log/jenderal /opt/jenderal
+	install -d -o root -g root -m 0700 /var/lib/jenderal/quarantine
+	install -d -o root -g root -m 0755 /etc/nginx/jenderal/security/sites
     chmod 700 /var/lib/jenderal/acme
     chmod 755 /var/lib/jenderal/acme-challenges
     log "Directories: OK"

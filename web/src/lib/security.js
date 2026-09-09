@@ -37,7 +37,8 @@ export function normalizeOverview(value = {}) {
 		components: Array.isArray(value.components) ? value.components : [],
 		open_events: Number.isFinite(value.open_events) ? value.open_events : 0,
 		setup_complete: value.setup_complete === true,
-		active_tasks: Array.isArray(value.active_tasks) ? value.active_tasks : []
+		active_tasks: Array.isArray(value.active_tasks) ? value.active_tasks : [],
+		posture: value.posture && typeof value.posture === 'object' ? value.posture : undefined
 	};
 }
 

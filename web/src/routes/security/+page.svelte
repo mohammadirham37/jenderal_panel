@@ -21,8 +21,9 @@
 		observationProgress,
 		summarizeTraffic
 	} from '$lib/traffic-guard.js';
+	import { buildSafeSetupRequest, normalizeSetupReview } from '$lib/security-setup.js';
 
-	type Tab = 'overview' | 'fail2ban' | 'malware' | 'traffic' | 'events';
+	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'events';
 	interface ComponentStatus {
 		name: string;
 		state: string;
@@ -39,6 +40,7 @@
 		open_events: number;
 		setup_complete: boolean;
 		active_tasks: unknown[];
+		posture?: { checked_at: string; components: Record<string, string>; findings: Array<{ code: string; component: string; severity: string; summary: string; remediation: string }> };
 	}
 	interface Jail {
 		name: string;
@@ -116,6 +118,9 @@
 		status_429: number; bytes: number; peak_rps: number;
 		top_ips: Record<string, number>; top_paths: Record<string, number>;
 	}
+	interface SetupReview { mutations: string[]; warnings: string[]; hash: string }
+	interface SetupState { id: string; status: string; safe_error: string; task_id: string; completed_steps: string[] }
+	interface SetupAssessment { website_ids: string[]; latest?: SetupState }
 
 	let activeTab = $state<Tab>('overview');
 	let editMode = $state<'simple' | 'advanced'>('simple');
@@ -164,6 +169,15 @@
 	let trafficBurst = $state(20);
 	let trafficConnections = $state(20);
 	let trafficConfirmed = $state(false);
+	let setupAssessment = $state<SetupAssessment>({ website_ids: [] });
+	let setupManagementCIDRs = $state('');
+	let setupFail2ban = $state(true);
+	let setupMalwareMode = $state('low_memory');
+	let setupSchedule = $state(true);
+	let setupScheduleTime = $state('02:00');
+	let setupTrafficWebsites = $state<string[]>([]);
+	let setupReview = $state<SetupReview | null>(null);
+	let setupConfirmed = $state(false);
 	let trafficSummary = $derived(summarizeTraffic(trafficBuckets));
 	let trafficPeak = $derived(Math.max(1, ...trafficBuckets.map((bucket) => bucket.requests)));
 	let topTrafficPaths = $derived.by(() => {
@@ -185,7 +199,7 @@
 		loading = true;
 		error = '';
 		try {
-			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData, trafficData] = await Promise.all([
+			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData, trafficData, setupData] = await Promise.all([
 				api.get<Overview>('/api/v1/security/overview'),
 				api.get<Fail2banStatus>('/api/v1/security/fail2ban'),
 				api.get<Ban[]>('/api/v1/security/fail2ban/bans'),
@@ -195,7 +209,8 @@
 				api.get<QuarantineItem[]>('/api/v1/security/malware/quarantine'),
 				api.get<MalwareSchedule[]>('/api/v1/security/malware/schedules'),
 				api.get<Website[]>('/api/v1/websites'),
-				api.get<TrafficProfile[]>('/api/v1/security/traffic/profiles')
+				api.get<TrafficProfile[]>('/api/v1/security/traffic/profiles'),
+				api.get<SetupAssessment>('/api/v1/security/setup')
 			]);
 			overview = normalizeOverview(overviewData) as Overview;
 			fail2ban = { ...statusData, jails: statusData?.jails || [] };
@@ -213,6 +228,8 @@
 			malwareSchedules = scheduleData || [];
 			websites = (websiteData || []).filter((website) => website.status === 'active' || website.status === 'suspended');
 			trafficProfiles = trafficData || [];
+			setupAssessment = setupData || { website_ids: [] };
+			if (setupTrafficWebsites.length === 0) setupTrafficWebsites = [...(setupAssessment.website_ids || [])];
 			if (!selectedWebsite && websites.length > 0) selectedWebsite = websites[0].id;
 			if (!selectedTrafficWebsite && websites.length > 0) selectedTrafficWebsite = websites[0].id;
 			syncTrafficForm();
@@ -229,6 +246,44 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function toggleSetupWebsite(id: string) {
+		setupReview = null; setupConfirmed = false;
+		setupTrafficWebsites = setupTrafficWebsites.includes(id) ? setupTrafficWebsites.filter((value) => value !== id) : [...setupTrafficWebsites, id];
+	}
+
+	function setupRequest() {
+		return buildSafeSetupRequest({
+			management_cidrs: setupManagementCIDRs.split(/[\s,]+/).filter(Boolean), enable_fail2ban: setupFail2ban,
+			malware_mode: setupMalwareMode, schedule_malware: setupSchedule, schedule_time: setupScheduleTime,
+			traffic_website_ids: setupTrafficWebsites
+		});
+	}
+
+	async function reviewSecuritySetup() {
+		busy = 'setup-review'; actionError = ''; setupConfirmed = false;
+		try { setupReview = normalizeSetupReview(await api.post<SetupReview>('/api/v1/security/setup/review', setupRequest())); actionMessage = 'Review generated. Confirm every mutation before applying.'; }
+		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to review Safe Setup.'; }
+		finally { busy = ''; }
+	}
+
+	async function applySecuritySetup() {
+		if (!setupReview || !setupConfirmed) { actionError = 'Review and confirm the Safe Setup first.'; return; }
+		busy = 'setup-apply'; actionError = '';
+		try {
+			const result = await api.post<{ run_id: string; task_id: string }>('/api/v1/security/setup/apply', { request: setupRequest(), review: setupReview, confirm: true });
+			currentTaskId = result.task_id; actionMessage = 'Safe Setup started. Its checkpoints and task output survive a page refresh.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to apply Safe Setup.'; }
+		finally { busy = ''; }
+	}
+
+	async function resumeSecuritySetup() {
+		if (!setupAssessment.latest) return;
+		busy = 'setup-resume'; actionError = '';
+		try { const result = await api.post<{ task_id: string }>('/api/v1/security/setup/resume', { run_id: setupAssessment.latest.id }); currentTaskId = result.task_id; actionMessage = 'Safe Setup resumed from its last completed checkpoint.'; }
+		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to resume Safe Setup.'; }
+		finally { busy = ''; }
 	}
 
 	function syncTrafficForm() {
@@ -473,6 +528,7 @@
 			void loadData();
 		} else {
 			actionError = task.error || 'Security operation failed. Review the task output and retry.';
+			void loadData();
 		}
 	}
 
@@ -492,7 +548,7 @@
 	</div>
 
 	<div class="flex gap-1 overflow-x-auto rounded-xl border border-gray-700 bg-gray-900 p-1">
-		{#each ['overview', 'fail2ban', 'malware', 'traffic', 'events'] as tab}
+		{#each ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'events'] as tab}
 			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{tab}</button>
 		{/each}
 	</div>
@@ -509,6 +565,24 @@
 			<p class="font-medium text-red-300">Security status could not be loaded.</p>
 			<p class="mt-1 text-sm text-red-300">{error}</p>
 			<button onclick={loadData} class="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700">Retry</button>
+		</div>
+	{:else if activeTab === 'setup'}
+		<div class="space-y-4">
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h3 class="text-lg font-semibold text-white">Safe Setup</h3><p class="mt-1 max-w-3xl text-sm text-gray-400">A resumable, reviewed setup for conservative defaults. Every completed step is checkpointed before the next mutation begins.</p></div>{#if setupAssessment.latest}<span class="rounded-full px-2 py-1 text-xs {setupAssessment.latest.status === 'completed' ? 'bg-green-900 text-green-300' : setupAssessment.latest.status === 'failed' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">Latest: {setupAssessment.latest.status}</span>{/if}</div>
+				{#if setupAssessment.latest && setupAssessment.latest.status !== 'completed'}<div class="mt-4 rounded-lg border border-red-700 bg-red-900/25 p-3"><p class="text-sm text-red-300">{setupAssessment.latest.safe_error || 'The previous setup may have stopped before completion. The backend will reject a duplicate if its task is still running.'}</p><p class="mt-1 text-xs text-gray-400">Completed: {setupAssessment.latest.completed_steps.join(', ') || 'none'}</p><button onclick={resumeSecuritySetup} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded bg-red-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">Resume from checkpoint</button></div>{/if}
+			</section>
+
+			<div class="grid gap-4 lg:grid-cols-2">
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">1 · Assessment</p><h3 class="mt-1 font-semibold text-white">Read-only server posture</h3><p class="mt-2 text-sm text-gray-400">UFW, AppArmor, effective SSH settings, Nginx, and Ubuntu security-update capability are checked without changing them.</p><p class="mt-3 text-xs text-gray-500">Last check: {overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : 'not available'}</p></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">2 · Management access</p><label class="mt-2 block"><span class="text-sm text-gray-300">Your trusted management IP/CIDR</span><textarea bind:value={setupManagementCIDRs} oninput={() => (setupReview = null)} rows="3" placeholder="203.0.113.10/32" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea></label><p class="mt-2 text-xs text-yellow-300">Keep the VPS provider console open during the first SSH protection test.</p></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">3 · Fail2ban</p><label class="mt-3 flex items-start gap-3"><input type="checkbox" bind:checked={setupFail2ban} onchange={() => (setupReview = null)} /><span><span class="block text-sm font-medium text-white">Install and configure SSH Safe preset</span><span class="text-xs text-gray-400">5 retries, 10-minute window, temporary 15-minute ban.</span></span></label></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">4 · Malware</p><label class="mt-2 block"><span class="text-sm text-gray-300">ClamAV runtime</span><select bind:value={setupMalwareMode} onchange={() => (setupReview = null)} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="low_memory">Low-memory (recommended)</option><option value="daemon">Daemon (2 GiB+ RAM)</option><option value="">Skip malware setup</option></select></label><div class="mt-3 flex items-center gap-3"><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={setupSchedule} disabled={!setupMalwareMode} /> Daily Quick Scan</label><input type="time" bind:value={setupScheduleTime} disabled={!setupSchedule || !setupMalwareMode} class="rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-white" /></div></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">5 · Traffic Guard Observe</p><p class="mt-1 text-sm text-gray-400">Select websites to begin a non-blocking 24-hour observation.</p><div class="mt-3 max-h-36 space-y-2 overflow-auto">{#each websites as website}<label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" checked={setupTrafficWebsites.includes(website.id)} onchange={() => toggleSetupWebsite(website.id)} /> {website.domain}</label>{/each}</div></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">6 · Trusted proxy</p><p class="mt-2 text-sm text-gray-400">Safe Setup starts with Direct mode. Configure Cloudflare or exact custom proxy CIDRs per website in the Traffic tab after initial observation.</p><p class="mt-2 text-xs text-yellow-300">Forwarded IP headers are never trusted from arbitrary peers.</p></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">7 · Notifications</p><p class="mt-2 text-sm text-gray-400">Critical security events use the notification channels already enabled in the Notifications page. Test those channels there before applying.</p><a href="/notifications" class="mt-3 inline-block text-sm text-blue-300 hover:text-blue-200">Open Notifications →</a></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">8 · Review & Apply</p><button onclick={reviewSecuritySetup} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">Generate exact review</button>{#if setupReview}<div class="mt-4 space-y-3"><div><p class="text-xs uppercase text-gray-500">Mutations</p><ol class="mt-1 list-inside list-decimal text-sm text-gray-300">{#each setupReview.mutations as mutation}<li>{mutation}</li>{/each}</ol></div><div><p class="text-xs uppercase text-yellow-500">Warnings</p><ul class="mt-1 list-inside list-disc text-sm text-yellow-300">{#each setupReview.warnings as warning}<li>{warning}</li>{/each}</ul></div><label class="flex items-start gap-2 rounded border border-yellow-700 bg-yellow-900/20 p-2 text-xs text-yellow-200"><input class="mt-0.5" type="checkbox" bind:checked={setupConfirmed} /> I reviewed and confirm these exact changes.</label><button onclick={applySecuritySetup} disabled={!setupConfirmed || busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">Apply Safe Setup</button></div>{/if}</section>
+			</div>
 		</div>
 	{:else if activeTab === 'overview'}
 		{@const tone = conditionTone(overview.condition)}
@@ -535,6 +609,10 @@
 				{/if}
 			</section>
 		</div>
+		<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+			<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h3 class="font-semibold text-white">Read-only posture findings</h3><p class="mt-1 text-sm text-gray-400">Guidance only—these checks never silently change SSH, UFW, AppArmor, packages, or Nginx.</p></div><span class="text-xs text-gray-500">{overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : 'Not checked'}</span></div>
+			{#if !overview.posture?.findings?.length}<p class="mt-4 text-sm text-green-300">No actionable posture finding was detected. Optional or unavailable tools remain labeled unknown.</p>{:else}<div class="mt-4 grid gap-3 md:grid-cols-2">{#each overview.posture.findings as finding}<article class="rounded-lg border border-gray-700 bg-gray-900/50 p-4"><div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{finding.component.replaceAll('_', ' ')}</span><span class="rounded-full px-2 py-0.5 text-xs uppercase {finding.severity === 'critical' ? 'bg-red-900 text-red-300' : finding.severity === 'medium' || finding.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{finding.severity}</span></div><p class="mt-2 text-sm text-gray-200">{finding.summary}</p><p class="mt-1 text-xs text-gray-400">{finding.remediation}</p></article>{/each}</div>{/if}
+		</section>
 	{:else if activeTab === 'fail2ban'}
 		<div class="space-y-4">
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">

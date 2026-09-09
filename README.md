@@ -28,6 +28,9 @@ Built with Go backend + SvelteKit frontend, deployed as a single binary.
 - **Auto-renewal** — Background worker renews certificates 14 days before expiry
 - **Security Center** — Unified posture summary, persistent security events, and actionable recovery guidance
 - **Fail2ban Safe Mode** — Explicit install, validated panel-owned configuration, temporary bans, and rollback on failure
+- **Malware Scanner** — Low-memory or daemon ClamAV, scheduled scans, private quarantine, exact-hash false-positive review
+- **Traffic Guard** — Per-website HTTP anomaly evidence, trusted proxy profiles, 24-hour Observe Mode, bounded Nginx limits
+- **Safe Setup & Posture** — Resumable reviewed setup plus read-only UFW, AppArmor, SSH, Nginx, and security-update checks
 - **2FA/TOTP** — Optional two-factor authentication for user accounts
 - **API Tokens** — Bearer token authentication for API access
 - **RBAC** — 63 granular permissions across admin and user roles
