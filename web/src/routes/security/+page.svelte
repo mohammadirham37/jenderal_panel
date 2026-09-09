@@ -9,8 +9,14 @@
 		normalizeOverview,
 		validateBan
 	} from '$lib/security.js';
+	import {
+		buildOnAccessRequest,
+		buildSafeSchedule,
+		formatSignatureAge,
+		normalizeMalwareStatus
+	} from '$lib/malware.js';
 
-	type Tab = 'overview' | 'fail2ban' | 'events';
+	type Tab = 'overview' | 'fail2ban' | 'malware' | 'events';
 	interface ComponentStatus {
 		name: string;
 		state: string;
@@ -76,6 +82,23 @@
 		ban_time_seconds: number;
 		ignore_ips: string[];
 	}
+	interface MalwareStatus {
+		installed: boolean; healthy: boolean; state: string; version: string; engine: string;
+		signature_version: string; signature_updated_at: string | null; signature_fresh: boolean;
+		updater_running: boolean; daemon_installed: boolean; daemon_running: boolean;
+		daemon_supported: boolean; message: string;
+		on_access: { available: boolean; enabled: boolean; prevention_supported: boolean; prevention_enabled: boolean; message: string };
+	}
+	interface MalwareScan {
+		id: string; mode: string; status: string; engine: string; files_scanned: number;
+		findings_count: number; error?: string; started_at?: string; ended_at?: string;
+	}
+	interface QuarantineItem {
+		id: string; website_id: string; original_path: string; sha256: string; signature: string;
+		status: string; size_bytes: number; detected_at: string;
+	}
+	interface MalwareSchedule { id?: string; enabled: boolean; local_time: string; mode: string; website_ids: string[] }
+	interface Website { id: string; domain: string; status: string }
 
 	let activeTab = $state<Tab>('overview');
 	let editMode = $state<'simple' | 'advanced'>('simple');
@@ -101,16 +124,33 @@
 	let banJail = $state('');
 	let banIP = $state('');
 	let banDuration = $state(300);
+	let malware = $state<MalwareStatus>(normalizeMalwareStatus(null) as MalwareStatus);
+	let malwareScans = $state<MalwareScan[]>([]);
+	let quarantine = $state<QuarantineItem[]>([]);
+	let malwareSchedules = $state<MalwareSchedule[]>([]);
+	let websites = $state<Website[]>([]);
+	let selectedWebsite = $state('');
+	let malwareMode = $state<'simple' | 'advanced'>('simple');
+	let scheduleEnabled = $state(true);
+	let scheduleTime = $state('02:00');
+	let onAccessEnabled = $state(false);
+	let preventionEnabled = $state(false);
+	let preventionConfirmed = $state(false);
 
 	async function loadData() {
 		loading = true;
 		error = '';
 		try {
-			const [overviewData, statusData, banData, eventData] = await Promise.all([
+			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData] = await Promise.all([
 				api.get<Overview>('/api/v1/security/overview'),
 				api.get<Fail2banStatus>('/api/v1/security/fail2ban'),
 				api.get<Ban[]>('/api/v1/security/fail2ban/bans'),
-				api.get<SecurityEvent[]>('/api/v1/security/events?per_page=100')
+				api.get<SecurityEvent[]>('/api/v1/security/events?per_page=100'),
+				api.get<MalwareStatus>('/api/v1/security/malware/status'),
+				api.get<MalwareScan[]>('/api/v1/security/malware/scans'),
+				api.get<QuarantineItem[]>('/api/v1/security/malware/quarantine'),
+				api.get<MalwareSchedule[]>('/api/v1/security/malware/schedules'),
+				api.get<Website[]>('/api/v1/websites')
 			]);
 			overview = normalizeOverview(overviewData) as Overview;
 			fail2ban = { ...statusData, jails: statusData?.jails || [] };
@@ -122,12 +162,104 @@
 			}
 			bans = banData || [];
 			events = eventData || [];
+			malware = normalizeMalwareStatus(malwareData) as MalwareStatus;
+			malwareScans = scanData || [];
+			quarantine = quarantineData || [];
+			malwareSchedules = scheduleData || [];
+			websites = (websiteData || []).filter((website) => website.status === 'active' || website.status === 'suspended');
+			if (!selectedWebsite && websites.length > 0) selectedWebsite = websites[0].id;
+			if (malwareSchedules.length > 0) {
+				scheduleEnabled = malwareSchedules[0].enabled;
+				scheduleTime = malwareSchedules[0].local_time;
+			}
+			onAccessEnabled = malware.on_access.enabled;
+			preventionEnabled = malware.on_access.prevention_enabled;
 			if (!banJail && fail2ban.jails.length > 0) banJail = fail2ban.jails[0].name;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Unable to load Security Center.';
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function installMalware(mode: 'low_memory' | 'daemon') {
+		busy = `malware-install:${mode}`; actionError = ''; actionMessage = '';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/install', { mode });
+			currentTaskId = result.task_id;
+			actionMessage = 'ClamAV installation started. Progress remains available after refresh.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to install ClamAV.'; }
+		finally { busy = ''; }
+	}
+
+	async function updateSignatures() {
+		busy = 'malware-signatures'; actionError = ''; actionMessage = '';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/signatures/update', {});
+			currentTaskId = result.task_id; actionMessage = 'ClamAV signature update started.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to update signatures.'; }
+		finally { busy = ''; }
+	}
+
+	async function startMalwareScan(mode: 'quick' | 'website' | 'full_websites') {
+		if (mode === 'website' && !selectedWebsite) { actionError = 'Select a website first.'; return; }
+		busy = `malware-scan:${mode}`; actionError = ''; actionMessage = '';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/scans', {
+				mode, website_ids: mode === 'website' ? [selectedWebsite] : []
+			});
+			currentTaskId = result.task_id; actionMessage = 'Malware scan started with safe resource limits.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to start malware scan.'; }
+		finally { busy = ''; }
+	}
+
+	async function saveMalwareSchedule() {
+		busy = 'malware-schedule'; actionError = '';
+		try {
+			const safe = buildSafeSchedule({ time: scheduleTime });
+			await api.put('/api/v1/security/malware/schedules', {
+				...safe, id: malwareSchedules[0]?.id || '', enabled: scheduleEnabled
+			});
+			actionMessage = scheduleEnabled ? `Daily Quick Scan saved for ${scheduleTime}.` : 'Daily malware scan disabled.';
+			await loadData();
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to save scan schedule.'; }
+		finally { busy = ''; }
+	}
+
+	async function configureOnAccess() {
+		busy = 'malware-on-access'; actionError = '';
+		try {
+			const request = buildOnAccessRequest({ enabled: onAccessEnabled, prevention: preventionEnabled, confirmed: preventionConfirmed });
+			const result = await api.put<{ task_id: string }>('/api/v1/security/malware/on-access', request);
+			currentTaskId = result.task_id; actionMessage = 'On-access configuration is being validated and applied.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to configure on-access scanning.'; }
+		finally { busy = ''; }
+	}
+
+	async function restoreQuarantine(item: QuarantineItem) {
+		if (!confirm(`Restore ${item.original_path}? The destination must still be empty and the sample must scan clean.`)) return;
+		busy = `restore:${item.id}`; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/security/malware/quarantine/${item.id}/restore`, {});
+			currentTaskId = result.task_id; actionMessage = 'Restore validation started.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to restore sample.'; }
+		finally { busy = ''; }
+	}
+
+	async function markFalsePositive(item: QuarantineItem) {
+		if (!confirm('Allowlist only this exact website, path, and SHA-256 hash?')) return;
+		busy = `false-positive:${item.id}`; actionError = '';
+		try { await api.post(`/api/v1/security/malware/quarantine/${item.id}/false-positive`, {}); actionMessage = 'Exact sample marked as false positive.'; await loadData(); }
+		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to mark false positive.'; }
+		finally { busy = ''; }
+	}
+
+	async function deleteQuarantine(item: QuarantineItem) {
+		if (!confirm(`Permanently delete quarantined sample ${item.id}? This cannot be undone.`)) return;
+		busy = `delete:${item.id}`; actionError = '';
+		try { await api.del(`/api/v1/security/malware/quarantine/${item.id}`); actionMessage = 'Quarantined sample permanently deleted.'; await loadData(); }
+		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to delete quarantined sample.'; }
+		finally { busy = ''; }
 	}
 
 	async function installFail2ban() {
@@ -251,7 +383,7 @@
 	</div>
 
 	<div class="flex gap-1 overflow-x-auto rounded-xl border border-gray-700 bg-gray-900 p-1">
-		{#each ['overview', 'fail2ban', 'events'] as tab}
+		{#each ['overview', 'fail2ban', 'malware', 'events'] as tab}
 			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{tab}</button>
 		{/each}
 	</div>
@@ -324,6 +456,79 @@
 
 				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Temporary manual ban</h3><div class="mt-4 grid gap-3 sm:grid-cols-4"><select bind:value={banJail} class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="">Select jail</option>{#each fail2ban.jails as jail}<option value={jail.name}>{jail.name}</option>{/each}</select><input bind:value={banIP} placeholder="203.0.113.7" class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white sm:col-span-2" /><input type="number" min="60" max="604800" bind:value={banDuration} class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white" /></div><button onclick={createBan} disabled={busy !== '' || fail2ban.jails.length === 0} class="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-50">Ban temporarily</button>
 					{#if bans.length === 0}<p class="mt-5 text-sm text-gray-400">No active bans.</p>{:else}<div class="mt-5 overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs uppercase text-gray-400"><tr><th class="pb-2">Address</th><th class="pb-2">Jail</th><th class="pb-2">Expiry</th><th class="pb-2 text-right">Action</th></tr></thead><tbody class="divide-y divide-gray-700">{#each bans as ban}<tr><td class="py-3 font-mono text-white">{ban.ip}</td><td class="py-3 text-gray-300">{ban.jail}</td><td class="py-3 text-gray-400">{formatBanExpiry(ban.expires_at)}</td><td class="py-3 text-right"><button onclick={() => removeBan(ban)} disabled={busy !== ''} class="text-red-400 hover:text-red-300 disabled:opacity-50">Unban</button></td></tr>{/each}</tbody></table></div>{/if}
+				</section>
+			{/if}
+		</div>
+	{:else if activeTab === 'malware'}
+		<div class="space-y-4">
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+					<div>
+						<div class="flex flex-wrap items-center gap-2">
+							<h3 class="text-lg font-semibold text-white">Malware Scanner</h3>
+							<span class="rounded-full px-2 py-0.5 text-xs {malware.healthy ? 'bg-green-900 text-green-300' : malware.installed ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{malware.state.replaceAll('_', ' ')}</span>
+						</div>
+						<p class="mt-1 max-w-2xl text-sm text-gray-400">{malware.message || 'Scan panel-managed website roots with ClamAV and isolate suspicious files outside Nginx document roots.'}</p>
+					</div>
+					{#if !malware.installed}
+						<div class="flex flex-wrap gap-2">
+							<button onclick={() => installMalware('low_memory')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">Install low-memory</button>
+							<button onclick={() => installMalware('daemon')} disabled={!malware.daemon_supported || busy !== '' || !!currentTaskId} title={malware.daemon_supported ? 'Resident scanner for repeated scans' : 'Requires at least 2 GiB RAM'} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">Install daemon</button>
+						</div>
+					{:else}
+						<button onclick={updateSignatures} disabled={busy !== '' || !!currentTaskId} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">Update signatures</button>
+					{/if}
+				</div>
+				{#if malware.installed}
+					<div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Engine</p><p class="mt-1 font-medium text-white">{malware.engine || 'clamscan'}</p><p class="text-xs text-gray-400">{malware.version || 'version unknown'}</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Signatures</p><p class="mt-1 font-medium text-white">{malware.signature_version || 'unknown'}</p><p class="text-xs {malware.signature_fresh ? 'text-green-300' : 'text-yellow-300'}">{formatSignatureAge(malware.signature_updated_at)}</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Updater</p><p class="mt-1 font-medium text-white">{malware.updater_running ? 'Running' : 'Needs attention'}</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Quarantine</p><p class="mt-1 font-medium text-white">{quarantine.filter((item) => item.status === 'quarantined' || item.status === 'false_positive').length} retained</p><p class="text-xs text-gray-400">Never auto-deleted</p></div>
+					</div>
+				{/if}
+			</section>
+
+			{#if malware.installed}
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+						<div><h3 class="font-semibold text-white">Run a scan</h3><p class="mt-1 text-sm text-gray-400">One scan at a time, low CPU/I/O priority, one-hour limit, and files up to 100 MiB.</p></div>
+						<div class="flex gap-1 rounded-lg border border-gray-700 bg-gray-900 p-1"><button onclick={() => (malwareMode = 'simple')} class="rounded px-3 py-1.5 text-sm {malwareMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-400'}">Simple</button><button onclick={() => (malwareMode = 'advanced')} class="rounded px-3 py-1.5 text-sm {malwareMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-400'}">Advanced</button></div>
+					</div>
+					<div class="mt-5 flex flex-wrap gap-3">
+						<button onclick={() => startMalwareScan('quick')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Quick scan</button>
+						<button onclick={() => startMalwareScan('full_websites')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">Full website scan</button>
+					</div>
+					<div class="mt-4 flex flex-col gap-2 sm:flex-row">
+						<select bind:value={selectedWebsite} class="min-w-64 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="">Select website</option>{#each websites as website}<option value={website.id}>{website.domain}</option>{/each}</select>
+						<button onclick={() => startMalwareScan('website')} disabled={!selectedWebsite || busy !== '' || !!currentTaskId} class="rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">Scan selected website</button>
+					</div>
+					{#if malwareMode === 'advanced'}
+						<div class="mt-5 grid gap-3 rounded-lg border border-gray-700 bg-gray-900/50 p-4 text-sm text-gray-300 sm:grid-cols-3"><span>Maximum files: 100,000</span><span>Maximum file size: 100 MiB</span><span>Archive depth: 16</span></div>
+					{/if}
+				</section>
+
+				<div class="grid gap-4 lg:grid-cols-2">
+					<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+						<h3 class="font-semibold text-white">Daily schedule</h3><p class="mt-1 text-sm text-gray-400">The Safe preset scans only files changed since the last successful Quick Scan.</p>
+						<div class="mt-4 flex flex-wrap items-end gap-3"><label class="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2 text-sm text-gray-300"><input type="checkbox" bind:checked={scheduleEnabled} /> Enabled</label><label><span class="block text-xs text-gray-400">Server local time</span><input type="time" bind:value={scheduleTime} class="mt-1 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white" /></label><button onclick={saveMalwareSchedule} disabled={busy !== ''} class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">Save schedule</button></div>
+					</section>
+					<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+						<h3 class="font-semibold text-white">On-access protection <span class="ml-1 text-xs font-normal text-yellow-300">Advanced</span></h3><p class="mt-1 text-sm text-gray-400">Off by default. Requires the daemon, clamonacc, and supported Linux fanotify features.</p>
+						<p class="mt-2 text-xs text-gray-500">{malware.on_access.message}</p>
+						<div class="mt-4 space-y-3"><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={onAccessEnabled} disabled={!malware.on_access.available && !malware.on_access.enabled} /> Enable notify-only monitoring</label><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={preventionEnabled} disabled={!onAccessEnabled || !malware.on_access.prevention_supported} /> Block access to detected files</label>{#if preventionEnabled}<label class="flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/25 p-3 text-sm text-yellow-300"><input class="mt-1" type="checkbox" bind:checked={preventionConfirmed} /><span>I understand prevention can materially affect busy website directories and may block access.</span></label>{/if}</div>
+						<button onclick={configureOnAccess} disabled={busy !== '' || (!malware.on_access.available && !malware.on_access.enabled)} class="mt-4 rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">Validate & Apply</button>
+					</section>
+				</div>
+
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Scan history</h3><p class="mt-1 text-sm text-gray-400">Recent persistent scan results.</p></div><span class="text-sm text-gray-400">{malwareScans.length} shown</span></div>
+					{#if malwareScans.length === 0}<p class="mt-4 text-sm text-gray-400">No malware scan has run yet.</p>{:else}<div class="mt-4 overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs uppercase text-gray-400"><tr><th class="pb-2">Mode</th><th class="pb-2">Status</th><th class="pb-2">Files</th><th class="pb-2">Findings</th><th class="pb-2">Started</th></tr></thead><tbody class="divide-y divide-gray-700">{#each malwareScans as scan}<tr><td class="py-3 text-white">{scan.mode.replaceAll('_', ' ')}</td><td class="py-3"><span class="rounded-full px-2 py-0.5 text-xs {scan.status === 'completed' ? 'bg-green-900 text-green-300' : scan.status === 'failed' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{scan.status}</span>{#if scan.error}<p class="mt-1 max-w-lg text-xs text-red-300">{scan.error}</p>{/if}</td><td class="py-3 text-gray-300">{scan.files_scanned}</td><td class="py-3 text-gray-300">{scan.findings_count}</td><td class="py-3 text-gray-400">{scan.started_at ? new Date(scan.started_at).toLocaleString() : '—'}</td></tr>{/each}</tbody></table></div>{/if}
+				</section>
+
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Quarantine</h3><p class="mt-1 text-sm text-gray-400">Review comes first; permanent deletion is never the default action.</p></div><span class="text-sm text-gray-400">{quarantine.length} items</span></div>
+					{#if quarantine.length === 0}<p class="mt-4 text-sm text-gray-400">No quarantined files.</p>{:else}<div class="mt-4 space-y-3">{#each quarantine as item}<article class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="rounded-full bg-red-900 px-2 py-0.5 text-xs text-red-300">{item.signature}</span><span class="text-xs text-gray-400">{item.status.replaceAll('_', ' ')}</span></div><p class="mt-2 break-all font-mono text-sm text-white">{item.original_path}</p><p class="mt-1 break-all font-mono text-xs text-gray-500">SHA-256 {item.sha256}</p><p class="mt-1 text-xs text-gray-400">Detected {new Date(item.detected_at).toLocaleString()} · {item.size_bytes} bytes</p></div><div class="flex flex-wrap gap-2">{#if item.status === 'quarantined' || item.status === 'false_positive'}<a download href={`/api/v1/security/malware/quarantine/${item.id}/download`} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300">Download</a><button onclick={() => restoreQuarantine(item)} disabled={busy !== ''} class="rounded border border-green-700 px-3 py-1.5 text-xs text-green-300 disabled:opacity-50">Restore</button>{#if item.status === 'quarantined'}<button onclick={() => markFalsePositive(item)} disabled={busy !== ''} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-50">False positive</button>{/if}<button onclick={() => deleteQuarantine(item)} disabled={busy !== ''} class="rounded bg-red-700 px-3 py-1.5 text-xs text-white disabled:opacity-50">Delete permanently</button>{/if}</div></div></article>{/each}</div>{/if}
 				</section>
 			{/if}
 		</div>
