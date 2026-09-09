@@ -110,6 +110,11 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 }
 
 func (s *Service) Install(ctx context.Context) error {
+	return s.InstallWithProgress(ctx, nil)
+}
+
+func (s *Service) InstallWithProgress(ctx context.Context, progress func(string)) error {
+	reportProgress(progress, "=== package install ===")
 	result, err := s.exec.RunSudo(ctx, "apt-get", "install", "-y",
 		"-o", "DPkg::Lock::Timeout=120", "-o", "Acquire::Retries=2",
 		"-o", "Acquire::http::Timeout=30", "-o", "Acquire::https::Timeout=30", "fail2ban")
@@ -119,6 +124,7 @@ func (s *Service) Install(ctx context.Context) error {
 	if result.ExitCode != 0 {
 		return commandFailure("install fail2ban package", result)
 	}
+	reportProgress(progress, "=== enable service ===")
 	result, err = s.exec.RunSudo(ctx, "systemctl", "enable", "--now", "fail2ban")
 	if err != nil {
 		return fmt.Errorf("enable fail2ban service: %w", err)
@@ -130,6 +136,10 @@ func (s *Service) Install(ctx context.Context) error {
 }
 
 func (s *Service) Apply(ctx context.Context, settings Settings) error {
+	return s.ApplyWithProgress(ctx, settings, nil)
+}
+
+func (s *Service) ApplyWithProgress(ctx context.Context, settings Settings, progress func(string)) error {
 	candidate, err := Render(settings)
 	if err != nil {
 		return err
@@ -144,6 +154,7 @@ func (s *Service) Apply(ctx context.Context, settings Settings) error {
 		}
 	}
 
+	reportProgress(progress, "=== validation ===")
 	validationRoot, err := s.createValidationRoot(ctx, candidate)
 	if err != nil {
 		return err
@@ -161,10 +172,12 @@ func (s *Service) Apply(ctx context.Context, settings Settings) error {
 	if err != nil {
 		return fmt.Errorf("read previous fail2ban configuration: %w", err)
 	}
+	reportProgress(progress, "=== promotion ===")
 	if err := s.files.WriteAtomic(ctx, managedConfigPath, candidate); err != nil {
 		return fmt.Errorf("install fail2ban configuration: %w", err)
 	}
-	if err := s.reloadAndConfirm(ctx, requestedJails); err != nil {
+	if err := s.reloadAndConfirm(ctx, requestedJails, progress); err != nil {
+		reportProgress(progress, "=== rollback ===")
 		if rollbackErr := s.restoreConfig(ctx, previous, existed); rollbackErr != nil {
 			return fmt.Errorf("%v; rollback failed: %w", err, rollbackErr)
 		}
@@ -284,6 +297,9 @@ func (s *Service) Unban(ctx context.Context, jailName, address string) error {
 			return fmt.Errorf("release manual fail2ban ban: %w", err)
 		}
 	}
+	if s.events != nil {
+		_ = s.events.ResolveFingerprint(ctx, "fail2ban:"+jailName+":"+ip.String(), s.now())
+	}
 	return nil
 }
 
@@ -399,7 +415,8 @@ func (s *Service) removeValidationRoot(root string) {
 	}
 }
 
-func (s *Service) reloadAndConfirm(ctx context.Context, requested []string) error {
+func (s *Service) reloadAndConfirm(ctx context.Context, requested []string, progress func(string)) error {
+	reportProgress(progress, "=== reload ===")
 	result, err := s.exec.RunSudo(ctx, "systemctl", "reload", "fail2ban")
 	if err != nil {
 		return fmt.Errorf("reload fail2ban: %w", err)
@@ -407,6 +424,7 @@ func (s *Service) reloadAndConfirm(ctx context.Context, requested []string) erro
 	if result.ExitCode != 0 {
 		return commandFailure("reload fail2ban", result)
 	}
+	reportProgress(progress, "=== health confirmation ===")
 	result, err = s.exec.RunSudo(ctx, "fail2ban-client", "status")
 	if err != nil {
 		return fmt.Errorf("confirm fail2ban jails: %w", err)
@@ -425,6 +443,12 @@ func (s *Service) reloadAndConfirm(ctx context.Context, requested []string) erro
 		}
 	}
 	return nil
+}
+
+func reportProgress(progress func(string), message string) {
+	if progress != nil {
+		progress(message)
+	}
 }
 
 func (s *Service) restoreConfig(ctx context.Context, previous string, existed bool) error {

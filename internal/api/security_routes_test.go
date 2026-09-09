@@ -17,6 +17,12 @@ func TestSecurityRoutesRegistered(t *testing.T) {
 		http.MethodGet + " /api/v1/security/overview":                false,
 		http.MethodGet + " /api/v1/security/events":                  false,
 		http.MethodPost + " /api/v1/security/events/{id}/transition": false,
+		http.MethodGet + " /api/v1/security/fail2ban":                false,
+		http.MethodPost + " /api/v1/security/fail2ban/install":       false,
+		http.MethodPut + " /api/v1/security/fail2ban/settings":       false,
+		http.MethodGet + " /api/v1/security/fail2ban/bans":           false,
+		http.MethodPost + " /api/v1/security/fail2ban/bans":          false,
+		http.MethodDelete + " /api/v1/security/fail2ban/bans/{ip}":   false,
 	}
 	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		key := method + " " + route

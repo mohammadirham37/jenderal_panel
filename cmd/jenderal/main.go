@@ -23,6 +23,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
@@ -176,7 +177,8 @@ func cmdServe() {
 		os.Exit(1)
 	}
 	securityEvents := security.NewEventService(db, notifSvc)
-	securitySvc := security.NewService(securityEvents, tasks)
+	fail2banSvc := fail2ban.NewService(exec, nil, db, securityEvents)
+	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
@@ -221,6 +223,7 @@ func cmdServe() {
 		Tasks:          tasks,
 		SecuritySvc:    securitySvc,
 		SecurityEvents: securityEvents,
+		Fail2banSvc:    fail2banSvc,
 		DB:             db,
 		StaticHandler:  staticHandler(),
 	})
@@ -241,6 +244,7 @@ func cmdServe() {
 	deploySvc.Start(bgCtx)
 	backupScheduler.Start(bgCtx)
 	alertChecker.Start(bgCtx)
+	fail2banSvc.StartReconciler(bgCtx)
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {

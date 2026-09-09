@@ -18,6 +18,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
@@ -71,6 +72,7 @@ type Dependencies struct {
 	Tasks          *taskrunner.Runner
 	SecuritySvc    *security.Service
 	SecurityEvents *security.EventService
+	Fail2banSvc    *fail2ban.Service
 	StaticHandler  http.Handler
 }
 
@@ -111,6 +113,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	terminalHandler := terminal.NewHandler(deps.Exec, deps.AuditSvc)
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
+	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -566,6 +569,24 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/security/events", securityHandler.ListEvents)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Post("/security/events/{id}/transition", securityHandler.TransitionEvent)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/fail2ban", fail2banHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/fail2ban/install", fail2banHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Put("/security/fail2ban/settings", fail2banHandler.Apply)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/fail2ban/start", fail2banHandler.Start)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/fail2ban/stop", fail2banHandler.Stop)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/fail2ban/restart", fail2banHandler.Restart)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/fail2ban/bans", fail2banHandler.Bans)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/fail2ban/bans", fail2banHandler.Ban)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Delete("/security/fail2ban/bans/{ip}", fail2banHandler.Unban)
 		})
 	})
 

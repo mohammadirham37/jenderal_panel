@@ -388,7 +388,7 @@ git commit -m "feat(security): add safe fail2ban manager"
 - Consumes: Fail2ban service, task runner, audit, and event service.
 - Produces HTTP: `GET /security/fail2ban`, `POST /install`, `PUT /settings`, service actions, `GET /bans`, `POST /bans`, and `DELETE /bans/{ip}` under `/api/v1/security/fail2ban`.
 
-- [ ] **Step 1: Write failing handler behavior tests**
+- [x] **Step 1: Write failing handler behavior tests**
 
 ```go
 func TestInstallReturnsPersistentSecurityTask(t *testing.T) {
@@ -409,13 +409,13 @@ func TestManualBanRejectsPermanentDuration(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run handler tests and verify RED**
+- [x] **Step 2: Run handler tests and verify RED**
 
 Run: `go test ./internal/fail2ban ./internal/api -run 'InstallReturns|ManualBan|SecurityRoutes' -count=1`
 
 Expected: FAIL on missing handlers and routes.
 
-- [ ] **Step 3: Implement permissioned routes, auditing, and task progress**
+- [x] **Step 3: Implement permissioned routes, auditing, and task progress**
 
 Install and apply operations call `RunFuncWithOptions` with `Module: "security"` and explicit 20-minute timeouts. Log named phases before package install, validation, promotion, reload, and health confirmation. Service start/stop/restart, settings changes, ban, and unban require `security.manage`; reads require `security.view`.
 
@@ -423,13 +423,13 @@ Audit only accepted mutations, recording the user, remote address, jail, IP, dur
 
 Add the Fail2ban probe to the overview. A missing optional package before setup is `not_installed`; an enabled but stopped service is unhealthy.
 
-- [ ] **Step 4: Verify route, task, audit, and event tests**
+- [x] **Step 4: Verify route, task, audit, and event tests**
 
 Run: `go test ./internal/fail2ban ./internal/security ./internal/api ./cmd/jenderal -count=1`
 
 Expected: PASS and a page refresh can retrieve the same task by ID.
 
-- [ ] **Step 5: Commit Fail2ban API integration**
+- [x] **Step 5: Commit Fail2ban API integration**
 
 ```bash
 git add internal/fail2ban internal/security/service.go internal/api/router.go cmd/jenderal/main.go

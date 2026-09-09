@@ -181,6 +181,19 @@ func (s *EventService) Transition(ctx context.Context, id string, status EventSt
 	return nil
 }
 
+func (s *EventService) ResolveFingerprint(ctx context.Context, fingerprint string, now time.Time) error {
+	var id string
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM security_events
+		WHERE fingerprint = ? AND status IN ('open','acknowledged') ORDER BY last_seen DESC LIMIT 1`, fingerprint).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("find security event by fingerprint: %w", err)
+	}
+	return s.Transition(ctx, id, StatusResolved, now)
+}
+
 func (s *EventService) Cleanup(ctx context.Context, now time.Time) error {
 	days := defaultEventRetentionDays
 	var configured string
