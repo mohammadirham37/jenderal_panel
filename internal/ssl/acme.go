@@ -77,6 +77,11 @@ func acmeDirectoryURL() string {
 	return lego.LEDirectoryProduction
 }
 
+func isInvalidContactError(err error) bool {
+	var problem *legoacme.ProblemDetails
+	return errors.As(err, &problem) && problem.Type == "urn:ietf:params:acme:error:invalidContact"
+}
+
 // legoUser implements the registration.User interface required by lego.
 type legoUser struct {
 	Email        string                 `json:"email"`
@@ -154,28 +159,24 @@ func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, [
 		return nil, nil, err
 	}
 
-	config := lego.NewConfig(user)
-	config.Certificate.KeyType = certcrypto.RSA2048
-
-	config.CADirURL = acmeDirectoryURL()
-
-	client, err := lego.NewClient(config)
+	client, err := newLegoACMEClient(user, webroot)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create lego client: %w", err)
-	}
-
-	// Let Nginx keep port 80 and serve the challenge file from the website root.
-	provider, err := newHTTP01Provider(webroot)
-	if err != nil {
-		return nil, nil, fmt.Errorf("create HTTP-01 webroot provider: %w", err)
-	}
-	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
-		return nil, nil, fmt.Errorf("set http01 provider: %w", err)
+		return nil, nil, err
 	}
 
 	// Register if we don't have a registration yet.
 	if user.Registration == nil {
 		reg, regErr := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+		if regErr != nil && user.Email != "" && isInvalidContactError(regErr) {
+			// Some syntactically valid addresses still have domains rejected by
+			// the CA. Retry without an optional contact instead of blocking SSL.
+			user.Email = ""
+			client, err = newLegoACMEClient(user, webroot)
+			if err != nil {
+				return nil, nil, err
+			}
+			reg, regErr = client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+		}
 		if regErr != nil {
 			return nil, nil, fmt.Errorf("register ACME account: %w", regErr)
 		}
@@ -197,6 +198,27 @@ func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, [
 	}
 
 	return cert.Certificate, cert.PrivateKey, nil
+}
+
+func newLegoACMEClient(user *legoUser, webroot string) (*lego.Client, error) {
+	config := lego.NewConfig(user)
+	config.Certificate.KeyType = certcrypto.RSA2048
+	config.CADirURL = acmeDirectoryURL()
+
+	client, err := lego.NewClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("create lego client: %w", err)
+	}
+
+	// Let Nginx keep port 80 and serve the challenge file from the website root.
+	provider, err := newHTTP01Provider(webroot)
+	if err != nil {
+		return nil, fmt.Errorf("create HTTP-01 webroot provider: %w", err)
+	}
+	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
+		return nil, fmt.Errorf("set http01 provider: %w", err)
+	}
+	return client, nil
 }
 
 // RevokeCertificate revokes a previously issued certificate.

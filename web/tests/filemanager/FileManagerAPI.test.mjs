@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 
 let createFileManagerAPI;
 try {
@@ -38,4 +39,10 @@ test('file manager client matches the backend route contract', async () => {
 		['POST', '/api/v1/websites/site-1/files/mkdir', { path: '/public/cache' }],
 		['POST', '/api/v1/websites/site-1/files/rename', { old_path: '/public/a.txt', new_path: '/public/b.txt' }]
 	]);
+});
+
+test('file uploads send the CSRF token required by the API middleware', async () => {
+	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
+	assert.match(page, /import \{ api, getCSRFToken \} from '\$lib\/api'/);
+	assert.match(page, /'X-CSRF-Token': getCSRFToken\(\)/);
 });

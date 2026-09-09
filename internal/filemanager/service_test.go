@@ -2,6 +2,8 @@ package filemanager
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +87,10 @@ func TestValidatePath(t *testing.T) {
 // ---------- Browse tests ----------
 
 func TestBrowse(t *testing.T) {
+	basePath := t.TempDir()
+	if err := os.Mkdir(filepath.Join(basePath, "public"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	lsOutput := `total 20
 drwxr-xr-x  4 webuser webuser 4096 Jan 15 10:30 .
 drwxr-xr-x  3 root    root    4096 Jan 10 08:00 ..
@@ -108,7 +114,7 @@ lrwxrwxrwx  1 webuser webuser   11 Jan 12 08:00 link -> /tmp/target
 	}
 
 	svc := NewService(mock, nil)
-	entries, err := svc.Browse(context.Background(), "/home/webuser", "public")
+	entries, err := svc.Browse(context.Background(), basePath, "public")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,6 +189,7 @@ func TestBrowse_PathTraversal(t *testing.T) {
 }
 
 func TestBrowse_EmptyDir(t *testing.T) {
+	basePath := t.TempDir()
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return &executor.Result{ExitCode: 0, Duration: time.Millisecond}, nil
@@ -197,12 +204,83 @@ func TestBrowse_EmptyDir(t *testing.T) {
 	}
 
 	svc := NewService(mock, nil)
-	entries, err := svc.Browse(context.Background(), "/home/webuser", "")
+	entries, err := svc.Browse(context.Background(), basePath, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(entries) != 0 {
 		t.Fatalf("expected 0 entries, got %d", len(entries))
+	}
+}
+
+func TestResolvePathRejectsSymlinkEscape(t *testing.T) {
+	basePath := t.TempDir()
+	outsidePath := t.TempDir()
+	if err := os.Symlink(outsidePath, filepath.Join(basePath, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := resolvePath(basePath, "escape/secret.txt", true); err == nil {
+		t.Fatal("resolvePath accepted a symlink that escapes the website home")
+	}
+}
+
+func TestDeleteFileRejectsWebsiteRoot(t *testing.T) {
+	basePath := t.TempDir()
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			t.Fatal("Run should not be called when deleting the website root")
+			return nil, nil
+		},
+		RunSudoFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			t.Fatal("RunSudo should not be called when deleting the website root")
+			return nil, nil
+		},
+	}
+
+	if err := NewService(mock, nil).DeleteFile(context.Background(), basePath, "/"); err == nil {
+		t.Fatal("DeleteFile accepted the website root")
+	}
+}
+
+func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
+	basePath := t.TempDir()
+	resolvedBasePath, err := filepath.EvalSymlinks(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := "$(touch /tmp/should-not-run) ' literal content"
+	var copiedContent string
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			t.Fatal("WriteFile must not invoke a shell")
+			return nil, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "chown" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			if name != "cp" || len(args) != 4 || args[0] != "--remove-destination" || args[1] != "--" {
+				t.Fatalf("RunSudo = %q %q, want cp --remove-destination -- <temp> <target>", name, args)
+			}
+			got, err := os.ReadFile(args[2])
+			if err != nil {
+				t.Fatal(err)
+			}
+			copiedContent = string(got)
+			if args[3] != filepath.Join(resolvedBasePath, "name;touch injected") {
+				t.Fatalf("target = %q, want literal filename", args[3])
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	err = NewService(mock, nil).WriteFile(context.Background(), basePath, "name;touch injected", content)
+	if err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if copiedContent != content {
+		t.Fatalf("copied content = %q, want %q", copiedContent, content)
 	}
 }
 

@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
+	import { api, getCSRFToken } from '$lib/api';
 	import { createFileManagerAPI } from '$lib/file-manager.js';
 
 	interface WebsiteDomain {
@@ -428,6 +428,7 @@
 			formData.append('path', currentPath);
 			const res = await fetch(`/api/v1/websites/${website.id}/files/upload`, {
 				method: 'POST',
+				headers: { 'X-CSRF-Token': getCSRFToken() },
 				credentials: 'include',
 				body: formData
 			});

@@ -56,13 +56,20 @@ func TestNewLegoClientOmitsInvalidACMEContactEmail(t *testing.T) {
 }
 
 func TestNewLegoClientPreservesValidACMEContactEmail(t *testing.T) {
-	client := NewLegoClient("admin@example.com", t.TempDir())
+	client := NewLegoClient("admin@gmail.com", t.TempDir())
 	user, err := client.loadOrCreateAccount()
 	if err != nil {
 		t.Fatalf("loadOrCreateAccount() error = %v", err)
 	}
-	if got := user.GetEmail(); got != "admin@example.com" {
-		t.Fatalf("ACME contact email = %q, want admin@example.com", got)
+	if got := user.GetEmail(); got != "admin@gmail.com" {
+		t.Fatalf("ACME contact email = %q, want admin@gmail.com", got)
+	}
+}
+
+func TestInvalidContactErrorCanBeRetriedWithoutEmail(t *testing.T) {
+	err := &legoacme.ProblemDetails{Type: "urn:ietf:params:acme:error:invalidContact"}
+	if !isInvalidContactError(err) {
+		t.Fatal("isInvalidContactError did not recognize an ACME invalidContact response")
 	}
 }
 

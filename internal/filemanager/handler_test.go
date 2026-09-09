@@ -36,11 +36,22 @@ func TestBrowseUsesWebsiteRouteID(t *testing.T) {
 	}
 	handler := NewHandler(NewService(mock, nil), db, nil)
 	router := chi.NewRouter()
-	router.Get("/websites/{id}/files", handler.Browse)
+	router.Get("/websites/{id}/files", func(w http.ResponseWriter, r *http.Request) {
+		basePath, err := handler.getWebsite(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(basePath))
+	})
 
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/websites/site-1/files?path=/", nil))
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("Browse status = %d, want 200; body = %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Body.String(); got != "/home/web_example_com" {
+		t.Fatalf("website base path = %q, want /home/web_example_com", got)
 	}
 }
