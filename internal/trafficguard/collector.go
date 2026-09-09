@@ -33,6 +33,8 @@ func (c *Collector) Collect(ctx context.Context, now time.Time) error {
 		return err
 	}
 	defer rows.Close()
+	type websiteTarget struct{ id, user string }
+	var websites []websiteTarget
 	for rows.Next() {
 		var id, user string
 		if err := rows.Scan(&id, &user); err != nil {
@@ -41,18 +43,22 @@ func (c *Collector) Collect(ctx context.Context, now time.Time) error {
 		if !trafficWebUserPattern.MatchString(user) {
 			return fmt.Errorf("website %s has an invalid web user", id)
 		}
-		if err := c.repo.EnsureProfile(ctx, id, now); err != nil {
-			return err
-		}
-		if err := c.collectSite(ctx, id, "/home/"+user+"/logs/access.log", now); err != nil {
-			return err
-		}
+		websites = append(websites, websiteTarget{id: id, user: user})
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 	if err := rows.Close(); err != nil {
 		return err
+	}
+
+	for _, website := range websites {
+		if err := c.repo.EnsureProfile(ctx, website.id, now); err != nil {
+			return err
+		}
+		if err := c.collectSite(ctx, website.id, "/home/"+website.user+"/logs/access.log", now); err != nil {
+			return err
+		}
 	}
 	return c.repo.RollupAndCleanup(ctx, now)
 }

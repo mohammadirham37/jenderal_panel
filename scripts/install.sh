@@ -418,6 +418,103 @@ step_firewall() {
     log "Firewall: OK"
 }
 
+is_public_ipv4() {
+    local ip="${1:-}"
+    local a b c d extra octet
+    [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    IFS=. read -r a b c d extra <<< "$ip"
+    [[ -z "${extra:-}" ]] || return 1
+
+    for octet in "$a" "$b" "$c" "$d"; do
+        [[ "$octet" =~ ^[0-9]{1,3}$ ]] || return 1
+        (( 10#$octet <= 255 )) || return 1
+    done
+
+    local first=$((10#$a))
+    local second=$((10#$b))
+    local third=$((10#$c))
+
+    (( first == 0 || first == 10 || first == 127 || first >= 224 )) && return 1
+    (( first == 100 && second >= 64 && second <= 127 )) && return 1
+    (( first == 169 && second == 254 )) && return 1
+    (( first == 172 && second >= 16 && second <= 31 )) && return 1
+    (( first == 192 && second == 168 )) && return 1
+    (( first == 192 && second == 0 && (third == 0 || third == 2) )) && return 1
+    (( first == 192 && second == 88 && third == 99 )) && return 1
+    (( first == 198 && (second == 18 || second == 19) )) && return 1
+    (( first == 198 && second == 51 && third == 100 )) && return 1
+    (( first == 203 && second == 0 && third == 113 )) && return 1
+    return 0
+}
+
+detect_public_ipv4() {
+    local service candidate addresses
+    for service in \
+        https://api.ipify.org \
+        https://checkip.amazonaws.com \
+        https://ifconfig.me/ip; do
+        candidate=$(curl -4fsS --connect-timeout 3 --max-time 5 "$service" 2>/dev/null | tr -d '[:space:]') || continue
+        if is_public_ipv4 "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    addresses=$(hostname -I 2>/dev/null || true)
+    for candidate in $addresses; do
+        if is_public_ipv4 "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+is_usable_install_hostname() {
+    local hostname_value="${1:-}"
+    [[ -n "$hostname_value" ]] || return 1
+    is_public_ipv4 "$hostname_value" && return 0
+    [[ "$hostname_value" != *:* ]] || return 1
+    [[ ! "$hostname_value" =~ ^[0-9.]+$ ]]
+}
+
+detect_install_host() {
+    local configured_hostname="${1:-}"
+    local public_ip fallback_hostname
+    if public_ip=$(detect_public_ipv4); then
+        printf '%s\n' "$public_ip"
+        return 0
+    fi
+    if is_usable_install_hostname "$configured_hostname"; then
+        printf '%s\n' "$configured_hostname"
+        return 0
+    fi
+    fallback_hostname=$(hostname -f 2>/dev/null) || fallback_hostname=$(hostname 2>/dev/null) || fallback_hostname=localhost
+    if is_usable_install_hostname "$fallback_hostname"; then
+        printf '%s\n' "$fallback_hostname"
+        return 0
+    fi
+    printf 'localhost\n'
+}
+
+print_install_summary() {
+    local panel_host
+    panel_host=$(detect_install_host "$ADMIN_HOSTNAME")
+    echo ""
+    echo -e "${GREEN}${BOLD}"
+    echo "  ╔═══════════════════════════════════════════════╗"
+    echo "  ║       Jenderal Panel v${JENDERAL_VERSION} Installed!       ║"
+    echo "  ╚═══════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo -e "  URL:       ${BOLD}https://${panel_host}:${PANEL_PORT}${NC}"
+    echo -e "  Username:  ${BOLD}admin${NC}"
+    echo -e "  Password:  ${BOLD}${ADMIN_PASSWORD}${NC}"
+    echo ""
+    echo -e "  ${YELLOW}Browser will show certificate warning (self-signed).${NC}"
+    echo -e "  ${YELLOW}Use Let's Encrypt via panel for production SSL.${NC}"
+    echo ""
+}
+
 #----------------------------------------------------------#
 #                         Main                              #
 #----------------------------------------------------------#
@@ -454,21 +551,8 @@ main() {
     step_systemd
     step_firewall
 
-    # Summary
-    local ip=$(curl -fsSL https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
-    echo ""
-    echo -e "${GREEN}${BOLD}"
-    echo "  ╔═══════════════════════════════════════════════╗"
-    echo "  ║       Jenderal Panel v${JENDERAL_VERSION} Installed!       ║"
-    echo "  ╚═══════════════════════════════════════════════╝"
-    echo -e "${NC}"
-    echo -e "  URL:       ${BOLD}https://${ip}:${PANEL_PORT}${NC}"
-    echo -e "  Username:  ${BOLD}admin${NC}"
-    echo -e "  Password:  ${BOLD}${ADMIN_PASSWORD}${NC}"
-    echo ""
-    echo -e "  ${YELLOW}Browser will show certificate warning (self-signed).${NC}"
-    echo -e "  ${YELLOW}Use Let's Encrypt via panel for production SSL.${NC}"
-    echo ""
+
+    print_install_summary
 }
 
 main "$@"

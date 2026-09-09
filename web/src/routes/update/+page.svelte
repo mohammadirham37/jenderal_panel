@@ -106,6 +106,16 @@
 		await resumeUpdateReload(60);
 	}
 
+	function onTaskMissing() {
+		reloadWatcherGeneration += 1;
+		reloadWatcherActive = false;
+		updating = false;
+		expectedUpdateVersion = '';
+		updateMsg = '';
+		reloadTimedOut = false;
+		localStorage.removeItem(updateTargetStorageKey);
+	}
+
 	function reloadPanel() {
 		window.location.replace(cacheBustedURL(window.location.href));
 	}
@@ -220,5 +230,5 @@
 		</div>
 	{/if}
 
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_update_task" onComplete={onTaskComplete} />
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_update_task" onComplete={onTaskComplete} onMissing={onTaskMissing} />
 </div>

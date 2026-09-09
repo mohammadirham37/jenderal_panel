@@ -249,7 +249,7 @@
 			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
 		</div>
 	{/if}
-	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') actionMsg = 'Laravel repair completed.'; }} />
+	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') actionMsg = 'Laravel repair completed.'; }} onMissing={() => { repairing = false; }} />
 
 	<!-- Create Form -->
 	{#if showCreateForm}
@@ -463,7 +463,7 @@
 											</button>
 										{/if}
 										{#if deleteConfirmId === website.id}
-											<span class="text-xs text-red-400">Confirm?</span>
+											<span class="text-xs text-red-400">Delete website, SSL, and all files?</span>
 											<button
 												onclick={() => deleteWebsite(website.id)}
 												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"

@@ -536,7 +536,7 @@
 
 				{#if deleteConfirm}
 					<div class="flex items-center gap-2 p-2 bg-red-900/30 border border-red-700 rounded-lg">
-						<span class="text-sm text-red-300">Are you sure? This cannot be undone.</span>
+						<span class="text-sm text-red-300">Delete this website, its SSL certificates, and all files? This cannot be undone.</span>
 						<button
 							onclick={deleteWebsite}
 							class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"

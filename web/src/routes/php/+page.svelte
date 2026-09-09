@@ -375,5 +375,5 @@
 		{/if}
 	{/if}
 
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} />
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} onMissing={() => { actionInProgress = null; }} />
 </div>

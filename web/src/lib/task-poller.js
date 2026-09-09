@@ -10,6 +10,7 @@
  *   onTask: (task: T) => void,
  *   onComplete: (task: T) => void,
  *   onError?: (error: unknown) => void,
+ *   onMissing?: (error: unknown) => void,
  *   intervalMs?: number,
  *   schedule?: (callback: () => void, intervalMs: number) => number,
  *   cancel?: (timer: number) => void
@@ -22,6 +23,7 @@ export function createTaskPoller(options) {
 		onTask,
 		onComplete,
 		onError = () => {},
+		onMissing = () => {},
 		intervalMs = 2000,
 		schedule = setInterval,
 		cancel = clearInterval
@@ -43,7 +45,12 @@ export function createTaskPoller(options) {
 				onComplete(task);
 			}
 		} catch (error) {
-			if (!stopped) onError(error);
+			if (!stopped && error && typeof error === 'object' && 'status' in error && error.status === 404) {
+				stop();
+				onMissing(error);
+			} else if (!stopped) {
+				onError(error);
+			}
 		} finally {
 			inFlight = false;
 		}
@@ -59,4 +66,27 @@ export function createTaskPoller(options) {
 	void poll();
 
 	return stop;
+}
+
+/**
+ * Clear a task that the backend no longer knows about, then let the owning
+ * page release any operation-specific state it keeps alongside the task ID.
+ *
+ * @param {{
+ *   storageKey?: string,
+ *   storage?: { removeItem: (key: string) => void },
+ *   clearTask: () => void,
+ *   onMissing?: () => void
+ * }} options
+ */
+export function clearMissingTask(options) {
+	const {
+		storageKey = '',
+		storage = globalThis.localStorage,
+		clearTask,
+		onMissing = () => {}
+	} = options;
+	clearTask();
+	if (storageKey) storage?.removeItem(storageKey);
+	onMissing();
 }

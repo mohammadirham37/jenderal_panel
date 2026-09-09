@@ -2,13 +2,14 @@
 	import { goto } from '$app/navigation';
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
-	import { login, isAuthenticated } from '$lib/stores/auth';
+	import { login, isAuthenticated, authError } from '$lib/stores/auth';
 	import { onMount } from 'svelte';
 
 	let username = $state('');
 	let password = $state('');
 	let error = $state('');
 	let submitting = $state(false);
+	let visibleError = $derived(error || $authError);
 
 	onMount(() => {
 		if ($isAuthenticated) {
@@ -101,13 +102,13 @@
 				<h1 class="mt-3 text-3xl font-semibold tracking-tight text-white">Welcome back</h1>
 				<p class="mt-2 text-sm leading-6 text-gray-400">Sign in to continue to your server workspace.</p>
 
-				{#if error}
+				{#if visibleError}
 					<div id="login-error" role="alert" class="mt-6 rounded-xl border border-red-700/80 bg-red-900/40 p-3.5 text-sm text-red-300">
-						{error}
+						{visibleError}
 					</div>
 				{/if}
 
-				<form onsubmit={handleSubmit} aria-describedby={error ? 'login-error' : undefined} class="mt-8 space-y-5">
+				<form onsubmit={handleSubmit} aria-describedby={visibleError ? 'login-error' : undefined} class="mt-8 space-y-5">
 					<div>
 						<label for="username" class="mb-2 block text-sm font-medium text-gray-300">
 							Username

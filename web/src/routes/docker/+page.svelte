@@ -972,5 +972,5 @@
 		</div>
 	{/if}
 
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_docker_task" onComplete={onInstallComplete} />
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_docker_task" onComplete={onInstallComplete} onMissing={() => { actionInProgress = null; }} />
 </div>

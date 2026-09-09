@@ -2,6 +2,26 @@ import type { ApiResponse, ApiError } from './types';
 
 let csrfToken = '';
 
+export class APIRequestError extends Error {
+	constructor(message: string, public readonly status: number, public readonly code = '') {
+		super(message);
+		this.name = 'APIRequestError';
+	}
+}
+
+type APIRequestOptions = {
+	timeoutMs?: number;
+};
+
+async function responseError(res: Response): Promise<APIRequestError> {
+	try {
+		const errorData: ApiError = await res.json();
+		return new APIRequestError(errorData.error?.message || `HTTP ${res.status}`, res.status, errorData.error?.code);
+	} catch {
+		return new APIRequestError(`HTTP ${res.status}: ${res.statusText}`, res.status);
+	}
+}
+
 export function setCSRFToken(token: string) {
 	csrfToken = token;
 }
@@ -16,7 +36,13 @@ export function getCSRFToken(): string {
 	return csrfToken;
 }
 
-async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
+async function request<T>(
+	method: string,
+	path: string,
+	body?: unknown,
+	init: RequestInit = {},
+	options: APIRequestOptions = {}
+): Promise<T> {
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json'
 	};
@@ -29,37 +55,55 @@ async function request<T>(method: string, path: string, body?: unknown, init: Re
 		}
 	}
 
-	const res = await fetch(path, {
-		...init,
-		method,
-		headers,
-		credentials: 'include',
-		body: body ? JSON.stringify(body) : undefined
-	});
+	const controller = options.timeoutMs ? new AbortController() : undefined;
+	let timedOut = false;
+	const timeout = controller
+		? setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, options.timeoutMs)
+		: undefined;
 
-	if (!res.ok) {
-		let errorData: ApiError;
-		try {
-			errorData = await res.json();
-		} catch {
-			throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+	try {
+		const res = await fetch(path, {
+			...init,
+			method,
+			headers,
+			credentials: 'include',
+			body: body ? JSON.stringify(body) : undefined,
+			signal: controller?.signal ?? init.signal
+		});
+
+		if (!res.ok) {
+			throw await responseError(res);
 		}
-		throw new Error(errorData.error?.message || `HTTP ${res.status}`);
-	}
 
-	const data: ApiResponse<T> = await res.json();
-	return data.data;
+		const data: ApiResponse<T> = await res.json();
+		return data.data;
+	} catch (error) {
+		if (timedOut) {
+			const seconds = Math.ceil((options.timeoutMs || 0) / 1000);
+			throw new APIRequestError(
+				`Server did not respond within ${seconds} seconds. Restart it over SSH: sudo /opt/jenderal/jenderal restart`,
+				0,
+				'REQUEST_TIMEOUT'
+			);
+		}
+		throw error;
+	} finally {
+		if (timeout !== undefined) clearTimeout(timeout);
+	}
 }
 
 export const api = {
-	get<T>(path: string): Promise<T> {
-		return request<T>('GET', path);
+	get<T>(path: string, options?: APIRequestOptions): Promise<T> {
+		return request<T>('GET', path, undefined, {}, options);
 	},
 	getNoStore<T>(path: string): Promise<T> {
 		return request<T>('GET', path, undefined, { cache: 'no-store' });
 	},
-	post<T>(path: string, body?: unknown): Promise<T> {
-		return request<T>('POST', path, body);
+	post<T>(path: string, body?: unknown, options?: APIRequestOptions): Promise<T> {
+		return request<T>('POST', path, body, {}, options);
 	},
 	put<T>(path: string, body?: unknown): Promise<T> {
 		return request<T>('PUT', path, body);
@@ -90,13 +134,7 @@ export async function apiRaw<T>(method: string, path: string, body?: unknown): P
 	});
 
 	if (!res.ok) {
-		let errorData: ApiError;
-		try {
-			errorData = await res.json();
-		} catch {
-			throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-		}
-		throw new Error(errorData.error?.message || `HTTP ${res.status}`);
+		throw await responseError(res);
 	}
 
 	return await res.json();

@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -68,6 +70,12 @@ func main() {
 		cmdAdminCreate()
 	case "version":
 		fmt.Printf("Jenderal Panel %s\n", buildVersion())
+	case "restart":
+		if err := restartService(os.Geteuid(), runSystemCommand); err != nil {
+			fmt.Fprintf(os.Stderr, "Restart failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("Jenderal Panel restarted successfully.")
 	default:
 		printUsage()
 		os.Exit(1)
@@ -82,7 +90,43 @@ Usage:
   jenderal migrate            Run database migrations
   jenderal admin create       Create admin user
   jenderal version            Print version
+  jenderal restart            Restart the systemd service (requires root)
 `, buildVersion())
+}
+
+type systemCommandRunner func(context.Context, string, ...string) ([]byte, error)
+
+func runSystemCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+}
+
+func restartService(euid int, run systemCommandRunner) error {
+	if euid != 0 {
+		return fmt.Errorf("root privileges required; run: sudo /opt/jenderal/jenderal restart")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	output, err := run(ctx, "/usr/bin/systemctl", "restart", "jenderal.service")
+	if err != nil {
+		detail := strings.TrimSpace(string(output))
+		if detail == "" {
+			detail = err.Error()
+		}
+		return fmt.Errorf("systemctl restart jenderal.service: %s", detail)
+	}
+
+	output, err = run(ctx, "/usr/bin/systemctl", "is-active", "jenderal.service")
+	status := strings.TrimSpace(string(output))
+	if err != nil || status != "active" {
+		if status == "" {
+			status = "unknown"
+		}
+		return fmt.Errorf("jenderal.service is %s; inspect logs with: sudo journalctl -u jenderal -n 100 --no-pager", status)
+	}
+
+	return nil
 }
 
 func buildVersion() string {

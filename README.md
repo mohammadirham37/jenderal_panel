@@ -323,9 +323,16 @@ jenderal serve              # Start the HTTP server
 jenderal migrate            # Run database migrations
 jenderal admin create       # Create admin user (interactive)
 jenderal version            # Print version
+jenderal restart            # Restart the systemd service (requires root)
 ```
 
 Use `--config /path/to/config.yaml` to specify config file location.
+
+On an installed server, restart the panel over SSH with:
+
+```bash
+sudo /opt/jenderal/jenderal restart
+```
 
 ## Development
 

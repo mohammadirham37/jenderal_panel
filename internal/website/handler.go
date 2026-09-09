@@ -112,9 +112,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 // Delete handles DELETE /api/websites/{id}.
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	removeFiles := r.URL.Query().Get("remove_files") == "true"
 
-	if err := h.svc.Delete(r.Context(), id, removeFiles); err != nil {
+	if err := h.svc.Delete(r.Context(), id); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}

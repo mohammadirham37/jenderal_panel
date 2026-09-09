@@ -350,7 +350,7 @@ func TestDeleteRemovesPerDomainSSLArtifacts(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 	}
-	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-ssl", false); err != nil {
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-ssl"); err != nil {
 		t.Fatalf("Delete() error = %v", err)
 	}
 	for _, domain := range []string{"example.com", "www.example.com"} {
@@ -367,6 +367,50 @@ func TestDeleteRemovesPerDomainSSLArtifacts(t *testing.T) {
 	}
 	if !removed["/etc/nginx/sites-enabled/example.com.suspended"] {
 		t.Error("suspended primary HTTP symlink was not removed")
+	}
+}
+
+func TestDeleteAlwaysRemovesWebsiteFilesAndSSLCertificateRecords(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-all", "delete-all.example.com", "static", "", "active")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO ssl_certificates (id, website_id, domain, issuer, status, auto_renew, created_at, updated_at)
+		 VALUES ('cert-delete-all', 'ws-delete-all', 'delete-all.example.com', 'custom', 'active', 0, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	homeRemoved := false
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "rm" && len(args) == 2 && args[0] == "-rf" && args[1] == "/home/web_delete_all_example_com" {
+				homeRemoved = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-all"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+
+	if !homeRemoved {
+		t.Fatal("website home directory was not removed recursively")
+	}
+	for table, want := range map[string]int{"websites": 0, "ssl_certificates": 0} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM ` + table + ` WHERE ` + map[string]string{
+			"websites": "id = 'ws-delete-all'", "ssl_certificates": "website_id = 'ws-delete-all'",
+		}[table]).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != want {
+			t.Fatalf("%s rows = %d, want %d", table, count, want)
+		}
 	}
 }
 
@@ -397,7 +441,7 @@ func TestDeleteIgnoresUnregisteredHistoricalCertificateDomain(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 	}
-	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-unsafe", false); err == nil {
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-unsafe"); err == nil {
 		t.Fatal("Delete() error = nil, want unregistered certificate rejection")
 	}
 	for _, path := range removed {
@@ -429,7 +473,7 @@ func TestDeleteRetainsDatabaseStateWhenSystemCleanupFails(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 	}
-	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-fail", false); err == nil {
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-fail"); err == nil {
 		t.Fatal("Delete() error = nil, want cleanup failure")
 	}
 	var count int
@@ -458,7 +502,7 @@ func TestDeleteRejectsStoredSystemUserOutsideWebsiteOwnership(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 	}
-	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-root", true); err == nil {
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-root"); err == nil {
 		t.Fatal("Delete() error = nil, want foreign system user rejection")
 	}
 	if sudoCalls != 0 {

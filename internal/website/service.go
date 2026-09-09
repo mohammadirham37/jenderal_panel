@@ -410,8 +410,8 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 	return nil
 }
 
-// Delete removes a website record and optionally its files.
-func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error {
+// Delete removes a website record and all of its managed files.
+func (s *Service) Delete(ctx context.Context, id string) error {
 	unlock := s.mutations.Lock(id)
 	defer unlock()
 	w, err := s.Get(ctx, id)
@@ -472,12 +472,10 @@ func (s *Service) Delete(ctx context.Context, id string, removeFiles bool) error
 		}
 	}
 
-	// Optionally remove user home directory.
-	if removeFiles {
-		homeDir := filepath.Join("/home", w.WebUser)
-		if err := s.runSudoOK(ctx, "rm", "-rf", homeDir); err != nil {
-			return fmt.Errorf("delete website files: %w", err)
-		}
+	// Remove the website user home, including all application files.
+	homeDir := filepath.Join("/home", w.WebUser)
+	if err := s.runSudoOK(ctx, "rm", "-rf", homeDir); err != nil {
+		return fmt.Errorf("delete website files: %w", err)
 	}
 
 	// Remove the system user if it still exists, keeping retries idempotent.
