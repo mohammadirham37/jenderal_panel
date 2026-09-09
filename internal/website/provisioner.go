@@ -26,6 +26,7 @@ type Provisioner struct {
 	queue         chan string
 	ipv6Available func() bool
 	mutations     *siteops.Coordinator
+	installer     *Installer
 }
 
 // NewProvisioner creates a new Provisioner with a buffered queue channel.
@@ -37,6 +38,7 @@ func NewProvisioner(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.S
 		queue:         make(chan string, 100),
 		ipv6Available: nginxconfig.IPv6Available,
 		mutations:     siteops.Default,
+		installer:     NewInstaller(exec),
 	}
 }
 
@@ -78,9 +80,13 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 
 	homeDir := "/home/" + w.WebUser
 	logDir := homeDir + "/logs"
+	automaticFramework := w.SetupMode == SetupAutomatic && w.Framework != "none"
 
-	// Step 1: installing
+	// Step 1: account and runtime preparation.
 	if err := p.updateStatus(ctx, websiteID, "installing", ""); err != nil {
+		return
+	}
+	if err := p.updateProgress(ctx, websiteID, "checking dependencies", ""); err != nil {
 		return
 	}
 
@@ -102,14 +108,17 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		return
 	}
 
-	// Create directories.
-	dirs := []string{
-		w.DocumentRoot,
-		logDir,
-		homeDir + "/tmp",
+	// Create only account-owned support directories before an automatic install.
+	// Framework document roots are promoted from staging and must not pre-exist.
+	dirs := []string{logDir, homeDir + "/tmp"}
+	if !automaticFramework {
+		if filepath.Clean(w.DocumentRoot) == filepath.Join(homeDir, "app", "public") {
+			dirs = append(dirs, filepath.Join(homeDir, "app"))
+		}
+		dirs = append(dirs, w.DocumentRoot)
 	}
 	for _, dir := range dirs {
-		result, err = p.exec.RunSudo(ctx, "mkdir", "-p", dir)
+		result, err = p.exec.RunSudo(ctx, "install", "-d", "-o", w.WebUser, "-g", w.WebUser, "-m", "0750", dir)
 		if err != nil {
 			p.fail(ctx, websiteID, "create directory failed: "+err.Error())
 			return
@@ -120,40 +129,43 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		}
 	}
 
-	// Set ownership.
-	result, err = p.exec.RunSudo(ctx, "chown", "-R", w.WebUser+":"+w.WebUser, homeDir)
-	if err != nil {
-		p.fail(ctx, websiteID, "chown failed: "+err.Error())
-		return
-	}
-	if result.ExitCode != 0 {
-		p.fail(ctx, websiteID, "chown failed: "+strings.TrimSpace(result.Stderr))
-		return
+	if automaticFramework {
+		if err := p.installer.Install(ctx, w, func(stage, output string) error {
+			return p.updateProgress(ctx, websiteID, stage, output)
+		}); err != nil {
+			p.fail(ctx, websiteID, "framework installation failed: "+err.Error())
+			return
+		}
 	}
 	if err := p.ensureServingPermissions(ctx, w); err != nil {
 		p.fail(ctx, websiteID, "set website permissions failed: "+err.Error())
 		return
 	}
 
-	defaultIndex, err := landing.WebsiteUnderDevelopment(w.Domain)
-	if err != nil {
-		p.fail(ctx, websiteID, "render default website page failed: "+err.Error())
-		return
-	}
-	defaultFiles := map[string]string{
-		"index.html":           defaultIndex,
-		"robots.txt":           landing.RobotsTXT,
-		"jenderal-landing.css": landing.CSS(),
-	}
-	for name, content := range defaultFiles {
-		if err := p.ensureWebsiteFile(ctx, w, name, content); err != nil {
-			p.fail(ctx, websiteID, "create default website file failed: "+err.Error())
+	if !automaticFramework {
+		defaultIndex, err := landing.WebsiteUnderDevelopment(w.Domain)
+		if err != nil {
+			p.fail(ctx, websiteID, "render default website page failed: "+err.Error())
 			return
 		}
+		defaultFiles := map[string]string{"index.html": defaultIndex, "robots.txt": landing.RobotsTXT, "jenderal-landing.css": landing.CSS()}
+		for name, content := range defaultFiles {
+			if err := p.ensureWebsiteFile(ctx, w, name, content); err != nil {
+				p.fail(ctx, websiteID, "create default website file failed: "+err.Error())
+				return
+			}
+		}
+	}
+	if err := p.ensureFrameworkWritablePaths(ctx, w); err != nil {
+		p.fail(ctx, websiteID, "set framework permissions failed: "+err.Error())
+		return
 	}
 
 	// Step 2: configuring
 	if err := p.updateStatus(ctx, websiteID, "configuring", ""); err != nil {
+		return
+	}
+	if err := p.updateProgress(ctx, websiteID, "writing configuration", ""); err != nil {
 		return
 	}
 
@@ -235,6 +247,9 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	if err := p.updateStatus(ctx, websiteID, "validating", ""); err != nil {
 		return
 	}
+	if err := p.updateProgress(ctx, websiteID, "validating nginx", ""); err != nil {
+		return
+	}
 
 	// Validate nginx config.
 	result, err = p.exec.RunSudo(ctx, "nginx", "-t")
@@ -276,6 +291,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 
 	// Step 4: active
 	_ = p.updateStatus(ctx, websiteID, "active", "")
+	_ = p.updateProgress(ctx, websiteID, "active", "")
 	p.logAudit(ctx, "website_provisioned", websiteID, "provisioned website "+w.Domain)
 }
 
@@ -286,30 +302,59 @@ func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow
 		return fmt.Errorf("unsafe stored web user %q", w.WebUser)
 	}
 	homeDir := filepath.Join("/home", w.WebUser)
-	documentRoot := filepath.Join(homeDir, "public")
-	if filepath.Clean(w.DocumentRoot) != documentRoot {
+	publicRoot := filepath.Join(homeDir, "public")
+	appRoot := filepath.Join(homeDir, "app")
+	appPublicRoot := filepath.Join(appRoot, "public")
+	documentRoot := filepath.Clean(w.DocumentRoot)
+	var boundaries []string
+	var permissions []struct{ mode, path string }
+	switch documentRoot {
+	case publicRoot:
+		boundaries = []string{homeDir, publicRoot}
+		permissions = []struct{ mode, path string }{{"0710", homeDir}, {"0750", publicRoot}}
+	case appPublicRoot:
+		boundaries = []string{homeDir, appRoot, appPublicRoot}
+		permissions = []struct{ mode, path string }{{"0710", homeDir}, {"0710", appRoot}, {"0750", appPublicRoot}}
+	default:
 		return nil
 	}
-	result, err := p.exec.RunSudo(ctx, "chown", "-h", w.WebUser+":www-data", "--", homeDir, documentRoot)
+	result, err := p.exec.RunSudo(ctx, "chown", append([]string{"-h", w.WebUser + ":www-data", "--"}, boundaries...)...)
 	if err != nil {
 		return fmt.Errorf("assign Nginx group to website directories: %w", err)
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("assign Nginx group to website directories: %s", strings.TrimSpace(result.Stderr))
 	}
-	for _, permission := range []struct {
-		mode string
-		path string
-	}{
-		{mode: "0710", path: homeDir},
-		{mode: "0750", path: documentRoot},
-	} {
+	for _, permission := range permissions {
 		result, err := p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", permission.mode, "--", permission.path)
 		if err != nil {
 			return fmt.Errorf("chmod %s: %w", permission.path, err)
 		}
 		if result.ExitCode != 0 {
 			return fmt.Errorf("chmod %s: %s", permission.path, strings.TrimSpace(result.Stderr))
+		}
+	}
+	return nil
+}
+
+func (p *Provisioner) ensureFrameworkWritablePaths(ctx context.Context, w websiteRow) error {
+	homeDir := filepath.Join("/home", w.WebUser)
+	var paths []string
+	switch NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType) {
+	case "laravel":
+		paths = []string{filepath.Join(homeDir, "app", "storage"), filepath.Join(homeDir, "app", "bootstrap", "cache")}
+	case "codeigniter4":
+		paths = []string{filepath.Join(homeDir, "app", "writable")}
+	default:
+		return nil
+	}
+	for _, path := range paths {
+		result, err := p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", "-R", "u+rwX", "--", path)
+		if err != nil {
+			return err
+		}
+		if result.ExitCode != 0 {
+			return fmt.Errorf("chmod %s: %s", path, strings.TrimSpace(result.Stderr))
 		}
 	}
 	return nil
@@ -471,6 +516,24 @@ func (p *Provisioner) updateStatus(ctx context.Context, websiteID, status, error
 	}
 	if err != nil {
 		return fmt.Errorf("update status to %s: %w", status, err)
+	}
+	return nil
+}
+
+const maxProvisionLogBytes = 256 * 1024
+
+func (p *Provisioner) updateProgress(ctx context.Context, websiteID, stage, output string) error {
+	var current string
+	if err := p.db.QueryRowContext(ctx, `SELECT provision_log FROM websites WHERE id = ?`, websiteID).Scan(&current); err != nil {
+		return fmt.Errorf("read provisioning progress: %w", err)
+	}
+	current += output
+	if len(current) > maxProvisionLogBytes {
+		current = current[len(current)-maxProvisionLogBytes:]
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := p.db.ExecContext(ctx, `UPDATE websites SET provision_stage = ?, provision_log = ?, updated_at = ? WHERE id = ?`, stage, current, now, websiteID); err != nil {
+		return fmt.Errorf("update provisioning progress: %w", err)
 	}
 	return nil
 }

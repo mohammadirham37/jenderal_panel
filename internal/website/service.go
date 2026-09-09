@@ -557,8 +557,8 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`UPDATE websites SET status = ?, error_message = NULL, updated_at = ? WHERE id = ?`,
-		"pending", now, id,
+		`UPDATE websites SET status = ?, error_message = NULL, provision_stage = ?, updated_at = ? WHERE id = ?`,
+		"pending", "queued", now, id,
 	)
 	if err != nil {
 		return fmt.Errorf("update status: %w", err)

@@ -173,6 +173,45 @@ func TestProvision_Success(t *testing.T) {
 	}
 }
 
+func TestProvisionFrameworkFailurePersistsStageAndLog(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-auto-fail", "auto.example.com", "laravel", "8.3", "pending")
+	if _, err := db.Exec(`UPDATE websites SET framework = 'laravel', framework_version = '12', frontend_stack = 'blade', project_variant = 'empty', setup_mode = 'automatic', document_root = '/home/web_auto_example_com/app/public' WHERE id = 'ws-auto-fail'`); err != nil {
+		t.Fatal(err)
+	}
+	var promoted bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := strings.Join(append([]string{name}, args...), " ")
+			if strings.Contains(joined, "/usr/bin/test") {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			if strings.Contains(joined, "create-project") {
+				return &executor.Result{ExitCode: 1, Stderr: "composer download failed"}, nil
+			}
+			if strings.Contains(joined, "/usr/bin/mv") {
+				promoted = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-auto-fail")
+	var status, stage, log string
+	if err := db.QueryRow(`SELECT status, provision_stage, provision_log FROM websites WHERE id = 'ws-auto-fail'`).Scan(&status, &stage, &log); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || stage != "installing framework" || !strings.Contains(log, "composer download failed") {
+		t.Fatalf("status=%q stage=%q log=%q", status, stage, log)
+	}
+	if promoted {
+		t.Fatal("failed framework staging was promoted")
+	}
+}
+
 func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
@@ -249,6 +288,32 @@ func TestEnsureServingPermissionsGrantsOnlyNginxGroupAccessWithoutPrivilegedChmo
 	for i := range want {
 		if strings.Join(commands[i], "\x00") != strings.Join(want[i], "\x00") {
 			t.Fatalf("permission command %d = %q, want %q", i, commands[i], want[i])
+		}
+	}
+}
+
+func TestEnsureServingPermissionsSupportsCanonicalAppPublicRoot(t *testing.T) {
+	var commands [][]string
+	mock := &executor.MockExecutor{RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+		commands = append(commands, append([]string{name}, args...))
+		return &executor.Result{ExitCode: 0}, nil
+	}}
+	w := websiteRow{Domain: "example.com", WebUser: "web_example_com", DocumentRoot: "/home/web_example_com/app/public/."}
+	if err := NewProvisioner(nil, mock, nil).ensureServingPermissions(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"chown", "-h", "web_example_com:www-data", "--", "/home/web_example_com", "/home/web_example_com/app", "/home/web_example_com/app/public"},
+		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com"},
+		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com/app"},
+		{"-u", "web_example_com", "--", "chmod", "0750", "--", "/home/web_example_com/app/public"},
+	}
+	if len(commands) != len(want) {
+		t.Fatalf("permission commands = %q, want %q", commands, want)
+	}
+	for index := range want {
+		if strings.Join(commands[index], "\x00") != strings.Join(want[index], "\x00") {
+			t.Fatalf("permission command %d = %q, want %q", index, commands[index], want[index])
 		}
 	}
 }
