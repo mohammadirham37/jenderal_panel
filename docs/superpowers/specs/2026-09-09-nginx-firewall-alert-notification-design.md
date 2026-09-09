@@ -81,8 +81,11 @@ The canonical endpoints remain `/api/v1/alert-rules` and
 released plural frontend paths `/api/v1/alerts/rules` and
 `/api/v1/alerts/history`.
 
-An additive database migration adds a nullable `target` column to alert rules.
-Existing rules remain valid because system metrics do not require a target.
+An additive database migration creates an idempotent `alert_rule_targets`
+companion table keyed by rule ID. The API still exposes `target` directly on an
+alert rule. Existing rules remain valid because system metrics do not require a
+target. A companion table is used because this project's SQL migrations run on
+every startup and SQLite does not support a portable idempotent `ADD COLUMN`.
 
 Create requests default `enabled` to true when the field is omitted. Update
 requests use pointer fields so small updates such as `{ "enabled": false }`
