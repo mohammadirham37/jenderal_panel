@@ -74,13 +74,15 @@
 
 ### Task 4: Laravel SQLite initialization and repair
 
-**Files:** Create `internal/website/laravel.go`, modify `internal/website/installer.go`, and add `internal/website/laravel_test.go` plus installer regressions.
+**Files:** Create `internal/website/laravel.go`, modify `internal/website/installer.go`, website service/handler/routes and website UI for repair, `internal/php/service.go` for SQLite extension installation, and add `internal/website/laravel_test.go` plus installer regressions.
 
 **Interfaces:** `(*Installer).bootstrapLaravel(ctx context.Context,w websiteRow,root string,progress func(string,string) error) error` called after promotion and when Retry encounters a valid existing panel-installed Laravel project. Use selected PHP binary and tenant executor.
 
 - [ ] Test missing SQLite, existing SQLite content preservation, blank/missing app key, existing app key preservation, relative/absolute SQLite paths, explicit external connection, migration failure and config-only exclusion.
 - [ ] Implement idempotent environment bootstrap: fresh panel skeleton uses SQLite; preserve existing explicit external database settings and never migrate an external DB automatically. Ensure absolute final SQLite path (not staging), safe writable database/storage/cache directories, SQLite PHP extension preflight, generate key only when empty, clear stale config cache then migrate with `--force --no-interaction` as website user.
 - [ ] Run bootstrap both after new project promotion and before successful Retry returns on existing project. Never truncate SQLite or replace an existing app key. Capture migration output in progress and fail provisioning if bootstrap fails.
+- [ ] Existing affected Laravel websites may already be active, while Retry only accepts failed status. Add explicit `Repair Laravel` action for panel auto-installed Laravel backed by a callback task and website mutation lock; run bootstrap alone, preserving SSL/Nginx. Expose task progress and user confirmation that existing migrations will run, excluding external DBs.
+- [ ] Include `php<version>-sqlite3` in normal PHP install defaults. For already-installed PHP missing pdo_sqlite, return an actionable message directing reinstall/extension install rather than claim success.
 - [ ] Run `go test ./internal/website` and commit.
 
 ### Task 5: Panel build without global Node
