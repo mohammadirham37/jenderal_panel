@@ -33,6 +33,25 @@ const operationPages = [
 	}
 ];
 
+const legacyOperationRoutes = [
+	{
+		name: 'Deployments',
+		url: new URL('../../src/routes/deployments/+page.ts', import.meta.url)
+	},
+	{
+		name: 'SSL',
+		url: new URL('../../src/routes/ssl/+page.ts', import.meta.url)
+	},
+	{
+		name: 'Cron',
+		url: new URL('../../src/routes/cron/+page.ts', import.meta.url)
+	},
+	{
+		name: 'Queue workers',
+		url: new URL('../../src/routes/queue-workers/+page.ts', import.meta.url)
+	}
+];
+
 function collectAttributeValues(node, name, values = []) {
 	if (!node || typeof node !== 'object') return values;
 	if (node.type === 'Attribute' && node.name === name) {
@@ -106,5 +125,16 @@ for (const operationPage of operationPages) {
 
 		assert.ok(reloadEffect, 'route changes must reload through a websiteID-tracked $effect');
 		assert.doesNotMatch(source, /\bonMount\s*\(/);
+	});
+}
+
+for (const legacyOperationRoute of legacyOperationRoutes) {
+	test(`${legacyOperationRoute.name} legacy route redirects to websites`, async () => {
+		const { load } = await import(legacyOperationRoute.url);
+
+		assert.throws(
+			() => load(),
+			(error) => error?.status === 307 && error?.location === '/websites'
+		);
 	});
 }
