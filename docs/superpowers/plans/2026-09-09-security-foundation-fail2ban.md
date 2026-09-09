@@ -325,7 +325,7 @@ git commit -m "feat(security): expose security overview and events"
 - Produces: `Service.Check`, `Install`, `Apply`, `Start`, `Stop`, `Restart`, `Bans`, `Ban`, and `Unban`.
 - Produces: a `security.Probe` implementation named `fail2ban`.
 
-- [ ] **Step 1: Write failing parser, renderer, and rollback tests**
+- [x] **Step 1: Write failing parser, renderer, and rollback tests**
 
 ```go
 func TestRenderSafeConfigUsesTemporarySSHBanAndLiteralCIDRs(t *testing.T) {
@@ -344,13 +344,13 @@ func TestApplyRestoresPreviousConfigWhenReloadFails(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run Fail2ban tests and verify RED**
+- [x] **Step 2: Run Fail2ban tests and verify RED**
 
 Run: `go test ./internal/fail2ban -count=1`
 
 Expected: FAIL because the package does not exist.
 
-- [ ] **Step 3: Implement the typed Fail2ban adapter**
+- [x] **Step 3: Implement the typed Fail2ban adapter**
 
 Validate PHP-independent values as follows: max retry 1-20, find time 60-86400 seconds, ban time 60-604800 seconds, and every ignore entry through `net/netip.ParsePrefix` or `ParseAddr`. Always add loopback. Render only known jail names discovered under `/etc/fail2ban/filter.d`; never accept a filename from the API.
 
@@ -362,13 +362,13 @@ For `Apply`, copy `/etc/fail2ban` into a temporary validation root, install the 
 
 Manual bans use `fail2ban-client set <discovered-jail> banip <validated-address>` and require an expiry between 60 seconds and that jail's current `bantime` (900 seconds in Safe mode). Persist the requested expiry in `security_manual_bans`; a one-minute reconciliation worker performs early unban when required and repairs expired rows after restart. Report the actual expiry returned by the service. Automatic Fail2ban bans rely on jail `bantime` and never use UFW rules.
 
-- [ ] **Step 4: Run the Fail2ban unit suite**
+- [x] **Step 4: Run the Fail2ban unit suite**
 
 Run: `go test ./internal/fail2ban -count=1`
 
 Expected: PASS for English/spacing variants, missing package, unavailable filters, invalid CIDRs, Safe defaults, successful apply, validation rollback, reload rollback, manual expiry, and command allowlisting.
 
-- [ ] **Step 5: Commit the Fail2ban service**
+- [x] **Step 5: Commit the Fail2ban service**
 
 ```bash
 git add internal/fail2ban
