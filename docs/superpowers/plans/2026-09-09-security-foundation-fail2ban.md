@@ -503,11 +503,11 @@ git commit -m "feat(security): add fail2ban security center UI"
 - Consumes: all outputs in this plan.
 - Produces: operator recovery guide and a verified base for the malware plan.
 
-- [ ] **Step 1: Document exact safe setup and recovery checks**
+- [x] **Step 1: Document exact safe setup and recovery checks**
 
 Document package state, `/etc/fail2ban/jail.d/jenderal-panel.local`, task recovery semantics, SSH allowlist warning, `sudo fail2ban-client status`, `sudo fail2ban-client set sshd unbanip <address>`, and how to return the component to a stopped state without disabling UFW.
 
-- [ ] **Step 2: Run the complete automated gate**
+- [x] **Step 2: Run the complete automated gate**
 
 Run: `go test ./... -count=1 && (cd web && npm test && npm run check && npm run build) && git diff --check`
 
@@ -521,7 +521,7 @@ Run the panel setup, install Fail2ban from `/security`, confirm the task survive
 
 Append the tested panel commit, Ubuntu release, Fail2ban version, active firewall backend, test timestamp, commands used, and pass/fail results. Do not include public IPs, credentials, tokens, or complete auth logs.
 
-- [ ] **Step 5: Commit the verified slice**
+- [x] **Step 5: Commit the locally verified slice**
 
 ```bash
 git add docs/security-center-ubuntu-24.04.md README.md

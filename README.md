@@ -26,9 +26,11 @@ Built with Go backend + SvelteKit frontend, deployed as a single binary.
 ### SSL & Security
 - **Let's Encrypt** — ACME certificate issue/renew/revoke via [lego](https://github.com/go-acme/lego)
 - **Auto-renewal** — Background worker renews certificates 14 days before expiry
+- **Security Center** — Unified posture summary, persistent security events, and actionable recovery guidance
+- **Fail2ban Safe Mode** — Explicit install, validated panel-owned configuration, temporary bans, and rollback on failure
 - **2FA/TOTP** — Optional two-factor authentication for user accounts
 - **API Tokens** — Bearer token authentication for API access
-- **RBAC** — 60 granular permissions across admin and user roles
+- **RBAC** — 63 granular permissions across admin and user roles
 - **CSRF Protection** — Double-submit cookie pattern
 - **Audit Logging** — All operations logged with user, action, target, IP
 
@@ -65,7 +67,10 @@ Built with Go backend + SvelteKit frontend, deployed as a single binary.
 ### Other
 - **Web Terminal** — WebSocket command execution (admin only)
 - **Self-Update** — Check GitHub releases, one-click update
-- **Dark Theme** — Modern dark UI with Tailwind CSS
+- **System-aware theme** — Dark/light mode follows the device by default with a manual toggle
+
+See [Security Center: Ubuntu 24.04 Operations Guide](docs/security-center-ubuntu-24.04.md)
+for Safe-mode setup, verification, and lockout recovery.
 
 ## Architecture
 
