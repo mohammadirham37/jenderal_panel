@@ -16,7 +16,7 @@ Automatic Laravel setup creates the default SQLite database and runs initial mig
 
 For an existing automatically installed Laravel website that reports a missing SQLite file or session table, use **Repair Laravel** in Websites. Review the confirmation because pending SQLite migrations will run. The operation leaves the website's Nginx and SSL configuration intact and reports its result through task progress.
 
-If PHP reports a missing `pdo_sqlite` extension, install SQLite support for the selected PHP version using the PHP management page, then retry repair. Explicit external database settings are preserved and are not migrated by this repair action.
+If PHP reports a missing `pdo_sqlite` extension, run the package command shown in the task log in Terminal (for example, `sudo apt-get install php8.3-sqlite3` for PHP 8.3), then retry repair. New PHP installations include this extension automatically. Explicit external database settings are preserved and are not migrated by this repair action.
 
 ## Ubuntu 24.04 acceptance scenarios
 

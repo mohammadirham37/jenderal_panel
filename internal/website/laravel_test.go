@@ -194,6 +194,9 @@ func TestLaravelBootstrapRetainsFailureDiagnostics(t *testing.T) {
 					return &executor.Result{Stdout: "APP_KEY=base64:keep\nDB_CONNECTION=sqlite\nDB_DATABASE=\"/home/web_example_com/app/database/database.sqlite\"\n"}, nil
 				}
 				if strings.Contains(joined, "extension_loaded") && failure == "missing sqlite extension" {
+					if args[len(args)-1] != "php8.3-sqlite3" {
+						t.Fatal("extension diagnostic must name the selected PHP package")
+					}
 					return &executor.Result{ExitCode: 1, Stderr: "Missing pdo_sqlite: install php8.3-sqlite3"}, nil
 				}
 				if strings.Contains(joined, " migrate ") {
