@@ -2,6 +2,7 @@ package dependency
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -21,6 +22,22 @@ func TestComposerStatusReportsMissingExecutableAsNotInstalled(t *testing.T) {
 		t.Fatalf("ComposerStatus() error = %v", err)
 	}
 	if status.Installed || status.Version != "" || status.Name != "composer" {
+		t.Fatalf("status = %+v, want missing Composer", status)
+	}
+}
+
+func TestComposerStatusReportsMissingAbsolutePathAsNotInstalled(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return nil, &os.PathError{Op: "fork/exec", Path: "/usr/local/bin/composer", Err: os.ErrNotExist}
+		},
+	}
+
+	status, err := NewService(mock).ComposerStatus(context.Background())
+	if err != nil {
+		t.Fatalf("ComposerStatus() error = %v, want missing absolute path treated as not installed", err)
+	}
+	if status.Installed {
 		t.Fatalf("status = %+v, want missing Composer", status)
 	}
 }

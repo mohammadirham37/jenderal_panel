@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
 	availablePHPVersions,
 	normalizeWebsiteSelection,
 	selectedCombination
 } from '../../src/lib/website-form.js';
+
+test('uses Native PHP wording in the website template selector', () => {
+	const source = readFileSync(new URL('../../src/routes/websites/+page.svelte', import.meta.url), 'utf8');
+	assert.match(source, /<option value="php">Native PHP<\/option>/);
+	assert.doesNotMatch(source, /PHP murni/);
+});
 
 const options = {
 	php_versions: [

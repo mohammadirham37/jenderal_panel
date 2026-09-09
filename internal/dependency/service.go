@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -29,7 +30,7 @@ func NewService(exec executor.CommandExecutor) *Service {
 func (s *Service) ComposerStatus(ctx context.Context) (Status, error) {
 	status := Status{Name: "composer"}
 	result, err := s.exec.Run(ctx, "/usr/local/bin/composer", "--version", "--no-ansi")
-	if errors.Is(err, exec.ErrNotFound) {
+	if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
 		return status, nil
 	}
 	if err != nil {

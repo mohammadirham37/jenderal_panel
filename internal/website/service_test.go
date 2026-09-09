@@ -57,6 +57,35 @@ func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
 	}
 }
 
+func TestOptionsLoadsWhenAbsoluteDependencyPathsDoNotExist(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "test" {
+			path := args[len(args)-1]
+			if path == "/etc/php/8.3" || path == "/usr/bin/php8.3" || path == "/lib/systemd/system/php8.3-fpm.service" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		}
+		if name == "systemctl" {
+			return &executor.Result{ExitCode: 0}, nil
+		}
+		return nil, &os.PathError{Op: "fork/exec", Path: name, Err: os.ErrNotExist}
+	}}
+
+	options, err := NewService(db, mock, nil).Options(context.Background())
+	if err != nil {
+		t.Fatalf("Options() error = %v, want form options available without Composer or Node.js", err)
+	}
+	if len(options.Dependencies) != 2 || options.Dependencies[0].Installed || options.Dependencies[1].Installed {
+		t.Fatalf("dependencies = %#v, want both reported as not installed", options.Dependencies)
+	}
+	if !options.PHPVersions[2].Installed || options.PHPVersions[2].Version != "8.3" {
+		t.Fatalf("PHP versions = %#v, want installed PHP 8.3 preserved", options.PHPVersions)
+	}
+}
+
 func TestCreateRejectsPHPDirectoryWithoutVersionedBinary(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

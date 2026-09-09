@@ -152,7 +152,7 @@ func (s *Service) nodeDependency(ctx context.Context) (DependencyOption, error) 
 		return node, err
 	}
 	npm, npmErr := s.exec.Run(ctx, "/usr/bin/npm", "--version")
-	if errors.Is(npmErr, osexec.ErrNotFound) || (npmErr == nil && npm.ExitCode != 0) {
+	if commandNotFound(npmErr) || (npmErr == nil && npm.ExitCode != 0) {
 		node.Installed = false
 		return node, nil
 	}
@@ -185,7 +185,7 @@ func (s *Service) phpRuntimeInstalled(ctx context.Context, version string) (bool
 func (s *Service) commandDependency(ctx context.Context, label, manageURL, command string, args ...string) (DependencyOption, error) {
 	status := DependencyOption{Name: label, ManageURL: manageURL}
 	result, err := s.exec.Run(ctx, command, args...)
-	if errors.Is(err, osexec.ErrNotFound) {
+	if commandNotFound(err) {
 		return status, nil
 	}
 	if err != nil {
@@ -196,6 +196,10 @@ func (s *Service) commandDependency(ctx context.Context, label, manageURL, comma
 		status.Version = parseDependencyVersion(label, result.Stdout)
 	}
 	return status, nil
+}
+
+func commandNotFound(err error) bool {
+	return errors.Is(err, osexec.ErrNotFound) || errors.Is(err, os.ErrNotExist)
 }
 
 func parseDependencyVersion(name, output string) string {

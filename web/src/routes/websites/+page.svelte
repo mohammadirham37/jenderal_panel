@@ -263,7 +263,7 @@
 						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 					>
 						<option value="static">Static HTML</option>
-						<option value="php">PHP murni</option>
+						<option value="php">Native PHP</option>
 						<option value="codeigniter3">CodeIgniter 3</option>
 						<option value="codeigniter4">CodeIgniter 4</option>
 						<option value="laravel">Laravel</option>
