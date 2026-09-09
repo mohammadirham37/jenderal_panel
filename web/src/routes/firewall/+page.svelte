@@ -1,10 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import { firewallActionTone, normalizeFirewallStatus, parseFirewallPort } from '$lib/firewall.js';
 
 	interface FirewallStatus {
 		active: boolean;
-		default_policy: string;
+		defaultPolicy: string;
 	}
 
 	interface FirewallRule {
@@ -38,10 +39,13 @@
 	let addError = $state('');
 
 	async function loadStatus() {
+		loading = true;
+		error = '';
 		try {
-			const data = await api.get<{ status: FirewallStatus; rules: FirewallRule[] }>('/api/v1/firewall/status');
-			status = data.status;
-			rules = data.rules || [];
+			const data = await api.get<{ active: boolean; default: string; rules: FirewallRule[] }>('/api/v1/firewall/status');
+			const normalized = normalizeFirewallStatus(data);
+			status = { active: normalized.active, defaultPolicy: normalized.defaultPolicy };
+			rules = normalized.rules as FirewallRule[];
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load firewall status';
 		} finally {
@@ -112,8 +116,9 @@
 		}
 		actionInProgress = true;
 		try {
+			const port = parseFirewallPort(newPort);
 			await api.post('/api/v1/firewall/rules', {
-				port: newPort.trim(),
+				port,
 				protocol: newProtocol,
 				action: newAction,
 				from: newFrom.trim() || undefined,
@@ -134,10 +139,10 @@
 	}
 
 	function actionColor(action: string): string {
-		const lower = action.toLowerCase();
-		if (lower === 'allow') return 'bg-green-900/50 text-green-400';
-		if (lower === 'deny' || lower === 'reject') return 'bg-red-900/50 text-red-400';
-		if (lower === 'limit') return 'bg-yellow-900/50 text-yellow-400';
+		const tone = firewallActionTone(action);
+		if (tone === 'allow') return 'bg-green-900/50 text-green-400';
+		if (tone === 'deny') return 'bg-red-900/50 text-red-400';
+		if (tone === 'limit') return 'bg-yellow-900/50 text-yellow-400';
 		return 'bg-gray-700 text-gray-300';
 	}
 
@@ -173,8 +178,8 @@
 					<span class="w-1.5 h-1.5 rounded-full {status.active ? 'bg-green-400' : 'bg-red-400'}"></span>
 					{status.active ? 'Active' : 'Inactive'}
 				</span>
-				{#if status.default_policy}
-					<span class="text-xs text-gray-400">Default Policy: <span class="text-gray-200">{status.default_policy}</span></span>
+				{#if status.defaultPolicy}
+					<span class="text-xs text-gray-400">Default Policy: <span class="text-gray-200">{status.defaultPolicy}</span></span>
 				{/if}
 			</div>
 
