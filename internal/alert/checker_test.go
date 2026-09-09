@@ -2,6 +2,7 @@ package alert
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -17,10 +18,59 @@ func (s *checkerSender) SendAll(_ context.Context, message string) error {
 
 type checkerServices struct {
 	statuses map[string]*model.ServiceStatus
+	err      error
 }
 
 func (s checkerServices) Status(_ context.Context, name string) (*model.ServiceStatus, error) {
-	return s.statuses[name], nil
+	return s.statuses[name], s.err
+}
+
+func TestCheckerResetsDurationAfterFailedProbe(t *testing.T) {
+	svc := NewService(setupTestDB(t), nil)
+	_, err := svc.CreateRule(context.Background(), model.AlertRule{Metric: "service_down", Target: "nginx", Operator: "eq", Threshold: 1, DurationS: 60, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := &checkerServices{statuses: map[string]*model.ServiceStatus{"nginx": {Name: "nginx", Active: false}}}
+	checker := NewChecker(svc, &checkerSender{}, func() model.ServerMetrics { return model.ServerMetrics{} }, services, checkerCertificates{})
+	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
+
+	checker.Check(context.Background(), now)
+	services.err = errors.New("temporary probe failure")
+	checker.Check(context.Background(), now.Add(30*time.Second))
+	services.err = nil
+	checker.Check(context.Background(), now.Add(60*time.Second))
+	if events, _ := svc.ListHistory(context.Background(), 10); len(events) != 0 {
+		t.Fatalf("alert fired using duration from before failed probe: %d events", len(events))
+	}
+	checker.Check(context.Background(), now.Add(120*time.Second))
+	if events, _ := svc.ListHistory(context.Background(), 10); len(events) != 1 {
+		t.Fatalf("alert did not restart duration after failed probe: %d events", len(events))
+	}
+}
+
+func TestCheckerResetsDurationAfterRuleConditionChanges(t *testing.T) {
+	svc := NewService(setupTestDB(t), nil)
+	rule, err := svc.CreateRule(context.Background(), model.AlertRule{Metric: "cpu", Operator: "gt", Threshold: 80, DurationS: 60, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checker := NewChecker(svc, &checkerSender{}, func() model.ServerMetrics { return model.ServerMetrics{CPU: 90} }, checkerServices{}, checkerCertificates{})
+	now := time.Date(2026, 9, 9, 10, 0, 0, 0, time.UTC)
+
+	checker.Check(context.Background(), now)
+	if err := svc.UpdateRule(context.Background(), rule.ID, model.AlertRule{Metric: "cpu", Operator: "gt", Threshold: 85, DurationS: 60, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	checker.Check(context.Background(), now.Add(30*time.Second))
+	checker.Check(context.Background(), now.Add(60*time.Second))
+	if events, _ := svc.ListHistory(context.Background(), 10); len(events) != 0 {
+		t.Fatalf("alert fired using duration from before rule edit: %d events", len(events))
+	}
+	checker.Check(context.Background(), now.Add(90*time.Second))
+	if events, _ := svc.ListHistory(context.Background(), 10); len(events) != 1 {
+		t.Fatalf("alert did not restart duration after rule edit: %d events", len(events))
+	}
 }
 
 type checkerCertificates struct{ certificates []model.SSLCertificate }

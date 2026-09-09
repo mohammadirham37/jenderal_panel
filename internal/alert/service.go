@@ -33,7 +33,7 @@ func (s *Service) SetTargetProviders(services ServiceStatusProvider, certs Certi
 
 // CreateRule inserts a new alert rule.
 func (s *Service) CreateRule(ctx context.Context, rule model.AlertRule) (model.AlertRule, error) {
-	if err := s.validateRule(ctx, &rule); err != nil {
+	if err := s.validateRule(ctx, &rule, true); err != nil {
 		return model.AlertRule{}, err
 	}
 
@@ -70,7 +70,12 @@ func (s *Service) CreateRule(ctx context.Context, rule model.AlertRule) (model.A
 
 // UpdateRule updates an existing alert rule.
 func (s *Service) UpdateRule(ctx context.Context, id string, rule model.AlertRule) error {
-	if err := s.validateRule(ctx, &rule); err != nil {
+	current, err := s.GetRule(ctx, id)
+	if err != nil {
+		return err
+	}
+	validateTarget := current.Metric != rule.Metric || current.Target != rule.Target || (!current.Enabled && rule.Enabled)
+	if err := s.validateRule(ctx, &rule, validateTarget); err != nil {
 		return err
 	}
 
@@ -283,7 +288,7 @@ func scanRule(rows *sql.Rows) (model.AlertRule, error) {
 	return r, nil
 }
 
-func (s *Service) validateRule(ctx context.Context, rule *model.AlertRule) error {
+func (s *Service) validateRule(ctx context.Context, rule *model.AlertRule, validateTarget bool) error {
 	switch rule.Metric {
 	case "cpu", "ram", "disk", "load1", "load5", "load15":
 		rule.Target = ""
@@ -291,7 +296,7 @@ func (s *Service) validateRule(ctx context.Context, rule *model.AlertRule) error
 		if rule.Target == "" {
 			return model.NewValidationError("target is required for " + rule.Metric)
 		}
-		if s.services != nil {
+		if validateTarget && s.services != nil {
 			status, err := s.services.Status(ctx, rule.Target)
 			if err != nil || status == nil {
 				return model.NewValidationError("service target is not available")
@@ -301,7 +306,7 @@ func (s *Service) validateRule(ctx context.Context, rule *model.AlertRule) error
 		if rule.Target == "" {
 			return model.NewValidationError("target is required for " + rule.Metric)
 		}
-		if s.certs != nil {
+		if validateTarget && s.certs != nil {
 			certificates, err := s.certs.List(ctx)
 			if err != nil {
 				return model.NewValidationError("certificate targets are not available")

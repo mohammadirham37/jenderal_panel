@@ -31,7 +31,12 @@ type Checker struct {
 	services   ServiceStatusProvider
 	certs      CertificateProvider
 	mu         sync.Mutex
-	pending    map[string]time.Time
+	pending    map[string]pendingCondition
+}
+
+type pendingCondition struct {
+	since     time.Time
+	signature string
 }
 
 // NewChecker creates a new Checker.
@@ -42,7 +47,7 @@ func NewChecker(alertSvc *Service, notifSvc NotificationSender, getMetrics func(
 		getMetrics: getMetrics,
 		services:   services,
 		certs:      certs,
-		pending:    make(map[string]time.Time),
+		pending:    make(map[string]pendingCondition),
 	}
 }
 
@@ -79,10 +84,12 @@ func (c *Checker) Check(ctx context.Context, now time.Time) {
 
 		value, ok, err := c.ruleValue(ctx, rule, now)
 		if err != nil {
+			c.clearPending(rule.ID)
 			log.Printf("[alert-checker] failed to evaluate rule %s: %v", rule.ID, err)
 			continue
 		}
 		if !ok {
+			c.clearPending(rule.ID)
 			continue
 		}
 		open, found, err := c.alertSvc.FindUnresolvedByRule(ctx, rule.ID)
@@ -129,12 +136,17 @@ func (c *Checker) send(ctx context.Context, eventID, message string) {
 func (c *Checker) durationReached(rule model.AlertRule, now time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	first, found := c.pending[rule.ID]
-	if !found {
-		c.pending[rule.ID] = now
-		first = now
+	pending, found := c.pending[rule.ID]
+	signature := ruleConditionSignature(rule)
+	if !found || pending.signature != signature {
+		pending = pendingCondition{since: now, signature: signature}
+		c.pending[rule.ID] = pending
 	}
-	return now.Sub(first) >= time.Duration(rule.DurationS)*time.Second
+	return now.Sub(pending.since) >= time.Duration(rule.DurationS)*time.Second
+}
+
+func ruleConditionSignature(rule model.AlertRule) string {
+	return fmt.Sprintf("%q\x00%q\x00%q\x00%.17g\x00%d", rule.Metric, rule.Target, rule.Operator, rule.Threshold, rule.DurationS)
 }
 
 func (c *Checker) clearPending(ruleID string) {

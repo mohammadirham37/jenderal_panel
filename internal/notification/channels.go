@@ -6,10 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"regexp"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
+
+var telegramTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)?$`)
 
 var httpClient = &http.Client{
 	Timeout: 10 * time.Second,
@@ -48,11 +52,14 @@ func sendWebhook(ctx context.Context, config, message string) error {
 	if cfg.URL == "" {
 		return fmt.Errorf("webhook url is empty")
 	}
+	if err := validateHTTPURL(cfg.URL, "webhook url"); err != nil {
+		return err
+	}
 
 	payload, _ := json.Marshal(map[string]string{"text": message})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.URL, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("create webhook request: %w", err)
+		return fmt.Errorf("create webhook request failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if cfg.Authorization != "" {
@@ -83,6 +90,9 @@ func sendTelegram(ctx context.Context, config, message string) error {
 	if cfg.BotToken == "" || cfg.ChatID == "" {
 		return fmt.Errorf("telegram bot_token and chat_id are required")
 	}
+	if !telegramTokenPattern.MatchString(cfg.BotToken) {
+		return model.NewValidationError("telegram bot_token format is invalid")
+	}
 
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", cfg.BotToken)
 	payload, _ := json.Marshal(map[string]string{
@@ -92,7 +102,7 @@ func sendTelegram(ctx context.Context, config, message string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("create telegram request: %w", err)
+		return fmt.Errorf("create telegram request failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
@@ -120,11 +130,14 @@ func sendDiscord(ctx context.Context, config, message string) error {
 	if cfg.WebhookURL == "" {
 		return fmt.Errorf("discord webhook_url is empty")
 	}
+	if err := validateHTTPURL(cfg.WebhookURL, "discord webhook_url"); err != nil {
+		return err
+	}
 
 	payload, _ := json.Marshal(map[string]string{"content": message})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.WebhookURL, bytes.NewReader(payload))
 	if err != nil {
-		return fmt.Errorf("create discord request: %w", err)
+		return fmt.Errorf("create discord request failed")
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
@@ -150,15 +163,24 @@ func ValidateConfig(channelType, config string) error {
 		if json.Unmarshal([]byte(config), &cfg) != nil || cfg.URL == "" {
 			return model.NewValidationError("webhook url is required")
 		}
+		if err := validateHTTPURL(cfg.URL, "webhook url"); err != nil {
+			return err
+		}
 	case "telegram":
 		var cfg TelegramConfig
 		if json.Unmarshal([]byte(config), &cfg) != nil || cfg.BotToken == "" || cfg.ChatID == "" {
 			return model.NewValidationError("telegram bot_token and chat_id are required")
 		}
+		if !telegramTokenPattern.MatchString(cfg.BotToken) {
+			return model.NewValidationError("telegram bot_token format is invalid")
+		}
 	case "discord":
 		var cfg DiscordConfig
 		if json.Unmarshal([]byte(config), &cfg) != nil || cfg.WebhookURL == "" {
 			return model.NewValidationError("discord webhook_url is required")
+		}
+		if err := validateHTTPURL(cfg.WebhookURL, "discord webhook_url"); err != nil {
+			return err
 		}
 	case "email":
 		if _, err := parseEmailConfig(config); err != nil {
@@ -166,6 +188,14 @@ func ValidateConfig(channelType, config string) error {
 		}
 	default:
 		return model.NewValidationError("type must be email, telegram, discord, or webhook")
+	}
+	return nil
+}
+
+func validateHTTPURL(rawURL, field string) error {
+	parsed, err := url.ParseRequestURI(rawURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return model.NewValidationError(field + " must be a valid HTTP or HTTPS URL")
 	}
 	return nil
 }

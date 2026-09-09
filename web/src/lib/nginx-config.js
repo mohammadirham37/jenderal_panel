@@ -110,7 +110,9 @@ export function parseSimpleNginxConfig(content) {
 			values[key] = definition.fallback;
 			continue;
 		}
-		values[key] = locateDirective(content, key, definition.context, parsed)?.value || definition.fallback;
+		const located = locateDirective(content, key, definition.context, parsed);
+		values[key] = located?.value || definition.fallback;
+		if (located && !definition.pattern.test(located.value)) errors.push(`Invalid ${key} value.`);
 	}
 	return { values, errors };
 }

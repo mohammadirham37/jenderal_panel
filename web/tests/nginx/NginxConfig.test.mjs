@@ -53,6 +53,9 @@ test('updates and inserts directives without changing unrelated content', () => 
 test('rejects invalid values and missing structural contexts', () => {
 	assert.throws(() => updateSimpleNginxConfig(config, 'worker_connections', '0'), /invalid worker_connections/i);
 	assert.throws(() => updateSimpleNginxConfig('events {}\n', 'gzip', 'on'), /http block/i);
+	const parsed = parseSimpleNginxConfig(config.replace('gzip on;', 'gzip invalid;'));
+	assert.equal(parsed.values.gzip, 'invalid');
+	assert.ok(parsed.errors.some((message) => /invalid gzip/i.test(message)), 'existing invalid directives must disable Simple-mode save');
 });
 
 test('reads and replaces directives written inline after a block brace', () => {

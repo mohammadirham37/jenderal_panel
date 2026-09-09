@@ -329,8 +329,9 @@ func TestRuleTargetRoundTripAndUnresolvedLookup(t *testing.T) {
 func TestTargetValidationUsesConfiguredProviders(t *testing.T) {
 	svc := NewService(setupTestDB(t), nil)
 	now := time.Now().UTC()
+	serviceProvider := checkerServices{statuses: map[string]*model.ServiceStatus{"nginx": {Name: "nginx"}}}
 	svc.SetTargetProviders(
-		checkerServices{statuses: map[string]*model.ServiceStatus{"nginx": {Name: "nginx"}}},
+		serviceProvider,
 		checkerCertificates{certificates: []model.SSLCertificate{{Domain: "example.com", Status: "active", ExpiresAt: now.Add(24 * time.Hour)}}},
 	)
 	ctx := context.Background()
@@ -346,5 +347,14 @@ func TestTargetValidationUsesConfiguredProviders(t *testing.T) {
 	}
 	if err := svc.UpdateRule(ctx, rule.ID, model.AlertRule{Metric: "service_down", Target: "missing", Operator: "eq", Threshold: 1}); err == nil {
 		t.Fatal("missing service target was accepted during update")
+	}
+	serviceRule, err := svc.CreateRule(ctx, model.AlertRule{Metric: "service_down", Target: "nginx", Operator: "eq", Threshold: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("available service target rejected: %v", err)
+	}
+	delete(serviceProvider.statuses, "nginx")
+	serviceRule.Enabled = false
+	if err := svc.UpdateRule(ctx, serviceRule.ID, serviceRule); err != nil {
+		t.Fatalf("disable rule with stale target: %v", err)
 	}
 }
