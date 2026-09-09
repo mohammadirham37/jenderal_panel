@@ -435,7 +435,8 @@
 		if (!website) return;
 		terminalConnecting = true;
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const wsUrl = `${protocol}//${location.host}/ws/terminal?web_user=${encodeURIComponent(website.web_user)}&workdir=${encodeURIComponent(website.document_root)}`;
+		const homeDir = `/home/${website.web_user}`;
+		const wsUrl = `${protocol}//${location.host}/ws/terminal?web_user=${encodeURIComponent(website.web_user)}&workdir=${encodeURIComponent(homeDir)}`;
 		terminalWs = new WebSocket(wsUrl);
 
 		terminalWs.onopen = () => {

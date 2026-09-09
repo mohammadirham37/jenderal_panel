@@ -152,8 +152,10 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 		return "", fmt.Errorf("task runner not available")
 	}
 
-	// Build the shell command to run as the web user inside the document root.
-	shellCmd := "cd " + w.DocumentRoot + " && " + strings.Join(args, " ")
+	// Run from home directory (not document_root) so artisan/composer/npm
+	// work from project root, not the public/ subdirectory.
+	homeDir := "/home/" + w.WebUser
+	shellCmd := "cd " + homeDir + " && " + strings.Join(args, " ")
 
 	taskID := tr.Run(
 		command+" ("+w.Domain+")",
