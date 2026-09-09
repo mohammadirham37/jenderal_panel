@@ -99,12 +99,8 @@ func (s *Service) List(ctx context.Context) ([]model.CronJob, error) {
 
 // ListByWebsite returns all cron jobs for a specific website.
 func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.CronJob, error) {
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM websites WHERE id = ?`, websiteID).Scan(&exists); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, model.ErrNotFound
-		}
-		return nil, fmt.Errorf("validate website: %w", err)
+	if err := s.requireWebsite(ctx, websiteID); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -124,6 +120,17 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
+}
+
+func (s *Service) requireWebsite(ctx context.Context, websiteID string) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM websites WHERE id = ?`, websiteID).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return model.ErrNotFound
+		}
+		return fmt.Errorf("validate website: %w", err)
+	}
+	return nil
 }
 
 // Get returns a single cron job by ID.

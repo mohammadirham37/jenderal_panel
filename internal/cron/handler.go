@@ -81,6 +81,10 @@ func (h *Handler) CreateForWebsite(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.WebsiteID = chi.URLParam(r, "id")
+	if err := h.svc.requireWebsite(r.Context(), req.WebsiteID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
 	job, err := h.svc.Create(r.Context(), req)
 	if err != nil {
 		httputil.HandleError(w, err)

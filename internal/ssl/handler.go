@@ -69,7 +69,12 @@ func (h *Handler) IssueForWebsite(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
-	h.issue(w, r, chi.URLParam(r, "id"), req.Domain)
+	websiteID := chi.URLParam(r, "id")
+	if err := h.svc.requireWebsite(r.Context(), websiteID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.issue(w, r, websiteID, req.Domain)
 }
 
 func (h *Handler) issue(w http.ResponseWriter, r *http.Request, websiteID, domain string) {
@@ -106,7 +111,12 @@ func (h *Handler) InstallCustomForWebsite(w http.ResponseWriter, r *http.Request
 		httputil.HandleError(w, err)
 		return
 	}
-	h.installCustom(w, r, chi.URLParam(r, "id"), req)
+	websiteID := chi.URLParam(r, "id")
+	if err := h.svc.requireWebsite(r.Context(), websiteID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.installCustom(w, r, websiteID, req)
 }
 
 func (h *Handler) installCustom(w http.ResponseWriter, r *http.Request, websiteID string, req customRequest) {

@@ -387,6 +387,7 @@
 	});
 
 	onDestroy(() => {
+		websiteLoadGeneration++;
 		stopPolling();
 	});
 </script>
@@ -400,7 +401,10 @@
 	<div class="flex items-center justify-between">
 		<div>
 			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
-			<h2 class="text-2xl font-bold text-white">SSL Certificates · {currentWebsite.domain}</h2>
+			<div class="flex flex-wrap items-center gap-3">
+				<h2 class="text-2xl font-bold text-white">SSL Certificates · {currentWebsite.domain}</h2>
+				<span aria-label="Website status" class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{currentWebsite.status}</span>
+			</div>
 		</div>
 		<button
 			onclick={() => showIssueForm ? closeIssueForm() : openIssueForm()}

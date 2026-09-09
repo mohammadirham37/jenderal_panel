@@ -433,12 +433,8 @@ func (s *Service) List(ctx context.Context) ([]model.SSLCertificate, error) {
 
 // ListByWebsite returns all SSL certificates for a specific website.
 func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.SSLCertificate, error) {
-	var exists int
-	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM websites WHERE id = ?`, websiteID).Scan(&exists); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, model.ErrNotFound
-		}
-		return nil, fmt.Errorf("validate website: %w", err)
+	if err := s.requireWebsite(ctx, websiteID); err != nil {
+		return nil, err
 	}
 
 	rows, err := s.db.QueryContext(ctx,
@@ -458,6 +454,17 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 		certs = append(certs, cert)
 	}
 	return certs, rows.Err()
+}
+
+func (s *Service) requireWebsite(ctx context.Context, websiteID string) error {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM websites WHERE id = ?`, websiteID).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return model.ErrNotFound
+		}
+		return fmt.Errorf("validate website: %w", err)
+	}
+	return nil
 }
 
 // Count returns the total number of SSL certificates.

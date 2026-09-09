@@ -13,26 +13,62 @@ import (
 )
 
 func TestHandlerCreateForWebsiteUsesRouteWebsiteID(t *testing.T) {
+	for _, bodyWebsiteID := range []string{"", "site-other"} {
+		t.Run("body_website_id="+bodyWebsiteID, func(t *testing.T) {
+			db := setupTestDB(t)
+			insertTestWebsite(t, db, "site-route", "route-user")
+			insertTestWebsite(t, db, "site-other", "other-user")
+			handler := NewHandler(NewService(db, mockExecutor(), nil), audit.NewService(db))
+			router := chi.NewRouter()
+			router.Post("/websites/{id}/queue-workers", handler.CreateForWebsite)
+
+			recorder := httptest.NewRecorder()
+			body := `{"command":"php artisan queue:work","num_workers":2}`
+			if bodyWebsiteID != "" {
+				body = `{"website_id":"site-other","command":"php artisan queue:work","num_workers":2}`
+			}
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/site-route/queue-workers", strings.NewReader(body)))
+			if recorder.Code != http.StatusCreated {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var response struct {
+				Data model.QueueWorker `json:"data"`
+			}
+			if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+				t.Fatal(err)
+			}
+			got := response.Data
+			if got.WebsiteID != "site-route" {
+				t.Fatalf("website_id = %q, want route website", got.WebsiteID)
+			}
+			var storedWebsiteID string
+			if err := db.QueryRow(`SELECT website_id FROM queue_workers WHERE id = ?`, got.ID).Scan(&storedWebsiteID); err != nil {
+				t.Fatal(err)
+			}
+			if storedWebsiteID != "site-route" {
+				t.Fatalf("stored website_id = %q, want route website", storedWebsiteID)
+			}
+		})
+	}
+}
+
+func TestHandlerCreateForWebsiteRejectsMissingWebsite(t *testing.T) {
 	db := setupTestDB(t)
-	insertTestWebsite(t, db, "site-route", "route-user")
+	insertTestWebsite(t, db, "site-other", "other-user")
 	handler := NewHandler(NewService(db, mockExecutor(), nil), audit.NewService(db))
 	router := chi.NewRouter()
 	router.Post("/websites/{id}/queue-workers", handler.CreateForWebsite)
-
 	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/site-route/queue-workers", strings.NewReader(`{"command":"php artisan queue:work","num_workers":2}`)))
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/missing-site/queue-workers", strings.NewReader(`{"website_id":"site-other","command":"php artisan queue:work","num_workers":2}`)))
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", recorder.Code, recorder.Body.String())
 	}
-	var response struct {
-		Data model.QueueWorker `json:"data"`
-	}
-	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM queue_workers`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	got := response.Data
-	if got.WebsiteID != "site-route" {
-		t.Fatalf("website_id = %q, want route website", got.WebsiteID)
+	if count != 0 {
+		t.Fatalf("created %d workers for a missing route website", count)
 	}
 }
 

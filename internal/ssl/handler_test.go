@@ -16,75 +16,160 @@ import (
 )
 
 func TestHandlerIssueForWebsiteUsesRouteWebsiteID(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-	insertTestWebsite(t, db, "site-route", "example.com")
-	now := time.Now().UTC().Truncate(time.Second)
-	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
-	handler := NewHandler(newTestService(t, db, &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
-		return certPEM, keyPEM, nil
-	}}), audit.NewService(db))
-	router := chi.NewRouter()
-	router.Post("/websites/{id}/ssl/issue", handler.IssueForWebsite)
+	for _, bodyWebsiteID := range []string{"", "site-other"} {
+		t.Run("body_website_id="+bodyWebsiteID, func(t *testing.T) {
+			db := setupTestDB(t)
+			defer db.Close()
+			insertTestWebsite(t, db, "site-route", "example.com")
+			insertTestWebsite(t, db, "site-other", "other.example.com")
+			now := time.Now().UTC().Truncate(time.Second)
+			certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+			handler := NewHandler(newTestService(t, db, &MockACMEClient{ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
+				return certPEM, keyPEM, nil
+			}}), audit.NewService(db))
+			router := chi.NewRouter()
+			router.Post("/websites/{id}/ssl/issue", handler.IssueForWebsite)
 
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/site-route/ssl/issue", strings.NewReader(`{"domain":"example.com"}`)))
-	if recorder.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-	var response struct {
-		Data model.SSLCertificate `json:"data"`
-	}
-	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
-		t.Fatal(err)
-	}
-	got := response.Data
-	if got.WebsiteID != "site-route" {
-		t.Fatalf("website_id = %q, want route website", got.WebsiteID)
+			recorder := httptest.NewRecorder()
+			body := `{"domain":"example.com"}`
+			if bodyWebsiteID != "" {
+				body = `{"website_id":"site-other","domain":"example.com"}`
+			}
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/site-route/ssl/issue", strings.NewReader(body)))
+			if recorder.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var response struct {
+				Data model.SSLCertificate `json:"data"`
+			}
+			if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+				t.Fatal(err)
+			}
+			got := response.Data
+			if got.WebsiteID != "site-route" {
+				t.Fatalf("website_id = %q, want route website", got.WebsiteID)
+			}
+			var storedWebsiteID string
+			if err := db.QueryRow(`SELECT website_id FROM ssl_certificates WHERE id = ?`, got.ID).Scan(&storedWebsiteID); err != nil {
+				t.Fatal(err)
+			}
+			if storedWebsiteID != "site-route" {
+				t.Fatalf("stored website_id = %q, want route website", storedWebsiteID)
+			}
+		})
 	}
 }
 
 func TestHandlerInstallCustomForWebsiteUsesRouteWebsiteIDAndKeepsMaterialPrivate(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-	insertTestWebsite(t, db, "site-route", "example.com")
-	now := time.Now().UTC().Truncate(time.Second)
-	certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
-	handler := NewHandler(newTestService(t, db, &MockACMEClient{}), audit.NewService(db))
-	router := chi.NewRouter()
-	router.Post("/websites/{id}/ssl/custom", handler.InstallCustomForWebsite)
-	body, err := json.Marshal(map[string]string{
-		"domain": "example.com", "certificate_pem": string(certPEM), "private_key_pem": string(keyPEM),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, bodyWebsiteID := range []string{"", "site-other"} {
+		t.Run("body_website_id="+bodyWebsiteID, func(t *testing.T) {
+			db := setupTestDB(t)
+			defer db.Close()
+			insertTestWebsite(t, db, "site-route", "example.com")
+			insertTestWebsite(t, db, "site-other", "other.example.com")
+			now := time.Now().UTC().Truncate(time.Second)
+			certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+			handler := NewHandler(newTestService(t, db, &MockACMEClient{}), audit.NewService(db))
+			router := chi.NewRouter()
+			router.Post("/websites/{id}/ssl/custom", handler.InstallCustomForWebsite)
+			values := map[string]string{
+				"domain": "example.com", "certificate_pem": string(certPEM), "private_key_pem": string(keyPEM),
+			}
+			if bodyWebsiteID != "" {
+				values["website_id"] = bodyWebsiteID
+			}
+			body, err := json.Marshal(values)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/site-route/ssl/custom", bytes.NewReader(body)))
-	if recorder.Code != http.StatusAccepted {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/site-route/ssl/custom", bytes.NewReader(body)))
+			if recorder.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			response := recorder.Body.String()
+			if strings.Contains(response, string(certPEM)) || strings.Contains(response, string(keyPEM)) || strings.Contains(response, "certificate_pem") || strings.Contains(response, "private_key_pem") {
+				t.Fatal("response exposed certificate material")
+			}
+			var responseBody struct {
+				Data model.SSLCertificate `json:"data"`
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &responseBody); err != nil {
+				t.Fatal(err)
+			}
+			got := responseBody.Data
+			if got.WebsiteID != "site-route" {
+				t.Fatalf("website_id = %q, want route website", got.WebsiteID)
+			}
+			var storedWebsiteID string
+			if err := db.QueryRow(`SELECT website_id FROM ssl_certificates WHERE id = ?`, got.ID).Scan(&storedWebsiteID); err != nil {
+				t.Fatal(err)
+			}
+			if storedWebsiteID != "site-route" {
+				t.Fatalf("stored website_id = %q, want route website", storedWebsiteID)
+			}
+			var detail string
+			if err := db.QueryRow(`SELECT detail FROM audit_logs WHERE action = 'install_custom_ssl'`).Scan(&detail); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(detail, string(certPEM)) || strings.Contains(detail, string(keyPEM)) {
+				t.Fatal("audit detail exposed certificate material")
+			}
+		})
 	}
-	response := recorder.Body.String()
-	if strings.Contains(response, string(certPEM)) || strings.Contains(response, string(keyPEM)) || strings.Contains(response, "certificate_pem") || strings.Contains(response, "private_key_pem") {
-		t.Fatal("response exposed certificate material")
+}
+
+func TestHandlerScopedCreatesRejectMissingWebsite(t *testing.T) {
+	for _, operation := range []string{"issue", "custom"} {
+		t.Run(operation, func(t *testing.T) {
+			db := setupTestDB(t)
+			defer db.Close()
+			insertTestWebsite(t, db, "site-other", "example.com")
+			now := time.Now().UTC().Truncate(time.Second)
+			certPEM, keyPEM := testCertificate(t, []string{"example.com"}, now.Add(-time.Hour), now.Add(24*time.Hour))
+			handler := NewHandler(newTestService(t, db, &MockACMEClient{}), audit.NewService(db))
+			router := chi.NewRouter()
+			router.Post("/websites/{id}/ssl/issue", handler.IssueForWebsite)
+			router.Post("/websites/{id}/ssl/custom", handler.InstallCustomForWebsite)
+			body, err := json.Marshal(map[string]string{
+				"website_id": "site-other", "domain": "example.com",
+				"certificate_pem": string(certPEM), "private_key_pem": string(keyPEM),
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/websites/missing-site/ssl/"+operation, bytes.NewReader(body)))
+			if recorder.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404; body = %s", recorder.Code, recorder.Body.String())
+			}
+			var count int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM ssl_certificates`).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != 0 {
+				t.Fatalf("created %d certificates for a missing route website", count)
+			}
+		})
 	}
-	var responseBody struct {
-		Data model.SSLCertificate `json:"data"`
-	}
-	if err := json.Unmarshal(recorder.Body.Bytes(), &responseBody); err != nil {
-		t.Fatal(err)
-	}
-	got := responseBody.Data
-	if got.WebsiteID != "site-route" {
-		t.Fatalf("website_id = %q, want route website", got.WebsiteID)
-	}
-	var detail string
-	if err := db.QueryRow(`SELECT detail FROM audit_logs WHERE action = 'install_custom_ssl'`).Scan(&detail); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(detail, string(certPEM)) || strings.Contains(detail, string(keyPEM)) {
-		t.Fatal("audit detail exposed certificate material")
+}
+
+func TestHandlerLegacyCreatesPreserveMissingWebsiteValidation(t *testing.T) {
+	for _, operation := range []string{"issue", "custom"} {
+		t.Run(operation, func(t *testing.T) {
+			db := setupTestDB(t)
+			defer db.Close()
+			handler := NewHandler(newTestService(t, db, &MockACMEClient{}), audit.NewService(db))
+			router := chi.NewRouter()
+			router.Post("/ssl/issue", handler.Issue)
+			router.Post("/ssl/custom", handler.InstallCustom)
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodPost, "/ssl/"+operation, strings.NewReader(`{"website_id":"missing-site","domain":"example.com"}`)))
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want legacy 400; body = %s", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
