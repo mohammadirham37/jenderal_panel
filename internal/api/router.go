@@ -21,6 +21,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
+	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
@@ -73,6 +74,8 @@ type Dependencies struct {
 	SecuritySvc    *security.Service
 	SecurityEvents *security.EventService
 	Fail2banSvc    *fail2ban.Service
+	MalwareSvc     *malware.Service
+	MalwareRepo    *malware.Repository
 	StaticHandler  http.Handler
 }
 
@@ -114,6 +117,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
+	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -587,6 +591,32 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/security/fail2ban/bans", fail2banHandler.Ban)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Delete("/security/fail2ban/bans/{ip}", fail2banHandler.Unban)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/malware/status", malwareHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/malware/install", malwareHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/malware/signatures/update", malwareHandler.UpdateSignatures)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Put("/security/malware/on-access", malwareHandler.ConfigureOnAccess)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/malware/scans", malwareHandler.Scans)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/malware/scans", malwareHandler.StartScan)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/malware/schedules", malwareHandler.Schedules)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Put("/security/malware/schedules", malwareHandler.SaveSchedule)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/malware/quarantine", malwareHandler.Quarantine)
+			r.With(auth.RequirePermission(deps.RBAC, "security.quarantine")).
+				Get("/security/malware/quarantine/{id}/download", malwareHandler.Download)
+			r.With(auth.RequirePermission(deps.RBAC, "security.quarantine")).
+				Post("/security/malware/quarantine/{id}/restore", malwareHandler.Restore)
+			r.With(auth.RequirePermission(deps.RBAC, "security.quarantine")).
+				Post("/security/malware/quarantine/{id}/false-positive", malwareHandler.FalsePositive)
+			r.With(auth.RequirePermission(deps.RBAC, "security.quarantine")).
+				Delete("/security/malware/quarantine/{id}", malwareHandler.DeleteQuarantine)
 		})
 	})
 

@@ -27,6 +27,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
+	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
@@ -178,7 +179,17 @@ func cmdServe() {
 	}
 	securityEvents := security.NewEventService(db, notifSvc)
 	fail2banSvc := fail2ban.NewService(exec, nil, db, securityEvents)
-	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc)
+	malwareRepo := malware.NewRepository(db)
+	if err := malwareRepo.RecoverInterruptedScans(context.Background(), time.Now().UTC()); err != nil {
+		logger.Error("recover interrupted malware scans failed", "error", err)
+		os.Exit(1)
+	}
+	malwareFiles := malware.NewSudoFileOperator(exec)
+	malwareResolver := malware.NewTargetResolverWithFiles(db, malwareFiles)
+	malwareSvc := malware.NewService(malwareRepo, malwareResolver, exec, malwareFiles, "/var/lib/jenderal/quarantine", securityEvents)
+	malwareSvc.UseWalker(malware.NewSudoTargetWalker(exec))
+	malwareScheduler := malware.NewScheduler(malwareRepo, tasks, malwareSvc, time.Local)
+	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc, malwareSvc)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
@@ -224,6 +235,8 @@ func cmdServe() {
 		SecuritySvc:    securitySvc,
 		SecurityEvents: securityEvents,
 		Fail2banSvc:    fail2banSvc,
+		MalwareSvc:     malwareSvc,
+		MalwareRepo:    malwareRepo,
 		DB:             db,
 		StaticHandler:  staticHandler(),
 	})
@@ -245,6 +258,7 @@ func cmdServe() {
 	backupScheduler.Start(bgCtx)
 	alertChecker.Start(bgCtx)
 	fail2banSvc.StartReconciler(bgCtx)
+	malwareScheduler.Start(bgCtx)
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {

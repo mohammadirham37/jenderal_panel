@@ -14,15 +14,28 @@ func TestSecurityRoutesRegistered(t *testing.T) {
 		t.Fatal("router does not expose chi routes")
 	}
 	want := map[string]bool{
-		http.MethodGet + " /api/v1/security/overview":                false,
-		http.MethodGet + " /api/v1/security/events":                  false,
-		http.MethodPost + " /api/v1/security/events/{id}/transition": false,
-		http.MethodGet + " /api/v1/security/fail2ban":                false,
-		http.MethodPost + " /api/v1/security/fail2ban/install":       false,
-		http.MethodPut + " /api/v1/security/fail2ban/settings":       false,
-		http.MethodGet + " /api/v1/security/fail2ban/bans":           false,
-		http.MethodPost + " /api/v1/security/fail2ban/bans":          false,
-		http.MethodDelete + " /api/v1/security/fail2ban/bans/{ip}":   false,
+		http.MethodGet + " /api/v1/security/overview":                                false,
+		http.MethodGet + " /api/v1/security/events":                                  false,
+		http.MethodPost + " /api/v1/security/events/{id}/transition":                 false,
+		http.MethodGet + " /api/v1/security/fail2ban":                                false,
+		http.MethodPost + " /api/v1/security/fail2ban/install":                       false,
+		http.MethodPut + " /api/v1/security/fail2ban/settings":                       false,
+		http.MethodGet + " /api/v1/security/fail2ban/bans":                           false,
+		http.MethodPost + " /api/v1/security/fail2ban/bans":                          false,
+		http.MethodDelete + " /api/v1/security/fail2ban/bans/{ip}":                   false,
+		http.MethodGet + " /api/v1/security/malware/status":                          false,
+		http.MethodPost + " /api/v1/security/malware/install":                        false,
+		http.MethodPost + " /api/v1/security/malware/signatures/update":              false,
+		http.MethodPut + " /api/v1/security/malware/on-access":                       false,
+		http.MethodGet + " /api/v1/security/malware/scans":                           false,
+		http.MethodPost + " /api/v1/security/malware/scans":                          false,
+		http.MethodGet + " /api/v1/security/malware/schedules":                       false,
+		http.MethodPut + " /api/v1/security/malware/schedules":                       false,
+		http.MethodGet + " /api/v1/security/malware/quarantine":                      false,
+		http.MethodGet + " /api/v1/security/malware/quarantine/{id}/download":        false,
+		http.MethodPost + " /api/v1/security/malware/quarantine/{id}/restore":        false,
+		http.MethodPost + " /api/v1/security/malware/quarantine/{id}/false-positive": false,
+		http.MethodDelete + " /api/v1/security/malware/quarantine/{id}":              false,
 	}
 	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		key := method + " " + route
