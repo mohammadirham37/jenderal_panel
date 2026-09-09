@@ -3,6 +3,7 @@ package noderuntime
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,7 @@ func TestFreshInstallerPreparesPanelUserBeforeBuildAndUsesNVM(t *testing.T) {
 		t.Fatal("installer entry point not found")
 	}
 	harness := `
+original_build_definition=$(declare -f step_build)
 log() { :; }; warn() { :; }
 exec 3>&1
 apt-get() { { printf 'APT'; printf ' <%s>' "$@"; printf '\n'; } >&3; }
@@ -33,20 +35,33 @@ step_build() { [ "$panel_user_ready" = yes ] && [ "$panel_dirs_ready" = yes ] ||
 step_tls() { :; }; step_config() { :; }; step_sudoers() { :; }; step_migrate() { :; }
 step_admin() { :; }; step_systemd() { :; }; step_firewall() { :; }
 main --force
-sudo() { printf 'CALL'; printf ' <%s>' "$@"; printf '\n'; }
-step_install_node /tmp/panel-source
-panel_npm run build
+sudo() { { printf 'CALL'; printf ' <%s>' "$@"; printf '\n'; } >&3; }
+git() { :; }; chown() { :; }; chmod() { :; }; cp() { :; }; rm() { :; }
+mkdir() { :; }; install() { :; }; go() { :; }
+npm() { echo AMBIENT_NPM >&3; return 99; }
+cd() { if [[ "$1" = */web ]]; then builtin cd "$PANEL_FIXTURE/web"; else builtin cd "$PANEL_FIXTURE"; fi; }
+JENDERAL_BIN="$PANEL_FIXTURE/fake-panel"
+eval "$original_build_definition"
+step_build
 `
+	fixture := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(fixture, "web", "build"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fixture, "fake-panel"), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("bash")
+	cmd.Env = append(os.Environ(), "PANEL_FIXTURE="+fixture)
 	cmd.Stdin = strings.NewReader(definitions + harness)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("installer harness: %v\n%s", err, output)
 	}
-	if strings.Contains(string(output), "nodesource") || strings.Contains(string(output), "<nodejs>") {
+	if strings.Contains(string(output), "nodesource") || strings.Contains(string(output), "<nodejs>") || strings.Contains(string(output), "AMBIENT_NPM") {
 		t.Fatalf("fresh installer attempted global Node installation:\n%s", output)
 	}
-	for _, want := range []string{"ORDER_OK", "<-u> <jenderal> <-->", "<HOME=/var/lib/jenderal>", "<NODE_VERSION=24>", "</tmp/panel-source/internal/noderuntime/install.sh> <jenderal> <24> </var/lib/jenderal>", "</var/lib/jenderal/.nvm/nvm-exec> <npm> <run> <build>"} {
+	for _, want := range []string{"ORDER_OK", "<-u> <jenderal> <-->", "<HOME=/var/lib/jenderal>", "<NODE_VERSION=24>", "/internal/noderuntime/install.sh> <jenderal> <24> </var/lib/jenderal>", "</var/lib/jenderal/.nvm/nvm-exec> <npm> <install> <--loglevel=error>", "</var/lib/jenderal/.nvm/nvm-exec> <npm> <run> <build>"} {
 		if !strings.Contains(string(output), want) {
 			t.Fatalf("missing %s in installer execution:\n%s", want, output)
 		}
