@@ -136,7 +136,7 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 		}
 		return nil
 	}
-	if err := installer.bootstrapLaravel(context.Background(), row, canonical, true, progress); err != nil {
+	if err := installer.bootstrapLaravel(context.Background(), row, canonical, true, false, progress); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(filepath.Join(root, "database/database.sqlite"))
@@ -153,7 +153,7 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	commands = nil
-	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, progress); err != nil {
+	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, false, progress); err != nil {
 		t.Fatal(err)
 	}
 	after, _ := os.ReadFile(filepath.Join(root, "database/database.sqlite"))
@@ -167,7 +167,7 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "fail-migration"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, progress); err == nil || !strings.Contains(err.Error(), "migrate Laravel SQLite failed") {
+	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, false, progress); err == nil || !strings.Contains(err.Error(), "migrate Laravel SQLite failed") {
 		t.Fatalf("migration failure not propagated: %v", err)
 	}
 	external := "APP_KEY=base64:keep\nDB_CONNECTION=mysql\nDB_DATABASE=production\n"
@@ -175,7 +175,7 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	commands = nil
-	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, progress); err != nil {
+	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, false, progress); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(strings.Join(commands, "\n"), "/artisan") {
@@ -206,7 +206,7 @@ func TestLaravelBootstrapRetainsFailureDiagnostics(t *testing.T) {
 				return &executor.Result{}, nil
 			}}
 			row := automaticRow("laravel", "12", "blade", "", "empty")
-			err := NewInstaller(mock).bootstrapLaravel(context.Background(), row, "/home/web_example_com/app", false, func(_, output string) error { logs.WriteString(output); return nil })
+			err := NewInstaller(mock).bootstrapLaravel(context.Background(), row, "/home/web_example_com/app", false, false, func(_, output string) error { logs.WriteString(output); return nil })
 			if err == nil {
 				t.Fatal("bootstrap failure swallowed")
 			}
@@ -251,7 +251,7 @@ func TestLaravelSQLiteDiagnosticNamesPackageAndWorksForProvisioningOrRepair(t *t
 		t.Fatal("unexpected operation before SQLite preflight")
 		return nil, nil
 	}}
-	err = NewInstaller(mock).bootstrapLaravel(context.Background(), automaticRow("laravel", "12", "blade", "", "empty"), "/home/web_example_com/app", false, func(_, output string) error { logs.WriteString(output); return nil })
+	err = NewInstaller(mock).bootstrapLaravel(context.Background(), automaticRow("laravel", "12", "blade", "", "empty"), "/home/web_example_com/app", false, false, func(_, output string) error { logs.WriteString(output); return nil })
 	if err == nil || !strings.Contains(logs.String(), "sudo apt-get install php8.3-sqlite3") || !strings.Contains(logs.String(), "retry this operation") {
 		t.Fatalf("unusable extension diagnostic: %v\n%s", err, logs.String())
 	}
