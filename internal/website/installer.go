@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 )
 
 const codeIgniter3Commit = "bcb17eb8ba53a85de154439d0ab8ff1bed047bc9"
@@ -51,6 +52,13 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 		prefix := []string{w.WebUser, "--", "/usr/bin/env", "HOME=" + homeDir, command}
 		return installStep{Name: name, Stage: stage, Timeout: timeout, Command: "-u", Args: append(prefix, args...)}
 	}
+	nodeStep := func(name, stage string, timeout time.Duration, command string, args ...string) (installStep, error) {
+		commandArgs, err := noderuntime.ExecArgs(w.WebUser, w.NodeVersion, command, args...)
+		if err != nil {
+			return installStep{}, err
+		}
+		return installStep{Name: name, Stage: stage, Timeout: timeout, Command: "-u", Args: commandArgs}, nil
+	}
 
 	var steps []installStep
 	switch profile.NginxProfile {
@@ -89,10 +97,15 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 			userStep("generate Laravel key", "installing framework", time.Minute, phpBinary, staging+"/artisan", "key:generate", "--force", "--no-interaction"),
 		)
 		if profile.RequiresNode {
-			steps = append(steps,
-				userStep("install frontend dependencies", "building assets", 10*time.Minute, "/usr/bin/npm", "--prefix", staging, "install", "--no-audit", "--no-fund"),
-				userStep("build frontend assets", "building assets", 10*time.Minute, "/usr/bin/npm", "--prefix", staging, "run", "build"),
-			)
+			installDependencies, err := nodeStep("install frontend dependencies", "building assets", 10*time.Minute, "npm", "--prefix", staging, "install", "--no-audit", "--no-fund")
+			if err != nil {
+				return nil, err
+			}
+			buildAssets, err := nodeStep("build frontend assets", "building assets", 10*time.Minute, "npm", "--prefix", staging, "run", "build")
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, installDependencies, buildAssets)
 		}
 	default:
 		return nil, fmt.Errorf("automatic installation is not implemented for profile %q", profile.NginxProfile)
@@ -188,7 +201,7 @@ func profileForWebsiteRow(w websiteRow) (Profile, error) {
 		frameworkVersion = "3"
 	}
 	return ResolveProfile(CreateRequest{Template: template, PHPVersion: w.PHPVersion, FrameworkVersion: frameworkVersion,
-		FrontendStack: w.FrontendStack, InertiaAdapter: w.InertiaAdapter, ProjectVariant: w.ProjectVariant, SetupMode: w.SetupMode})
+		FrontendStack: w.FrontendStack, InertiaAdapter: w.InertiaAdapter, ProjectVariant: w.ProjectVariant, SetupMode: w.SetupMode, NodeVersion: w.NodeVersion})
 }
 
 func installerStagingRoot(w websiteRow) (string, error) {

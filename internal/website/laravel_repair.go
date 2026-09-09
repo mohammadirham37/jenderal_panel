@@ -17,7 +17,7 @@ func (s *Service) laravelRepairTarget(ctx context.Context, id string) (websiteRo
 	if w.Status != "active" || w.Framework != "laravel" || w.SetupMode != SetupAutomatic {
 		return websiteRow{}, "", model.NewValidationError("Repair Laravel is available for active automatically installed Laravel websites; use Retry for failed provisioning")
 	}
-	row := websiteRow{ID: w.ID, Domain: w.Domain, AppType: w.AppType, PHPVersion: w.PHPVersion, WebUser: w.WebUser, DocumentRoot: w.DocumentRoot, Framework: w.Framework, FrameworkVersion: w.FrameworkVersion, FrontendStack: w.FrontendStack, InertiaAdapter: w.InertiaAdapter, ProjectVariant: w.ProjectVariant, SetupMode: w.SetupMode}
+	row := websiteRow{ID: w.ID, Domain: w.Domain, AppType: w.AppType, PHPVersion: w.PHPVersion, NodeVersion: w.NodeVersion, WebUser: w.WebUser, DocumentRoot: w.DocumentRoot, Framework: w.Framework, FrameworkVersion: w.FrameworkVersion, FrontendStack: w.FrontendStack, InertiaAdapter: w.InertiaAdapter, ProjectVariant: w.ProjectVariant, SetupMode: w.SetupMode}
 	root, _, err := installerFinalPaths(row)
 	return row, root, err
 }

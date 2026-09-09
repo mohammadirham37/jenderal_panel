@@ -158,7 +158,7 @@ func automaticRow(template, version, frontend, adapter, variant string) websiteR
 			docRoot = "/home/web_example_com/app/public"
 		}
 	}
-	return websiteRow{ID: "01TESTWEBSITE", Domain: "example.com", WebUser: "web_example_com", PHPVersion: "8.3", AppType: appType,
+	return websiteRow{ID: "01TESTWEBSITE", Domain: "example.com", WebUser: "web_example_com", PHPVersion: "8.3", NodeVersion: "24", AppType: appType,
 		DocumentRoot: docRoot, Framework: framework, FrameworkVersion: version, FrontendStack: frontend,
 		InertiaAdapter: adapter, ProjectVariant: variant, SetupMode: SetupAutomatic}
 }

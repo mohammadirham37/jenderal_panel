@@ -32,6 +32,7 @@ type CreateRequest struct {
 	Domain           string `json:"domain"`
 	AppType          string `json:"app_type,omitempty"`
 	PHPVersion       string `json:"php_version"`
+	NodeVersion      string `json:"node_version"`
 	Template         string `json:"template"`
 	FrameworkVersion string `json:"framework_version"`
 	FrontendStack    string `json:"frontend_stack"`
@@ -103,6 +104,7 @@ type CompatibilityOption struct {
 
 type WebsiteOptions struct {
 	PHPVersions     []RuntimeOption    `json:"php_versions"`
+	NodeVersions    []string           `json:"node_versions"`
 	Dependencies    []DependencyOption `json:"dependencies"`
 	Profiles        []ProfileOption    `json:"profiles"`
 	InertiaAdapters []string           `json:"inertia_adapters"`
@@ -111,7 +113,7 @@ type WebsiteOptions struct {
 
 // Options reports host runtimes separately from the fixed website profile catalog.
 func (s *Service) Options(ctx context.Context) (WebsiteOptions, error) {
-	options := WebsiteOptions{InertiaAdapters: []string{"react", "vue", "svelte"}, Defaults: CreateRequest{
+	options := WebsiteOptions{NodeVersions: []string{"20", "22", "24"}, InertiaAdapters: []string{"react", "vue", "svelte"}, Defaults: CreateRequest{
 		Template: "php", FrameworkVersion: "12", FrontendStack: "blade", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
 	}}
 	for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
@@ -137,32 +139,9 @@ func (s *Service) Options(ctx context.Context) (WebsiteOptions, error) {
 	if err != nil {
 		return WebsiteOptions{}, err
 	}
-	node, err := s.nodeDependency(ctx)
-	if err != nil {
-		return WebsiteOptions{}, err
-	}
-	options.Dependencies = []DependencyOption{composer, node}
+	options.Dependencies = []DependencyOption{composer}
 	options.Profiles = websiteProfileOptions()
 	return options, nil
-}
-
-func (s *Service) nodeDependency(ctx context.Context) (DependencyOption, error) {
-	node, err := s.commandDependency(ctx, "node", "/nodejs", "/usr/bin/node", "--version")
-	if err != nil || !node.Installed {
-		return node, err
-	}
-	npm, npmErr := s.exec.Run(ctx, "/usr/bin/npm", "--version")
-	if commandNotFound(npmErr) || (npmErr == nil && npm.ExitCode != 0) {
-		node.Installed = false
-		return node, nil
-	}
-	if npmErr != nil {
-		return node, fmt.Errorf("check npm: %w", npmErr)
-	}
-	if strings.SplitN(node.Version, ".", 2)[0] != "20" {
-		node.Installed = false
-	}
-	return node, nil
 }
 
 func (s *Service) phpRuntimeInstalled(ctx context.Context, version string) (bool, error) {
@@ -232,15 +211,6 @@ func (s *Service) validateRuntimeRequirements(ctx context.Context, phpVersion st
 			return model.NewValidationError("Composer is not installed; install it from /services")
 		}
 	}
-	if profile.RequiresNode {
-		status, err := s.nodeDependency(ctx)
-		if err != nil {
-			return err
-		}
-		if !status.Installed {
-			return model.NewValidationError("Node.js is not installed; install it from /nodejs")
-		}
-	}
 	return nil
 }
 
@@ -279,6 +249,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		Domain:           req.Domain,
 		AppType:          profile.AppType,
 		PHPVersion:       req.PHPVersion,
+		NodeVersion:      profile.NodeVersion,
 		DocumentRoot:     docRoot,
 		WebUser:          webUser,
 		Status:           "pending",
@@ -300,11 +271,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, ssl_enabled,
+		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		 created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
+		w.NodeVersion,
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
 		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,
 		nowStr, nowStr,
@@ -347,7 +319,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 // Get returns a website by ID, including its associated domains.
 func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, domain, app_type, php_version, document_root, web_user,
+		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
@@ -372,7 +344,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 // List returns all websites ordered by created_at DESC.
 func (s *Service) List(ctx context.Context) ([]model.Website, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, domain, app_type, php_version, document_root, web_user,
+		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log, created_at, updated_at
 		 FROM websites ORDER BY created_at DESC`)
@@ -1084,7 +1056,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 
 	err := row.Scan(
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
-		&w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
+		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog, &createdStr, &updatedStr,
 	)
@@ -1111,7 +1083,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 
 	err := rows.Scan(
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
-		&w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
+		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog, &createdStr, &updatedStr,
 	)

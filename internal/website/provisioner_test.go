@@ -50,6 +50,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		,setup_mode TEXT NOT NULL DEFAULT 'config-only'
 		,provision_stage TEXT NOT NULL DEFAULT ''
 		,provision_log TEXT NOT NULL DEFAULT ''
+		,node_version TEXT NOT NULL DEFAULT '24'
 	);
 	CREATE TABLE IF NOT EXISTS domains (
 		id         TEXT PRIMARY KEY,

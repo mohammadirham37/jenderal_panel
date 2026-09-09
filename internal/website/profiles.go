@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 )
 
 const (
@@ -28,6 +29,7 @@ type Profile struct {
 	RelativeDocumentRoot string `json:"relative_document_root"`
 	RequiresComposer     bool   `json:"requires_composer"`
 	RequiresNode         bool   `json:"requires_node"`
+	NodeVersion          string `json:"node_version"`
 	StarterRepository    string `json:"-"`
 	StarterReference     string `json:"-"`
 	StarterCommit        string `json:"-"`
@@ -60,6 +62,12 @@ var laravelStarterSources = map[string]map[string]starterSource{
 // ResolveProfile validates request selections and derives paths and runtime requirements.
 // Package names and source revisions come only from this file's allowlists.
 func ResolveProfile(req CreateRequest) (Profile, error) {
+	req.NodeVersion = strings.TrimSpace(req.NodeVersion)
+	if req.NodeVersion != "" {
+		if err := noderuntime.ValidateVersion(req.NodeVersion); err != nil {
+			return Profile{}, model.NewValidationError("unsupported Node.js version: " + req.NodeVersion)
+		}
+	}
 	template := strings.TrimSpace(req.Template)
 	if template == "" {
 		template = strings.TrimSpace(req.AppType)
@@ -118,6 +126,7 @@ func simpleProfile(req CreateRequest, template, appType, framework, frameworkVer
 		ProjectVariant: "empty", SetupMode: setupMode,
 		RelativeProjectRoot: projectRoot, RelativeDocumentRoot: documentRoot,
 		RequiresComposer: composer && setupMode == SetupAutomatic,
+		NodeVersion:      req.NodeVersion,
 	}, nil
 }
 
@@ -165,6 +174,7 @@ func resolveLaravelProfile(req CreateRequest, setupMode string) (Profile, error)
 		InertiaAdapter: adapter, ProjectVariant: variant, SetupMode: setupMode,
 		MinimumPHP: minimumPHP, RelativeProjectRoot: "app", RelativeDocumentRoot: "app/public",
 		RequiresComposer: setupMode == SetupAutomatic,
+		NodeVersion:      req.NodeVersion,
 	}
 	if setupMode != SetupAutomatic {
 		return profile, nil
@@ -183,6 +193,9 @@ func resolveLaravelProfile(req CreateRequest, setupMode string) (Profile, error)
 		return Profile{}, model.NewValidationError(fmt.Sprintf("automatic %s starter kit is not available for Laravel %s; use config-only", key, version))
 	}
 	profile.RequiresNode = true
+	if profile.NodeVersion == "" {
+		profile.NodeVersion = "24"
+	}
 	profile.StarterRepository = source.repository
 	profile.StarterReference = source.reference
 	profile.StarterCommit = source.commit

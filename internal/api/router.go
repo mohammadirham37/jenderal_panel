@@ -342,6 +342,14 @@ func NewRouter(deps Dependencies) http.Handler {
 
 			// Node.js
 			r.With(auth.RequirePermission(deps.RBAC, "nodejs.view")).
+				Get("/nodejs/runtimes", nodeHandler.ListRuntimes)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Post("/nodejs/runtimes/{websiteID}", nodeHandler.ChangeRuntime)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.view")).
+				Get("/nodejs/global", nodeHandler.GlobalStatus)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
+				Delete("/nodejs/global", nodeHandler.RemoveGlobal)
+			r.With(auth.RequirePermission(deps.RBAC, "nodejs.view")).
 				Get("/nodejs/versions", nodeHandler.ListVersions)
 			r.With(auth.RequirePermission(deps.RBAC, "nodejs.manage")).
 				Post("/nodejs/install", nodeHandler.Install)

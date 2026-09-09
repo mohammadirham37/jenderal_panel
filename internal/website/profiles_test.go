@@ -5,6 +5,43 @@ import (
 	"testing"
 )
 
+func TestResolveProfileDefaultsAndValidatesRequiredNodeRuntime(t *testing.T) {
+	req := CreateRequest{
+		Template: "laravel", FrameworkVersion: "13", PHPVersion: "8.3",
+		FrontendStack: "inertia", InertiaAdapter: "svelte", ProjectVariant: "starter-kit", SetupMode: SetupAutomatic,
+	}
+	profile, err := ResolveProfile(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !profile.RequiresNode || profile.NodeVersion != "24" {
+		t.Fatalf("profile = %#v, want required Node 24 default", profile)
+	}
+
+	req.NodeVersion = "21"
+	if _, err := ResolveProfile(req); err == nil || !strings.Contains(err.Error(), "unsupported Node") {
+		t.Fatalf("ResolveProfile() error = %v, want unsupported Node validation", err)
+	}
+}
+
+func TestResolveProfilePreservesOptionalNodeSelectionAndDefaultsToNone(t *testing.T) {
+	withoutNode, err := ResolveProfile(CreateRequest{Template: "php", PHPVersion: "8.3", SetupMode: SetupConfigOnly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withoutNode.NodeVersion != "" {
+		t.Fatalf("NodeVersion = %q, want none", withoutNode.NodeVersion)
+	}
+
+	withNode, err := ResolveProfile(CreateRequest{Template: "php", PHPVersion: "8.3", SetupMode: SetupConfigOnly, NodeVersion: "22"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withNode.NodeVersion != "22" {
+		t.Fatalf("NodeVersion = %q, want explicit 22", withNode.NodeVersion)
+	}
+}
+
 func TestResolveProfileDocumentRootsAndPHPCompatibility(t *testing.T) {
 	tests := []struct {
 		name    string

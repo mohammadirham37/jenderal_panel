@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	osexec "os/exec"
 	"testing"
 	"time"
 
@@ -32,8 +31,8 @@ func insertTestWebsite(t *testing.T, db *sql.DB, id, domain, webUser, docRoot st
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := db.Exec(
-		`INSERT INTO websites (id, domain, app_type, document_root, web_user, status, ssl_enabled, created_at, updated_at)
-		 VALUES (?, ?, 'nodejs', ?, ?, 'active', 0, ?, ?)`,
+		`INSERT INTO websites (id, domain, app_type, node_version, document_root, web_user, status, ssl_enabled, created_at, updated_at)
+		 VALUES (?, ?, 'nodejs', '24', ?, ?, 'active', 0, ?, ?)`,
 		id, domain, docRoot, webUser, now, now,
 	)
 	if err != nil {
@@ -57,6 +56,10 @@ func newMockExec() *executor.MockExecutor {
 			return mockResult("", "", 0), nil
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "-u" && len(args) > 14 && args[13] == "10s" {
+				version := args[len(args)-2]
+				return mockResult("nvm_state=ready\nnvm_version=v0.40.7\ninstalled=true\nnode_version=v"+version+".1.0\nnpm_version=11.0.0\n", "", 0), nil
+			}
 			return mockResult("", "", 0), nil
 		},
 	}
@@ -67,14 +70,14 @@ func TestCreateApp(t *testing.T) {
 	mock := newMockExec()
 
 	websiteID := "site-001"
-	insertTestWebsite(t, db, websiteID, "example.com", "exampleuser", "/home/exampleuser/public")
+	insertTestWebsite(t, db, websiteID, "example.com", "web_exampleuser", "/home/web_exampleuser/public")
 
 	svc := NewService(db, mock, nil)
 	ctx := context.Background()
 
 	app, err := svc.CreateApp(ctx, CreateAppRequest{
 		WebsiteID:   websiteID,
-		NodeVersion: "20",
+		NodeVersion: "24",
 		PackageMgr:  "npm",
 		BuildCmd:    "npm run build",
 		StartCmd:    "server.js",
@@ -91,8 +94,8 @@ func TestCreateApp(t *testing.T) {
 	if app.WebsiteID != websiteID {
 		t.Errorf("expected website_id %q, got %q", websiteID, app.WebsiteID)
 	}
-	if app.NodeVersion != "20" {
-		t.Errorf("expected node_version '20', got %q", app.NodeVersion)
+	if app.NodeVersion != "24" {
+		t.Errorf("expected inherited node_version '24', got %q", app.NodeVersion)
 	}
 	if app.PackageMgr != "npm" {
 		t.Errorf("expected package_mgr 'npm', got %q", app.PackageMgr)
@@ -128,7 +131,7 @@ func TestList(t *testing.T) {
 	mock := newMockExec()
 
 	websiteID := "site-002"
-	insertTestWebsite(t, db, websiteID, "test.com", "testuser", "/home/testuser/public")
+	insertTestWebsite(t, db, websiteID, "test.com", "web_testuser", "/home/web_testuser/public")
 
 	svc := NewService(db, mock, nil)
 	ctx := context.Background()
@@ -136,7 +139,7 @@ func TestList(t *testing.T) {
 	// Create 2 apps.
 	_, err := svc.CreateApp(ctx, CreateAppRequest{
 		WebsiteID:   websiteID,
-		NodeVersion: "20",
+		NodeVersion: "24",
 		StartCmd:    "app1.js",
 		Port:        3001,
 	})
@@ -146,7 +149,7 @@ func TestList(t *testing.T) {
 
 	_, err = svc.CreateApp(ctx, CreateAppRequest{
 		WebsiteID:   websiteID,
-		NodeVersion: "18",
+		NodeVersion: "24",
 		PackageMgr:  "yarn",
 		StartCmd:    "start",
 		Port:        3002,
@@ -230,14 +233,14 @@ func TestDelete(t *testing.T) {
 	mock := newMockExec()
 
 	websiteID := "site-003"
-	insertTestWebsite(t, db, websiteID, "del.com", "deluser", "/home/deluser/public")
+	insertTestWebsite(t, db, websiteID, "del.com", "web_deluser", "/home/web_deluser/public")
 
 	svc := NewService(db, mock, nil)
 	ctx := context.Background()
 
 	app, err := svc.CreateApp(ctx, CreateAppRequest{
 		WebsiteID:   websiteID,
-		NodeVersion: "20",
+		NodeVersion: "24",
 		StartCmd:    "server.js",
 		Port:        4000,
 	})
@@ -259,10 +262,8 @@ func TestDelete(t *testing.T) {
 func TestListVersions(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			if name == "node" {
-				return mockResult("v20.11.0\n", "", 0), nil
-			}
-			return mockResult("", "", 0), nil
+			t.Fatalf("ListVersions probed global executable: %s %v", name, args)
+			return nil, nil
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return mockResult("", "", 0), nil
@@ -278,32 +279,7 @@ func TestListVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal versions: %v", err)
 	}
-	want := `[{"version":"20","installed":true,"lts":true}]`
-	if string(got) != want {
-		t.Errorf("versions JSON: got %s, want %s", got, want)
-	}
-}
-
-func TestListVersions_NotInstalled(t *testing.T) {
-	mock := &executor.MockExecutor{
-		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			return nil, &osexec.Error{Name: "node", Err: osexec.ErrNotFound}
-		},
-		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			return mockResult("", "", 0), nil
-		},
-	}
-
-	svc := NewService(nil, mock, nil)
-	versions, err := svc.ListVersions(context.Background())
-	if err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
-	got, err := json.Marshal(versions)
-	if err != nil {
-		t.Fatalf("marshal versions: %v", err)
-	}
-	want := `[{"version":"20","installed":false,"lts":true}]`
+	want := `[{"version":"20","installed":false,"lts":true},{"version":"22","installed":false,"lts":true},{"version":"24","installed":false,"lts":true}]`
 	if string(got) != want {
 		t.Errorf("versions JSON: got %s, want %s", got, want)
 	}

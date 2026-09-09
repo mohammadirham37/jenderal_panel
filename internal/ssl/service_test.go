@@ -35,6 +35,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		domain        TEXT NOT NULL UNIQUE,
 		app_type      TEXT NOT NULL DEFAULT 'php',
 		php_version   TEXT,
+		node_version  TEXT NOT NULL DEFAULT '24',
 		document_root TEXT NOT NULL,
 		web_user      TEXT NOT NULL UNIQUE,
 		status        TEXT NOT NULL DEFAULT 'pending',

@@ -146,6 +146,7 @@ type Website struct {
 	Domain           string    `json:"domain"`
 	AppType          string    `json:"app_type"`
 	PHPVersion       string    `json:"php_version"`
+	NodeVersion      string    `json:"node_version"`
 	DocumentRoot     string    `json:"document_root"`
 	WebUser          string    `json:"web_user"`
 	Status           string    `json:"status"`

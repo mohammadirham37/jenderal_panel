@@ -10,7 +10,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
 
-func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
+func TestOptionsReportsPHPComposerAndNodeChoicesWithoutGlobalNodeProbe(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -24,10 +24,6 @@ func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
 			return &executor.Result{ExitCode: 1}, nil
 		case "/usr/local/bin/composer":
 			return &executor.Result{ExitCode: 0, Stdout: "Composer version 2.10.3 2026-04-20"}, nil
-		case "/usr/bin/node":
-			return &executor.Result{ExitCode: 0, Stdout: "v20.19.0\n"}, nil
-		case "/usr/bin/npm":
-			return &executor.Result{ExitCode: 0, Stdout: "10.8.0\n"}, nil
 		case "systemctl":
 			return &executor.Result{ExitCode: 0}, nil
 		default:
@@ -49,8 +45,11 @@ func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
 	if strings.Join(installed, ",") != "8.2,8.4" {
 		t.Fatalf("installed PHP versions = %v, want [8.2 8.4]", installed)
 	}
-	if len(options.Dependencies) != 2 || options.Dependencies[0].Version != "2.10.3" || options.Dependencies[1].Version != "20.19.0" {
+	if len(options.Dependencies) != 1 || options.Dependencies[0].Version != "2.10.3" {
 		t.Fatalf("dependencies = %#v", options.Dependencies)
+	}
+	if strings.Join(options.NodeVersions, ",") != "20,22,24" {
+		t.Fatalf("node_versions = %v", options.NodeVersions)
 	}
 	if len(options.Profiles) == 0 {
 		t.Fatal("profile catalog is empty")
@@ -78,8 +77,8 @@ func TestOptionsLoadsWhenAbsoluteDependencyPathsDoNotExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Options() error = %v, want form options available without Composer or Node.js", err)
 	}
-	if len(options.Dependencies) != 2 || options.Dependencies[0].Installed || options.Dependencies[1].Installed {
-		t.Fatalf("dependencies = %#v, want both reported as not installed", options.Dependencies)
+	if len(options.Dependencies) != 1 || options.Dependencies[0].Installed {
+		t.Fatalf("dependencies = %#v, want Composer reported as not installed", options.Dependencies)
 	}
 	if !options.PHPVersions[2].Installed || options.PHPVersions[2].Version != "8.3" {
 		t.Fatalf("PHP versions = %#v, want installed PHP 8.3 preserved", options.PHPVersions)
@@ -103,51 +102,71 @@ func TestCreateRejectsPHPDirectoryWithoutVersionedBinary(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsUnsupportedNodeMajor(t *testing.T) {
+func TestCreateDefaultsRequiredRuntimeWithoutProbingGlobalNode(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 		switch name {
-		case "test", "/usr/local/bin/composer", "/usr/bin/npm":
+		case "test", "/usr/local/bin/composer":
 			return &executor.Result{ExitCode: 0, Stdout: "10.0.0"}, nil
-		case "/usr/bin/node":
-			return &executor.Result{ExitCode: 0, Stdout: "v22.0.0"}, nil
 		default:
-			return &executor.Result{ExitCode: 0}, nil
+			t.Fatalf("unexpected global runtime probe: %s %v", name, args)
+			return nil, nil
 		}
 	}}
-	_, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
+	created, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
 		Domain: "node22.example.com", Template: "laravel", FrameworkVersion: "13", PHPVersion: "8.3",
 		FrontendStack: "inertia", InertiaAdapter: "svelte", ProjectVariant: "starter-kit", SetupMode: SetupAutomatic,
 	})
-	if err == nil || !strings.Contains(err.Error(), "Node.js") {
-		t.Fatalf("Create() error = %v, want unsupported Node.js validation", err)
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.NodeVersion != "24" {
+		t.Fatalf("created node_version = %q, want 24", created.NodeVersion)
 	}
 }
 
-func TestCreateRejectsMissingNPMBeforeInsert(t *testing.T) {
+func TestCreateRejectsUnsupportedSelectedNodeBeforeInsert(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
 	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-		switch name {
-		case "test", "/usr/local/bin/composer", "/usr/bin/node":
-			return &executor.Result{ExitCode: 0, Stdout: "v20.19.0"}, nil
-		case "/usr/bin/npm":
-			return &executor.Result{ExitCode: 1}, nil
-		default:
-			return &executor.Result{ExitCode: 0}, nil
-		}
+		return &executor.Result{ExitCode: 0, Stdout: "2.10.3"}, nil
 	}}
 	_, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
 		Domain: "npm.example.com", Template: "laravel", FrameworkVersion: "13", PHPVersion: "8.3",
-		FrontendStack: "inertia", InertiaAdapter: "svelte", ProjectVariant: "starter-kit", SetupMode: SetupAutomatic,
+		FrontendStack: "inertia", InertiaAdapter: "svelte", ProjectVariant: "starter-kit", SetupMode: SetupAutomatic, NodeVersion: "21",
 	})
-	if err == nil || !strings.Contains(err.Error(), "Node.js") {
-		t.Fatalf("Create() error = %v, want missing Node.js/npm validation", err)
+	if err == nil || !strings.Contains(err.Error(), "unsupported Node") {
+		t.Fatalf("Create() error = %v, want unsupported Node validation", err)
 	}
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM websites`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("website count = %d, error = %v", count, err)
+	}
+}
+
+func TestCreateExplicitlyPersistsNoNodeRuntime(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "test" {
+			return &executor.Result{ExitCode: 0}, nil
+		}
+		t.Fatalf("unexpected dependency probe: %s %v", name, args)
+		return nil, nil
+	}}
+	created, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
+		Domain: "no-node.example.com", Template: "php", PHPVersion: "8.3", SetupMode: SetupConfigOnly, NodeVersion: "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := db.QueryRow(`SELECT node_version FROM websites WHERE id = ?`, created.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != "" || created.NodeVersion != "" {
+		t.Fatalf("stored=%q response=%q, want explicit empty runtime", stored, created.NodeVersion)
 	}
 }
 

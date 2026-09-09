@@ -14,6 +14,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/landing"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 	"github.com/oklog/ulid/v2"
 )
@@ -27,6 +28,7 @@ type Provisioner struct {
 	ipv6Available func() bool
 	mutations     *siteops.Coordinator
 	installer     *Installer
+	runtime       *noderuntime.Service
 }
 
 // NewProvisioner creates a new Provisioner with a buffered queue channel.
@@ -39,6 +41,7 @@ func NewProvisioner(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.S
 		ipv6Available: nginxconfig.IPv6Available,
 		mutations:     siteops.Default,
 		installer:     NewInstaller(exec),
+		runtime:       noderuntime.New(exec),
 	}
 }
 
@@ -152,6 +155,19 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	if result.ExitCode != 0 && result.ExitCode != 9 {
 		p.fail(ctx, websiteID, "create user failed: "+strings.TrimSpace(result.Stderr))
 		return
+	}
+
+	automaticSetup := w.SetupMode == SetupAutomatic || w.SetupMode == "automatic"
+	if automaticSetup && w.NodeVersion != "" {
+		if err := p.updateProgress(ctx, websiteID, "installing Node.js", ""); err != nil {
+			return
+		}
+		if err := p.runtime.Install(ctx, w.WebUser, w.NodeVersion, func(output string) {
+			_ = p.updateProgress(ctx, websiteID, "installing Node.js", output+"\n")
+		}); err != nil {
+			p.fail(ctx, websiteID, "Node.js runtime installation failed: "+err.Error())
+			return
+		}
 	}
 
 	// Create only account-owned support directories before an automatic install.
@@ -608,6 +624,7 @@ type websiteRow struct {
 	Domain           string
 	AppType          string
 	PHPVersion       string
+	NodeVersion      string
 	DocumentRoot     string
 	WebUser          string
 	Framework        string
@@ -631,10 +648,10 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	var w websiteRow
 	var phpVersion, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	err := p.db.QueryRowContext(ctx,
-		`SELECT id, domain, app_type, php_version, document_root, web_user,
+		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log
 		 FROM websites WHERE id = ?`, id,
-	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.DocumentRoot, &w.WebUser,
+	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser,
 		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog)
 	if err != nil {
 		return w, err

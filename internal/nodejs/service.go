@@ -4,11 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
-	osexec "os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -16,6 +19,8 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
+	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 )
 
 type VersionInfo struct {
@@ -26,6 +31,8 @@ type VersionInfo struct {
 
 var supportedNodeVersions = []VersionInfo{
 	{Version: "20", LTS: true},
+	{Version: "22", LTS: true},
+	{Version: "24", LTS: true},
 }
 
 // CreateAppRequest holds the data for creating a new Node.js app.
@@ -41,66 +48,35 @@ type CreateAppRequest struct {
 
 // Service manages Node.js application lifecycle.
 type Service struct {
-	db    *sql.DB
-	exec  executor.CommandExecutor
-	audit *audit.Service
+	db          *sql.DB
+	exec        executor.CommandExecutor
+	audit       *audit.Service
+	runtime     runtimeManager
+	mutations   *siteops.Coordinator
+	runtimeGate sync.RWMutex
 }
 
 // NewService creates a new Node.js management service.
 func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service) *Service {
-	return &Service{db: db, exec: exec, audit: auditSvc}
+	return &Service{db: db, exec: exec, audit: auditSvc, runtime: noderuntime.New(exec), mutations: siteops.Default}
 }
 
-// ListVersions returns supported Node.js versions and marks the installed major.
+// ListVersions returns the supported catalog. Installation is owned per website,
+// so this compatibility endpoint never probes a global executable.
 func (s *Service) ListVersions(ctx context.Context) ([]VersionInfo, error) {
-	versions := append([]VersionInfo(nil), supportedNodeVersions...)
-	result, err := s.exec.Run(ctx, "node", "--version")
-	if err != nil {
-		if errors.Is(err, osexec.ErrNotFound) {
-			return versions, nil
-		}
-		return nil, fmt.Errorf("check node version: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return versions, nil
-	}
-
-	version := strings.TrimSpace(result.Stdout)
-	if version == "" {
-		return versions, nil
-	}
-	version = strings.TrimPrefix(version, "v")
-	major := strings.SplitN(version, ".", 2)[0]
-	for i := range versions {
-		versions[i].Installed = versions[i].Version == major
-	}
-
-	return versions, nil
+	return append([]VersionInfo(nil), supportedNodeVersions...), nil
 }
 
 func (s *Service) validateVersion(version string) error {
-	for _, supported := range supportedNodeVersions {
-		if supported.Version == version {
-			return nil
-		}
+	if err := noderuntime.ValidateVersion(version); err == nil {
+		return nil
 	}
 	return model.NewValidationError("unsupported Node.js version: " + version)
 }
 
-// Install installs Node.js using apt-get.
+// Install is retained only to give older clients an actionable migration error.
 func (s *Service) Install(ctx context.Context, version string) error {
-	if version == "" {
-		return model.NewValidationError("version is required")
-	}
-
-	result, err := s.exec.RunSudo(ctx, "apt-get", "install", "-y", "nodejs")
-	if err != nil {
-		return fmt.Errorf("install nodejs: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("install nodejs: %s", strings.TrimSpace(result.Stderr))
-	}
-	return nil
+	return model.NewValidationError("global Node.js installation is no longer managed; select a website runtime and use /api/v1/nodejs/runtimes/{websiteID}")
 }
 
 // CreateApp creates a new Node.js application, writes systemd and nginx configs,
@@ -109,8 +85,12 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 	if req.WebsiteID == "" {
 		return model.NodeApp{}, model.NewValidationError("website_id is required")
 	}
+	req.StartCmd = strings.TrimSpace(req.StartCmd)
 	if req.StartCmd == "" {
 		return model.NodeApp{}, model.NewValidationError("start_cmd is required")
+	}
+	if containsLineControl(req.StartCmd) {
+		return model.NodeApp{}, model.NewValidationError("start_cmd must not contain newlines or NUL")
 	}
 	if req.Port <= 0 {
 		return model.NodeApp{}, model.NewValidationError("port must be a positive integer")
@@ -124,18 +104,33 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 		return model.NodeApp{}, model.NewValidationError("package_mgr must be npm, yarn, or pnpm")
 	}
 
-	// Validate env_vars JSON if provided.
-	if req.EnvVars != "" {
-		var envMap map[string]string
-		if err := json.Unmarshal([]byte(req.EnvVars), &envMap); err != nil {
-			return model.NodeApp{}, model.NewValidationError("env_vars must be valid JSON object")
-		}
+	if _, err := parseEnvironment(req.EnvVars); err != nil {
+		return model.NodeApp{}, err
 	}
 
-	// Fetch website to get web_user, document_root, domain.
-	webUser, docRoot, domain, err := s.getWebsiteInfo(ctx, req.WebsiteID)
+	s.runtimeGate.RLock()
+	defer s.runtimeGate.RUnlock()
+	unlock := s.mutations.Lock(req.WebsiteID)
+	defer unlock()
+	website, err := s.loadWebsiteRuntime(ctx, req.WebsiteID)
 	if err != nil {
 		return model.NodeApp{}, err
+	}
+	if website.NodeVersion == "" {
+		return model.NodeApp{}, model.NewValidationError("this website has no Node.js runtime selected; choose and install one from /nodejs")
+	}
+	if containsLineControl(website.Domain) {
+		return model.NodeApp{}, fmt.Errorf("unsafe website domain %q", website.Domain)
+	}
+	if req.NodeVersion != "" && req.NodeVersion != website.NodeVersion {
+		return model.NodeApp{}, model.NewValidationError("node_version is inherited from the website and must be " + website.NodeVersion)
+	}
+	status, err := s.runtime.Detect(ctx, website.WebUser, website.NodeVersion)
+	if err != nil {
+		return model.NodeApp{}, fmt.Errorf("detect website Node.js runtime: %w", err)
+	}
+	if !status.Installed {
+		return model.NodeApp{}, model.NewValidationError("Node.js " + website.NodeVersion + " is not installed for this website; install or retry it from /nodejs")
 	}
 
 	now := time.Now().UTC()
@@ -145,7 +140,7 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 	app := model.NodeApp{
 		ID:          id,
 		WebsiteID:   req.WebsiteID,
-		NodeVersion: req.NodeVersion,
+		NodeVersion: website.NodeVersion,
 		PackageMgr:  req.PackageMgr,
 		BuildCmd:    req.BuildCmd,
 		StartCmd:    req.StartCmd,
@@ -154,6 +149,31 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 		Status:      "stopped",
 		CreatedAt:   now,
 		UpdatedAt:   now,
+	}
+
+	unitContent, err := s.buildSystemdUnit(app, website.WebUser, website.DocumentRoot)
+	if err != nil {
+		return model.NodeApp{}, err
+	}
+	unitPath := "/etc/systemd/system/jenderal-node-" + id + ".service"
+	if err := s.writeFileViaSudo(ctx, unitPath, unitContent); err != nil {
+		return model.NodeApp{}, fmt.Errorf("write systemd unit: %w", err)
+	}
+
+	proxyContent := s.buildNginxProxy(app.Port, website.Domain)
+	proxyPath := "/etc/nginx/conf.d/jenderal-node-" + id + ".conf"
+	if err := s.writeFileViaSudo(ctx, proxyPath, proxyContent); err != nil {
+		_, _ = s.exec.RunSudo(context.WithoutCancel(ctx), "rm", "-f", unitPath)
+		return model.NodeApp{}, fmt.Errorf("write nginx proxy config: %w", err)
+	}
+
+	if err := s.runSudoOK(ctx, "systemctl", "daemon-reload"); err != nil {
+		s.cleanupCreatedConfigs(ctx, unitPath, proxyPath)
+		return model.NodeApp{}, fmt.Errorf("reload systemd: %w", err)
+	}
+	if err := s.runSudoOK(ctx, "systemctl", "reload", "nginx"); err != nil {
+		s.cleanupCreatedConfigs(ctx, unitPath, proxyPath)
+		return model.NodeApp{}, fmt.Errorf("reload nginx: %w", err)
 	}
 
 	_, err = s.db.ExecContext(ctx,
@@ -165,28 +185,20 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 		nowStr, nowStr,
 	)
 	if err != nil {
+		s.cleanupCreatedConfigs(ctx, unitPath, proxyPath)
 		return model.NodeApp{}, fmt.Errorf("insert nodejs app: %w", err)
 	}
 
-	// Write systemd unit file.
-	unitContent := s.buildSystemdUnit(app, webUser, docRoot)
-	unitPath := "/etc/systemd/system/jenderal-node-" + id + ".service"
-	if err := s.writeFileViaSudo(ctx, unitPath, unitContent); err != nil {
-		return model.NodeApp{}, fmt.Errorf("write systemd unit: %w", err)
-	}
-
-	// Write nginx reverse proxy snippet.
-	proxyContent := s.buildNginxProxy(app.Port, domain)
-	proxyPath := "/etc/nginx/conf.d/jenderal-node-" + id + ".conf"
-	if err := s.writeFileViaSudo(ctx, proxyPath, proxyContent); err != nil {
-		return model.NodeApp{}, fmt.Errorf("write nginx proxy config: %w", err)
-	}
-
-	// Reload systemd and nginx.
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "daemon-reload")
-	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
-
 	return app, nil
+}
+
+func (s *Service) cleanupCreatedConfigs(ctx context.Context, paths ...string) {
+	cleanupCtx := context.WithoutCancel(ctx)
+	for _, path := range paths {
+		_, _ = s.exec.RunSudo(cleanupCtx, "rm", "-f", path)
+	}
+	_, _ = s.exec.RunSudo(cleanupCtx, "systemctl", "daemon-reload")
+	_, _ = s.exec.RunSudo(cleanupCtx, "systemctl", "reload", "nginx")
 }
 
 // Get returns a Node.js app by ID.
@@ -252,7 +264,16 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 
 // Start starts a Node.js app via systemctl and updates the DB status.
 func (s *Service) Start(ctx context.Context, id string) error {
-	if _, err := s.Get(ctx, id); err != nil {
+	app, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := validateNodeAppID(app.ID); err != nil {
+		return err
+	}
+	unlock := s.mutations.Lock(app.WebsiteID)
+	defer unlock()
+	if _, _, err := s.ensureAppRuntime(ctx, id); err != nil {
 		return err
 	}
 
@@ -273,6 +294,15 @@ func (s *Service) Start(ctx context.Context, id string) error {
 
 // Stop stops a Node.js app via systemctl and updates the DB status.
 func (s *Service) Stop(ctx context.Context, id string) error {
+	app, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := validateNodeAppID(app.ID); err != nil {
+		return err
+	}
+	unlock := s.mutations.Lock(app.WebsiteID)
+	defer unlock()
 	if _, err := s.Get(ctx, id); err != nil {
 		return err
 	}
@@ -291,7 +321,16 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 
 // Restart restarts a Node.js app via systemctl and updates the DB status.
 func (s *Service) Restart(ctx context.Context, id string) error {
-	if _, err := s.Get(ctx, id); err != nil {
+	app, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := validateNodeAppID(app.ID); err != nil {
+		return err
+	}
+	unlock := s.mutations.Lock(app.WebsiteID)
+	defer unlock()
+	if _, _, err := s.ensureAppRuntime(ctx, id); err != nil {
 		return err
 	}
 
@@ -308,8 +347,41 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 	return s.updateStatus(ctx, id, "running")
 }
 
+func (s *Service) ensureAppRuntime(ctx context.Context, id string) (model.NodeApp, websiteRuntimeRow, error) {
+	app, err := s.Get(ctx, id)
+	if err != nil {
+		return model.NodeApp{}, websiteRuntimeRow{}, err
+	}
+	website, err := s.loadWebsiteRuntime(ctx, app.WebsiteID)
+	if err != nil {
+		return model.NodeApp{}, websiteRuntimeRow{}, err
+	}
+	if website.NodeVersion == "" {
+		return model.NodeApp{}, websiteRuntimeRow{}, model.NewValidationError("this website has no Node.js runtime selected; choose and install one from /nodejs")
+	}
+	status, err := s.runtime.Detect(ctx, website.WebUser, website.NodeVersion)
+	if err != nil {
+		return model.NodeApp{}, websiteRuntimeRow{}, fmt.Errorf("detect website Node.js runtime: %w", err)
+	}
+	if !status.Installed {
+		return model.NodeApp{}, websiteRuntimeRow{}, model.NewValidationError("Node.js " + website.NodeVersion + " is not installed for this website; install or retry it from /nodejs")
+	}
+	return app, website, nil
+}
+
 // Delete stops and removes a Node.js app, its systemd unit, and nginx proxy config.
 func (s *Service) Delete(ctx context.Context, id string) error {
+	app, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := validateNodeAppID(app.ID); err != nil {
+		return err
+	}
+	s.runtimeGate.RLock()
+	defer s.runtimeGate.RUnlock()
+	unlock := s.mutations.Lock(app.WebsiteID)
+	defer unlock()
 	if _, err := s.Get(ctx, id); err != nil {
 		return err
 	}
@@ -333,7 +405,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
 	// Delete DB record.
-	_, err := s.db.ExecContext(ctx, `DELETE FROM nodejs_apps WHERE id = ?`, id)
+	_, err = s.db.ExecContext(ctx, `DELETE FROM nodejs_apps WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete nodejs app: %w", err)
 	}
@@ -354,23 +426,29 @@ func (s *Service) updateStatus(ctx context.Context, id, status string) error {
 	return nil
 }
 
-// getWebsiteInfo fetches web_user, document_root, and domain for a website.
-func (s *Service) getWebsiteInfo(ctx context.Context, websiteID string) (webUser, docRoot, domain string, err error) {
-	err = s.db.QueryRowContext(ctx,
-		`SELECT web_user, document_root, domain FROM websites WHERE id = ?`,
-		websiteID,
-	).Scan(&webUser, &docRoot, &domain)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", "", "", model.ErrNotFound
-		}
-		return "", "", "", fmt.Errorf("get website info: %w", err)
-	}
-	return webUser, docRoot, domain, nil
-}
-
 // buildSystemdUnit generates a systemd unit file for a Node.js app.
-func (s *Service) buildSystemdUnit(app model.NodeApp, webUser, docRoot string) string {
+func (s *Service) buildSystemdUnit(app model.NodeApp, webUser, docRoot string) (string, error) {
+	if err := validateNodeAppID(app.ID); err != nil {
+		return "", err
+	}
+	if err := noderuntime.ValidateVersion(app.NodeVersion); err != nil {
+		return "", err
+	}
+	home, err := noderuntime.Home(webUser)
+	if err != nil {
+		return "", err
+	}
+	cleanRoot := filepath.Clean(docRoot)
+	if cleanRoot != home && !strings.HasPrefix(cleanRoot, home+string(os.PathSeparator)) {
+		return "", fmt.Errorf("unsafe website document root %q", docRoot)
+	}
+	if containsLineControl(cleanRoot) || containsLineControl(app.StartCmd) {
+		return "", model.NewValidationError("systemd command fields must not contain newlines or NUL")
+	}
+	env, err := parseEnvironment(app.EnvVars)
+	if err != nil {
+		return "", err
+	}
 	var b strings.Builder
 
 	b.WriteString("[Unit]\n")
@@ -379,29 +457,30 @@ func (s *Service) buildSystemdUnit(app model.NodeApp, webUser, docRoot string) s
 
 	b.WriteString("[Service]\n")
 	b.WriteString(fmt.Sprintf("User=%s\n", webUser))
-	b.WriteString(fmt.Sprintf("WorkingDirectory=%s\n", docRoot))
+	b.WriteString("WorkingDirectory=" + systemdQuote(cleanRoot) + "\n")
+	b.WriteString("Environment=" + systemdQuote("NVM_DIR="+home+"/.nvm") + "\n")
+	b.WriteString("Environment=" + systemdQuote("NODE_VERSION="+app.NodeVersion) + "\n")
+	b.WriteString("Environment=" + systemdQuote("PATH=/usr/local/bin:/usr/bin:/bin") + "\n")
 
-	// Build ExecStart based on package manager.
+	executable := "node"
 	switch app.PackageMgr {
 	case "yarn":
-		b.WriteString(fmt.Sprintf("ExecStart=/usr/bin/yarn %s\n", app.StartCmd))
+		executable = "yarn"
 	case "pnpm":
-		b.WriteString(fmt.Sprintf("ExecStart=/usr/bin/pnpm %s\n", app.StartCmd))
-	default:
-		b.WriteString(fmt.Sprintf("ExecStart=/usr/bin/node %s\n", app.StartCmd))
+		executable = "pnpm"
 	}
+	b.WriteString(fmt.Sprintf("ExecStart=%s/.nvm/nvm-exec %s %s\n", home, executable, escapeSystemdCommand(app.StartCmd)))
 
-	b.WriteString(fmt.Sprintf("Environment=PORT=%d\n", app.Port))
-	b.WriteString("Environment=NODE_ENV=production\n")
+	b.WriteString("Environment=" + systemdQuote(fmt.Sprintf("PORT=%d", app.Port)) + "\n")
+	b.WriteString("Environment=" + systemdQuote("NODE_ENV=production") + "\n")
 
-	// Parse and add additional env vars from JSON.
-	if app.EnvVars != "" {
-		var envMap map[string]string
-		if err := json.Unmarshal([]byte(app.EnvVars), &envMap); err == nil {
-			for k, v := range envMap {
-				b.WriteString(fmt.Sprintf("Environment=%s=%s\n", k, v))
-			}
-		}
+	keys := make([]string, 0, len(env))
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		b.WriteString("Environment=" + systemdQuote(key+"="+env[key]) + "\n")
 	}
 
 	b.WriteString("Restart=always\n")
@@ -411,7 +490,53 @@ func (s *Service) buildSystemdUnit(app model.NodeApp, webUser, docRoot string) s
 	b.WriteString("[Install]\n")
 	b.WriteString("WantedBy=multi-user.target\n")
 
-	return b.String()
+	return b.String(), nil
+}
+
+var environmentName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var nodeAppIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
+func validateNodeAppID(id string) error {
+	if !nodeAppIDPattern.MatchString(id) {
+		return fmt.Errorf("unsafe Node.js application ID %q", id)
+	}
+	return nil
+}
+
+func parseEnvironment(raw string) (map[string]string, error) {
+	env := make(map[string]string)
+	if strings.TrimSpace(raw) == "" {
+		return env, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		return nil, model.NewValidationError("env_vars must be a JSON object containing string values")
+	}
+	reserved := map[string]bool{"NVM_DIR": true, "NODE_VERSION": true, "PATH": true}
+	for key, value := range env {
+		if !environmentName.MatchString(key) {
+			return nil, model.NewValidationError("invalid environment variable name: " + key)
+		}
+		if reserved[key] {
+			return nil, model.NewValidationError(key + " is managed by the website runtime and cannot be overridden")
+		}
+		if containsLineControl(value) {
+			return nil, model.NewValidationError("environment variable values must not contain newlines or NUL")
+		}
+	}
+	return env, nil
+}
+
+func containsLineControl(value string) bool {
+	return strings.ContainsAny(value, "\r\n\x00")
+}
+
+func systemdQuote(value string) string {
+	value = strings.ReplaceAll(value, "%", "%%")
+	return strconv.Quote(value)
+}
+
+func escapeSystemdCommand(value string) string {
+	return strings.ReplaceAll(value, "%", "%%")
 }
 
 // buildNginxProxy generates an nginx reverse proxy configuration snippet.

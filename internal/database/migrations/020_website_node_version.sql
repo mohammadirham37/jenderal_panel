@@ -1,0 +1,1 @@
+ALTER TABLE websites ADD COLUMN node_version TEXT NOT NULL DEFAULT '24';
