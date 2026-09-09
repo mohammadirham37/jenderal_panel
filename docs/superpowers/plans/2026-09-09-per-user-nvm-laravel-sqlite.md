@@ -83,7 +83,18 @@
 - [ ] Run bootstrap both after new project promotion and before successful Retry returns on existing project. Never truncate SQLite or replace an existing app key. Capture migration output in progress and fail provisioning if bootstrap fails.
 - [ ] Run `go test ./internal/website` and commit.
 
-### Task 5: Integration verification and delivery
+### Task 5: Panel build without global Node
+
+**Files:** Modify `scripts/install.sh`, `internal/update/service.go` and their relevant tests; add a reusable pinned NVM bootstrap shell resource if needed.
+
+**Interfaces:** Panel build owns a separate NVM installation under `/var/lib/jenderal/.nvm` as the panel user. Website runtimes retain their own homes. Fresh install creates the panel user/directories before preparing Node 24. Update sources this explicit runtime for frontend npm steps.
+
+- [ ] Add regression tests that fresh install/update no longer use NodeSource or apt Node and that npm build resolves the panel-owned NVM Node 24.
+- [ ] Reuse pinned and verified NVM source identity from Task 1, bounded downloads, tenant-user execution and explicit HOME/NVM_DIR/NODE_VERSION. Preserve global Node; do not run tenant-modifiable scripts as root. Avoid changing process HOME globally.
+- [ ] Make first update from legacy deployment bootstrap panel build NVM explicitly as part of the requested update, and ensure global removal prepares/verifies this runtime before removing apt Node.
+- [ ] Run updater tests and `bash -n scripts/install.sh`; commit.
+
+### Task 6: Integration verification and delivery
 
 **Files:** Update this plan with actual test evidence and operator notes; only fix task-related findings.
 
