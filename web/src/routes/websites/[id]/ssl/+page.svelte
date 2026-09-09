@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { page } from '$app/state';
 	import { api } from '$lib/api';
-	import { buildSSLInstallRequest, certificateInstallError, domainsForWebsite } from '$lib/ssl-form.js';
+	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
+	import { websiteOperationAPI } from '$lib/website-operations.js';
+	import {
+		buildWebsiteSSLInstallRequest,
+		certificateInstallError,
+		domainsForWebsite
+	} from '$lib/ssl-form.js';
 
 	interface SSLCertificate {
 		id: string;
@@ -23,8 +30,10 @@
 	}
 
 	let certificates = $state<SSLCertificate[]>([]);
-	let websites = $state<Website[]>([]);
-	let loading = $state(true);
+	let website = $state<Website | null>(null);
+	let loading = $state(false);
+	let loadingWebsite = $state(true);
+	let websiteError = $state('');
 	let error = $state('');
 	let actionMsg = $state('');
 	let actionError = $state('');
@@ -32,13 +41,12 @@
 
 	// Install form
 	let showIssueForm = $state(false);
-	let issueWebsiteId = $state('');
 	let issueDomain = $state('');
 	let installMode = $state<'letsencrypt' | 'custom'>('letsencrypt');
 	let certificatePEM = $state('');
 	let privateKeyPEM = $state('');
 	let issuing = $state(false);
-	let issueDomains = $derived(domainsForWebsite(websites, issueWebsiteId));
+	let issueDomains = $derived(domainsForWebsite(website ? [website] : [], website?.id || ''));
 
 	// Confirm dialogs
 	let revokeConfirmId = $state<string | null>(null);
@@ -46,6 +54,8 @@
 
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let websiteID = $derived(page.params.id ?? '');
+	let operationAPI = $derived(websiteOperationAPI(websiteID));
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
@@ -101,8 +111,9 @@
 	function startPolling() {
 		stopPolling();
 		pollTimer = setInterval(async () => {
+			if (!website) return;
 			try {
-				certificates = (await api.get<SSLCertificate[]>('/api/v1/ssl')) || [];
+				certificates = (await api.get<SSLCertificate[]>(operationAPI.ssl)) || [];
 				if (!hasPending(certificates)) {
 					stopPolling();
 				}
@@ -120,10 +131,14 @@
 	}
 
 	async function loadCertificates() {
+		if (!website) {
+			certificates = [];
+			return;
+		}
 		loading = true;
 		error = '';
 		try {
-			certificates = (await api.get<SSLCertificate[]>('/api/v1/ssl')) || [];
+			certificates = (await api.get<SSLCertificate[]>(operationAPI.ssl)) || [];
 			if (hasPending(certificates)) {
 				startPolling();
 			}
@@ -134,16 +149,20 @@
 		}
 	}
 
-	async function loadWebsites() {
+	async function loadWebsite() {
+		loadingWebsite = true;
+		websiteError = '';
+		stopPolling();
+		website = null;
+		certificates = [];
 		try {
-			websites = (await api.get<Website[]>('/api/v1/websites')) || [];
-		} catch {
-			// Non-critical, just means dropdown won't populate
+			website = await api.get<Website>(operationAPI.website);
+			await loadCertificates();
+		} catch (err) {
+			websiteError = err instanceof Error ? err.message : 'Failed to load website';
+		} finally {
+			loadingWebsite = false;
 		}
-	}
-
-	function onWebsiteSelected() {
-		issueDomain = domainsForWebsite(websites, issueWebsiteId)[0] || '';
 	}
 
 	async function issueCertificate() {
@@ -152,8 +171,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			const request = buildSSLInstallRequest(installMode, {
-				websiteId: issueWebsiteId,
+			const request = buildWebsiteSSLInstallRequest(installMode, websiteID, {
 				domain: issueDomain,
 				certificatePEM,
 				privateKeyPEM
@@ -174,7 +192,7 @@
 	}
 
 	function formIsValid(): boolean {
-		if (!issueWebsiteId || !issueDomain) return false;
+		if (!website || !issueDomain) return false;
 		if (installMode === 'custom') return !!certificatePEM.trim() && !!privateKeyPEM.trim();
 		return true;
 	}
@@ -237,16 +255,16 @@
 		}
 	}
 
-	async function openIssueForm() {
+	function openIssueForm() {
 		installMode = 'letsencrypt';
+		issueDomain = issueDomains[0] || '';
+		certificatePEM = '';
+		privateKeyPEM = '';
 		showIssueForm = true;
-		await loadWebsites();
 	}
 
-	async function openReplaceForm(cert: SSLCertificate) {
-		await loadWebsites();
+	function openReplaceForm(cert: SSLCertificate) {
 		installMode = 'custom';
-		issueWebsiteId = cert.website_id;
 		issueDomain = cert.domain;
 		certificatePEM = '';
 		privateKeyPEM = '';
@@ -255,14 +273,13 @@
 
 	function closeIssueForm() {
 		showIssueForm = false;
-		issueWebsiteId = '';
 		issueDomain = '';
 		installMode = 'letsencrypt';
 		certificatePEM = '';
 		privateKeyPEM = '';
 	}
 
-	onMount(loadCertificates);
+	onMount(loadWebsite);
 
 	onDestroy(() => {
 		stopPolling();
@@ -270,8 +287,16 @@
 </script>
 
 <div class="space-y-6">
+	{#if loadingWebsite}
+		<div class="text-gray-400">Loading website...</div>
+	{:else if websiteError}
+		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
+	{:else if website}
 	<div class="flex items-center justify-between">
-		<h2 class="text-2xl font-bold text-white">SSL Certificates</h2>
+		<div>
+			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
+			<h2 class="text-2xl font-bold text-white">SSL Certificates · {website.domain}</h2>
+		</div>
 		<button
 			onclick={() => showIssueForm ? closeIssueForm() : openIssueForm()}
 			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
@@ -279,6 +304,8 @@
 			{showIssueForm ? 'Cancel' : 'Install Certificate'}
 		</button>
 	</div>
+
+	<WebsiteSectionNav websiteId={website.id} currentPath={page.url.pathname} />
 
 	{#if actionMsg}
 		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
@@ -315,35 +342,19 @@
 					>Custom SSL</button>
 				</div>
 			</div>
-			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-				<div>
-					<label for="ssl-website" class="block text-sm text-gray-400 mb-1">Website</label>
-					<select
-						id="ssl-website"
-						bind:value={issueWebsiteId}
-						onchange={onWebsiteSelected}
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					>
-						<option value="">Select a website...</option>
-						{#each websites as website}
-							<option value={website.id}>{website.domain}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label for="ssl-domain" class="block text-sm text-gray-400 mb-1">Domain</label>
-					<select
-						id="ssl-domain"
-						bind:value={issueDomain}
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-						disabled={!issueWebsiteId}
-					>
-						<option value="">Select a domain...</option>
-						{#each issueDomains as domain}
-							<option value={domain}>{domain}</option>
-						{/each}
-					</select>
-				</div>
+			<div>
+				<label for="ssl-domain" class="block text-sm text-gray-400 mb-1">Domain</label>
+				<select
+					id="ssl-domain"
+					bind:value={issueDomain}
+					class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+					disabled={!website}
+				>
+					<option value="">Select a domain...</option>
+					{#each issueDomains as domain}
+						<option value={domain}>{domain}</option>
+					{/each}
+				</select>
 			</div>
 			{#if installMode === 'custom'}
 				<div class="mt-4 grid grid-cols-1 gap-4">
@@ -519,5 +530,6 @@
 				</table>
 			</div>
 		</div>
+	{/if}
 	{/if}
 </div>

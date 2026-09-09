@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
+	import { page } from '$app/state';
 	import { api } from '$lib/api';
+	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
+	import { websiteOperationAPI } from '$lib/website-operations.js';
 
 	interface Deployment {
 		id: string;
@@ -20,11 +23,11 @@
 		status: string;
 	}
 
-	let websites = $state<Website[]>([]);
+	let website = $state<Website | null>(null);
 	let deployments = $state<Deployment[]>([]);
-	let selectedWebsiteId = $state('');
 	let loading = $state(false);
-	let loadingWebsites = $state(true);
+	let loadingWebsite = $state(true);
+	let websiteError = $state('');
 	let error = $state('');
 	let actionMsg = $state('');
 	let actionError = $state('');
@@ -40,6 +43,8 @@
 
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let websiteID = $derived(page.params.id ?? '');
+	let operationAPI = $derived(websiteOperationAPI(websiteID));
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
@@ -88,9 +93,9 @@
 	function startPolling() {
 		stopPolling();
 		pollTimer = setInterval(async () => {
-			if (!selectedWebsiteId) return;
+			if (!website) return;
 			try {
-				deployments = (await api.get<Deployment[]>(`/api/v1/websites/${selectedWebsiteId}/deployments`)) || [];
+				deployments = (await api.get<Deployment[]>(operationAPI.deployments)) || [];
 				if (!hasRunning(deployments)) {
 					stopPolling();
 				}
@@ -107,26 +112,31 @@
 		}
 	}
 
-	async function loadWebsites() {
-		loadingWebsites = true;
+	async function loadWebsite() {
+		loadingWebsite = true;
+		websiteError = '';
+		stopPolling();
+		website = null;
+		deployments = [];
 		try {
-			websites = (await api.get<Website[]>('/api/v1/websites')) || [];
+			website = await api.get<Website>(operationAPI.website);
+			await loadDeployments();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load websites';
+			websiteError = err instanceof Error ? err.message : 'Failed to load website';
 		} finally {
-			loadingWebsites = false;
+			loadingWebsite = false;
 		}
 	}
 
 	async function loadDeployments() {
-		if (!selectedWebsiteId) {
+		if (!website) {
 			deployments = [];
 			return;
 		}
 		loading = true;
 		error = '';
 		try {
-			deployments = (await api.get<Deployment[]>(`/api/v1/websites/${selectedWebsiteId}/deployments`)) || [];
+			deployments = (await api.get<Deployment[]>(operationAPI.deployments)) || [];
 			if (hasRunning(deployments)) {
 				startPolling();
 			}
@@ -138,12 +148,12 @@
 	}
 
 	async function deploy() {
-		if (!selectedWebsiteId || !deployRepoUrl.trim()) return;
+		if (!website || !deployRepoUrl.trim()) return;
 		deploying = true;
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post(`/api/v1/websites/${selectedWebsiteId}/deploy`, {
+			await api.post(operationAPI.deploy, {
 				repo_url: deployRepoUrl.trim(),
 				branch: deployBranch.trim() || 'main'
 			});
@@ -163,13 +173,7 @@
 		expandedId = expandedId === id ? null : id;
 	}
 
-	function onWebsiteChange() {
-		stopPolling();
-		expandedId = null;
-		loadDeployments();
-	}
-
-	onMount(loadWebsites);
+	onMount(loadWebsite);
 
 	onDestroy(() => {
 		stopPolling();
@@ -177,17 +181,25 @@
 </script>
 
 <div class="space-y-6">
+	{#if loadingWebsite}
+		<div class="text-gray-400">Loading website...</div>
+	{:else if websiteError}
+		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
+	{:else if website}
 	<div class="flex items-center justify-between">
-		<h2 class="text-2xl font-bold text-white">Deployments</h2>
-		{#if selectedWebsiteId}
-			<button
-				onclick={() => (showDeployForm = !showDeployForm)}
-				class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-			>
-				{showDeployForm ? 'Cancel' : 'Deploy'}
-			</button>
-		{/if}
+		<div>
+			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
+			<h2 class="text-2xl font-bold text-white">Deployments · {website.domain}</h2>
+		</div>
+		<button
+			onclick={() => (showDeployForm = !showDeployForm)}
+			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+		>
+			{showDeployForm ? 'Cancel' : 'Deploy'}
+		</button>
 	</div>
+
+	<WebsiteSectionNav websiteId={website.id} currentPath={page.url.pathname} />
 
 	{#if actionMsg}
 		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
@@ -203,28 +215,8 @@
 		</div>
 	{/if}
 
-	<!-- Website Selector -->
-	<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-		<label for="deploy-website" class="block text-sm text-gray-400 mb-2">Select Website</label>
-		{#if loadingWebsites}
-			<div class="text-gray-400 text-sm">Loading websites...</div>
-		{:else}
-			<select
-				id="deploy-website"
-				bind:value={selectedWebsiteId}
-				onchange={onWebsiteChange}
-				class="w-full max-w-md px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-			>
-				<option value="">Choose a website...</option>
-				{#each websites as website}
-					<option value={website.id}>{website.domain}</option>
-				{/each}
-			</select>
-		{/if}
-	</div>
-
 	<!-- Deploy Form -->
-	{#if showDeployForm && selectedWebsiteId}
+	{#if showDeployForm}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 			<h3 class="text-lg font-semibold text-white mb-4">New Deployment</h3>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -262,11 +254,7 @@
 	{/if}
 
 	<!-- Deployment History -->
-	{#if !selectedWebsiteId}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-			<p class="text-gray-400">Select a website to view deployment history.</p>
-		</div>
-	{:else if loading}
+	{#if loading}
 		<div class="text-gray-400">Loading deployments...</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
@@ -331,5 +319,6 @@
 				</table>
 			</div>
 		</div>
+	{/if}
 	{/if}
 </div>

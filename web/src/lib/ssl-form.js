@@ -36,6 +36,29 @@ export function buildSSLInstallRequest(mode, values) {
 }
 
 /**
+ * @param {'letsencrypt' | 'custom'} mode
+ * @param {string} websiteID
+ * @param {{ domain: string, certificatePEM?: string, privateKeyPEM?: string }} values
+ */
+export function buildWebsiteSSLInstallRequest(mode, websiteID, values) {
+	const operationAPI = websiteOperationAPI(websiteID);
+	const body = { domain: values.domain.trim() };
+
+	if (mode === 'custom') {
+		return {
+			path: operationAPI.sslCustom,
+			body: {
+				...body,
+				certificate_pem: values.certificatePEM || '',
+				private_key_pem: values.privateKeyPEM || ''
+			}
+		};
+	}
+
+	return { path: operationAPI.sslIssue, body };
+}
+
+/**
  * @param {{ status?: string, error_message?: string }} certificate
  * @returns {string}
  */
@@ -43,3 +66,4 @@ export function certificateInstallError(certificate) {
 	if (certificate?.status !== 'failed') return '';
 	return certificate.error_message || 'Certificate installation failed';
 }
+import { websiteOperationAPI } from './website-operations.js';
