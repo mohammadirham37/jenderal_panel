@@ -160,7 +160,9 @@ func (s *EventService) Transition(ctx context.Context, id string, status EventSt
 		return model.NewValidationError("invalid event status")
 	}
 	var current EventStatus
-	if err := s.db.QueryRowContext(ctx, `SELECT status FROM security_events WHERE id = ?`, id).Scan(&current); err != nil {
+	var category, component, resource string
+	var notifiedAt sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT status,category,component,resource,notified_at FROM security_events WHERE id = ?`, id).Scan(&current, &category, &component, &resource, &notifiedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return model.ErrNotFound
 		}
@@ -177,6 +179,9 @@ func (s *EventService) Transition(ctx context.Context, id string, status EventSt
 	affected, _ := result.RowsAffected()
 	if affected == 0 {
 		return model.ErrNotFound
+	}
+	if status == StatusResolved && current != StatusResolved && notifiedAt.Valid && s.notifier != nil {
+		_ = s.notifier.SendAll(ctx, fmt.Sprintf("Jenderal Panel security recovery: %s on %s (%s) is resolved.", category, resource, component))
 	}
 	return nil
 }

@@ -15,6 +15,11 @@ func TestSecurityRoutesRegistered(t *testing.T) {
 	}
 	want := map[string]bool{
 		http.MethodGet + " /api/v1/security/overview":                                false,
+		http.MethodGet + " /api/v1/security/posture":                                 false,
+		http.MethodGet + " /api/v1/security/setup":                                   false,
+		http.MethodPost + " /api/v1/security/setup/review":                           false,
+		http.MethodPost + " /api/v1/security/setup/apply":                            false,
+		http.MethodPost + " /api/v1/security/setup/resume":                           false,
 		http.MethodGet + " /api/v1/security/events":                                  false,
 		http.MethodPost + " /api/v1/security/events/{id}/transition":                 false,
 		http.MethodGet + " /api/v1/security/fail2ban":                                false,

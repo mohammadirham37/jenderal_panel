@@ -78,6 +78,7 @@ type Dependencies struct {
 	MalwareSvc      *malware.Service
 	MalwareRepo     *malware.Repository
 	TrafficGuardSvc *trafficguard.Service
+	SecuritySetup   *security.SetupService
 	StaticHandler   http.Handler
 }
 
@@ -118,6 +119,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	terminalHandler := terminal.NewHandler(deps.Exec, deps.AuditSvc)
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
+	securityHandler.SetSetupService(deps.SecuritySetup, deps.Tasks)
 	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
 	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
 	trafficHandler := trafficguard.NewHandler(deps.TrafficGuardSvc, deps.Tasks, deps.AuditSvc)
@@ -572,6 +574,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Security Center
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/overview", securityHandler.Overview)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/posture", securityHandler.Posture)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).Get("/security/setup", securityHandler.SetupAssessment)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/setup/review", securityHandler.SetupReview)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/setup/apply", securityHandler.SetupApply)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/setup/resume", securityHandler.SetupResume)
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/events", securityHandler.ListEvents)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).

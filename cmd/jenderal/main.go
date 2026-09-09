@@ -197,12 +197,54 @@ func cmdServe() {
 	trafficCollector := trafficguard.NewCollector(db, trafficRepo, exec, securityEvents)
 	trafficWorker := trafficguard.NewWorker(trafficCollector, cloudflareUpdater)
 	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc, malwareSvc, trafficSvc)
+	postureChecker := security.NewPostureChecker(exec)
+	securitySvc.SetPostureChecker(postureChecker)
+	securityWorker := security.NewWorker(securitySvc, securityEvents)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
+	securitySetup := security.NewSetupService(db, security.SetupActions{
+		InstallFail2ban: fail2banSvc.InstallWithProgress,
+		ConfigureFail2ban: func(ctx context.Context, cidrs []string, log func(string)) error {
+			settings := fail2ban.SafeSettings()
+			settings.IgnoreIPs = append(settings.IgnoreIPs, cidrs...)
+			return fail2banSvc.ApplyWithProgress(ctx, settings, log)
+		},
+		InstallMalware:   malwareSvc.Install,
+		UpdateSignatures: malwareSvc.UpdateSignatures,
+		ScheduleMalware: func(ctx context.Context, localTime string) error {
+			schedule := malware.Schedule{Enabled: true, LocalTime: localTime, Mode: malware.ScanModeQuick}
+			existing, err := malwareRepo.ListSchedules(ctx)
+			if err != nil {
+				return err
+			}
+			if len(existing) > 0 {
+				schedule.ID = existing[0].ID
+				schedule.CreatedAt = existing[0].CreatedAt
+			}
+			_, err = malwareRepo.SaveSchedule(ctx, schedule)
+			return err
+		},
+		ObserveTraffic: func(ctx context.Context, websiteIDs []string, log func(string)) error {
+			for _, id := range websiteIDs {
+				profile, err := trafficRepo.Profile(ctx, id, time.Now().UTC())
+				if err != nil {
+					return err
+				}
+				profile.Mode = "observe"
+				if log != nil {
+					log("Applying Observe Mode to website " + id + "\n")
+				}
+				if err := trafficSvc.Apply(ctx, id, profile, false); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}, securitySvc)
 
 	if err := rbac.Seed(context.Background()); err != nil {
 		logger.Error("RBAC seed failed", "error", err)
@@ -245,6 +287,7 @@ func cmdServe() {
 		MalwareSvc:      malwareSvc,
 		MalwareRepo:     malwareRepo,
 		TrafficGuardSvc: trafficSvc,
+		SecuritySetup:   securitySetup,
 		DB:              db,
 		StaticHandler:   staticHandler(),
 	})
@@ -268,6 +311,7 @@ func cmdServe() {
 	fail2banSvc.StartReconciler(bgCtx)
 	malwareScheduler.Start(bgCtx)
 	trafficWorker.Start(bgCtx)
+	securityWorker.Start(bgCtx)
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {

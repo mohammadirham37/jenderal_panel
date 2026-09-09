@@ -23,6 +23,7 @@ func TestMigrateCreatesCoreTables(t *testing.T) {
 		"security_settings", "security_events", "security_event_occurrences", "security_manual_bans",
 		"malware_scans", "malware_findings", "malware_quarantine", "malware_allowlist", "malware_schedules",
 		"traffic_guard_profiles", "traffic_log_cursors", "traffic_minute_buckets", "traffic_hour_buckets", "traffic_baselines", "trusted_proxy_snapshots",
+		"security_setup_runs", "security_setup_steps",
 	} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {

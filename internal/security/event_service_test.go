@@ -106,6 +106,25 @@ func TestRecordNotifiesRepeatOnlyAfterCooldown(t *testing.T) {
 	}
 }
 
+func TestRepeatedEventAndRecoverySendAtMostTwoNotifications(t *testing.T) {
+	notifier := &recordingNotifier{}
+	svc, _ := newEventTestService(t, notifier)
+	now := time.Date(2026, 9, 9, 2, 0, 0, 0, time.UTC)
+	event, _, err := svc.Record(context.Background(), validEventInput(), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = svc.Record(context.Background(), validEventInput(), now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err = svc.Transition(context.Background(), event.ID, StatusResolved, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifier.messages) != 2 {
+		t.Fatalf("messages=%v", notifier.messages)
+	}
+}
+
 func TestTransitionRejectsInvalidStateChange(t *testing.T) {
 	svc, _ := newEventTestService(t, nil)
 	event, _, err := svc.Record(context.Background(), validEventInput(), time.Now().UTC())

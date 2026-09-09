@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
@@ -41,12 +42,39 @@ type Overview struct {
 	OpenEvents    int               `json:"open_events"`
 	SetupComplete bool              `json:"setup_complete"`
 	ActiveTasks   []taskrunner.Task `json:"active_tasks"`
+	Posture       *PostureReport    `json:"posture,omitempty"`
 }
 
 type Service struct {
-	events *EventService
-	tasks  *taskrunner.Runner
-	probes []Probe
+	events      *EventService
+	tasks       *taskrunner.Runner
+	probes      []Probe
+	posture     *PostureChecker
+	postureMu   sync.RWMutex
+	lastPosture PostureReport
+}
+
+func (s *Service) SetPostureChecker(checker *PostureChecker) { s.posture = checker }
+
+func (s *Service) RefreshPosture(ctx context.Context, now time.Time) PostureReport {
+	if s.posture == nil {
+		return PostureReport{CheckedAt: now.UTC(), Components: map[string]string{}, Findings: []Finding{}}
+	}
+	report := s.posture.Check(ctx, now)
+	s.postureMu.Lock()
+	s.lastPosture = report
+	s.postureMu.Unlock()
+	return report
+}
+
+func (s *Service) Posture(ctx context.Context) PostureReport {
+	s.postureMu.RLock()
+	report := s.lastPosture
+	s.postureMu.RUnlock()
+	if report.CheckedAt.IsZero() {
+		return s.RefreshPosture(ctx, time.Now().UTC())
+	}
+	return report
 }
 
 func NewService(events *EventService, tasks *taskrunner.Runner, probes ...Probe) *Service {
@@ -70,18 +98,20 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	}
 	sort.Slice(components, func(i, j int) bool { return components[i].Name < components[j].Name })
 
-	counts, openEvents, err := s.activeEventCounts(ctx)
+	_, openEvents, err := s.activeEventCounts(ctx)
 	if err != nil {
 		return Overview{}, err
 	}
-	condition := ConditionGood
-	reasons := make([]string, 0)
-	if counts[SeverityCritical] > 0 {
-		condition = ConditionCritical
-		reasons = append(reasons, fmt.Sprintf("%d critical security event(s) require immediate review.", counts[SeverityCritical]))
-	} else if counts[SeverityHigh] > 0 {
-		condition = ConditionNeedsAttention
-		reasons = append(reasons, fmt.Sprintf("%d high-severity security event(s) require review.", counts[SeverityHigh]))
+	report := s.Posture(ctx)
+	activeEvents, _, err := s.events.List(ctx, EventFilter{Limit: 200})
+	if err != nil {
+		return Overview{}, err
+	}
+	score := Score(report, activeEvents)
+	condition := score.Level
+	reasons := append([]string{}, score.Reasons...)
+	if len(reasons) == 1 && reasons[0] == "No active security issues detected." {
+		reasons = nil
 	}
 	for _, component := range components {
 		if component.Enabled && !component.Healthy {
@@ -94,6 +124,9 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 			}
 			reasons = append(reasons, fmt.Sprintf("%s: %s.", component.Name, strings.TrimSuffix(reason, ".")))
 		}
+	}
+	if score.Additional > 0 {
+		reasons = append(reasons, fmt.Sprintf("%d additional finding(s) are available in posture details.", score.Additional))
 	}
 	if len(reasons) == 0 {
 		reasons = append(reasons, "No active security issues detected.")
@@ -113,7 +146,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	}
 	return Overview{
 		Condition: condition, Reasons: reasons, Components: components,
-		OpenEvents: openEvents, SetupComplete: setupComplete, ActiveTasks: activeTasks,
+		OpenEvents: openEvents, SetupComplete: setupComplete, ActiveTasks: activeTasks, Posture: &report,
 	}, nil
 }
 
