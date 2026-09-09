@@ -75,4 +75,3 @@ if [ -z "$npm_version" ]; then echo 'Installed npm verification failed' >&2; exi
 nvm alias default "$version"
 install_ok=true
 echo "Installed Node $node_version with npm $npm_version"
-
