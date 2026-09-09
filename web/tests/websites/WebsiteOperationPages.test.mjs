@@ -18,6 +18,18 @@ const operationPages = [
 		name: 'SSL',
 		url: new URL('../../src/routes/websites/[id]/ssl/+page.svelte', import.meta.url),
 		selectorID: 'ssl-website'
+	},
+	{
+		name: 'Cron',
+		url: new URL('../../src/routes/websites/[id]/cron/+page.svelte', import.meta.url),
+		selectorID: 'cron-website',
+		scopedMember: 'cronJobs'
+	},
+	{
+		name: 'Queue workers',
+		url: new URL('../../src/routes/websites/[id]/queue-workers/+page.svelte', import.meta.url),
+		selectorID: 'qw-website',
+		scopedMember: 'queueWorkers'
 	}
 ];
 
@@ -78,6 +90,9 @@ for (const operationPage of operationPages) {
 		const result = compile(source, { filename: operationPage.url.pathname, generate: 'server' });
 		const ids = collectAttributeValues(result.ast, 'id');
 		assert.equal(ids.includes(operationPage.selectorID), false);
+		if (operationPage.scopedMember) {
+			assert.match(source, new RegExp(`scopedAPI\\.${operationPage.scopedMember}`));
+		}
 	});
 
 	test(`${operationPage.name} reloads after a same-route website ID change`, () => {
