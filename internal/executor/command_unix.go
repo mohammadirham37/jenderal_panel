@@ -47,3 +47,11 @@ func configureCommandCancellation(cmd *exec.Cmd, done <-chan struct{}) {
 		return nil
 	}
 }
+
+// finalizeCommandCancellation synchronously removes any group members that
+// ignored TERM before run returns and the leader PID can be reused.
+func finalizeCommandCancellation(cmd *exec.Cmd) {
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+}

@@ -59,6 +59,9 @@ func (e *Executor) run(ctx context.Context, input *string, name string, args ...
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		finalizeCommandCancellation(cmd)
+	}
 	close(done)
 	duration := time.Since(start)
 
