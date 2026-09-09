@@ -13,6 +13,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -139,7 +140,6 @@ func (s *Service) Update(ctx context.Context) (string, error) {
 	script := fmt.Sprintf(`#!/bin/bash
 set -e
 export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
-export HOME=/root
 
 echo ">>> Step 1: Pulling latest source..."
 if [ -d %s/.git ]; then
@@ -150,11 +150,14 @@ else
 fi
 
 echo ">>> Step 2: Installing frontend dependencies..."
+echo ">>> Preparing panel-owned NVM runtime..."
+%s
 cd %s/web
-npm install --loglevel=error 2>&1
+chown -hR jenderal:jenderal .
+%s 2>&1
 
 echo ">>> Step 3: Building frontend..."
-npm run build 2>&1
+%s 2>&1
 
 echo ">>> Step 4: Preparing embed..."
 cd %s
@@ -230,7 +233,7 @@ fi
 echo ">>> Update complete! Service restart scheduled."
 `,
 		sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
-		sourceDir,
+		noderuntime.PanelBootstrapShell(), sourceDir, noderuntime.PanelNPMCommand("install", "--loglevel=error"), noderuntime.PanelNPMCommand("run", "build"),
 		sourceDir,
 		replacementPath, replacementPath, replacementPath,
 		sourceDir, sourceDir,

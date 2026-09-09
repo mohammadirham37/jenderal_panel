@@ -110,6 +110,14 @@ func TestUpdateAtomicallyReplacesRunningBinary(t *testing.T) {
 		t.Fatalf("read captured update script: %v", err)
 	}
 	script := string(scriptBytes)
+	for _, required := range []string{"/var/lib/jenderal/.nvm/nvm-exec", "HOME=/var/lib/jenderal", "NODE_VERSION=24", "'npm' 'install'", "'npm' 'run' 'build'"} {
+		if !strings.Contains(script, required) {
+			t.Fatalf("update does not use panel-owned NVM: missing %q", required)
+		}
+	}
+	if strings.Contains(script, "\nnpm install") || strings.Contains(script, "\nnpm run") {
+		t.Fatal("update uses ambient global npm")
+	}
 	if strings.Contains(script, "%!") {
 		t.Fatalf("update script contains fmt formatting errors:\n%s", script)
 	}

@@ -210,24 +210,21 @@ step_install_go() {
 }
 
 step_install_node() {
-    if command -v node &>/dev/null; then
-        log "Node.js: $(node --version) (exists)"
-        return
-    fi
+    local source_root="$1"
+    log "Preparing panel-owned NVM and Node.js 24..."
+    sudo -u "$JENDERAL_USER" -- /usr/bin/env -i \
+        HOME=/var/lib/jenderal USER="$JENDERAL_USER" LOGNAME="$JENDERAL_USER" \
+        NVM_DIR=/var/lib/jenderal/.nvm NODE_VERSION=24 PATH=/usr/local/bin:/usr/bin:/bin \
+        /usr/bin/timeout --signal=TERM --kill-after=5s 14m /bin/bash \
+        "$source_root/internal/noderuntime/install.sh" "$JENDERAL_USER" 24 /var/lib/jenderal \
+        || fail "Panel Node.js runtime installation failed"
+}
 
-    log "Installing Node.js 20..."
-    # Try NodeSource
-    if curl -fsSL https://deb.nodesource.com/setup_20.x 2>/dev/null | bash - > /dev/null 2>&1; then
-        apt-get install -y nodejs > /dev/null 2>&1
-    fi
-
-    # Fallback to apt
-    if ! command -v node &>/dev/null; then
-        apt-get install -y nodejs npm > /dev/null 2>&1
-    fi
-
-    command -v node &>/dev/null || fail "Node.js install failed"
-    log "Node.js: $(node --version)"
+panel_npm() {
+    sudo -u "$JENDERAL_USER" -- /usr/bin/env -i \
+        HOME=/var/lib/jenderal USER="$JENDERAL_USER" LOGNAME="$JENDERAL_USER" \
+        NVM_DIR=/var/lib/jenderal/.nvm NODE_VERSION=24 PATH=/usr/local/bin:/usr/bin:/bin \
+        /var/lib/jenderal/.nvm/nvm-exec npm "$@"
 }
 
 step_create_user() {
@@ -253,11 +250,14 @@ step_build() {
 
     git clone --depth 1 "https://github.com/${JENDERAL_REPO}.git" "$bd" 2>&1 | tail -1
 
+    step_install_node "$bd"
+
     # Frontend
     log "  Building frontend..."
     cd "$bd/web"
-    npm install --loglevel=error 2>&1 | tail -3
-    npm run build 2>&1 | tail -1
+    chown -hR "$JENDERAL_USER":"$JENDERAL_USER" "$bd/web"
+    panel_npm install --loglevel=error 2>&1 | tail -3
+    panel_npm run build 2>&1 | tail -1
     [[ -d build ]] || fail "Frontend build failed — web/build not found"
 
     # Prepare embed
@@ -441,7 +441,6 @@ main() {
     step_fix_dpkg
     step_install_deps
     step_install_go
-    step_install_node
     step_create_user
     step_create_dirs
     step_build
