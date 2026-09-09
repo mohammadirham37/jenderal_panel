@@ -299,3 +299,28 @@ func TestResolveAlert(t *testing.T) {
 		t.Error("expected not found error")
 	}
 }
+
+func TestRuleTargetRoundTripAndUnresolvedLookup(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, nil)
+	ctx := context.Background()
+	rule, err := svc.CreateRule(ctx, model.AlertRule{Metric: "service_down", Operator: "eq", Threshold: 1, Target: "nginx", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetRule(ctx, rule.ID)
+	if err != nil || got.Target != "nginx" {
+		t.Fatalf("GetRule() = %#v, %v; want target nginx", got, err)
+	}
+	if _, found, err := svc.FindUnresolvedByRule(ctx, rule.ID); err != nil || found {
+		t.Fatalf("empty unresolved lookup = found %v, err %v", found, err)
+	}
+	event, err := svc.LogAlert(ctx, rule.ID, rule.Metric, 1, "nginx is down")
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, found, err := svc.FindUnresolvedByRule(ctx, rule.ID)
+	if err != nil || !found || open.ID != event.ID {
+		t.Fatalf("unresolved lookup = %#v, %v, %v", open, found, err)
+	}
+}

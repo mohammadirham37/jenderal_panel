@@ -165,7 +165,7 @@ func cmdServe() {
 	notifSvc := notification.NewService(db)
 	alertChecker := alert.NewChecker(alertSvc, notifSvc, func() model.ServerMetrics {
 		return metricsCollector.Buffer().Latest()
-	})
+	}, serviceMgr, sslSvc)
 	fileManagerSvc := filemanager.NewService(exec, auditSvc)
 	tasks := taskrunner.New()
 	updateSvc := update.NewService(exec, buildVersion(), tasks)

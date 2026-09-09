@@ -325,6 +325,7 @@ type BackupSchedule struct {
 type AlertRule struct {
 	ID        string    `json:"id"`
 	Metric    string    `json:"metric"`
+	Target    string    `json:"target"`
 	Operator  string    `json:"operator"`
 	Threshold float64   `json:"threshold"`
 	DurationS int       `json:"duration_s"`

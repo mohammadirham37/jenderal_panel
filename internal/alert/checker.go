@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -14,25 +15,41 @@ type NotificationSender interface {
 	SendAll(ctx context.Context, message string) error
 }
 
+type ServiceStatusProvider interface {
+	Status(context.Context, string) (*model.ServiceStatus, error)
+}
+
+type CertificateProvider interface {
+	List(context.Context) ([]model.SSLCertificate, error)
+}
+
 // Checker periodically evaluates alert rules against current system metrics.
 type Checker struct {
 	alertSvc   *Service
 	notifSvc   NotificationSender
 	getMetrics func() model.ServerMetrics
+	services   ServiceStatusProvider
+	certs      CertificateProvider
+	mu         sync.Mutex
+	pending    map[string]time.Time
 }
 
 // NewChecker creates a new Checker.
-func NewChecker(alertSvc *Service, notifSvc NotificationSender, getMetrics func() model.ServerMetrics) *Checker {
+func NewChecker(alertSvc *Service, notifSvc NotificationSender, getMetrics func() model.ServerMetrics, services ServiceStatusProvider, certs CertificateProvider) *Checker {
 	return &Checker{
 		alertSvc:   alertSvc,
 		notifSvc:   notifSvc,
 		getMetrics: getMetrics,
+		services:   services,
+		certs:      certs,
+		pending:    make(map[string]time.Time),
 	}
 }
 
 // Start begins the background checker loop with a 60-second ticker.
 func (c *Checker) Start(ctx context.Context) {
 	go func() {
+		c.Check(ctx, time.Now().UTC())
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 
@@ -41,47 +58,129 @@ func (c *Checker) Start(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				c.check(ctx)
+				c.Check(ctx, time.Now().UTC())
 			}
 		}
 	}()
 }
 
-func (c *Checker) check(ctx context.Context) {
+func (c *Checker) Check(ctx context.Context, now time.Time) {
 	rules, err := c.alertSvc.ListRules(ctx)
 	if err != nil {
 		log.Printf("[alert-checker] failed to load rules: %v", err)
 		return
 	}
 
-	metrics := c.getMetrics()
-
 	for _, rule := range rules {
 		if !rule.Enabled {
+			c.clearPending(rule.ID)
 			continue
 		}
 
-		value, ok := metricValue(metrics, rule.Metric)
+		value, ok, err := c.ruleValue(ctx, rule, now)
+		if err != nil {
+			log.Printf("[alert-checker] failed to evaluate rule %s: %v", rule.ID, err)
+			continue
+		}
 		if !ok {
 			continue
 		}
-
-		if evaluate(value, rule.Operator, rule.Threshold) {
-			msg := fmt.Sprintf("Alert: %s is %.2f (threshold %s %.2f)", rule.Metric, value, rule.Operator, rule.Threshold)
-
-			ev, err := c.alertSvc.LogAlert(ctx, rule.ID, rule.Metric, value, msg)
-			if err != nil {
-				log.Printf("[alert-checker] failed to log alert for rule %s: %v", rule.ID, err)
-				continue
-			}
-
-			if c.notifSvc != nil {
-				if sendErr := c.notifSvc.SendAll(ctx, msg); sendErr != nil {
-					log.Printf("[alert-checker] failed to send notification for event %s: %v", ev.ID, sendErr)
+		open, found, err := c.alertSvc.FindUnresolvedByRule(ctx, rule.ID)
+		if err != nil {
+			log.Printf("[alert-checker] failed to read alert state for rule %s: %v", rule.ID, err)
+			continue
+		}
+		if !evaluate(value, rule.Operator, rule.Threshold) {
+			c.clearPending(rule.ID)
+			if found {
+				if err := c.alertSvc.ResolveAlert(ctx, open.ID); err != nil {
+					log.Printf("[alert-checker] failed to resolve event %s: %v", open.ID, err)
+					continue
 				}
+				c.send(ctx, open.ID, fmt.Sprintf("Resolved: %s returned to normal (value %.2f)", ruleLabel(rule), value))
 			}
+			continue
+		}
+		if found || !c.durationReached(rule, now) {
+			continue
+		}
+		msg := fmt.Sprintf("Alert: %s is %.2f (threshold %s %.2f)", ruleLabel(rule), value, rule.Operator, rule.Threshold)
+		event, err := c.alertSvc.LogAlert(ctx, rule.ID, rule.Metric, value, msg)
+		if err != nil {
+			log.Printf("[alert-checker] failed to log alert for rule %s: %v", rule.ID, err)
+			continue
+		}
+		c.clearPending(rule.ID)
+		c.send(ctx, event.ID, msg)
+	}
+}
+
+func (c *Checker) send(ctx context.Context, eventID, message string) {
+	if c.notifSvc != nil {
+		if err := c.notifSvc.SendAll(ctx, message); err != nil {
+			log.Printf("[alert-checker] failed to send notification for event %s: %v", eventID, err)
 		}
 	}
+}
+
+func (c *Checker) durationReached(rule model.AlertRule, now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	first, found := c.pending[rule.ID]
+	if !found {
+		c.pending[rule.ID] = now
+		first = now
+	}
+	return now.Sub(first) >= time.Duration(rule.DurationS)*time.Second
+}
+
+func (c *Checker) clearPending(ruleID string) {
+	c.mu.Lock()
+	delete(c.pending, ruleID)
+	c.mu.Unlock()
+}
+
+func (c *Checker) ruleValue(ctx context.Context, rule model.AlertRule, now time.Time) (float64, bool, error) {
+	if value, ok := metricValue(c.getMetrics(), rule.Metric); ok {
+		return value, true, nil
+	}
+	switch rule.Metric {
+	case "service_down":
+		if c.services == nil {
+			return 0, false, fmt.Errorf("service status provider is unavailable")
+		}
+		status, err := c.services.Status(ctx, rule.Target)
+		if err != nil {
+			return 0, false, err
+		}
+		if status == nil || !status.Active {
+			return 1, true, nil
+		}
+		return 0, true, nil
+	case "ssl_expiry":
+		if c.certs == nil {
+			return 0, false, fmt.Errorf("certificate provider is unavailable")
+		}
+		certificates, err := c.certs.List(ctx)
+		if err != nil {
+			return 0, false, err
+		}
+		for _, certificate := range certificates {
+			if certificate.Domain == rule.Target && certificate.Status == "active" {
+				return certificate.ExpiresAt.Sub(now).Hours() / 24, true, nil
+			}
+		}
+		return 0, false, fmt.Errorf("active certificate for %s was not found", rule.Target)
+	default:
+		return 0, false, nil
+	}
+}
+
+func ruleLabel(rule model.AlertRule) string {
+	if rule.Target == "" {
+		return rule.Metric
+	}
+	return fmt.Sprintf("%s (%s)", rule.Metric, rule.Target)
 }
 
 // metricValue extracts the named metric from ServerMetrics.

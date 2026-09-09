@@ -467,6 +467,16 @@ func NewRouter(deps Dependencies) http.Handler {
 				Delete("/alert-rules/{id}", alertHandler.DeleteRule)
 			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).
 				Get("/alert-history", alertHandler.ListHistory)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).
+				Get("/alerts/rules", alertHandler.ListRules)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.manage")).
+				Post("/alerts/rules", alertHandler.CreateRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.manage")).
+				Put("/alerts/rules/{id}", alertHandler.UpdateRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.manage")).
+				Delete("/alerts/rules/{id}", alertHandler.DeleteRule)
+			r.With(auth.RequirePermission(deps.RBAC, "alerts.view")).
+				Get("/alerts/history", alertHandler.ListHistory)
 
 			// Notifications
 			r.With(auth.RequirePermission(deps.RBAC, "notifications.view")).
