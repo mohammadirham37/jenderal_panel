@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 let createFileManagerAPI;
-let defaultFileManagerPath;
+let fileManagerStartPath;
 try {
-	({ createFileManagerAPI, defaultFileManagerPath } = await import('../../src/lib/file-manager.js'));
+	({ createFileManagerAPI, fileManagerStartPath } = await import('../../src/lib/file-manager.js'));
 } catch {}
 
 function recordingAPI() {
@@ -49,7 +49,12 @@ test('file uploads send the CSRF token required by the API middleware', async ()
 });
 
 test('file manager opens at the website document root', async () => {
-	assert.equal(defaultFileManagerPath, '/public');
+	assert.equal(typeof fileManagerStartPath, 'function');
+	assert.equal(fileManagerStartPath('/home/web_php_example/public', 'web_php_example'), '/public');
+	assert.equal(fileManagerStartPath('/home/web_laravel_example/app/public', 'web_laravel_example'), '/app/public');
+	assert.equal(fileManagerStartPath('/home/web_laravel_example', 'web_laravel_example'), '/');
+	assert.equal(fileManagerStartPath('/srv/custom/public', 'web_custom_example'), '/');
+
 	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
-	assert.match(page, /loadFiles\(defaultFileManagerPath\)/);
+	assert.match(page, /fileManagerStartPath\(website\.document_root, website\.web_user\)/);
 });

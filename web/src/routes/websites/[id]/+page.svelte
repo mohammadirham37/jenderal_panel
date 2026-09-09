@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
-	import { createFileManagerAPI, defaultFileManagerPath } from '$lib/file-manager.js';
+	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
 
 	interface WebsiteDomain {
 		id: string;
@@ -16,6 +16,8 @@
 		domain: string;
 		app_type: string;
 		php_version: string;
+		document_root: string;
+		web_user: string;
 		status: string;
 		ssl_enabled: boolean;
 		error_message?: string;
@@ -64,7 +66,7 @@
 	}
 
 	let files = $state<FileEntry[]>([]);
-	let currentPath = $state(defaultFileManagerPath);
+	let currentPath = $state('/');
 	let filesLoading = $state(false);
 	let filesError = $state('');
 	let showFiles = $state(false);
@@ -268,14 +270,15 @@
 	}
 
 	// File Manager functions
-	async function loadFiles(path: string = defaultFileManagerPath) {
+	async function loadFiles(path?: string) {
 		if (!website) return;
+		const requestedPath = path ?? fileManagerStartPath(website.document_root, website.web_user);
 		filesLoading = true;
 		filesError = '';
 		try {
-			const data = await createFileManagerAPI(api, website.id).browse(path) as FileEntry[];
+			const data = await createFileManagerAPI(api, website.id).browse(requestedPath) as FileEntry[];
 			files = data || [];
-			currentPath = path;
+			currentPath = requestedPath;
 		} catch (err) {
 			filesError = err instanceof Error ? err.message : 'Failed to load files';
 		} finally {
@@ -744,7 +747,7 @@
 				<h3 class="text-lg font-semibold text-white">File Manager</h3>
 				{#if !showFiles}
 					<button
-						onclick={() => { showFiles = true; loadFiles(defaultFileManagerPath); }}
+						onclick={() => { showFiles = true; loadFiles(); }}
 						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
 					>
 						Browse Files
