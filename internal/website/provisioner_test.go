@@ -212,6 +212,43 @@ func TestProvisionFrameworkFailurePersistsStageAndLog(t *testing.T) {
 	}
 }
 
+func TestProvisionLaravelConfigOnlyPublishesPHPCompatibleLanding(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-laravel-config", "config.example.com", "laravel", "8.3", "pending")
+	if _, err := db.Exec(`UPDATE websites SET framework = 'laravel', framework_version = '13', setup_mode = 'config-only', document_root = '/home/web_config_example_com/app/public' WHERE id = 'ws-laravel-config'`); err != nil {
+		t.Fatal(err)
+	}
+	var publishedPHP bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "-u" && len(args) > 4 && args[2] == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			if name == "-u" && len(args) > 4 && args[2] == "ln" && strings.HasSuffix(args[len(args)-1], "/index.php") {
+				publishedPHP = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	p := NewProvisioner(db, mock, nil)
+	p.ipv6Available = func() bool { return false }
+	p.provision(context.Background(), "ws-laravel-config")
+	status, message := getWebsiteStatus(t, db, "ws-laravel-config")
+	if status != "active" {
+		t.Fatalf("status = %q, error = %q", status, message)
+	}
+	if !publishedPHP {
+		t.Fatal("Laravel config-only landing was not published as index.php")
+	}
+}
+
 func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

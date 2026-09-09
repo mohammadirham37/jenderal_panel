@@ -160,7 +160,11 @@ cp -r web/build cmd/jenderal/web_build
 echo ">>> Step 5: Compiling Go binary..."
 rm -f %s
 trap 'rm -f %s' EXIT
-CGO_ENABLED=1 go build -o %s ./cmd/jenderal 2>&1
+revision="$(git rev-parse --verify HEAD^{commit})"
+case "$revision" in
+    ''|*[!0-9a-f]*) echo "Invalid source revision: $revision" >&2; exit 1 ;;
+esac
+CGO_ENABLED=1 go build -o %s -ldflags "-X main.version=$revision" ./cmd/jenderal 2>&1
 
 echo ">>> Step 6: Installing branded Nginx welcome page..."
 mkdir -p /var/www/html

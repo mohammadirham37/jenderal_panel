@@ -133,6 +133,10 @@ func TestUpdateAtomicallyReplacesRunningBinary(t *testing.T) {
 	if buildIndex < 0 || backupIndex < buildIndex || renameIndex < backupIndex {
 		t.Fatalf("update script must build, back up, then atomically rename the exact binary paths:\n%s", script)
 	}
+	if !strings.Contains(script, `revision="$(git rev-parse --verify HEAD^{commit})"`) ||
+		!strings.Contains(script, `-ldflags "-X main.version=$revision"`) {
+		t.Fatalf("update build does not embed the pulled commit revision:\n%s", script)
+	}
 	if !strings.Contains(script, "systemd-run --quiet --collect") || !strings.Contains(script, "--on-active=5s") {
 		t.Fatalf("update script does not schedule restart outside the panel service cgroup:\n%s", script)
 	}

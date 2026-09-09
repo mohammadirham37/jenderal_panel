@@ -149,6 +149,9 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 			return
 		}
 		defaultFiles := map[string]string{"index.html": defaultIndex, "robots.txt": landing.RobotsTXT, "jenderal-landing.css": landing.CSS()}
+		if NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType) == "laravel" {
+			defaultFiles["index.php"] = defaultIndex
+		}
 		for name, content := range defaultFiles {
 			if err := p.ensureWebsiteFile(ctx, w, name, content); err != nil {
 				p.fail(ctx, websiteID, "create default website file failed: "+err.Error())
@@ -156,9 +159,11 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 			}
 		}
 	}
-	if err := p.ensureFrameworkWritablePaths(ctx, w); err != nil {
-		p.fail(ctx, websiteID, "set framework permissions failed: "+err.Error())
-		return
+	if automaticFramework {
+		if err := p.ensureFrameworkWritablePaths(ctx, w); err != nil {
+			p.fail(ctx, websiteID, "set framework permissions failed: "+err.Error())
+			return
+		}
 	}
 
 	// Step 2: configuring
