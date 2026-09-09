@@ -20,7 +20,7 @@ const options = {
 	inertia_adapters: ['react', 'vue', 'svelte'],
 	profiles: [
 		{ template: 'php', framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only', enabled: true, document_root: '/home/<user>/public', prerequisites: [], php_compatibility: [{ version: '8.2', enabled: true }] },
-		{ template: 'laravel', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'automatic', enabled: true, document_root: '/home/<user>/app/public', prerequisites: ['composer', 'node'], php_compatibility: [{ version: '8.2', enabled: false, reason: 'Laravel 13 requires PHP 8.3 or newer' }, { version: '8.3', enabled: true, reason: '' }] }
+		{ template: 'laravel', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install', enabled: true, document_root: '/home/<user>/app/public', prerequisites: ['composer', 'node'], php_compatibility: [{ version: '8.2', enabled: false, reason: 'Laravel 13 requires PHP 8.3 or newer' }, { version: '8.3', enabled: true, reason: '' }] }
 	]
 };
 
@@ -41,20 +41,20 @@ test('Inertia adapters come from backend options', () => {
 });
 
 test('backend PHP incompatibility reason wins', () => {
-	const result = selectedCombination(options, { template: 'laravel', php_version: '8.2', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'automatic' });
+	const result = selectedCombination(options, { template: 'laravel', php_version: '8.2', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install' });
 	assert.equal(result.enabled, false);
 	assert.equal(result.reason, 'Laravel 13 requires PHP 8.3 or newer');
 });
 
 test('missing dependencies retain their management links', () => {
-	const result = selectedCombination(options, { template: 'laravel', php_version: '8.3', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'automatic' });
+	const result = selectedCombination(options, { template: 'laravel', php_version: '8.3', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install' });
 	assert.equal(result.enabled, false);
 	assert.deepEqual(result.missing_dependencies.map((item) => item.manage_url), ['/services', '/nodejs']);
 });
 
 test('Laravel Inertia Svelte normalization preserves six profile fields', () => {
-	const result = normalizeWebsiteSelection({ template: 'laravel', php_version: '8.3', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'automatic' }, options);
+	const result = normalizeWebsiteSelection({ template: 'laravel', php_version: '8.3', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install' }, options);
 	assert.deepEqual(Object.fromEntries(['template', 'framework_version', 'frontend_stack', 'inertia_adapter', 'project_variant', 'setup_mode'].map((key) => [key, result[key]])), {
-		template: 'laravel', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'automatic'
+		template: 'laravel', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install'
 	});
 });

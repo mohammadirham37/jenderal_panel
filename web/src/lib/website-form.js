@@ -1,4 +1,4 @@
-/** @typedef {{ version: string, installed: boolean }} PHPOption */
+/** @typedef {{ version: string, installed: boolean, running?: boolean }} PHPOption */
 /** @typedef {{ name: string, installed: boolean, version: string, manage_url: string }} DependencyOption */
 /** @typedef {{ version: string, enabled: boolean, reason: string }} CompatibilityOption */
 /** @typedef {{ template: string, php_version: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string }} WebsiteSelection */

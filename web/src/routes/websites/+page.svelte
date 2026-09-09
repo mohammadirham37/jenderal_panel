@@ -20,7 +20,7 @@
 		provision_log: string;
 		created_at: string;
 	}
-	interface RuntimeOption { version: string; installed: boolean }
+	interface RuntimeOption { version: string; installed: boolean; running: boolean }
 	interface DependencyOption { name: string; version: string; installed: boolean; manage_url: string }
 	interface ProfileOption {
 		template: string; framework_version: string; frontend_stack: string; inertia_adapter: string;
@@ -278,11 +278,13 @@
 							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 						>
 							{#each installedPHP as runtime}
-								<option value={runtime.version}>{runtime.version}</option>
+								<option value={runtime.version}>{runtime.version}{runtime.running ? '' : ' (FPM stopped)'}</option>
 							{/each}
 						</select>
 						{#if installedPHP.length === 0}
 							<p class="mt-1 text-xs text-yellow-300">No PHP version is installed. <a class="underline" href="/php">Install PHP</a></p>
+						{:else if installedPHP.find((runtime) => runtime.version === selection.php_version)?.running === false}
+							<p class="mt-1 text-xs text-yellow-300">PHP {selection.php_version} FPM is stopped; provisioning will try to restart it.</p>
 						{/if}
 					</div>
 				{/if}
@@ -319,7 +321,7 @@
 				<div>
 					<label for="setup-mode" class="block text-sm text-gray-400 mb-1">Setup</label>
 					<select id="setup-mode" bind:value={selection.setup_mode} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
-						<option value="config-only">Nginx config only</option><option value="automatic">Install framework automatically</option>
+						<option value="config-only">Nginx config only</option><option value="auto-install">Install framework automatically</option>
 					</select>
 				</div>
 			</div>

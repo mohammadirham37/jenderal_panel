@@ -21,6 +21,8 @@
 	let currentTaskId = $state('');
 	let expectedUpdateVersion = $state('');
 	let reloadTimedOut = $state(false);
+	let reloadWatcherActive = false;
+	let reloadWatcherGeneration = 0;
 	let updateInProgress = $derived(updating || !!currentTaskId);
 	const updateTargetStorageKey = 'jenderal_update_target';
 
@@ -52,12 +54,43 @@
 		} catch (err) {
 			updateError = err instanceof Error ? err.message : 'Failed to start update';
 			updating = false;
+			localStorage.removeItem(updateTargetStorageKey);
 		}
+	}
+
+	async function resumeUpdateReload(maxAttempts = 900) {
+		if (reloadWatcherActive) return;
+		const target = expectedUpdateVersion || localStorage.getItem(updateTargetStorageKey) || '';
+		if (!target) return;
+		reloadWatcherActive = true;
+		updating = true;
+		const generation = ++reloadWatcherGeneration;
+		const ready = await waitForUpdatedPanel({
+			expectedVersion: target,
+			check: () => api.getNoStore<Pick<UpdateInfo, 'current_version'>>(`/api/v1/update/current?_=${Date.now()}`),
+			maxAttempts,
+			shouldContinue: () => generation === reloadWatcherGeneration
+		});
+		if (generation !== reloadWatcherGeneration) return;
+		reloadWatcherActive = false;
+		updating = false;
+		if (ready) {
+			localStorage.removeItem(updateTargetStorageKey);
+			localStorage.removeItem('jenderal_update_task');
+			currentTaskId = '';
+			window.location.replace(cacheBustedURL(window.location.href));
+			return;
+		}
+		reloadTimedOut = true;
+		updateMsg = 'Update recovery timed out. The panel may still be restarting.';
 	}
 
 	async function onTaskComplete(task: { status?: string; error?: string }) {
 		updating = false;
 		if (task?.status === 'failed') {
+			reloadWatcherGeneration += 1;
+			reloadWatcherActive = false;
+			localStorage.removeItem(updateTargetStorageKey);
 			updateError = task.error || 'Panel update failed.';
 			return;
 		}
@@ -70,18 +103,7 @@
 			return;
 		}
 
-		const ready = await waitForUpdatedPanel({
-			expectedVersion: target,
-			check: () => api.getNoStore<UpdateInfo>(`/api/v1/update/check?_=${Date.now()}`)
-		});
-		if (ready) {
-			localStorage.removeItem(updateTargetStorageKey);
-			window.location.replace(cacheBustedURL(window.location.href));
-			return;
-		}
-
-		reloadTimedOut = true;
-		updateMsg = 'Update completed, but automatic reload timed out. The panel may still be restarting.';
+		await resumeUpdateReload(60);
 	}
 
 	function reloadPanel() {
@@ -91,6 +113,7 @@
 	onMount(() => {
 		expectedUpdateVersion = localStorage.getItem(updateTargetStorageKey) || '';
 		void checkUpdate();
+		if (expectedUpdateVersion) void resumeUpdateReload();
 	});
 </script>
 

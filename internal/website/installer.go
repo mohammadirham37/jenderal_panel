@@ -46,8 +46,10 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 	}
 	phpBinary := "/usr/bin/php" + w.PHPVersion
 	composer := "/usr/local/bin/composer"
+	homeDir := filepath.Join("/home", w.WebUser)
 	userStep := func(name, stage string, timeout time.Duration, command string, args ...string) installStep {
-		return installStep{Name: name, Stage: stage, Timeout: timeout, Command: "-u", Args: append([]string{w.WebUser, "--", command}, args...)}
+		prefix := []string{w.WebUser, "--", "/usr/bin/env", "HOME=" + homeDir, command}
+		return installStep{Name: name, Stage: stage, Timeout: timeout, Command: "-u", Args: append(prefix, args...)}
 	}
 
 	var steps []installStep
@@ -138,6 +140,9 @@ func (i *Installer) Install(ctx context.Context, w websiteRow, progress func(sta
 	}
 
 	for _, step := range steps {
+		if err := progress(step.Stage, "\n=== "+step.Name+" ===\n"); err != nil {
+			return err
+		}
 		stepCtx, cancel := context.WithTimeout(ctx, step.Timeout)
 		result, runErr := i.exec.RunSudo(stepCtx, step.Command, step.Args...)
 		cancel()
@@ -152,7 +157,7 @@ func (i *Installer) Install(ctx context.Context, w websiteRow, progress func(sta
 			return err
 		}
 		if result.ExitCode != 0 {
-			return fmt.Errorf("%s: exit status %d: %s", step.Name, result.ExitCode, strings.TrimSpace(output))
+			return fmt.Errorf("%s failed with exit status %d; see provisioning log", step.Name, result.ExitCode)
 		}
 		if step.ExpectedOutput != "" && strings.TrimSpace(result.Stdout) != step.ExpectedOutput {
 			return fmt.Errorf("%s: expected %s, got %s", step.Name, step.ExpectedOutput, strings.TrimSpace(result.Stdout))
@@ -175,7 +180,11 @@ func (i *Installer) Install(ctx context.Context, w websiteRow, progress func(sta
 
 func profileForWebsiteRow(w websiteRow) (Profile, error) {
 	template := NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType)
-	return ResolveProfile(CreateRequest{Template: template, PHPVersion: w.PHPVersion, FrameworkVersion: w.FrameworkVersion,
+	frameworkVersion := w.FrameworkVersion
+	if template == "codeigniter3" {
+		frameworkVersion = "3"
+	}
+	return ResolveProfile(CreateRequest{Template: template, PHPVersion: w.PHPVersion, FrameworkVersion: frameworkVersion,
 		FrontendStack: w.FrontendStack, InertiaAdapter: w.InertiaAdapter, ProjectVariant: w.ProjectVariant, SetupMode: w.SetupMode})
 }
 

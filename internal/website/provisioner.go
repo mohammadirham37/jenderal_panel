@@ -57,13 +57,59 @@ func (p *Provisioner) Start(ctx context.Context) {
 	}()
 }
 
-// Queue enqueues a website ID for provisioning. It is non-blocking; if the
-// queue is full the request is silently dropped.
-func (p *Provisioner) Queue(websiteID string) {
+// Queue enqueues a website ID for provisioning and reports when the caller
+// stops waiting for queue capacity. This prevents accepted work from being
+// silently lost while the worker is busy.
+func (p *Provisioner) Queue(ctx context.Context, websiteID string) error {
+	if websiteID == "" {
+		return errors.New("website ID is required")
+	}
 	select {
 	case p.queue <- websiteID:
-	default:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("queue website: %w", ctx.Err())
 	}
+}
+
+// Recover re-queues provisioning that was interrupted by a panel restart.
+// Active terminal states are untouched.
+func (p *Provisioner) Recover(ctx context.Context) error {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id FROM websites WHERE status IN ('pending', 'installing', 'configuring', 'validating') ORDER BY created_at`)
+	if err != nil {
+		return fmt.Errorf("find interrupted website provisioning: %w", err)
+	}
+	var websiteIDs []string
+	for rows.Next() {
+		var websiteID string
+		if err := rows.Scan(&websiteID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan interrupted website provisioning: %w", err)
+		}
+		websiteIDs = append(websiteIDs, websiteID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read interrupted website provisioning: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close interrupted website provisioning: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, websiteID := range websiteIDs {
+		if _, err := p.db.ExecContext(ctx,
+			`UPDATE websites SET status = 'pending', error_message = NULL, provision_stage = 'queued', updated_at = ? WHERE id = ?`,
+			now, websiteID); err != nil {
+			return fmt.Errorf("reset interrupted website %s: %w", websiteID, err)
+		}
+		if err := p.Queue(ctx, websiteID); err != nil {
+			p.fail(ctx, websiteID, "restore provisioning queue failed: "+err.Error())
+			return err
+		}
+	}
+	return nil
 }
 
 // provision executes the full provisioning pipeline for a website.
@@ -80,7 +126,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 
 	homeDir := "/home/" + w.WebUser
 	logDir := homeDir + "/logs"
-	automaticFramework := w.SetupMode == SetupAutomatic && w.Framework != "none"
+	automaticFramework := (w.SetupMode == SetupAutomatic || w.SetupMode == "automatic") && w.Framework != "none"
 
 	// Step 1: account and runtime preparation.
 	if err := p.updateStatus(ctx, websiteID, "installing", ""); err != nil {
@@ -499,8 +545,21 @@ func (p *Provisioner) rollbackConfigs(ctx context.Context, w websiteRow) {
 
 // fail sets the website status to failed with the given error message.
 func (p *Provisioner) fail(ctx context.Context, websiteID, errMsg string) {
-	_ = p.updateStatus(ctx, websiteID, "failed", errMsg)
-	p.logAudit(ctx, "provision_failed", websiteID, errMsg)
+	terminalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	errMsg = limitProvisionError(errMsg)
+	_ = p.updateStatus(terminalCtx, websiteID, "failed", errMsg)
+	p.logAudit(terminalCtx, "provision_failed", websiteID, errMsg)
+}
+
+const maxProvisionErrorRunes = 4096
+
+func limitProvisionError(message string) string {
+	runes := []rune(strings.TrimSpace(message))
+	if len(runes) <= maxProvisionErrorRunes {
+		return string(runes)
+	}
+	return string(runes[:maxProvisionErrorRunes]) + "…"
 }
 
 // updateStatus updates the status and optional error_message of a website.

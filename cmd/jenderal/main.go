@@ -225,6 +225,9 @@ func cmdServe() {
 		logger.Warn("website permission reconciliation failed", "error", err)
 	}
 	provisioner.Start(bgCtx)
+	if err := provisioner.Recover(bgCtx); err != nil {
+		logger.Warn("website provisioning recovery failed", "error", err)
+	}
 	renewalWorker.Start(bgCtx)
 	deploySvc.Start(bgCtx)
 	backupScheduler.Start(bgCtx)

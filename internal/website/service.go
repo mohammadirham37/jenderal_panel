@@ -70,6 +70,7 @@ func (s *Service) SetProvisioner(p *Provisioner) {
 type RuntimeOption struct {
 	Version   string `json:"version"`
 	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
 }
 
 type DependencyOption struct {
@@ -114,27 +115,71 @@ func (s *Service) Options(ctx context.Context) (WebsiteOptions, error) {
 		Template: "php", FrameworkVersion: "12", FrontendStack: "blade", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
 	}}
 	for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
-		result, err := s.exec.Run(ctx, "test", "-d", "/etc/php/"+version)
+		installed, err := s.phpRuntimeInstalled(ctx, version)
 		if err != nil {
 			return WebsiteOptions{}, fmt.Errorf("check PHP %s: %w", version, err)
 		}
-		options.PHPVersions = append(options.PHPVersions, RuntimeOption{Version: version, Installed: result.ExitCode == 0})
-		if result.ExitCode == 0 {
+		runtime := RuntimeOption{Version: version, Installed: installed}
+		if runtime.Installed {
+			serviceStatus, statusErr := s.exec.Run(ctx, "systemctl", "is-active", "--quiet", "php"+version+"-fpm")
+			if statusErr != nil {
+				return WebsiteOptions{}, fmt.Errorf("check PHP %s FPM: %w", version, statusErr)
+			}
+			runtime.Running = serviceStatus.ExitCode == 0
+		}
+		options.PHPVersions = append(options.PHPVersions, runtime)
+		if installed {
 			options.Defaults.PHPVersion = version
 		}
 	}
 
-	composer, err := s.commandDependency(ctx, "composer", "/services", "composer", "--version", "--no-ansi")
+	composer, err := s.commandDependency(ctx, "composer", "/services", "/usr/local/bin/composer", "--version", "--no-ansi")
 	if err != nil {
 		return WebsiteOptions{}, err
 	}
-	node, err := s.commandDependency(ctx, "node", "/nodejs", "node", "--version")
+	node, err := s.nodeDependency(ctx)
 	if err != nil {
 		return WebsiteOptions{}, err
 	}
 	options.Dependencies = []DependencyOption{composer, node}
 	options.Profiles = websiteProfileOptions()
 	return options, nil
+}
+
+func (s *Service) nodeDependency(ctx context.Context) (DependencyOption, error) {
+	node, err := s.commandDependency(ctx, "node", "/nodejs", "/usr/bin/node", "--version")
+	if err != nil || !node.Installed {
+		return node, err
+	}
+	npm, npmErr := s.exec.Run(ctx, "/usr/bin/npm", "--version")
+	if errors.Is(npmErr, osexec.ErrNotFound) || (npmErr == nil && npm.ExitCode != 0) {
+		node.Installed = false
+		return node, nil
+	}
+	if npmErr != nil {
+		return node, fmt.Errorf("check npm: %w", npmErr)
+	}
+	if strings.SplitN(node.Version, ".", 2)[0] != "20" {
+		node.Installed = false
+	}
+	return node, nil
+}
+
+func (s *Service) phpRuntimeInstalled(ctx context.Context, version string) (bool, error) {
+	for _, check := range [][]string{
+		{"-d", "/etc/php/" + version},
+		{"-x", "/usr/bin/php" + version},
+		{"-f", "/lib/systemd/system/php" + version + "-fpm.service"},
+	} {
+		result, err := s.exec.Run(ctx, "test", check...)
+		if err != nil {
+			return false, err
+		}
+		if result.ExitCode != 0 {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (s *Service) commandDependency(ctx context.Context, label, manageURL, command string, args ...string) (DependencyOption, error) {
@@ -166,16 +211,16 @@ func parseDependencyVersion(name, output string) string {
 
 func (s *Service) validateRuntimeRequirements(ctx context.Context, phpVersion string, profile Profile) error {
 	if profile.Template != "static" {
-		result, err := s.exec.Run(ctx, "test", "-d", "/etc/php/"+phpVersion)
+		installed, err := s.phpRuntimeInstalled(ctx, phpVersion)
 		if err != nil {
 			return fmt.Errorf("check PHP %s: %w", phpVersion, err)
 		}
-		if result.ExitCode != 0 {
+		if !installed {
 			return model.NewValidationError("PHP " + phpVersion + " is not installed; install it from /php")
 		}
 	}
 	if profile.RequiresComposer {
-		status, err := s.commandDependency(ctx, "composer", "/services", "composer", "--version", "--no-ansi")
+		status, err := s.commandDependency(ctx, "composer", "/services", "/usr/local/bin/composer", "--version", "--no-ansi")
 		if err != nil {
 			return err
 		}
@@ -184,7 +229,7 @@ func (s *Service) validateRuntimeRequirements(ctx context.Context, phpVersion st
 		}
 	}
 	if profile.RequiresNode {
-		status, err := s.commandDependency(ctx, "node", "/nodejs", "node", "--version")
+		status, err := s.nodeDependency(ctx)
 		if err != nil {
 			return err
 		}
@@ -286,7 +331,10 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 
 	// Queue provisioning in background.
 	if s.prov != nil {
-		s.prov.Queue(w.ID)
+		if err := s.prov.Queue(ctx, w.ID); err != nil {
+			s.markProvisioningQueueFailed(w.ID, err)
+			return model.Website{}, fmt.Errorf("queue website provisioning: %w", err)
+		}
 	}
 
 	return w, nil
@@ -578,10 +626,21 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 	}
 
 	if s.prov != nil {
-		s.prov.Queue(id)
+		if err := s.prov.Queue(ctx, id); err != nil {
+			s.markProvisioningQueueFailed(id, err)
+			return fmt.Errorf("queue website provisioning: %w", err)
+		}
 	}
 
 	return nil
+}
+
+func (s *Service) markProvisioningQueueFailed(websiteID string, queueErr error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE websites SET status = 'failed', error_message = ?, provision_stage = 'queue failed', updated_at = ? WHERE id = ?`,
+		limitProvisionError("queue provisioning failed: "+queueErr.Error()), time.Now().UTC().Format(time.RFC3339), websiteID)
 }
 
 // GetConfig returns the Nginx vhost configuration for a website.

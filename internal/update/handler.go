@@ -17,6 +17,11 @@ func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
 	return &Handler{svc: svc, audit: auditSvc}
 }
 
+func (h *Handler) Current(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	httputil.JSON(w, http.StatusOK, h.svc.Current())
+}
+
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
 	info, err := h.svc.Check(r.Context())

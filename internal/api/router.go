@@ -539,6 +539,8 @@ func NewRouter(deps Dependencies) http.Handler {
 
 			// Self-Update
 			r.With(auth.RequirePermission(deps.RBAC, "update.view")).
+				Get("/update/current", updateHandler.Current)
+			r.With(auth.RequirePermission(deps.RBAC, "update.view")).
 				Get("/update/check", updateHandler.Check)
 			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
 				Post("/update/perform", updateHandler.Perform)

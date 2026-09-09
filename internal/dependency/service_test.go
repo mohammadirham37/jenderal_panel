@@ -28,7 +28,7 @@ func TestComposerStatusReportsMissingExecutableAsNotInstalled(t *testing.T) {
 func TestComposerStatusParsesInstalledVersion(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
-			if name != "composer" || strings.Join(args, " ") != "--version --no-ansi" {
+			if name != "/usr/local/bin/composer" || strings.Join(args, " ") != "--version --no-ansi" {
 				t.Fatalf("command = %q %q", name, args)
 			}
 			return &executor.Result{ExitCode: 0, Stdout: "Composer version 2.10.3 2026-08-27 15:41:32\n"}, nil
@@ -75,8 +75,8 @@ func TestComposerInstallPlanVerifiesSignatureBeforeAtomicPromotion(t *testing.T)
 func TestComposerUpdatePlanUsesStableComposerTwo(t *testing.T) {
 	commands := NewService(nil).ComposerUpdateCommands()
 	want := [][]string{
-		{"composer", "self-update", "--2", "--no-interaction", "--no-ansi"},
-		{"composer", "--version", "--no-ansi"},
+		{"/usr/local/bin/composer", "self-update", "--2", "--no-interaction", "--no-ansi"},
+		{"/usr/local/bin/composer", "--version", "--no-ansi"},
 	}
 	if len(commands) != len(want) {
 		t.Fatalf("commands = %#v, want %#v", commands, want)

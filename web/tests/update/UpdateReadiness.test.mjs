@@ -61,3 +61,21 @@ test('builds a full reload URL without discarding existing query parameters', ()
 		'https://panel.test/update?foo=1&_panel_reload=123'
 	);
 });
+
+test('stops readiness recovery when the task is known to have failed', async () => {
+	let active = true;
+	let attempts = 0;
+	const ready = await waitForUpdatedPanel({
+		expectedVersion: 'new',
+		check: async () => {
+			attempts += 1;
+			active = false;
+			return { current_version: 'old' };
+		},
+		delay: async () => {},
+		maxAttempts: 10,
+		shouldContinue: () => active
+	});
+	assert.equal(ready, false);
+	assert.equal(attempts, 1);
+});

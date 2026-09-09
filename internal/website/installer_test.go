@@ -16,7 +16,7 @@ func TestInstallationPlanUsesPinnedAllowlistedCommands(t *testing.T) {
 	}{
 		{"laravel 11", automaticRow("laravel", "11", "blade", "", "empty"), []string{"/usr/bin/php8.3", "/usr/local/bin/composer", "create-project", "laravel/laravel:^11.0", "--no-scripts"}},
 		{"codeigniter 4", automaticRow("codeigniter4", "4", "", "", "empty"), []string{"/usr/bin/php8.3", "/usr/local/bin/composer", "create-project", "codeigniter4/appstarter", "--no-scripts"}},
-		{"codeigniter 3", automaticRow("codeigniter3", "3.1.13", "", "", "empty"), []string{"https://github.com/bcit-ci/CodeIgniter.git", "3.1.13", "bcb17eb8ba53a85de154439d0ab8ff1bed047bc9"}},
+		{"codeigniter 3", automaticRow("codeigniter3", "3", "", "", "empty"), []string{"https://github.com/bcit-ci/CodeIgniter.git", "3.1.13", "bcb17eb8ba53a85de154439d0ab8ff1bed047bc9"}},
 		{"laravel 13 svelte", automaticRow("laravel", "13", "inertia", "svelte", "starter-kit"), []string{"https://github.com/laravel/svelte-starter-kit.git", "593365653c38308fbea55fc90dfb22c554702b81", "npm", "install", "--no-audit", "--no-fund", "run", "build"}},
 	}
 
@@ -31,6 +31,9 @@ func TestInstallationPlanUsesPinnedAllowlistedCommands(t *testing.T) {
 				command := append([]string{step.Command}, step.Args...)
 				if len(command) < 4 || command[0] != "-u" || command[1] != tt.row.WebUser || command[2] != "--" {
 					t.Fatalf("command does not run as website user: %q", command)
+				}
+				if !strings.Contains(strings.Join(command, " "), "HOME=/home/"+tt.row.WebUser) {
+					t.Fatalf("command does not set website HOME: %q", command)
 				}
 				flattened = append(flattened, command...)
 				flattened = append(flattened, step.ExpectedOutput)
@@ -104,6 +107,36 @@ func TestInstallerClearsOnlyValidatedWebsiteStagingDirectory(t *testing.T) {
 	want := []string{"-u", "web_example_com", "--", "/usr/bin/rm", "-rf", "--", staging}
 	if strings.Join(removed, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("cleanup command = %q, want %q", removed, want)
+	}
+}
+
+func TestInstallerPublishesStageBeforeStartingLongCommand(t *testing.T) {
+	row := automaticRow("laravel", "12", "blade", "", "empty")
+	stagePublished := false
+	mock := &executor.MockExecutor{RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		joined := strings.Join(append([]string{name}, args...), " ")
+		if strings.Contains(joined, "/usr/bin/test") {
+			return &executor.Result{ExitCode: 1}, nil
+		}
+		if strings.Contains(joined, "create-project") {
+			if !stagePublished {
+				t.Fatal("long-running install command started before its stage was published")
+			}
+			return &executor.Result{ExitCode: 1, Stderr: "download failed"}, nil
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	}}
+	err := NewInstaller(mock).Install(context.Background(), row, func(stage, output string) error {
+		if stage == "installing framework" && strings.Contains(output, "install Laravel") {
+			stagePublished = true
+		}
+		return nil
+	})
+	if err == nil || !stagePublished {
+		t.Fatalf("Install() error=%v stagePublished=%v", err, stagePublished)
+	}
+	if strings.Contains(err.Error(), "download failed") || !strings.Contains(err.Error(), "see provisioning log") {
+		t.Fatalf("Install() returned unsafe or unhelpful error: %v", err)
 	}
 }
 

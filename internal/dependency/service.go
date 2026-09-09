@@ -28,7 +28,7 @@ func NewService(exec executor.CommandExecutor) *Service {
 
 func (s *Service) ComposerStatus(ctx context.Context) (Status, error) {
 	status := Status{Name: "composer"}
-	result, err := s.exec.Run(ctx, "composer", "--version", "--no-ansi")
+	result, err := s.exec.Run(ctx, "/usr/local/bin/composer", "--version", "--no-ansi")
 	if errors.Is(err, exec.ErrNotFound) {
 		return status, nil
 	}
@@ -68,7 +68,7 @@ test "$actual" = "$expected"
 php "$work_dir/composer-setup.php" --2 --install-dir="$work_dir" --filename=composer
 install -o root -g root -m 0755 "$work_dir/composer" /usr/local/bin/composer.new
 mv -f /usr/local/bin/composer.new /usr/local/bin/composer
-composer --version --no-ansi
+/usr/local/bin/composer --version --no-ansi
 `
 
 func (s *Service) ComposerInstallCommands() [][]string {
@@ -77,7 +77,7 @@ func (s *Service) ComposerInstallCommands() [][]string {
 
 func (s *Service) ComposerUpdateCommands() [][]string {
 	return [][]string{
-		{"composer", "self-update", "--2", "--no-interaction", "--no-ansi"},
-		{"composer", "--version", "--no-ansi"},
+		{"/usr/local/bin/composer", "self-update", "--2", "--no-interaction", "--no-ansi"},
+		{"/usr/local/bin/composer", "--version", "--no-ansi"},
 	}
 }

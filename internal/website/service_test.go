@@ -17,14 +17,19 @@ func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
 		switch name {
 		case "test":
 			path := args[len(args)-1]
-			if path == "/etc/php/8.2" || path == "/etc/php/8.4" {
+			if path == "/etc/php/8.2" || path == "/usr/bin/php8.2" || path == "/lib/systemd/system/php8.2-fpm.service" ||
+				path == "/etc/php/8.4" || path == "/usr/bin/php8.4" || path == "/lib/systemd/system/php8.4-fpm.service" {
 				return &executor.Result{ExitCode: 0}, nil
 			}
 			return &executor.Result{ExitCode: 1}, nil
-		case "composer":
+		case "/usr/local/bin/composer":
 			return &executor.Result{ExitCode: 0, Stdout: "Composer version 2.10.3 2026-04-20"}, nil
-		case "node":
+		case "/usr/bin/node":
 			return &executor.Result{ExitCode: 0, Stdout: "v20.19.0\n"}, nil
+		case "/usr/bin/npm":
+			return &executor.Result{ExitCode: 0, Stdout: "10.8.0\n"}, nil
+		case "systemctl":
+			return &executor.Result{ExitCode: 0}, nil
 		default:
 			t.Fatalf("unexpected command: %s %v", name, args)
 			return nil, nil
@@ -49,6 +54,71 @@ func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
 	}
 	if len(options.Profiles) == 0 {
 		t.Fatal("profile catalog is empty")
+	}
+}
+
+func TestCreateRejectsPHPDirectoryWithoutVersionedBinary(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "test" && args[len(args)-1] == "/etc/php/8.2" {
+			return &executor.Result{ExitCode: 0}, nil
+		}
+		return &executor.Result{ExitCode: 1}, nil
+	}}
+	_, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
+		Domain: "partial-php.example.com", Template: "php", PHPVersion: "8.2",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("Create() error = %v, want missing versioned PHP binary validation", err)
+	}
+}
+
+func TestCreateRejectsUnsupportedNodeMajor(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		switch name {
+		case "test", "/usr/local/bin/composer", "/usr/bin/npm":
+			return &executor.Result{ExitCode: 0, Stdout: "10.0.0"}, nil
+		case "/usr/bin/node":
+			return &executor.Result{ExitCode: 0, Stdout: "v22.0.0"}, nil
+		default:
+			return &executor.Result{ExitCode: 0}, nil
+		}
+	}}
+	_, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
+		Domain: "node22.example.com", Template: "laravel", FrameworkVersion: "13", PHPVersion: "8.3",
+		FrontendStack: "inertia", InertiaAdapter: "svelte", ProjectVariant: "starter-kit", SetupMode: SetupAutomatic,
+	})
+	if err == nil || !strings.Contains(err.Error(), "Node.js") {
+		t.Fatalf("Create() error = %v, want unsupported Node.js validation", err)
+	}
+}
+
+func TestCreateRejectsMissingNPMBeforeInsert(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		switch name {
+		case "test", "/usr/local/bin/composer", "/usr/bin/node":
+			return &executor.Result{ExitCode: 0, Stdout: "v20.19.0"}, nil
+		case "/usr/bin/npm":
+			return &executor.Result{ExitCode: 1}, nil
+		default:
+			return &executor.Result{ExitCode: 0}, nil
+		}
+	}}
+	_, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
+		Domain: "npm.example.com", Template: "laravel", FrameworkVersion: "13", PHPVersion: "8.3",
+		FrontendStack: "inertia", InertiaAdapter: "svelte", ProjectVariant: "starter-kit", SetupMode: SetupAutomatic,
+	})
+	if err == nil || !strings.Contains(err.Error(), "Node.js") {
+		t.Fatalf("Create() error = %v, want missing Node.js/npm validation", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("website count = %d, error = %v", count, err)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 
 const (
 	SetupConfigOnly = "config-only"
-	SetupAutomatic  = "automatic"
+	SetupAutomatic  = "auto-install"
 )
 
 // Profile is the server-derived deployment contract for an allowlisted website template.
@@ -68,8 +68,11 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 		template = "php"
 	}
 	setupMode := valueOr(req.SetupMode, SetupConfigOnly)
+	if setupMode == "automatic" {
+		setupMode = SetupAutomatic
+	}
 	if setupMode != SetupConfigOnly && setupMode != SetupAutomatic {
-		return Profile{}, model.NewValidationError("setup_mode must be config-only or automatic")
+		return Profile{}, model.NewValidationError("setup_mode must be config-only or auto-install")
 	}
 
 	switch template {
@@ -78,7 +81,10 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 	case "php":
 		return simpleProfile(req, template, "php", "none", "", "public", setupMode, false)
 	case "codeigniter3":
-		return simpleProfile(req, template, "php", "codeigniter", "3.1.13", "public", setupMode, false)
+		if req.FrameworkVersion == "3.1.13" {
+			req.FrameworkVersion = "3"
+		}
+		return simpleProfile(req, template, "php", "codeigniter", "3", "public", setupMode, false)
 	case "codeigniter4":
 		return simpleProfile(req, template, "php", "codeigniter", "4", "app/public", setupMode, true)
 	case "laravel":

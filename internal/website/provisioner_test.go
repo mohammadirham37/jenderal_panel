@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -200,8 +201,8 @@ func TestProvisionFrameworkFailurePersistsStageAndLog(t *testing.T) {
 		},
 	}
 	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-auto-fail")
-	var status, stage, log string
-	if err := db.QueryRow(`SELECT status, provision_stage, provision_log FROM websites WHERE id = 'ws-auto-fail'`).Scan(&status, &stage, &log); err != nil {
+	var status, stage, log, errorMessage string
+	if err := db.QueryRow(`SELECT status, provision_stage, provision_log, error_message FROM websites WHERE id = 'ws-auto-fail'`).Scan(&status, &stage, &log, &errorMessage); err != nil {
 		t.Fatal(err)
 	}
 	if status != "failed" || stage != "installing framework" || !strings.Contains(log, "composer download failed") {
@@ -209,6 +210,9 @@ func TestProvisionFrameworkFailurePersistsStageAndLog(t *testing.T) {
 	}
 	if promoted {
 		t.Fatal("failed framework staging was promoted")
+	}
+	if strings.Contains(errorMessage, "composer download failed") || !strings.Contains(errorMessage, "see provisioning log") {
+		t.Fatalf("error_message = %q, want concise reference to provisioning log", errorMessage)
 	}
 }
 
@@ -246,6 +250,55 @@ func TestProvisionLaravelConfigOnlyPublishesPHPCompatibleLanding(t *testing.T) {
 	}
 	if !publishedPHP {
 		t.Fatal("Laravel config-only landing was not published as index.php")
+	}
+}
+
+func TestFailPersistsTerminalStateAfterWorkerContextCanceled(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-canceled", "canceled.example.com", "static", "", "installing")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	NewProvisioner(db, nil, nil).fail(ctx, "ws-canceled", "interrupted by restart")
+	status, message := getWebsiteStatus(t, db, "ws-canceled")
+	if status != "failed" || !strings.Contains(message, "interrupted") {
+		t.Fatalf("status=%q message=%q", status, message)
+	}
+}
+
+func TestRecoverQueuesInterruptedProvisioningFromDatabase(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	for index, status := range []string{"pending", "installing", "configuring", "validating"} {
+		insertTestWebsite(t, db, fmt.Sprintf("ws-recover-%d", index), fmt.Sprintf("recover-%d.example.com", index), "static", "", status)
+	}
+	p := NewProvisioner(db, nil, nil)
+	if err := p.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.queue) != 4 {
+		t.Fatalf("queued websites = %d, want 4", len(p.queue))
+	}
+	var recovered int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites WHERE status = 'pending' AND provision_stage = 'queued'`).Scan(&recovered); err != nil {
+		t.Fatal(err)
+	}
+	if recovered != 4 {
+		t.Fatalf("recovered rows = %d, want 4", recovered)
+	}
+}
+
+func TestQueueReportsCanceledWaitWhenCapacityIsFull(t *testing.T) {
+	p := NewProvisioner(nil, nil, nil)
+	for index := 0; index < cap(p.queue); index++ {
+		if err := p.Queue(context.Background(), fmt.Sprintf("ws-%d", index)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := p.Queue(ctx, "overflow"); err == nil {
+		t.Fatal("Queue() error = nil for canceled full queue")
 	}
 }
 

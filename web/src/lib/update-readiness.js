@@ -6,7 +6,8 @@
  *   expectedVersion: string,
  *   check: () => Promise<{ current_version: string }>,
  *   delay?: (milliseconds: number) => Promise<void>,
- *   maxAttempts?: number
+ *   maxAttempts?: number,
+ *   shouldContinue?: () => boolean
  * }} options
  * @returns {Promise<boolean>}
  */
@@ -14,9 +15,11 @@ export async function waitForUpdatedPanel({
 	expectedVersion,
 	check,
 	delay = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-	maxAttempts = 30
+	maxAttempts = 30,
+	shouldContinue = () => true
 }) {
 	for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+		if (!shouldContinue()) return false;
 		try {
 			const info = await check();
 			if (info.current_version === expectedVersion) return true;

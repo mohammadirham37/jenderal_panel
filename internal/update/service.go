@@ -41,11 +41,15 @@ func NewService(exec executor.CommandExecutor, version string, tasks *taskrunner
 	}
 }
 
+// Current reports the revision served by this running process without making
+// an external request. It is used to detect readiness after self-update.
+func (s *Service) Current() model.UpdateInfo {
+	return model.UpdateInfo{CurrentVersion: displayVersion(s.currentVer)}
+}
+
 // Check returns current version and latest commit from GitHub.
 func (s *Service) Check(ctx context.Context) (model.UpdateInfo, error) {
-	info := model.UpdateInfo{
-		CurrentVersion: displayVersion(s.currentVer),
-	}
+	info := s.Current()
 
 	// Get latest commit hash from main branch
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, githubAPIURL, nil)
