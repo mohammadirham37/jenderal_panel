@@ -42,7 +42,7 @@
 
 **Files:** Add `internal/database/migrations/020_website_node_version.sql`; modify `internal/model/models.go`, `internal/website/{service,provisioner,installer,profiles}.go`, `internal/nodejs/{service,handler}.go`, routing registration, `internal/taskrunner/runner.go`, and their tests. Add focused `internal/nodejs/runtime.go` for runtime operations.
 
-**Interfaces:** Consume Task 1 runtime API. Expose website JSON `node_version`, options `node_versions`; Node runtime list `GET /api/nodejs/runtimes`, install/change `POST /api/nodejs/runtimes/{websiteID}` with `{version}` and response `{task_id}`, legacy status/removal endpoints under `/api/nodejs/global`. Reuse existing auth and task polling. Add callback task API `RunFunc(name string, work func(context.Context, func(string)) error) string` if needed.
+**Interfaces:** Consume Task 1 runtime API. Expose website JSON `node_version`, options `node_versions`; Node runtime list `GET /api/v1/nodejs/runtimes`, install/change `POST /api/v1/nodejs/runtimes/{websiteID}` with `{version}` and response `{task_id}`, legacy status/removal endpoints under `/api/v1/nodejs/global`. Reuse existing auth and task polling. Add callback task API `RunFunc(name string, work func(context.Context, func(string)) error) string` if needed.
 
 - [ ] Add migration and selection tests: existing rows receive 24, repeated migration preserves rows, create explicitly stores empty; Node-required auto profiles default 24 and reject unsupported selections.
 - [ ] Add regression tests proving options/create do not probe global Node/npm and configuration-only mode never installs NVM.
