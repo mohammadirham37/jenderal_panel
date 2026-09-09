@@ -80,17 +80,24 @@ type DependencyOption struct {
 }
 
 type ProfileOption struct {
-	Template         string   `json:"template"`
-	FrameworkVersion string   `json:"framework_version"`
-	FrontendStack    string   `json:"frontend_stack"`
-	InertiaAdapter   string   `json:"inertia_adapter"`
-	ProjectVariant   string   `json:"project_variant"`
-	SetupMode        string   `json:"setup_mode"`
-	Enabled          bool     `json:"enabled"`
-	Reason           string   `json:"reason"`
-	MinimumPHP       string   `json:"minimum_php"`
-	DocumentRoot     string   `json:"document_root"`
-	Prerequisites    []string `json:"prerequisites"`
+	Template         string                `json:"template"`
+	FrameworkVersion string                `json:"framework_version"`
+	FrontendStack    string                `json:"frontend_stack"`
+	InertiaAdapter   string                `json:"inertia_adapter"`
+	ProjectVariant   string                `json:"project_variant"`
+	SetupMode        string                `json:"setup_mode"`
+	Enabled          bool                  `json:"enabled"`
+	Reason           string                `json:"reason"`
+	MinimumPHP       string                `json:"minimum_php"`
+	DocumentRoot     string                `json:"document_root"`
+	Prerequisites    []string              `json:"prerequisites"`
+	PHPCompatibility []CompatibilityOption `json:"php_compatibility"`
+}
+
+type CompatibilityOption struct {
+	Version string `json:"version"`
+	Enabled bool   `json:"enabled"`
+	Reason  string `json:"reason"`
 }
 
 type WebsiteOptions struct {
@@ -98,17 +105,23 @@ type WebsiteOptions struct {
 	Dependencies    []DependencyOption `json:"dependencies"`
 	Profiles        []ProfileOption    `json:"profiles"`
 	InertiaAdapters []string           `json:"inertia_adapters"`
+	Defaults        CreateRequest      `json:"defaults"`
 }
 
 // Options reports host runtimes separately from the fixed website profile catalog.
 func (s *Service) Options(ctx context.Context) (WebsiteOptions, error) {
-	options := WebsiteOptions{InertiaAdapters: []string{"react", "vue", "svelte"}}
+	options := WebsiteOptions{InertiaAdapters: []string{"react", "vue", "svelte"}, Defaults: CreateRequest{
+		Template: "php", FrameworkVersion: "12", FrontendStack: "blade", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
+	}}
 	for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
 		result, err := s.exec.Run(ctx, "test", "-d", "/etc/php/"+version)
 		if err != nil {
 			return WebsiteOptions{}, fmt.Errorf("check PHP %s: %w", version, err)
 		}
 		options.PHPVersions = append(options.PHPVersions, RuntimeOption{Version: version, Installed: result.ExitCode == 0})
+		if result.ExitCode == 0 {
+			options.Defaults.PHPVersion = version
+		}
 	}
 
 	composer, err := s.commandDependency(ctx, "composer", "/services", "composer", "--version", "--no-ansi")

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
 
 	interface Website {
 		id: string;
@@ -9,7 +10,30 @@
 		php_version: string;
 		status: string;
 		error_message?: string;
+		framework: string;
+		framework_version: string;
+		frontend_stack: string;
+		inertia_adapter: string;
+		project_variant: string;
+		setup_mode: string;
+		provision_stage: string;
+		provision_log: string;
 		created_at: string;
+	}
+	interface RuntimeOption { version: string; installed: boolean }
+	interface DependencyOption { name: string; version: string; installed: boolean; manage_url: string }
+	interface ProfileOption {
+		template: string; framework_version: string; frontend_stack: string; inertia_adapter: string;
+		project_variant: string; setup_mode: string; enabled: boolean; reason: string; minimum_php: string;
+		document_root: string; prerequisites: string[]; php_compatibility: { version: string; enabled: boolean; reason: string }[];
+	}
+	interface WebsiteSelection {
+		template: string; php_version: string; framework_version: string; frontend_stack: string;
+		inertia_adapter: string; project_variant: string; setup_mode: string;
+	}
+	interface WebsiteOptions {
+		php_versions: RuntimeOption[]; dependencies: DependencyOption[]; profiles: ProfileOption[];
+		inertia_adapters: string[]; defaults: WebsiteSelection;
 	}
 
 	let websites = $state<Website[]>([]);
@@ -17,13 +41,17 @@
 	let error = $state('');
 	let actionMsg = $state('');
 	let actionError = $state('');
+	let options = $state<WebsiteOptions | null>(null);
+	let optionsError = $state('');
 
 	// Create form
 	let showCreateForm = $state(false);
 	let createDomain = $state('');
-	let createAppType = $state('php');
-	let createPhpVersion = $state('8.3');
+	let selection = $state<WebsiteSelection>({ template: 'php', php_version: '', framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only' });
 	let creating = $state(false);
+	let installedPHP = $derived(options ? availablePHPVersions(options) as RuntimeOption[] : []);
+	let combination = $derived(options ? selectedCombination(options, selection) : null);
+	let laravelVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel').map((item) => item.framework_version))] : []);
 
 	// Delete confirm
 	let deleteConfirmId = $state<string | null>(null);
@@ -31,8 +59,21 @@
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
-	const phpVersions = ['8.1', '8.2', '8.3', '8.4'];
 	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
+
+	function normalizeSelection() {
+		if (options) selection = normalizeWebsiteSelection(selection, options) as WebsiteSelection;
+	}
+
+	async function loadOptions() {
+		optionsError = '';
+		try {
+			options = await api.get<WebsiteOptions>('/api/v1/websites/options');
+			selection = normalizeWebsiteSelection(options.defaults || {}, options) as WebsiteSelection;
+		} catch (err) {
+			optionsError = err instanceof Error ? err.message : 'Failed to load website options';
+		}
+	}
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
@@ -98,19 +139,12 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			const body: Record<string, string> = {
-				domain: createDomain,
-				app_type: createAppType
-			};
-			if (createAppType !== 'static') {
-				body.php_version = createPhpVersion;
-			}
+			const body: Record<string, string> = { domain: createDomain, ...selection };
 			await api.post('/api/v1/websites', body);
 			actionMsg = `Website "${createDomain}" creation started.`;
 			showCreateForm = false;
 			createDomain = '';
-			createAppType = 'php';
-			createPhpVersion = '8.3';
+			if (options) selection = normalizeWebsiteSelection(options.defaults || {}, options) as WebsiteSelection;
 			await loadWebsites();
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to create website';
@@ -168,7 +202,7 @@
 		}
 	}
 
-	onMount(loadWebsites);
+	onMount(() => { void Promise.all([loadWebsites(), loadOptions()]); });
 
 	onDestroy(() => {
 		stopPolling();
@@ -204,6 +238,11 @@
 	{#if showCreateForm}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 			<h3 class="text-lg font-semibold text-white mb-4">New Website</h3>
+			{#if optionsError}
+				<div class="mb-4 p-3 bg-red-900/50 border border-red-700 rounded text-sm text-red-300">
+					{optionsError} <button class="underline cursor-pointer" onclick={loadOptions}>Retry</button>
+				</div>
+			{/if}
 			<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
 				<div>
 					<label for="create-domain" class="block text-sm text-gray-400 mb-1">Domain</label>
@@ -216,36 +255,91 @@
 					/>
 				</div>
 				<div>
-					<label for="create-app-type" class="block text-sm text-gray-400 mb-1">App Type</label>
+					<label for="create-app-type" class="block text-sm text-gray-400 mb-1">Template</label>
 					<select
 						id="create-app-type"
-						bind:value={createAppType}
+						value={selection.template}
+						onchange={(event) => { selection.template = event.currentTarget.value; normalizeSelection(); }}
 						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 					>
-						<option value="php">PHP</option>
-						<option value="static">Static</option>
+						<option value="static">Static HTML</option>
+						<option value="php">PHP murni</option>
+						<option value="codeigniter3">CodeIgniter 3</option>
+						<option value="codeigniter4">CodeIgniter 4</option>
 						<option value="laravel">Laravel</option>
 					</select>
 				</div>
-				{#if createAppType !== 'static'}
+				{#if selection.template !== 'static'}
 					<div>
 						<label for="create-php-version" class="block text-sm text-gray-400 mb-1">PHP Version</label>
 						<select
 							id="create-php-version"
-							bind:value={createPhpVersion}
+							bind:value={selection.php_version}
 							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 						>
-							{#each phpVersions as v}
-								<option value={v}>{v}</option>
+							{#each installedPHP as runtime}
+								<option value={runtime.version}>{runtime.version}</option>
 							{/each}
 						</select>
+						{#if installedPHP.length === 0}
+							<p class="mt-1 text-xs text-yellow-300">No PHP version is installed. <a class="underline" href="/php">Install PHP</a></p>
+						{/if}
 					</div>
 				{/if}
+				{#if selection.template === 'laravel'}
+					<div>
+						<label for="framework-version" class="block text-sm text-gray-400 mb-1">Laravel Version</label>
+						<select id="framework-version" bind:value={selection.framework_version} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+							{#each laravelVersions as version}<option value={version}>Laravel {version}</option>{/each}
+						</select>
+					</div>
+					<div>
+						<label for="frontend-stack" class="block text-sm text-gray-400 mb-1">Frontend</label>
+						<select id="frontend-stack" value={selection.frontend_stack} onchange={(event) => { selection.frontend_stack = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+							<option value="blade">Blade</option><option value="inertia">Inertia</option><option value="livewire">Livewire</option>
+						</select>
+					</div>
+					{#if selection.frontend_stack === 'inertia'}
+						<div>
+							<label for="inertia-adapter" class="block text-sm text-gray-400 mb-1">Inertia Adapter</label>
+							<select id="inertia-adapter" bind:value={selection.inertia_adapter} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+								{#each options?.inertia_adapters || [] as adapter}<option value={adapter}>{adapter[0].toUpperCase() + adapter.slice(1)}</option>{/each}
+							</select>
+						</div>
+					{/if}
+					{#if selection.frontend_stack !== 'blade'}
+						<div>
+							<label for="project-variant" class="block text-sm text-gray-400 mb-1">Project</label>
+							<select id="project-variant" bind:value={selection.project_variant} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+								<option value="empty">Empty project</option><option value="starter-kit">Starter kit</option>
+							</select>
+						</div>
+					{/if}
+				{/if}
+				<div>
+					<label for="setup-mode" class="block text-sm text-gray-400 mb-1">Setup</label>
+					<select id="setup-mode" bind:value={selection.setup_mode} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+						<option value="config-only">Nginx config only</option><option value="automatic">Install framework automatically</option>
+					</select>
+				</div>
 			</div>
+			{#if combination}
+				<div class="mt-4 rounded border border-gray-700 bg-gray-900/60 p-3 text-sm text-gray-300">
+					<p>Document root: <code>{combination.document_root || '-'}</code></p>
+					{#if !combination.enabled}<p class="mt-2 text-yellow-300">{combination.reason}</p>{/if}
+					{#if combination.missing_dependencies?.length}
+						<div class="mt-2 flex flex-wrap gap-3">
+							{#each combination.missing_dependencies as dependency}
+								<a class="text-blue-400 underline" href={dependency.manage_url}>Install {dependency.name}</a>
+							{/each}
+						</div>
+					{/if}
+				</div>
+			{/if}
 			<div class="mt-4">
 				<button
 					onclick={createWebsite}
-					disabled={creating || !createDomain.trim()}
+					disabled={creating || !createDomain.trim() || !options || !combination?.enabled || (selection.template !== 'static' && !selection.php_version)}
 					class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 				>
 					{creating ? 'Creating...' : 'Create'}
@@ -270,7 +364,7 @@
 					<thead>
 						<tr class="border-b border-gray-700">
 							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Domain</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">App Type</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Template</th>
 							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">PHP Version</th>
 							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
 							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
@@ -284,14 +378,26 @@
 										{website.domain}
 									</a>
 								</td>
-								<td class="px-4 py-3 text-sm text-gray-300 capitalize">{website.app_type}</td>
+								<td class="px-4 py-3 text-sm text-gray-300 capitalize">
+									{website.framework && website.framework !== 'none' ? website.framework : website.app_type}
+									{#if website.framework_version}<span class="text-gray-500"> {website.framework_version}</span>{/if}
+								</td>
 								<td class="px-4 py-3 text-sm text-gray-300">{website.app_type === 'static' ? '-' : website.php_version}</td>
 								<td class="px-4 py-3">
 									<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {statusBadgeClass(website.status)}">
 										{website.status}
 									</span>
+									{#if pendingStatuses.includes(website.status) && website.provision_stage}
+										<p class="mt-1 text-xs text-yellow-300">{website.provision_stage}</p>
+									{/if}
 									{#if website.status === 'failed' && website.error_message}
 										<p class="mt-1 text-xs text-red-400">{website.error_message}</p>
+									{/if}
+									{#if website.status === 'failed' && website.provision_log}
+										<details class="mt-2 max-w-md text-left">
+											<summary class="cursor-pointer text-xs text-gray-400">Provisioning log</summary>
+											<pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-gray-950 p-2 text-xs text-gray-300">{website.provision_log}</pre>
+										</details>
 									{/if}
 								</td>
 								<td class="px-4 py-3 text-right">

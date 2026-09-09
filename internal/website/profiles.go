@@ -268,6 +268,16 @@ func websiteProfileOptions() []ProfileOption {
 				option.Prerequisites = append(option.Prerequisites, "node")
 			}
 		}
+		if req.Template != "static" {
+			for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
+				compatible := option.MinimumPHP == "" || comparePHP(version, option.MinimumPHP) >= 0
+				compatibility := CompatibilityOption{Version: version, Enabled: compatible}
+				if !compatible {
+					compatibility.Reason = fmt.Sprintf("Laravel %s requires PHP %s or newer", req.FrameworkVersion, option.MinimumPHP)
+				}
+				option.PHPCompatibility = append(option.PHPCompatibility, compatibility)
+			}
+		}
 		options = append(options, option)
 	}
 	return options
