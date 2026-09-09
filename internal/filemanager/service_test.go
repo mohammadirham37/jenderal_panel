@@ -251,14 +251,29 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 	}
 	content := "$(touch /tmp/should-not-run) ' literal content"
 	var writtenContent string
+	chmodCalled := false
 	mock := &executor.MockExecutor{
 		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
 			t.Fatal("WriteFile must not invoke a shell")
 			return nil, nil
 		},
 		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
-			t.Fatalf("WriteFile must use the input-aware executor, got %q %q", name, args)
-			return nil, nil
+			if name != "-u" || len(args) < 3 || args[1] != "--" {
+				t.Fatalf("unexpected website-user command %q %q", name, args)
+			}
+			switch args[2] {
+			case "test":
+				return &executor.Result{ExitCode: 1}, nil
+			case "chmod":
+				chmodCalled = true
+				if len(args) != 6 || args[3] != "0644" || args[4] != "--" {
+					t.Fatalf("new-file chmod args = %q, want chmod 0644 -- <target>", args)
+				}
+				return &executor.Result{ExitCode: 0}, nil
+			default:
+				t.Fatalf("unexpected website-user command %q", args[2])
+				return nil, nil
+			}
 		},
 		RunSudoWithInputFunc: func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
 			writtenContent = input
@@ -278,6 +293,9 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 	}
 	if writtenContent != content {
 		t.Fatalf("written content = %q, want %q", writtenContent, content)
+	}
+	if !chmodCalled {
+		t.Fatal("WriteFile did not set a readable mode on the new file")
 	}
 }
 

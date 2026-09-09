@@ -240,12 +240,27 @@ func (s *Service) WriteFile(ctx context.Context, basePath, filePath, content str
 		return err
 	}
 
+	existsResult, err := s.runAsWebsiteUser(ctx, basePath, "test", "-e", "--", full)
+	if err != nil {
+		return fmt.Errorf("check existing file: %w", err)
+	}
+	existed := existsResult.ExitCode == 0
+
 	result, err := s.runAsWebsiteUserWithInput(ctx, basePath, content, "tee", "--", full)
 	if err != nil {
 		return fmt.Errorf("file write: %w", err)
 	}
 	if result.ExitCode != 0 {
 		return model.NewDomainError("FILE_ERROR", "failed to write file: "+result.Stderr, nil)
+	}
+	if !existed {
+		result, err = s.runAsWebsiteUser(ctx, basePath, "chmod", "0644", "--", full)
+		if err != nil {
+			return fmt.Errorf("set new file mode: %w", err)
+		}
+		if result.ExitCode != 0 {
+			return model.NewDomainError("FILE_ERROR", "failed to set new file mode: "+result.Stderr, nil)
+		}
 	}
 
 	return nil
