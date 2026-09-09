@@ -63,6 +63,9 @@ func TestInstallerPreservesExistingFinalProject(t *testing.T) {
 	var destructive bool
 	mock := &executor.MockExecutor{RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 		joined := strings.Join(append([]string{name}, args...), " ")
+		if strings.Contains(joined, `cat -- "$root/.env"`) {
+			return &executor.Result{Stdout: "APP_KEY=base64:keep\nDB_CONNECTION=sqlite\nDB_DATABASE=\"/home/web_example_com/app/database/database.sqlite\"\n"}, nil
+		}
 		if strings.Contains(joined, "test -e /home/web_example_com/app") || strings.Contains(joined, "test -f /home/web_example_com/app/public/index.php") {
 			return &executor.Result{ExitCode: 0}, nil
 		}

@@ -25,6 +25,8 @@ func TestLaravelEnvironment(t *testing.T) {
 		{name: "missing key", input: "DB_CONNECTION=sqlite\n", path: root + "/database/database.sqlite", key: true},
 		{name: "commented empty key", input: "APP_KEY= # create a key\nDB_CONNECTION='sqlite' # user's choice\n", path: root + "/database/database.sqlite", key: true},
 		{name: "relative database", input: "APP_KEY='base64:keep'\nDB_CONNECTION=sqlite\nDB_DATABASE=database/custom.sqlite\n", path: root + "/database/custom.sqlite"},
+		{name: "absolute database", input: "APP_KEY=base64:keep\nDB_CONNECTION=sqlite\nDB_DATABASE=" + root + "/database/custom.sqlite\n", path: root + "/database/custom.sqlite"},
+		{name: "implicit external driver", input: "APP_KEY=base64:keep\nDB_HOST=127.0.0.1\nDB_USERNAME=production\nDB_DATABASE=production\n", unchanged: true},
 		{name: "external database", input: "APP_KEY=base64:keep\nDB_CONNECTION=mysql\nDB_DATABASE=production\n", unchanged: true},
 		{name: "external URL", input: "DB_CONNECTION=sqlite\nDB_URL='postgres://example/db'\n", unchanged: true},
 		{name: "outside project", input: "DB_CONNECTION=sqlite\nDB_DATABASE=/tmp/other.sqlite\n", wantError: true},
@@ -74,7 +76,11 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 	initial := "APP_KEY=\nDB_CONNECTION=mysql\nDB_DATABASE=laravel\n"
 	for name, content := range map[string]string{".env": initial, "public/index.php": "<?php echo 'ready';", "artisan": `<?php
  $root=__DIR__;
- if ($argv[1]==='key:generate') { $file=$root.'/.env'; file_put_contents($file,str_replace('APP_KEY=', 'APP_KEY=base64:preserved-fixture-key',file_get_contents($file))); }
+ if ($argv[1]==='key:generate') {
+   $key='base64:'.base64_encode(str_repeat('k',32));
+   if(in_array('--show',$argv)) { echo $key; }
+   else { $file=$root.'/.env'; file_put_contents($file,str_replace('APP_KEY=', 'APP_KEY='.$key,file_get_contents($file))); }
+ }
  if ($argv[1]==='migrate') {
    if (file_exists($root.'/fail-migration')) {fwrite(STDERR,'migration fixture failure'); exit(1);}
    $env=parse_ini_file($root.'/.env'); $db=new PDO('sqlite:'.$env['DB_DATABASE']);
@@ -137,6 +143,14 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	envBefore, _ := os.ReadFile(filepath.Join(root, ".env"))
+	for _, path := range []string{"database", "storage/framework", "storage/framework/cache", "storage/framework/sessions"} {
+		if err := os.Chmod(filepath.Join(root, path), 0500); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(root, "database/database.sqlite"), 0400); err != nil {
+		t.Fatal(err)
+	}
 	commands = nil
 	if err := installer.bootstrapLaravel(context.Background(), row, canonical, false, progress); err != nil {
 		t.Fatal(err)
@@ -165,5 +179,44 @@ func TestLaravelBootstrapCreatesDatabaseAndPreservesDataOnRetry(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(commands, "\n"), "/artisan") {
 		t.Fatal("external database repair invoked Artisan")
+	}
+}
+
+func TestLaravelBootstrapRetainsFailureDiagnostics(t *testing.T) {
+	for _, failure := range []string{"missing sqlite extension", "migration timeout"} {
+		t.Run(failure, func(t *testing.T) {
+			var logs strings.Builder
+			migrated := false
+			mock := &executor.MockExecutor{RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+				joined := strings.Join(args, " ")
+				if strings.Contains(joined, `cat -- "$root/.env"`) {
+					return &executor.Result{Stdout: "APP_KEY=base64:keep\nDB_CONNECTION=sqlite\nDB_DATABASE=\"/home/web_example_com/app/database/database.sqlite\"\n"}, nil
+				}
+				if strings.Contains(joined, "extension_loaded") && failure == "missing sqlite extension" {
+					return &executor.Result{ExitCode: 1, Stderr: "Missing pdo_sqlite: install php8.3-sqlite3"}, nil
+				}
+				if strings.Contains(joined, " migrate ") {
+					migrated = true
+					return &executor.Result{Stdout: "Migration started\n", Stderr: "SQLite is busy\n"}, context.DeadlineExceeded
+				}
+				return &executor.Result{}, nil
+			}}
+			row := automaticRow("laravel", "12", "blade", "", "empty")
+			err := NewInstaller(mock).bootstrapLaravel(context.Background(), row, "/home/web_example_com/app", false, func(_, output string) error { logs.WriteString(output); return nil })
+			if err == nil {
+				t.Fatal("bootstrap failure swallowed")
+			}
+			if failure == "missing sqlite extension" {
+				if migrated || !strings.Contains(logs.String(), "Missing pdo_sqlite") {
+					t.Fatal("extension failure not actionable or migration ran")
+				}
+			}
+			if failure == "migration timeout" && (!migrated || !strings.Contains(logs.String(), "SQLite is busy") || !strings.Contains(logs.String(), "Migration started")) {
+				t.Fatal("captured timeout diagnostics lost")
+			}
+			if strings.Contains(logs.String(), "base64:keep") {
+				t.Fatal("app key leaked into task log")
+			}
+		})
 	}
 }

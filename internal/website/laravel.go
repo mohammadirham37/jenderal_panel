@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -10,7 +11,8 @@ import (
 	"time"
 )
 
-var laravelEnvLine = regexp.MustCompile(`^\s*(?:export\s+)?(APP_KEY|DB_CONNECTION|DB_DATABASE|DB_URL|DATABASE_URL)\s*=\s*(.*?)\s*$`)
+var laravelEnvLine = regexp.MustCompile(`^\s*(?:export\s+)?(APP_KEY|DB_CONNECTION|DB_DATABASE|DB_URL|DATABASE_URL|DB_HOST|DB_PORT|DB_USERNAME|DB_PASSWORD)\s*=\s*(.*?)\s*$`)
+var laravelAppKeyLine = regexp.MustCompile(`(?m)^[ \t]*(?:export[ \t]+)?APP_KEY[ \t]*=.*$`)
 
 // laravelEnvironment changes only SQLite settings, retaining unrelated dotenv
 // content and app keys. Existing external connections are never migrated.
@@ -68,6 +70,13 @@ func laravelEnvironment(content, root string, fresh bool) (string, string, bool,
 	connection := values["DB_CONNECTION"]
 	if strings.ContainsAny(connection, "${}") {
 		return "", "", false, fmt.Errorf("resolve DB_CONNECTION before Laravel repair")
+	}
+	if !fresh && connection == "" {
+		for _, key := range []string{"DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD"} {
+			if values[key] != "" {
+				return content, "", false, nil
+			}
+		}
 	}
 	if !fresh && ((connection != "" && connection != "sqlite") || values["DB_URL"] != "" || values["DATABASE_URL"] != "") {
 		return content, "", false, nil
@@ -156,16 +165,36 @@ func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root str
 		}
 		prefix := []string{w.WebUser, "--", "/usr/bin/env", "HOME=/home/" + w.WebUser, command}
 		r, e := i.exec.RunSudo(ctx, "-u", append(prefix, args...)...)
+		if r != nil {
+			if err := progress("initializing Laravel", r.Stdout+r.Stderr); err != nil {
+				return err
+			}
+		}
 		if e != nil {
 			return fmt.Errorf("%s: %w", label, e)
-		}
-		if err := progress("initializing Laravel", r.Stdout+r.Stderr); err != nil {
-			return err
 		}
 		if r.ExitCode != 0 {
 			return fmt.Errorf("%s failed (exit %d); see provisioning log", label, r.ExitCode)
 		}
 		return nil
+	}
+	if needsKey {
+		if err := progress("initializing Laravel", "Generating missing Laravel app key.\n"); err != nil {
+			return err
+		}
+		keyResult, keyErr := i.exec.RunSudo(ctx, "-u", w.WebUser, "--", "/usr/bin/env", "HOME=/home/"+w.WebUser, php, root+"/artisan", "key:generate", "--show", "--no-ansi", "--no-interaction")
+		if keyErr != nil {
+			return fmt.Errorf("generate Laravel key: %w", keyErr)
+		}
+		if keyResult.ExitCode != 0 {
+			return fmt.Errorf("generate Laravel key failed; check Laravel bootstrap and dependencies")
+		}
+		key := strings.TrimSpace(keyResult.Stdout)
+		decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimPrefix(key, "base64:"))
+		if !strings.HasPrefix(key, "base64:") || decodeErr != nil || (len(decoded) != 16 && len(decoded) != 32) {
+			return fmt.Errorf("Laravel returned an invalid app key")
+		}
+		updated = laravelAppKeyLine.ReplaceAllString(updated, "APP_KEY="+key)
 	}
 	if updated != result.Stdout {
 		write := `set -eu; umask 077; [ ! -L "$1" ]; staging=$(mktemp "$1.jenderal.XXXXXX"); trap 'rm -f -- "$staging"' EXIT; cat > "$staging"; mv -f -- "$staging" "$1"`
@@ -186,6 +215,17 @@ func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root str
    while [ "$part" != "$root" ]; do [ ! -L "$part" ] || { echo "Refusing symlinked Laravel writable path" >&2; exit 1; }; part=$(dirname "$part"); done
  done
  umask 027
+ chmod u+rwx "$root"
+ for writable in "$root/database" "$root/storage" "$root/bootstrap/cache"; do
+   if [ -d "$writable" ]; then
+     chmod u+rwx,go-w "$writable"
+     find "$writable" -type d -exec chmod u+rwx,go-w {} \;
+     find "$writable" -type f -exec chmod u+rw,go-w {} \;
+   fi
+ done
+ for target in "$(dirname "$db")" "$root/bootstrap"; do
+   while [ "$target" != "$root" ]; do if [ -d "$target" ]; then chmod u+rwx "$target"; fi; target=$(dirname "$target"); done
+ done
  mkdir -p -- "$(dirname "$db")" "$root/database" "$root/storage/framework/cache/data" "$root/storage/framework/sessions" "$root/storage/framework/views" "$root/storage/logs" "$root/bootstrap/cache"
  if [ ! -e "$db" ]; then touch -- "$db"; fi
  [ -f "$db" ] || exit 1
@@ -197,11 +237,6 @@ func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root str
 	}
 	if err := run("clear stale Laravel configuration", php, root+"/artisan", "config:clear", "--no-interaction"); err != nil {
 		return err
-	}
-	if needsKey {
-		if err := run("generate Laravel key", php, root+"/artisan", "key:generate", "--force", "--no-interaction"); err != nil {
-			return err
-		}
 	}
 	return run("migrate Laravel SQLite", php, root+"/artisan", "migrate", "--force", "--no-interaction")
 }
