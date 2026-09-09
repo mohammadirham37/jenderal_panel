@@ -225,6 +225,41 @@ func TestResolvePathRejectsSymlinkEscape(t *testing.T) {
 	}
 }
 
+func TestResolveWebsitePathFallbackRejectsSymlinkInPrivateDirectory(t *testing.T) {
+	basePath := t.TempDir()
+	privatePath := filepath.Join(basePath, "private")
+	if err := os.Mkdir(privatePath, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(basePath, filepath.Join(privatePath, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(privatePath, 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(privatePath, 0700)
+
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name != "-u" || len(args) < 5 || args[1] != "--" || args[2] != "test" {
+				t.Fatalf("unexpected fallback command %q %q", name, args)
+			}
+			if args[3] == "-L" && strings.HasSuffix(args[4], string(filepath.Separator)+"alias") {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			if args[3] == "-e" && strings.HasSuffix(args[4], string(filepath.Separator)+"private") {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		},
+	}
+
+	_, err := NewService(mock, nil).resolveWebsitePath(context.Background(), basePath, "private/alias", false)
+	if err == nil || !strings.Contains(err.Error(), "symbolic links") {
+		t.Fatalf("private-directory symlink error = %v, want symbolic-link rejection", err)
+	}
+}
+
 func TestDeleteFileRejectsWebsiteRoot(t *testing.T) {
 	basePath := t.TempDir()
 	mock := &executor.MockExecutor{

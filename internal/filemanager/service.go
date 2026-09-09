@@ -146,6 +146,38 @@ func (s *Service) runAsWebsiteUserWithInput(ctx context.Context, basePath, input
 	return s.exec.RunSudoWithInput(ctx, input, "-u", sudoArgs...)
 }
 
+func (s *Service) rejectWebsiteSymlinksAsOwner(ctx context.Context, basePath, target string, allowMissing bool) error {
+	relativeTarget, err := filepath.Rel(filepath.Clean(basePath), target)
+	if err != nil {
+		return model.NewValidationError("path is not accessible")
+	}
+	cursor := filepath.Clean(basePath)
+	for _, component := range strings.Split(relativeTarget, string(filepath.Separator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		cursor = filepath.Join(cursor, component)
+		linkResult, runErr := s.runAsWebsiteUser(ctx, basePath, "test", "-L", cursor)
+		if runErr != nil {
+			return runErr
+		}
+		if linkResult.ExitCode == 0 {
+			return model.NewValidationError("symbolic links cannot be used in file manager paths")
+		}
+		existsResult, runErr := s.runAsWebsiteUser(ctx, basePath, "test", "-e", cursor)
+		if runErr != nil {
+			return runErr
+		}
+		if existsResult.ExitCode != 0 {
+			if allowMissing {
+				break
+			}
+			return model.NewValidationError("path is not accessible")
+		}
+	}
+	return nil
+}
+
 func (s *Service) resolveWebsitePath(ctx context.Context, basePath, subPath string, allowMissing bool) (string, error) {
 	resolved, err := resolvePath(basePath, subPath, allowMissing)
 	if err == nil {
@@ -162,6 +194,9 @@ func (s *Service) resolveWebsitePath(ctx context.Context, basePath, subPath stri
 	target, validationErr := validatePath(basePath, subPath)
 	if validationErr != nil {
 		return "", validationErr
+	}
+	if symlinkErr := s.rejectWebsiteSymlinksAsOwner(ctx, basePath, target, allowMissing); symlinkErr != nil {
+		return "", symlinkErr
 	}
 	resolve := func(flag, path string) (string, error) {
 		result, runErr := s.runAsWebsiteUser(ctx, basePath, "realpath", flag, "--", path)
