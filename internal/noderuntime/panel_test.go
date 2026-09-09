@@ -61,6 +61,11 @@ step_build
 	if strings.Contains(string(output), "nodesource") || strings.Contains(string(output), "<nodejs>") || strings.Contains(string(output), "AMBIENT_NPM") {
 		t.Fatalf("fresh installer attempted global Node installation:\n%s", output)
 	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasPrefix(line, "APT") && strings.Contains(line, "<npm>") {
+			t.Fatalf("fresh installer attempted global npm installation: %s", line)
+		}
+	}
 	for _, want := range []string{"ORDER_OK", "<-u> <jenderal> <-->", "<HOME=/var/lib/jenderal>", "<NODE_VERSION=24>", "/internal/noderuntime/install.sh> <jenderal> <24> </var/lib/jenderal>", "</var/lib/jenderal/.nvm/nvm-exec> <npm> <install> <--loglevel=error>", "</var/lib/jenderal/.nvm/nvm-exec> <npm> <run> <build>"} {
 		if !strings.Contains(string(output), want) {
 			t.Fatalf("missing %s in installer execution:\n%s", want, output)
