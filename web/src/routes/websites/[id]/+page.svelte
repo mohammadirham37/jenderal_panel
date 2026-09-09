@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
 	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
+	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 
 	interface WebsiteDomain {
 		id: string;
@@ -563,6 +564,8 @@
 				{/if}
 			</div>
 		</div>
+
+		<WebsiteSectionNav websiteId={website.id} currentPath={page.url.pathname} />
 
 		<!-- Domains -->
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">

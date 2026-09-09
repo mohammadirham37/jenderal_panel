@@ -31,10 +31,6 @@
 				{ href: '/websites', labelKey: 'nav.websites', icon: 'globe-alt' },
 				{ href: '/php', labelKey: 'nav.php', icon: 'code' },
 				{ href: '/nodejs', labelKey: 'nav.nodejs', icon: 'terminal' },
-				{ href: '/ssl', labelKey: 'nav.ssl', icon: 'lock' },
-				{ href: '/deployments', labelKey: 'nav.deploy', icon: 'upload' },
-				{ href: '/cron', labelKey: 'nav.cron', icon: 'clock' },
-				{ href: '/queue-workers', labelKey: 'nav.queue', icon: 'refresh' },
 			]
 		},
 		{
