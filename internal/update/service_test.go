@@ -139,6 +139,12 @@ func TestUpdateAtomicallyReplacesRunningBinary(t *testing.T) {
 	if !strings.Contains(script, "install -m 0644 "+sourceDir+"/internal/landing/nginx-welcome.html /var/www/html/index.nginx-debian.html") {
 		t.Fatalf("update script does not install the branded Nginx welcome page:\n%s", script)
 	}
+	if !strings.Contains(script, "install -m 0644 "+sourceDir+"/internal/landing/landing.css /var/www/html/jenderal-landing.css") {
+		t.Fatalf("update script does not install compiled Tailwind CSS:\n%s", script)
+	}
+	if strings.Index(script, "CGO_ENABLED=1 go build") > strings.Index(script, "index.nginx-debian.html") {
+		t.Fatalf("update script publishes the welcome page before a successful build:\n%s", script)
+	}
 	if !strings.Contains(script, "systemctl is-active --quiet jenderal") || !strings.Contains(script, execPath+".bak") {
 		t.Fatalf("update script does not verify the restarted service and retain a rollback path:\n%s", script)
 	}
@@ -161,6 +167,9 @@ func TestFreshInstallerInstallsBrandedNginxWelcomePage(t *testing.T) {
 	script := string(installer)
 	if !strings.Contains(script, `install -m 0644 "$bd/internal/landing/nginx-welcome.html" /var/www/html/index.nginx-debian.html`) {
 		t.Fatalf("fresh installer does not install the branded Nginx welcome page")
+	}
+	if !strings.Contains(script, `install -m 0644 "$bd/internal/landing/landing.css" /var/www/html/jenderal-landing.css`) {
+		t.Fatalf("fresh installer does not install compiled Tailwind CSS")
 	}
 }
 

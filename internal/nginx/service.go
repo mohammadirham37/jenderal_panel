@@ -76,6 +76,13 @@ func (s *Service) Install(ctx context.Context) error {
 	if result.ExitCode != 0 {
 		return fmt.Errorf("install nginx: %s", strings.TrimSpace(result.Stderr))
 	}
+	result, err = s.exec.RunSudoWithInput(ctx, landing.CSS(), "tee", "--", "/var/www/html/jenderal-landing.css")
+	if err != nil {
+		return fmt.Errorf("install nginx landing stylesheet: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("install nginx landing stylesheet: %s", strings.TrimSpace(result.Stderr))
+	}
 	result, err = s.exec.RunSudoWithInput(ctx, landing.NginxWelcome(), "tee", "--", "/var/www/html/index.nginx-debian.html")
 	if err != nil {
 		return fmt.Errorf("install nginx welcome page: %w", err)
@@ -83,7 +90,7 @@ func (s *Service) Install(ctx context.Context) error {
 	if result.ExitCode != 0 {
 		return fmt.Errorf("install nginx welcome page: %s", strings.TrimSpace(result.Stderr))
 	}
-	result, err = s.exec.RunSudo(ctx, "chmod", "0644", "/var/www/html/index.nginx-debian.html")
+	result, err = s.exec.RunSudo(ctx, "chmod", "0644", "/var/www/html/index.nginx-debian.html", "/var/www/html/jenderal-landing.css")
 	if err != nil {
 		return fmt.Errorf("set nginx welcome page permissions: %w", err)
 	}

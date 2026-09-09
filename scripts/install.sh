@@ -276,7 +276,11 @@ step_build() {
     chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_BIN"
 
     # Replace Ubuntu's default Nginx page with Jenderal-Panel branding.
-    install -m 0644 "$bd/internal/landing/nginx-welcome.html" /var/www/html/index.nginx-debian.html
+    mkdir -p /var/www/html
+    install -m 0644 "$bd/internal/landing/landing.css" /var/www/html/jenderal-landing.css \
+        || fail "Failed to install Nginx landing stylesheet"
+    install -m 0644 "$bd/internal/landing/nginx-welcome.html" /var/www/html/index.nginx-debian.html \
+        || fail "Failed to install Nginx welcome page"
 
     cd /
     rm -rf "$bd"

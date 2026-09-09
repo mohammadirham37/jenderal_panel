@@ -145,25 +145,27 @@ else
     git clone --depth 1 %s %s 2>&1
 fi
 
-echo ">>> Step 2: Installing branded Nginx welcome page..."
-install -m 0644 %s/internal/landing/nginx-welcome.html /var/www/html/index.nginx-debian.html
-
-echo ">>> Step 3: Installing frontend dependencies..."
+echo ">>> Step 2: Installing frontend dependencies..."
 cd %s/web
 npm install --loglevel=error 2>&1
 
-echo ">>> Step 4: Building frontend..."
+echo ">>> Step 3: Building frontend..."
 npm run build 2>&1
 
-echo ">>> Step 5: Preparing embed..."
+echo ">>> Step 4: Preparing embed..."
 cd %s
 rm -rf cmd/jenderal/web_build
 cp -r web/build cmd/jenderal/web_build
 
-echo ">>> Step 6: Compiling Go binary..."
+echo ">>> Step 5: Compiling Go binary..."
 rm -f %s
 trap 'rm -f %s' EXIT
 CGO_ENABLED=1 go build -o %s ./cmd/jenderal 2>&1
+
+echo ">>> Step 6: Installing branded Nginx welcome page..."
+mkdir -p /var/www/html
+install -m 0644 %s/internal/landing/landing.css /var/www/html/jenderal-landing.css
+install -m 0644 %s/internal/landing/nginx-welcome.html /var/www/html/index.nginx-debian.html
 
 echo ">>> Step 7: Preparing replacement binary..."
 chown jenderal:jenderal %s
@@ -222,8 +224,8 @@ echo ">>> Update complete! Service restart scheduled."
 		sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
 		sourceDir,
 		sourceDir,
-		sourceDir,
 		replacementPath, replacementPath, replacementPath,
+		sourceDir, sourceDir,
 		replacementPath, replacementPath,
 		execPath, backupPath,
 		replacementPath, execPath,

@@ -99,8 +99,7 @@ func TestStatus_NotInstalled(t *testing.T) {
 }
 
 func TestInstallReplacesDefaultWelcomePage(t *testing.T) {
-	var welcomeHTML string
-	var welcomePath string
+	written := make(map[string]string)
 	mock := &executor.MockExecutor{
 		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
 			return mockResult("", "", 0), nil
@@ -110,8 +109,7 @@ func TestInstallReplacesDefaultWelcomePage(t *testing.T) {
 		},
 		RunSudoWithInputFunc: func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
 			if name == "tee" && len(args) == 2 && args[0] == "--" {
-				welcomeHTML = input
-				welcomePath = args[1]
+				written[args[1]] = input
 			}
 			return mockResult("", "", 0), nil
 		},
@@ -120,11 +118,15 @@ func TestInstallReplacesDefaultWelcomePage(t *testing.T) {
 	if err := NewService(mock, nil).Install(context.Background()); err != nil {
 		t.Fatalf("Install() error = %v", err)
 	}
-	if welcomePath != "/var/www/html/index.nginx-debian.html" {
-		t.Fatalf("welcome page path = %q", welcomePath)
-	}
-	if !strings.Contains(welcomeHTML, "Jenderal-Panel") || !strings.Contains(welcomeHTML, "cdn.tailwindcss.com") {
+	welcomeHTML := written["/var/www/html/index.nginx-debian.html"]
+	if !strings.Contains(welcomeHTML, "Jenderal-Panel") {
 		t.Fatalf("welcome page is missing branding or Tailwind:\n%s", welcomeHTML)
+	}
+	if strings.Contains(welcomeHTML, "cdn.tailwindcss.com") || !strings.Contains(welcomeHTML, "jenderal-landing.css") {
+		t.Fatalf("welcome page must use the local stylesheet:\n%s", welcomeHTML)
+	}
+	if css := written["/var/www/html/jenderal-landing.css"]; !strings.Contains(css, "tailwindcss") {
+		t.Fatalf("compiled Tailwind stylesheet was not installed: %q", css)
 	}
 }
 

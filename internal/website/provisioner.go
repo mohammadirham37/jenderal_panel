@@ -14,6 +14,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/landing"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
+	"github.com/oklog/ulid/v2"
 )
 
 // Provisioner handles background provisioning of websites.
@@ -135,8 +136,9 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		return
 	}
 	defaultFiles := map[string]string{
-		"index.html": defaultIndex,
-		"robots.txt": landing.RobotsTXT,
+		"index.html":           defaultIndex,
+		"robots.txt":           landing.RobotsTXT,
+		"jenderal-landing.css": landing.CSS(),
 	}
 	for name, content := range defaultFiles {
 		if err := p.ensureWebsiteFile(ctx, w, name, content); err != nil {
@@ -275,30 +277,65 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 // preserving any file the user has already created.
 func (p *Provisioner) ensureWebsiteFile(ctx context.Context, w websiteRow, name, content string) error {
 	targetPath := filepath.Join(w.DocumentRoot, name)
-	result, err := p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "test", "-e", targetPath)
+	exists, err := p.websitePathExists(ctx, w.WebUser, targetPath)
 	if err != nil {
 		return fmt.Errorf("check %s: %w", targetPath, err)
+	}
+	if exists {
+		return nil
+	}
+
+	temporaryPath := filepath.Join(w.DocumentRoot, ".jenderal-"+name+"-"+ulid.Make().String()+".tmp")
+	result, err := p.exec.RunSudoWithInput(ctx, content, "-u", w.WebUser, "--", "tee", "--", temporaryPath)
+	if err != nil {
+		return fmt.Errorf("stage %s: %w", targetPath, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("stage %s: %s", targetPath, strings.TrimSpace(result.Stderr))
+	}
+	defer func() {
+		_, _ = p.exec.RunSudo(context.WithoutCancel(ctx), "-u", w.WebUser, "--", "rm", "-f", "--", temporaryPath)
+	}()
+
+	result, err = p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", "0644", "--", temporaryPath)
+	if err != nil {
+		return fmt.Errorf("set permissions on staged %s: %w", targetPath, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("set permissions on staged %s: %s", targetPath, strings.TrimSpace(result.Stderr))
+	}
+
+	result, err = p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "ln", "--", temporaryPath, targetPath)
+	if err != nil {
+		return fmt.Errorf("publish %s: %w", targetPath, err)
 	}
 	if result.ExitCode == 0 {
 		return nil
 	}
 
-	result, err = p.exec.RunSudoWithInput(ctx, content, "-u", w.WebUser, "--", "tee", "--", targetPath)
-	if err != nil {
-		return fmt.Errorf("write %s: %w", targetPath, err)
+	// A destination created between the initial check and the hard link wins.
+	// This also treats dangling symlinks as existing without following them.
+	exists, checkErr := p.websitePathExists(ctx, w.WebUser, targetPath)
+	if checkErr != nil {
+		return fmt.Errorf("publish %s: %s (recheck: %v)", targetPath, strings.TrimSpace(result.Stderr), checkErr)
 	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("write %s: %s", targetPath, strings.TrimSpace(result.Stderr))
-	}
-
-	result, err = p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", "0644", targetPath)
-	if err != nil {
-		return fmt.Errorf("set permissions on %s: %w", targetPath, err)
-	}
-	if result.ExitCode != 0 {
-		return fmt.Errorf("set permissions on %s: %s", targetPath, strings.TrimSpace(result.Stderr))
+	if !exists {
+		return fmt.Errorf("publish %s: %s", targetPath, strings.TrimSpace(result.Stderr))
 	}
 	return nil
+}
+
+func (p *Provisioner) websitePathExists(ctx context.Context, webUser, targetPath string) (bool, error) {
+	for _, flag := range []string{"-e", "-L"} {
+		result, err := p.exec.RunSudo(ctx, "-u", webUser, "--", "test", flag, targetPath)
+		if err != nil {
+			return false, err
+		}
+		if result.ExitCode == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // writeSystemFile writes content to a temporary file and copies it to the

@@ -179,6 +179,9 @@ func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
 			if name == "-u" && len(args) >= 5 && args[2] == "test" {
 				return &executor.Result{ExitCode: 1}, nil
 			}
+			if name == "-u" && len(args) >= 6 && args[2] == "ln" {
+				written[args[len(args)-1]] = written[args[len(args)-2]]
+			}
 			return &executor.Result{ExitCode: 0}, nil
 		},
 		RunSudoWithInputFunc: func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
@@ -196,11 +199,93 @@ func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
 	if !strings.Contains(index, "coming-soon.example.com") || !strings.Contains(index, "Website sedang dikembangkan") {
 		t.Fatalf("default index.html does not contain the domain and development message:\n%s", index)
 	}
-	if !strings.Contains(index, "cdn.tailwindcss.com") || !strings.Contains(index, "Jenderal-Panel") {
-		t.Fatalf("default index.html is missing Tailwind/Jenderal-Panel branding:\n%s", index)
+	if !strings.Contains(index, "Jenderal-Panel") {
+		t.Fatalf("default index.html is missing Jenderal-Panel branding:\n%s", index)
 	}
 	if got := written[docRoot+"/robots.txt"]; got != "User-agent: *\nDisallow: /\n" {
 		t.Fatalf("robots.txt = %q, want crawler blocking defaults", got)
+	}
+	if strings.Contains(index, "cdn.tailwindcss.com") || !strings.Contains(index, "jenderal-landing.css") {
+		t.Fatalf("default index.html must use the local compiled Tailwind stylesheet:\n%s", index)
+	}
+	if css := written[docRoot+"/jenderal-landing.css"]; !strings.Contains(css, "tailwindcss") {
+		t.Fatalf("compiled Tailwind stylesheet was not provisioned: %q", css)
+	}
+}
+
+func TestEnsureWebsiteFileAtomicallyPreservesConcurrentDestination(t *testing.T) {
+	var temporaryPath string
+	linked := false
+	existenceChecks := 0
+	mock := &executor.MockExecutor{
+		RunSudoWithInputFunc: func(_ context.Context, _ string, name string, args ...string) (*executor.Result, error) {
+			if name != "-u" || args[2] != "tee" {
+				t.Fatalf("unexpected write command %q %q", name, args)
+			}
+			temporaryPath = args[len(args)-1]
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "-u" && args[2] == "ln" {
+				linked = true
+				return &executor.Result{ExitCode: 1, Stderr: "File exists"}, nil
+			}
+			if name == "-u" && args[2] == "test" && args[3] == "-e" {
+				existenceChecks++
+				if existenceChecks > 1 {
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			if name == "-u" && args[2] == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	w := websiteRow{DocumentRoot: "/home/web_example/public", WebUser: "web_example"}
+	if err := NewProvisioner(nil, mock, nil).ensureWebsiteFile(context.Background(), w, "index.html", "default"); err != nil {
+		t.Fatalf("ensureWebsiteFile() error = %v", err)
+	}
+	if !linked {
+		t.Fatal("default file was not published with an atomic hard link")
+	}
+	if temporaryPath == w.DocumentRoot+"/index.html" || !strings.HasPrefix(temporaryPath, w.DocumentRoot+"/.jenderal-") {
+		t.Fatalf("temporary write path = %q", temporaryPath)
+	}
+}
+
+func TestEnsureWebsiteFilePreservesDanglingSymlink(t *testing.T) {
+	var testedSymlink bool
+	mock := &executor.MockExecutor{
+		RunSudoWithInputFunc: func(_ context.Context, _ string, _ string, args ...string) (*executor.Result, error) {
+			if args[len(args)-1] == "/home/web_example/public/index.html" {
+				t.Fatal("must not write through the final destination")
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "-u" && args[2] == "ln" {
+				return &executor.Result{ExitCode: 1, Stderr: "File exists"}, nil
+			}
+			if name == "-u" && args[2] == "test" {
+				if args[3] == "-L" {
+					testedSymlink = true
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	w := websiteRow{DocumentRoot: "/home/web_example/public", WebUser: "web_example"}
+	if err := NewProvisioner(nil, mock, nil).ensureWebsiteFile(context.Background(), w, "index.html", "default"); err != nil {
+		t.Fatalf("ensureWebsiteFile() error = %v", err)
+	}
+	if !testedSymlink {
+		t.Fatal("dangling symlink was not recognized as an existing destination")
 	}
 }
 
