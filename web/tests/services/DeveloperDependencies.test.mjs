@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 let composerActionPath;
 try {
@@ -22,4 +23,11 @@ test('selects update when Composer is installed', () => {
 		composerActionPath({ name: 'composer', installed: true, version: '2.10.3' }),
 		'/api/v1/services/composer/update'
 	);
+});
+
+test('fully refreshes the services page after a successful Composer task', () => {
+	const source = readFileSync(new URL('../../src/routes/services/+page.svelte', import.meta.url), 'utf8');
+	const completedBranch = source.match(/if \(task\?\.status === 'completed'\) \{([\s\S]*?)\} else \{/);
+	assert.ok(completedBranch, 'expected a completed Composer task branch');
+	assert.match(completedBranch[1], /window\.location\.reload\(\)/);
 });

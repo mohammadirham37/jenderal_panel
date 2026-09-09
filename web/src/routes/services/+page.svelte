@@ -63,8 +63,7 @@
 
 	function onComposerComplete(task: { status?: string; error?: string }) {
 		if (task?.status === 'completed') {
-			actionMsg = 'Composer operation completed successfully.';
-			void loadDependencies();
+			window.location.reload();
 		} else {
 			actionError = task?.error || 'Composer operation failed.';
 		}
