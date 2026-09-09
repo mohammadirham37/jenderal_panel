@@ -9,17 +9,23 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Handler handles website management HTTP requests.
 type Handler struct {
 	svc   *Service
 	audit *audit.Service
+	tasks *taskrunner.Runner
 }
 
 // NewHandler creates a new website HTTP handler.
-func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
-	return &Handler{svc: svc, audit: auditSvc}
+func NewHandler(svc *Service, auditSvc *audit.Service, tasks ...*taskrunner.Runner) *Handler {
+	h := &Handler{svc: svc, audit: auditSvc}
+	if len(tasks) > 0 {
+		h.tasks = tasks[0]
+	}
+	return h
 }
 
 // logAction writes an audit log entry for a mutating action.

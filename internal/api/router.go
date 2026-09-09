@@ -91,7 +91,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	nginxHandler := nginx.NewHandler(deps.NginxSvc, deps.AuditSvc)
 	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
-	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc)
+	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc, deps.Tasks)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc, deps.Tasks)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
 	deployHandler := deployment.NewHandler(deps.DeploymentSvc, deps.AuditSvc)
@@ -253,6 +253,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/enable", websiteHandler.Enable)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/retry", websiteHandler.Retry)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/repair-laravel", websiteHandler.RepairLaravel)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/config", websiteHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).

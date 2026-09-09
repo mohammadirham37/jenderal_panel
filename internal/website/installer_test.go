@@ -70,6 +70,8 @@ func TestInstallerPreservesExistingFinalProject(t *testing.T) {
 			destructive = true
 		}
 		return &executor.Result{ExitCode: 0}, nil
+	}, RunSudoWithInputFunc: func(context.Context, string, string, ...string) (*executor.Result, error) {
+		return &executor.Result{}, nil
 	}}
 	if err := NewInstaller(mock).Install(context.Background(), row, func(string, string) error { return nil }); err != nil {
 		t.Fatal(err)

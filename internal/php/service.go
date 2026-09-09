@@ -163,6 +163,7 @@ func (s *Service) installCommands(version string) [][]string {
 		"php"+version+"-cli",
 		"php"+version+"-common",
 		"php"+version+"-mysql",
+		"php"+version+"-sqlite3",
 		"php"+version+"-pgsql",
 		"php"+version+"-mbstring",
 		"php"+version+"-xml",

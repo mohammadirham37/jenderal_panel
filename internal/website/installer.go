@@ -124,7 +124,10 @@ func (i *Installer) Install(ctx context.Context, w websiteRow, progress func(sta
 			return fmt.Errorf("validate existing project: %w", checkErr)
 		}
 		if valid {
-			return progress("installing framework", "Existing framework project preserved.\n")
+			if err := progress("installing framework", "Existing framework project preserved.\n"); err != nil {
+				return err
+			}
+			return i.bootstrapLaravel(ctx, w, finalRoot, false, progress)
 		}
 		return fmt.Errorf("final project path already exists but %s is missing", publicIndex)
 	}
@@ -175,7 +178,7 @@ func (i *Installer) Install(ctx context.Context, w websiteRow, progress func(sta
 	if err := i.runUserOK(ctx, w.WebUser, "/usr/bin/mv", "--", staging, finalRoot); err != nil {
 		return fmt.Errorf("promote staged project: %w", err)
 	}
-	return nil
+	return i.bootstrapLaravel(ctx, w, finalRoot, true, progress)
 }
 
 func profileForWebsiteRow(w websiteRow) (Profile, error) {

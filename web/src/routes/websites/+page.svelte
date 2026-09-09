@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
 
 	interface Website {
@@ -43,6 +44,19 @@
 	let actionError = $state('');
 	let options = $state<WebsiteOptions | null>(null);
 	let optionsError = $state('');
+	let repairTaskId = $state('');
+	let repairing = $state(false);
+	let repairConfirmId = $state<string | null>(null);
+	let repairBusy = $derived(repairing || !!repairTaskId);
+
+	async function repairLaravel(id: string) {
+		if (repairBusy) return;
+		repairing = true; actionError = ''; repairConfirmId = null;
+		try {
+			const result = await api.post<{task_id: string}>(`/api/v1/websites/${id}/repair-laravel`, {confirm: true});
+			repairTaskId = result.task_id;
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Laravel repair failed'; repairing = false; }
+	}
 
 	// Create form
 	let showCreateForm = $state(false);
@@ -233,6 +247,7 @@
 			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
 		</div>
 	{/if}
+	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') actionMsg = 'Laravel repair completed.'; }} />
 
 	<!-- Create Form -->
 	{#if showCreateForm}
@@ -404,6 +419,15 @@
 								</td>
 								<td class="px-4 py-3 text-right">
 									<div class="flex items-center justify-end gap-2">
+										{#if website.status === 'active' && website.framework === 'laravel' && website.setup_mode === 'auto-install'}
+											{#if repairConfirmId === website.id}
+												<span class="max-w-xs text-xs text-yellow-400">Create missing SQLite files and run pending SQLite migrations? Existing data and app key are preserved.</span>
+												<button class="px-2 py-1 text-xs bg-blue-600 text-white rounded" onclick={() => repairLaravel(website.id)} disabled={repairBusy}>Confirm repair</button>
+												<button class="text-xs text-gray-400" onclick={() => repairConfirmId = null}>Cancel</button>
+											{:else}
+												<button class="px-2 py-1 text-xs bg-blue-600 text-white rounded disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>Repair Laravel</button>
+											{/if}
+										{/if}
 										{#if website.status === 'failed'}
 											<button
 												onclick={() => retryWebsite(website.id)}
