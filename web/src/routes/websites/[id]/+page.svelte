@@ -3,7 +3,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
-	import { createFileManagerAPI } from '$lib/file-manager.js';
+	import { createFileManagerAPI, defaultFileManagerPath } from '$lib/file-manager.js';
 
 	interface WebsiteDomain {
 		id: string;
@@ -64,7 +64,7 @@
 	}
 
 	let files = $state<FileEntry[]>([]);
-	let currentPath = $state('/');
+	let currentPath = $state(defaultFileManagerPath);
 	let filesLoading = $state(false);
 	let filesError = $state('');
 	let showFiles = $state(false);
@@ -268,7 +268,7 @@
 	}
 
 	// File Manager functions
-	async function loadFiles(path: string = '/') {
+	async function loadFiles(path: string = defaultFileManagerPath) {
 		if (!website) return;
 		filesLoading = true;
 		filesError = '';
@@ -744,7 +744,7 @@
 				<h3 class="text-lg font-semibold text-white">File Manager</h3>
 				{#if !showFiles}
 					<button
-						onclick={() => { showFiles = true; loadFiles('/'); }}
+						onclick={() => { showFiles = true; loadFiles(defaultFileManagerPath); }}
 						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
 					>
 						Browse Files

@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 let createFileManagerAPI;
+let defaultFileManagerPath;
 try {
-	({ createFileManagerAPI } = await import('../../src/lib/file-manager.js'));
+	({ createFileManagerAPI, defaultFileManagerPath } = await import('../../src/lib/file-manager.js'));
 } catch {}
 
 function recordingAPI() {
@@ -45,4 +46,10 @@ test('file uploads send the CSRF token required by the API middleware', async ()
 	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
 	assert.match(page, /import \{ api, getCSRFToken \} from '\$lib\/api'/);
 	assert.match(page, /'X-CSRF-Token': getCSRFToken\(\)/);
+});
+
+test('file manager opens at the website document root', async () => {
+	assert.equal(defaultFileManagerPath, '/public');
+	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
+	assert.match(page, /loadFiles\(defaultFileManagerPath\)/);
 });

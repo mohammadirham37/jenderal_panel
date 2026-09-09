@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/landing"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 )
@@ -125,6 +127,22 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	if result.ExitCode != 0 {
 		p.fail(ctx, websiteID, "chown failed: "+strings.TrimSpace(result.Stderr))
 		return
+	}
+
+	defaultIndex, err := landing.WebsiteUnderDevelopment(w.Domain)
+	if err != nil {
+		p.fail(ctx, websiteID, "render default website page failed: "+err.Error())
+		return
+	}
+	defaultFiles := map[string]string{
+		"index.html": defaultIndex,
+		"robots.txt": landing.RobotsTXT,
+	}
+	for name, content := range defaultFiles {
+		if err := p.ensureWebsiteFile(ctx, w, name, content); err != nil {
+			p.fail(ctx, websiteID, "create default website file failed: "+err.Error())
+			return
+		}
 	}
 
 	// Step 2: configuring
@@ -251,6 +269,36 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	// Step 4: active
 	_ = p.updateStatus(ctx, websiteID, "active", "")
 	p.logAudit(ctx, "website_provisioned", websiteID, "provisioned website "+w.Domain)
+}
+
+// ensureWebsiteFile creates a document-root file as the website user, while
+// preserving any file the user has already created.
+func (p *Provisioner) ensureWebsiteFile(ctx context.Context, w websiteRow, name, content string) error {
+	targetPath := filepath.Join(w.DocumentRoot, name)
+	result, err := p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "test", "-e", targetPath)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", targetPath, err)
+	}
+	if result.ExitCode == 0 {
+		return nil
+	}
+
+	result, err = p.exec.RunSudoWithInput(ctx, content, "-u", w.WebUser, "--", "tee", "--", targetPath)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("write %s: %s", targetPath, strings.TrimSpace(result.Stderr))
+	}
+
+	result, err = p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", "0644", targetPath)
+	if err != nil {
+		return fmt.Errorf("set permissions on %s: %w", targetPath, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("set permissions on %s: %s", targetPath, strings.TrimSpace(result.Stderr))
+	}
+	return nil
 }
 
 // writeSystemFile writes content to a temporary file and copies it to the

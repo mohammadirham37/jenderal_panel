@@ -275,6 +275,9 @@ step_build() {
     chmod +x "$JENDERAL_BIN"
     chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_BIN"
 
+    # Replace Ubuntu's default Nginx page with Jenderal-Panel branding.
+    install -m 0644 "$bd/internal/landing/nginx-welcome.html" /var/www/html/index.nginx-debian.html
+
     cd /
     rm -rf "$bd"
 

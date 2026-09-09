@@ -165,6 +165,73 @@ func TestProvision_Success(t *testing.T) {
 	}
 }
 
+func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-defaults", "coming-soon.example.com", "php", "8.2", "pending")
+
+	written := make(map[string]string)
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "-u" && len(args) >= 5 && args[2] == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
+			if name != "-u" || len(args) < 5 || args[1] != "--" || args[2] != "tee" {
+				t.Fatalf("unexpected default-file command %q %q", name, args)
+			}
+			written[args[len(args)-1]] = input
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-defaults")
+	docRoot := "/home/web_coming_soon_example_com/public"
+	index := written[docRoot+"/index.html"]
+	if !strings.Contains(index, "coming-soon.example.com") || !strings.Contains(index, "Website sedang dikembangkan") {
+		t.Fatalf("default index.html does not contain the domain and development message:\n%s", index)
+	}
+	if !strings.Contains(index, "cdn.tailwindcss.com") || !strings.Contains(index, "Jenderal-Panel") {
+		t.Fatalf("default index.html is missing Tailwind/Jenderal-Panel branding:\n%s", index)
+	}
+	if got := written[docRoot+"/robots.txt"]; got != "User-agent: *\nDisallow: /\n" {
+		t.Fatalf("robots.txt = %q, want crawler blocking defaults", got)
+	}
+}
+
+func TestProvisionDoesNotOverwriteExistingDefaultWebsiteFiles(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-existing", "existing.example.com", "static", "", "pending")
+
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "-u" && len(args) >= 5 && args[2] == "test" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(context.Context, string, string, ...string) (*executor.Result, error) {
+			t.Fatal("existing website files must not be overwritten")
+			return nil, nil
+		},
+	}
+
+	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-existing")
+	status, errMsg := getWebsiteStatus(t, db, "ws-existing")
+	if status != "active" {
+		t.Fatalf("website status = %q, want active; error = %q", status, errMsg)
+	}
+}
+
 func TestProvisionUsesDetectedIPv6Capability(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

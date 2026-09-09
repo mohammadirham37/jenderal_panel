@@ -145,35 +145,38 @@ else
     git clone --depth 1 %s %s 2>&1
 fi
 
-echo ">>> Step 2: Installing frontend dependencies..."
+echo ">>> Step 2: Installing branded Nginx welcome page..."
+install -m 0644 %s/internal/landing/nginx-welcome.html /var/www/html/index.nginx-debian.html
+
+echo ">>> Step 3: Installing frontend dependencies..."
 cd %s/web
 npm install --loglevel=error 2>&1
 
-echo ">>> Step 3: Building frontend..."
+echo ">>> Step 4: Building frontend..."
 npm run build 2>&1
 
-echo ">>> Step 4: Preparing embed..."
+echo ">>> Step 5: Preparing embed..."
 cd %s
 rm -rf cmd/jenderal/web_build
 cp -r web/build cmd/jenderal/web_build
 
-echo ">>> Step 5: Compiling Go binary..."
+echo ">>> Step 6: Compiling Go binary..."
 rm -f %s
 trap 'rm -f %s' EXIT
 CGO_ENABLED=1 go build -o %s ./cmd/jenderal 2>&1
 
-echo ">>> Step 6: Preparing replacement binary..."
+echo ">>> Step 7: Preparing replacement binary..."
 chown jenderal:jenderal %s
 chmod +x %s
 
-echo ">>> Step 7: Backing up current binary..."
+echo ">>> Step 8: Backing up current binary..."
 cp -f %s %s
 
-echo ">>> Step 8: Replacing binary atomically..."
+echo ">>> Step 9: Replacing binary atomically..."
 mv -f %s %s
 trap - EXIT
 
-echo ">>> Step 9: Scheduling verified service restart..."
+echo ">>> Step 10: Scheduling verified service restart..."
 cat > %s <<'JENDERAL_RESTART_SCRIPT'
 #!/bin/bash
 set -e
@@ -217,6 +220,7 @@ fi
 echo ">>> Update complete! Service restart scheduled."
 `,
 		sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
+		sourceDir,
 		sourceDir,
 		sourceDir,
 		replacementPath, replacementPath, replacementPath,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/landing"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
@@ -74,6 +75,20 @@ func (s *Service) Install(ctx context.Context) error {
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("install nginx: %s", strings.TrimSpace(result.Stderr))
+	}
+	result, err = s.exec.RunSudoWithInput(ctx, landing.NginxWelcome(), "tee", "--", "/var/www/html/index.nginx-debian.html")
+	if err != nil {
+		return fmt.Errorf("install nginx welcome page: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("install nginx welcome page: %s", strings.TrimSpace(result.Stderr))
+	}
+	result, err = s.exec.RunSudo(ctx, "chmod", "0644", "/var/www/html/index.nginx-debian.html")
+	if err != nil {
+		return fmt.Errorf("set nginx welcome page permissions: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("set nginx welcome page permissions: %s", strings.TrimSpace(result.Stderr))
 	}
 	return nil
 }

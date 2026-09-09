@@ -1,3 +1,7 @@
+// Website files are stored relative to the account home, while Nginx serves
+// the public subdirectory as the document root.
+export const defaultFileManagerPath = '/public';
+
 /**
  * Creates the website-scoped file manager client using the backend's routes
  * and HTTP methods.

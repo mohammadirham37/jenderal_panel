@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="id" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>{{ .Domain }} — Website sedang dikembangkan</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 antialiased">
+  <main class="relative isolate flex min-h-full items-center justify-center overflow-hidden px-6 py-16">
+    <div class="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_20%_20%,rgba(20,184,166,.2),transparent_32%),radial-gradient(circle_at_80%_75%,rgba(37,99,235,.18),transparent_35%)]"></div>
+    <section class="w-full max-w-2xl rounded-3xl border border-white/10 bg-slate-900/75 p-8 text-center shadow-2xl shadow-teal-950/30 backdrop-blur md:p-12">
+      <div class="mx-auto mb-8 grid h-16 w-16 place-items-center rounded-2xl bg-teal-400/10 ring-1 ring-teal-300/25">
+        <span class="h-4 w-4 animate-pulse rounded-full bg-teal-300 shadow-[0_0_28px_rgba(94,234,212,.8)]"></span>
+      </div>
+      <p class="text-sm font-medium uppercase tracking-[0.25em] text-teal-300">Jenderal-Panel</p>
+      <h1 class="mt-4 text-4xl font-semibold tracking-tight text-white md:text-6xl">Website sedang dikembangkan</h1>
+      <p class="mt-6 text-lg leading-8 text-slate-400">Kami sedang menyiapkan pengalaman terbaik untuk <span class="font-medium text-slate-200">{{ .Domain }}</span>. Silakan kembali lagi segera.</p>
+      <div class="mx-auto mt-10 h-px max-w-xs bg-gradient-to-r from-transparent via-teal-300/40 to-transparent"></div>
+      <p class="mt-6 text-sm text-slate-500">Hosted with Jenderal-Panel</p>
+    </section>
+  </main>
+</body>
+</html>

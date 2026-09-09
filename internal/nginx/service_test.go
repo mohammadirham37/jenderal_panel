@@ -98,6 +98,36 @@ func TestStatus_NotInstalled(t *testing.T) {
 	}
 }
 
+func TestInstallReplacesDefaultWelcomePage(t *testing.T) {
+	var welcomeHTML string
+	var welcomePath string
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return mockResult("", "", 0), nil
+		},
+		RunSudoFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return mockResult("", "", 0), nil
+		},
+		RunSudoWithInputFunc: func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
+			if name == "tee" && len(args) == 2 && args[0] == "--" {
+				welcomeHTML = input
+				welcomePath = args[1]
+			}
+			return mockResult("", "", 0), nil
+		},
+	}
+
+	if err := NewService(mock, nil).Install(context.Background()); err != nil {
+		t.Fatalf("Install() error = %v", err)
+	}
+	if welcomePath != "/var/www/html/index.nginx-debian.html" {
+		t.Fatalf("welcome page path = %q", welcomePath)
+	}
+	if !strings.Contains(welcomeHTML, "Jenderal-Panel") || !strings.Contains(welcomeHTML, "cdn.tailwindcss.com") {
+		t.Fatalf("welcome page is missing branding or Tailwind:\n%s", welcomeHTML)
+	}
+}
+
 func TestTestConfig_Valid(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
