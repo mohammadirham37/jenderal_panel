@@ -66,7 +66,11 @@ func TestDetectStates(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fake := fakeExecutor{runSudo: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			fake := fakeExecutor{runSudo: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+				deadline, ok := ctx.Deadline()
+				if !ok || time.Until(deadline) > detectTimeout {
+					t.Fatalf("Detect did not impose timeout: %v, %v", deadline, ok)
+				}
 				if name != "-u" || len(args) < 13 || args[0] != "web_example" || args[10] != "/bin/bash" || args[11] != "-c" || args[len(args)-3] != "web_example" || args[len(args)-2] != "24" || args[len(args)-1] != "/home/web_example" {
 					t.Fatalf("unexpected command: %q %#v", name, args)
 				}
@@ -95,23 +99,30 @@ func TestDetectRejectsMalformedOutput(t *testing.T) {
 
 func TestInstallRunsPinnedVerifiedScriptAndLogs(t *testing.T) {
 	var script string
-	fake := fakeExecutor{runSudo: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+	fake := fakeExecutor{runSudo: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok || time.Until(deadline) > installTimeout {
+			t.Fatalf("Install did not impose timeout: %v, %v", deadline, ok)
+		}
 		if name != "-u" || args[0] != "web_example" || args[len(args)-3] != "web_example" || args[len(args)-2] != "24" || args[len(args)-1] != "/home/web_example" {
 			t.Fatalf("unexpected command: %q %#v", name, args)
 		}
 		script = args[len(args)-5]
-		return &executor.Result{Stdout: "Installing Node 24\nInstalled Node v24.8.0 with npm 11.6.0\n"}, nil
+		return &executor.Result{Stdout: "Installing Node 24\nInstalled Node v24.8.0 with npm 11.6.0\n", Stderr: "download progress\n"}, nil
 	}}
 	var logs []string
 	if err := New(fake).Install(context.Background(), "web_example", "24", func(s string) { logs = append(logs, s) }); err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{nvmCommit, nvmArchiveSHA256, "curl", "sha256", "nvm install", "nvm alias default", "NODE_VERSION"} {
+	for _, required := range []string{nvmCommit, nvmArchiveSHA256, "curl", "sha256", "nvm install", "nvm alias default", "nvm unalias default", "previous_default", "NODE_VERSION"} {
 		if !strings.Contains(script, required) {
 			t.Fatalf("install script missing %q", required)
 		}
 	}
-	if got := strings.Join(logs, "|"); got != "Installing Node 24|Installed Node v24.8.0 with npm 11.6.0" {
+	if strings.Contains(script, "--latest-npm") {
+		t.Fatal("install must preserve bundled npm rather than mutate an existing runtime")
+	}
+	if got := strings.Join(logs, "|"); got != "Preparing NVM and Node 24 for web_example|Installing Node 24|Installed Node v24.8.0 with npm 11.6.0|download progress" {
 		t.Fatalf("logs = %q", got)
 	}
 }

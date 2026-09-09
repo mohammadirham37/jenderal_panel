@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
@@ -16,6 +17,11 @@ const (
 	nvmVersion       = "v0.40.7"
 	nvmCommit        = "f0b0c6bb0b281ceeb106c8cf9ab8fde141215092"
 	nvmArchiveSHA256 = "2a9578d1e31d2e8fc45984ca1ab33e56dce470b9c986ef3ce265fa57a2be3083"
+)
+
+const (
+	detectTimeout  = 15 * time.Second
+	installTimeout = 15 * time.Minute
 )
 
 const (
@@ -104,6 +110,8 @@ func (s *Service) Detect(ctx context.Context, user, version string) (Status, err
 	if err != nil {
 		return Status{}, err
 	}
+	ctx, cancel := context.WithTimeout(ctx, detectTimeout)
+	defer cancel()
 	result, err := s.exec.RunSudo(ctx, "-u", args...)
 	if err != nil {
 		return Status{}, fmt.Errorf("detect Node runtime: %w", err)
@@ -158,6 +166,11 @@ func (s *Service) Install(ctx context.Context, user, version string, log func(st
 	if err != nil {
 		return err
 	}
+	if log != nil {
+		log(fmt.Sprintf("Preparing NVM and Node %s for %s", version, user))
+	}
+	ctx, cancel := context.WithTimeout(ctx, installTimeout)
+	defer cancel()
 	result, err := s.exec.RunSudo(ctx, "-u", args...)
 	if err != nil {
 		return fmt.Errorf("install Node runtime: %w", err)
@@ -166,10 +179,12 @@ func (s *Service) Install(ctx context.Context, user, version string, log func(st
 		return errors.New("install Node runtime: executor returned no result")
 	}
 	if log != nil {
-		scanner := bufio.NewScanner(strings.NewReader(result.Stdout))
-		for scanner.Scan() {
-			if line := strings.TrimSpace(scanner.Text()); line != "" {
-				log(line)
+		for _, output := range []string{result.Stdout, result.Stderr} {
+			scanner := bufio.NewScanner(strings.NewReader(output))
+			for scanner.Scan() {
+				if line := strings.TrimSpace(scanner.Text()); line != "" {
+					log(line)
+				}
 			}
 		}
 	}
@@ -237,10 +252,22 @@ for path in "$HOME" "$NVM_DIR" "$NVM_DIR/versions" "$NVM_DIR/versions/node" "$NV
 done
 
 stage=''
-cleanup() { if [ -n "$stage" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi; }
+install_ok=false
+previous_default=''
+previous_default_exists=false
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ "$install_ok" != true ] && [ -f "$NVM_DIR/nvm.sh" ]; then
+    . "$NVM_DIR/nvm.sh"
+    if [ "$previous_default_exists" = true ]; then nvm alias default "$previous_default" >/dev/null 2>&1 || true; else nvm unalias default >/dev/null 2>&1 || true; fi
+  fi
+  if [ -n "$stage" ] && [ -d "$stage" ]; then rm -rf -- "$stage"; fi
+  exit "$status"
+}
 trap cleanup EXIT HUP INT TERM
 
-if [ ! -e "$NVM_DIR" ]; then
+install_nvm() {
   stage=$(mktemp -d "$HOME/.nvm-stage.XXXXXX")
   archive=$stage/nvm.tar.gz
   curl --fail --location --silent --show-error --connect-timeout 10 --max-time 120 --proto '=https' --proto-redir '=https' --tlsv1.2 "$archive_url" -o "$archive"
@@ -251,8 +278,21 @@ if [ ! -e "$NVM_DIR" ]; then
   if [ ! -f "$stage/unpacked/nvm.sh" ] || [ ! -x "$stage/unpacked/nvm-exec" ]; then echo 'NVM archive content verification failed' >&2; exit 67; fi
   printf '%s\n' "$expected_commit" > "$stage/unpacked/.jenderal-nvm-commit"
   mv "$stage/unpacked" "$NVM_DIR"
+}
+
+if [ ! -e "$NVM_DIR" ]; then
+  install_nvm
 elif [ ! -d "$NVM_DIR" ] || [ ! -f "$NVM_DIR/nvm.sh" ] || [ ! -x "$NVM_DIR/nvm-exec" ]; then
-  echo 'Existing NVM installation is corrupt; refusing replacement' >&2; exit 68
+  actual_commit=''
+  if [ -f "$NVM_DIR/.jenderal-nvm-commit" ]; then IFS= read -r actual_commit < "$NVM_DIR/.jenderal-nvm-commit" || true; fi
+  if [ "$actual_commit" != "$expected_commit" ] || [ -e "$NVM_DIR/versions/node" ]; then
+    echo 'Existing unknown or runtime-bearing NVM tree is corrupt; refusing replacement' >&2; exit 68
+  fi
+  quarantine="$HOME/.nvm-incomplete.$$.bak"
+  if [ -e "$quarantine" ]; then echo 'NVM repair quarantine already exists' >&2; exit 68; fi
+  mv "$NVM_DIR" "$quarantine"
+  echo "Preserved incomplete panel-owned NVM tree at $quarantine"
+  install_nvm
 else
   actual_commit=''
   if [ -f "$NVM_DIR/.jenderal-nvm-commit" ]; then IFS= read -r actual_commit < "$NVM_DIR/.jenderal-nvm-commit" || true; fi
@@ -261,12 +301,14 @@ fi
 
 echo "Installing Node $version"
 . "$NVM_DIR/nvm.sh"
-nvm install "$version" --latest-npm
+if [ -f "$NVM_DIR/alias/default" ]; then IFS= read -r previous_default < "$NVM_DIR/alias/default"; previous_default_exists=true; fi
+nvm install "$version"
 node_version=$(NODE_VERSION="$version" "$NVM_DIR/nvm-exec" node --version)
 npm_version=$(NODE_VERSION="$version" "$NVM_DIR/nvm-exec" npm --version)
 case "$node_version" in "v$version."*) ;; *) echo "Installed Node verification failed: $node_version" >&2; exit 70;; esac
 if [ -z "$npm_version" ]; then echo 'Installed npm verification failed' >&2; exit 71; fi
 # Promotion is deliberately last: every failure above preserves the prior alias.
 nvm alias default "$version"
+install_ok=true
 echo "Installed Node $node_version with npm $npm_version"
 `
