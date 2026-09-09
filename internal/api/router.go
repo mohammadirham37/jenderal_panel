@@ -489,6 +489,16 @@ func NewRouter(deps Dependencies) http.Handler {
 				Delete("/notification-channels/{id}", notifHandler.DeleteChannel)
 			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
 				Post("/notification-channels/{id}/test", notifHandler.TestChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.view")).
+				Get("/notifications/channels", notifHandler.ListChannels)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Post("/notifications/channels", notifHandler.CreateChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Put("/notifications/channels/{id}", notifHandler.UpdateChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Delete("/notifications/channels/{id}", notifHandler.DeleteChannel)
+			r.With(auth.RequirePermission(deps.RBAC, "notifications.manage")).
+				Post("/notifications/channels/{id}/test", notifHandler.TestChannel)
 
 			// TOTP
 			r.Post("/auth/totp/setup", authHandler.TOTPSetup)

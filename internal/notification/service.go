@@ -3,7 +3,6 @@ package notification
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"log"
 	"time"
@@ -33,12 +32,8 @@ func (s *Service) CreateChannel(ctx context.Context, ch model.NotificationChanne
 	default:
 		return model.NotificationChannel{}, model.NewValidationError("type must be email, telegram, discord, or webhook")
 	}
-	if ch.Config == "" {
-		return model.NotificationChannel{}, model.NewValidationError("config is required")
-	}
-	// Validate that config is valid JSON
-	if !json.Valid([]byte(ch.Config)) {
-		return model.NotificationChannel{}, model.NewValidationError("config must be valid JSON")
+	if err := ValidateConfig(ch.Type, ch.Config); err != nil {
+		return model.NotificationChannel{}, err
 	}
 
 	now := time.Now().UTC()
@@ -69,11 +64,8 @@ func (s *Service) UpdateChannel(ctx context.Context, id string, ch model.Notific
 	default:
 		return model.NewValidationError("type must be email, telegram, discord, or webhook")
 	}
-	if ch.Config == "" {
-		return model.NewValidationError("config is required")
-	}
-	if !json.Valid([]byte(ch.Config)) {
-		return model.NewValidationError("config must be valid JSON")
+	if err := ValidateConfig(ch.Type, ch.Config); err != nil {
+		return err
 	}
 
 	nowStr := time.Now().UTC().Format(time.RFC3339)
@@ -158,7 +150,7 @@ func (s *Service) TestChannel(ctx context.Context, id string) error {
 		return err
 	}
 
-	return dispatch(ch.Type, ch.Config, "Jenderal Panel test notification")
+	return dispatch(ctx, ch.Type, ch.Config, "Jenderal Panel test notification")
 }
 
 // SendAll sends a message to all enabled notification channels.
@@ -173,7 +165,7 @@ func (s *Service) SendAll(ctx context.Context, message string) error {
 		if !ch.Enabled {
 			continue
 		}
-		if err := dispatch(ch.Type, ch.Config, message); err != nil {
+		if err := dispatch(ctx, ch.Type, ch.Config, message); err != nil {
 			log.Printf("[notification] failed to send via %s channel %s: %v", ch.Type, ch.ID, err)
 			lastErr = err
 		}
@@ -182,16 +174,16 @@ func (s *Service) SendAll(ctx context.Context, message string) error {
 }
 
 // dispatch routes a message to the appropriate channel sender.
-func dispatch(channelType, config, message string) error {
+func dispatch(ctx context.Context, channelType, config, message string) error {
 	switch channelType {
 	case "webhook":
-		return SendWebhook(config, message)
+		return sendWebhook(ctx, config, message)
 	case "telegram":
-		return SendTelegram(config, message)
+		return sendTelegram(ctx, config, message)
 	case "discord":
-		return SendDiscord(config, message)
+		return sendDiscord(ctx, config, message)
 	case "email":
-		return SendEmail(config, message)
+		return sendEmailWithDialer(ctx, config, message, networkSMTPDialer{})
 	default:
 		return fmt.Errorf("unsupported channel type: %s", channelType)
 	}

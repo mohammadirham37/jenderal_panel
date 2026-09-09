@@ -6,7 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"test": "node --test tests/alerts/*.test.mjs tests/branding/*.test.mjs tests/filemanager/*.test.mjs tests/firewall/*.test.mjs tests/nginx/*.test.mjs tests/php/*.test.mjs tests/ssl/*.test.mjs tests/terminal/*.test.mjs tests/update/*.test.mjs",
+		"test": "node --test tests/alerts/*.test.mjs tests/branding/*.test.mjs tests/filemanager/*.test.mjs tests/firewall/*.test.mjs tests/nginx/*.test.mjs tests/notifications/*.test.mjs tests/php/*.test.mjs tests/ssl/*.test.mjs tests/terminal/*.test.mjs tests/update/*.test.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",

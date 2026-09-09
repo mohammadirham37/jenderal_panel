@@ -9,6 +9,7 @@
 		enabled: boolean;
 		created_at: string;
 	}
+	type ChannelConfig = Record<string, string | number>;
 
 	let channels = $state<NotificationChannel[]>([]);
 	let loading = $state(true);
@@ -18,21 +19,21 @@
 
 	// Create form
 	let newType = $state('email');
-	let newConfig = $state('');
+	let newConfig = $state<ChannelConfig>({});
 	let creating = $state(false);
 
 	// Edit state
 	let editingChannel = $state<NotificationChannel | null>(null);
-	let editConfig = $state('');
+	let editConfig = $state<ChannelConfig>({});
 
 	const typeOptions = ['email', 'telegram', 'discord', 'webhook'];
 
-	const configPlaceholders: Record<string, string> = {
-		email: '{"to": "admin@example.com", "smtp_host": "smtp.example.com", "smtp_port": 587}',
-		telegram: '{"bot_token": "123456:ABC-DEF", "chat_id": "-1001234567890"}',
-		discord: '{"webhook_url": "https://discord.com/api/webhooks/..."}',
-		webhook: '{"url": "https://example.com/webhook", "method": "POST"}'
-	};
+	function defaultConfig(type: string): ChannelConfig {
+		if (type === 'email') return { smtp_host: '', smtp_port: 587, username: '', password: '', from: '', to: '', encryption: 'starttls' };
+		if (type === 'telegram') return { bot_token: '', chat_id: '' };
+		if (type === 'discord') return { webhook_url: '' };
+		return { url: '', authorization: '' };
+	}
 
 	function typeBadgeClass(type: string): string {
 		switch (type) {
@@ -45,14 +46,16 @@
 	}
 
 	function configPreview(config: Record<string, unknown>): string {
-		const entries = Object.entries(config);
+		const entries = Object.entries(config).filter(([key]) => !['password', 'bot_token', 'authorization'].includes(key));
 		if (entries.length === 0) return '-';
 		return entries.slice(0, 2).map(([k, v]) => `${k}: ${typeof v === 'string' ? v.substring(0, 20) : v}`).join(', ') + (entries.length > 2 ? '...' : '');
 	}
 
 	async function loadChannels() {
+		loading = true;
+		error = '';
 		try {
-			channels = (await api.get<NotificationChannel[]>('/api/v1/notifications/channels')) || [];
+			channels = (await api.get<NotificationChannel[]>('/api/v1/notification-channels')) || [];
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load channels';
 		} finally {
@@ -65,21 +68,17 @@
 		actionError = '';
 		creating = true;
 		try {
-			const config = JSON.parse(newConfig || '{}');
-			await api.post('/api/v1/notifications/channels', {
+			const config = { ...newConfig, ...(newType === 'email' ? { smtp_port: Number(newConfig.smtp_port) } : {}) };
+			await api.post('/api/v1/notification-channels', {
 				type: newType,
 				config
 			});
 			actionMsg = 'Channel created.';
 			newType = 'email';
-			newConfig = '';
+			newConfig = defaultConfig('email');
 			await loadChannels();
 		} catch (err) {
-			if (err instanceof SyntaxError) {
-				actionError = 'Invalid JSON in config.';
-			} else {
-				actionError = err instanceof Error ? err.message : 'Failed to create channel';
-			}
+			actionError = err instanceof Error ? err.message : 'Failed to create channel';
 		} finally {
 			creating = false;
 		}
@@ -89,7 +88,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.put(`/api/v1/notifications/channels/${ch.id}`, { enabled: !ch.enabled });
+			await api.put(`/api/v1/notification-channels/${ch.id}`, { enabled: !ch.enabled });
 			actionMsg = `Channel ${ch.enabled ? 'disabled' : 'enabled'}.`;
 			await loadChannels();
 		} catch (err) {
@@ -101,7 +100,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post(`/api/v1/notifications/channels/${ch.id}/test`);
+			await api.post(`/api/v1/notification-channels/${ch.id}/test`);
 			actionMsg = 'Test notification sent.';
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to send test notification';
@@ -110,7 +109,7 @@
 
 	function startEdit(ch: NotificationChannel) {
 		editingChannel = ch;
-		editConfig = JSON.stringify(ch.config, null, 2);
+		editConfig = Object.fromEntries(Object.entries(ch.config).map(([key, value]) => [key, typeof value === 'number' || typeof value === 'string' ? value : '']));
 	}
 
 	async function saveEdit() {
@@ -118,20 +117,15 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			const config = JSON.parse(editConfig);
-			await api.put(`/api/v1/notifications/channels/${editingChannel.id}`, {
-				config,
+			await api.put(`/api/v1/notification-channels/${editingChannel.id}`, {
+				config: { ...editConfig, ...(editingChannel.type === 'email' ? { smtp_port: Number(editConfig.smtp_port) } : {}) },
 				enabled: editingChannel.enabled
 			});
 			actionMsg = 'Channel updated.';
 			editingChannel = null;
 			await loadChannels();
 		} catch (err) {
-			if (err instanceof SyntaxError) {
-				actionError = 'Invalid JSON in config.';
-			} else {
-				actionError = err instanceof Error ? err.message : 'Failed to update channel';
-			}
+			actionError = err instanceof Error ? err.message : 'Failed to update channel';
 		}
 	}
 
@@ -139,7 +133,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.del(`/api/v1/notifications/channels/${id}`);
+			await api.del(`/api/v1/notification-channels/${id}`);
 			actionMsg = 'Channel deleted.';
 			await loadChannels();
 		} catch (err) {
@@ -150,7 +144,7 @@
 	// Update placeholder when type changes
 	$effect(() => {
 		if (!editingChannel) {
-			newConfig = configPlaceholders[newType] || '{}';
+			newConfig = defaultConfig(newType);
 		}
 	});
 
@@ -232,11 +226,25 @@
 			{#if editingChannel}
 				<div class="mb-4 p-4 bg-gray-900 border border-gray-600 rounded-lg">
 					<h4 class="text-sm font-medium text-white mb-2">Edit Channel: {editingChannel.type}</h4>
-					<textarea
-						bind:value={editConfig}
-						rows={6}
-						class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-					></textarea>
+					<div class="grid gap-3 sm:grid-cols-2">
+						{#if editingChannel.type === 'email'}
+							<label class="text-sm text-gray-300">SMTP Host<input bind:value={editConfig.smtp_host} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">SMTP Port<input type="number" bind:value={editConfig.smtp_port} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">Username<input bind:value={editConfig.username} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">Password<input type="password" bind:value={editConfig.password} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">From<input type="email" bind:value={editConfig.from} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">Recipient<input type="email" bind:value={editConfig.to} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">Encryption<select bind:value={editConfig.encryption} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white"><option value="starttls">STARTTLS</option><option value="tls">SSL/TLS</option><option value="none">None</option></select></label>
+						{:else if editingChannel.type === 'telegram'}
+							<label class="text-sm text-gray-300">Bot Token<input type="password" bind:value={editConfig.bot_token} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">Chat ID<input bind:value={editConfig.chat_id} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+						{:else if editingChannel.type === 'discord'}
+							<label class="text-sm text-gray-300 sm:col-span-2">Webhook URL<input type="url" bind:value={editConfig.webhook_url} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+						{:else}
+							<label class="text-sm text-gray-300">Webhook URL<input type="url" bind:value={editConfig.url} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+							<label class="text-sm text-gray-300">Authorization Header<input type="password" bind:value={editConfig.authorization} class="mt-1 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-white" /></label>
+						{/if}
+					</div>
 					<div class="mt-2 flex gap-2">
 						<button onclick={saveEdit} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded transition-colors cursor-pointer">Save</button>
 						<button onclick={() => (editingChannel = null)} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer">Cancel</button>
@@ -258,15 +266,24 @@
 						{/each}
 					</select>
 				</div>
-				<div>
-					<label for="notif-config" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Config (JSON)</label>
-					<textarea
-						id="notif-config"
-						bind:value={newConfig}
-						rows={4}
-						placeholder={configPlaceholders[newType]}
-						class="w-full bg-gray-700 border border-gray-600 rounded p-3 text-gray-200 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-					></textarea>
+				<div class="grid gap-3 sm:grid-cols-2">
+					{#if newType === 'email'}
+						<label class="text-sm text-gray-300">SMTP Host<input aria-label="smtp_host" bind:value={newConfig.smtp_host} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" placeholder="smtp.example.com" /></label>
+						<label class="text-sm text-gray-300">SMTP Port<input aria-label="smtp_port" type="number" min="1" max="65535" bind:value={newConfig.smtp_port} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+						<label class="text-sm text-gray-300">Username<input aria-label="username" bind:value={newConfig.username} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+						<label class="text-sm text-gray-300">Password<input aria-label="password" type="password" bind:value={newConfig.password} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+						<label class="text-sm text-gray-300">From<input aria-label="from" type="email" bind:value={newConfig.from} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" placeholder="panel@example.com" /></label>
+						<label class="text-sm text-gray-300">Recipient<input aria-label="to" type="email" bind:value={newConfig.to} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" placeholder="admin@example.com" /></label>
+						<label class="text-sm text-gray-300">Encryption<select aria-label="encryption" bind:value={newConfig.encryption} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white"><option value="starttls">STARTTLS</option><option value="tls">SSL/TLS</option><option value="none">None</option></select></label>
+					{:else if newType === 'telegram'}
+						<label class="text-sm text-gray-300">Bot Token<input aria-label="bot_token" type="password" bind:value={newConfig.bot_token} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+						<label class="text-sm text-gray-300">Chat ID<input aria-label="chat_id" bind:value={newConfig.chat_id} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+					{:else if newType === 'discord'}
+						<label class="text-sm text-gray-300 sm:col-span-2">Webhook URL<input aria-label="webhook_url" type="url" bind:value={newConfig.webhook_url} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+					{:else}
+						<label class="text-sm text-gray-300">Webhook URL<input aria-label="url" type="url" bind:value={newConfig.url} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" /></label>
+						<label class="text-sm text-gray-300">Authorization Header<input aria-label="authorization" type="password" bind:value={newConfig.authorization} class="mt-1 w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-white" placeholder="Bearer ..." /></label>
+					{/if}
 				</div>
 				<button
 					onclick={addChannel}
