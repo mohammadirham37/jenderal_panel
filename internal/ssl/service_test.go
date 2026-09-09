@@ -478,6 +478,9 @@ func TestList(t *testing.T) {
 	if len(wsCerts) != 1 {
 		t.Errorf("expected 1 certificate for ws-003, got %d", len(wsCerts))
 	}
+	if len(wsCerts) == 1 && wsCerts[0].WebsiteID != "ws-003" {
+		t.Errorf("certificate website_id = %q, want ws-003", wsCerts[0].WebsiteID)
+	}
 	emptyCerts, err := svc.ListByWebsite(context.Background(), "ws-empty")
 	if err != nil || len(emptyCerts) != 0 {
 		t.Fatalf("empty website certs = %#v, error = %v, want empty result", emptyCerts, err)
