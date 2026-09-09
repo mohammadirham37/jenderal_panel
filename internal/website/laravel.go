@@ -118,7 +118,7 @@ func laravelEnvironment(content, root string, fresh bool) (string, string, bool,
 	return strings.Join(lines, "\n"), database, values["APP_KEY"] == "", nil
 }
 
-func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root string, fresh bool, progress func(string, string) error) error {
+func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root string, fresh, installMissingSQLite bool, progress func(string, string) error) error {
 	profile, err := profileForWebsiteRow(w)
 	if err != nil {
 		return err
@@ -206,8 +206,14 @@ func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root str
 			return fmt.Errorf("save Laravel environment failed")
 		}
 	}
-	if err := run("check PHP SQLite extension", php, "-r", `if (!extension_loaded('pdo_sqlite')) { fwrite(STDERR, "Missing pdo_sqlite: run sudo apt-get install " . $argv[1] . " in Terminal, then retry this operation.\n"); exit(1); }`, "php"+w.PHPVersion+"-sqlite3"); err != nil {
-		return err
+	if installMissingSQLite {
+		if err := i.installLaravelSQLiteExtension(ctx, w, progress); err != nil {
+			return err
+		}
+	} else {
+		if err := run("check PHP SQLite extension", php, "-r", `if (!extension_loaded('pdo_sqlite')) { fwrite(STDERR, "Missing pdo_sqlite: run sudo apt-get install " . $argv[1] . " in Terminal, then retry this operation.\n"); exit(1); }`, "php"+w.PHPVersion+"-sqlite3"); err != nil {
+			return err
+		}
 	}
 	prepare := `set -eu; root=$1; db=$2
  for target in "$root/database" "$root/storage" "$root/bootstrap" "$root/bootstrap/cache" "$db"; do
