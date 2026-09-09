@@ -193,6 +193,17 @@ func (s *Service) resolveWebsitePath(ctx context.Context, basePath, subPath stri
 	return resolvedTarget, nil
 }
 
+func (s *Service) rejectResolvedWebsiteRoot(ctx context.Context, basePath, target string) error {
+	resolvedBase, err := s.resolveWebsitePath(ctx, basePath, "", false)
+	if err != nil {
+		return err
+	}
+	if filepath.Clean(target) == filepath.Clean(resolvedBase) {
+		return model.NewValidationError("the website root cannot be modified")
+	}
+	return nil
+}
+
 // Browse lists the contents of a directory within the website's base path.
 func (s *Service) Browse(ctx context.Context, basePath, subPath string) ([]model.FileEntry, error) {
 	dir, err := s.resolveWebsitePath(ctx, basePath, subPath, false)
@@ -239,8 +250,11 @@ func (s *Service) WriteFile(ctx context.Context, basePath, filePath, content str
 	if err != nil {
 		return err
 	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, full); err != nil {
+		return err
+	}
 
-	existsResult, err := s.runAsWebsiteUser(ctx, basePath, "test", "-e", "--", full)
+	existsResult, err := s.runAsWebsiteUser(ctx, basePath, "stat", "--", full)
 	if err != nil {
 		return fmt.Errorf("check existing file: %w", err)
 	}
@@ -275,6 +289,9 @@ func (s *Service) DeleteFile(ctx context.Context, basePath, filePath string) err
 	if err != nil {
 		return err
 	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, full); err != nil {
+		return err
+	}
 
 	result, err := s.runAsWebsiteUser(ctx, basePath, "rm", "-rf", "--", full)
 	if err != nil {
@@ -303,6 +320,12 @@ func (s *Service) Rename(ctx context.Context, basePath, oldPath, newPath string)
 	if err != nil {
 		return err
 	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, fullOld); err != nil {
+		return err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, fullNew); err != nil {
+		return err
+	}
 	result, err := s.runAsWebsiteUser(ctx, basePath, "mv", "--", fullOld, fullNew)
 	if err != nil {
 		return fmt.Errorf("file rename: %w", err)
@@ -323,6 +346,9 @@ func (s *Service) CreateDir(ctx context.Context, basePath, dirPath string) error
 	if err != nil {
 		return err
 	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, full); err != nil {
+		return err
+	}
 	result, err := s.runAsWebsiteUser(ctx, basePath, "mkdir", "-p", "--", full)
 	if err != nil {
 		return fmt.Errorf("create dir: %w", err)
@@ -341,6 +367,9 @@ func (s *Service) Chmod(ctx context.Context, basePath, filePath, mode string) er
 	}
 	full, err := s.resolveWebsitePath(ctx, basePath, filePath, false)
 	if err != nil {
+		return err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, full); err != nil {
 		return err
 	}
 	result, err := s.runAsWebsiteUser(ctx, basePath, "chmod", "--", mode, full)

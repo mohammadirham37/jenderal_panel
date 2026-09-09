@@ -243,6 +243,18 @@ func TestDeleteFileRejectsWebsiteRoot(t *testing.T) {
 	}
 }
 
+func TestRejectResolvedWebsiteRootBlocksCanonicalAlias(t *testing.T) {
+	basePath := t.TempDir()
+	resolvedBasePath, err := filepath.EvalSymlinks(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(&executor.MockExecutor{}, nil)
+	if err := svc.rejectResolvedWebsiteRoot(context.Background(), basePath, resolvedBasePath); err == nil {
+		t.Fatal("canonical alias to the website root was accepted")
+	}
+}
+
 func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 	basePath := t.TempDir()
 	resolvedBasePath, err := filepath.EvalSymlinks(basePath)
@@ -262,7 +274,7 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 				t.Fatalf("unexpected website-user command %q %q", name, args)
 			}
 			switch args[2] {
-			case "test":
+			case "stat":
 				return &executor.Result{ExitCode: 1}, nil
 			case "chmod":
 				chmodCalled = true
@@ -296,6 +308,38 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 	}
 	if !chmodCalled {
 		t.Fatal("WriteFile did not set a readable mode on the new file")
+	}
+}
+
+func TestWriteFilePreservesExistingMode(t *testing.T) {
+	basePath := t.TempDir()
+	filePath := filepath.Join(basePath, "existing.sh")
+	if err := os.WriteFile(filePath, []byte("old"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	mock := &executor.MockExecutor{
+		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			if name != "-u" || len(args) < 3 {
+				t.Fatalf("unexpected command %q %q", name, args)
+			}
+			if args[2] == "chmod" {
+				t.Fatal("WriteFile changed the mode of an existing file")
+			}
+			if args[2] != "stat" {
+				t.Fatalf("unexpected command %q", args[2])
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(context.Context, string, string, ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	if err := NewService(mock, nil).WriteFile(context.Background(), basePath, "existing.sh", "new"); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 }
 
