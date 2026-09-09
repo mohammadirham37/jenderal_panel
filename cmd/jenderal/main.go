@@ -33,6 +33,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
+	"github.com/mohammadirham37/jenderal_panel/internal/security"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
@@ -174,6 +175,8 @@ func cmdServe() {
 		logger.Error("initialize task runner failed", "error", err)
 		os.Exit(1)
 	}
+	securityEvents := security.NewEventService(db, notifSvc)
+	securitySvc := security.NewService(securityEvents, tasks)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
@@ -216,6 +219,8 @@ func cmdServe() {
 		UpdateSvc:      updateSvc,
 		Exec:           exec,
 		Tasks:          tasks,
+		SecuritySvc:    securitySvc,
+		SecurityEvents: securityEvents,
 		DB:             db,
 		StaticHandler:  staticHandler(),
 	})

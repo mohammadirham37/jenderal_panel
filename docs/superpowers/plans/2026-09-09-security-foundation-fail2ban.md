@@ -249,7 +249,7 @@ git commit -m "feat(security): add security event lifecycle"
 - Produces: `Service.Overview(context.Context) Overview`, `Service.ListEvents`, and `Service.TransitionEvent`.
 - Produces HTTP: `GET /api/v1/security/overview`, `GET /api/v1/security/events`, `POST /api/v1/security/events/{id}/transition`.
 
-- [ ] **Step 1: Write failing RBAC and handler contract tests**
+- [x] **Step 1: Write failing RBAC and handler contract tests**
 
 ```go
 func TestSecurityPermissionsSeededForAdminAndViewForUser(t *testing.T) {
@@ -271,13 +271,13 @@ func TestTransitionEventRejectsUnknownStatus(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run: `go test ./internal/auth ./internal/security ./internal/api -run 'Security|Transition' -count=1`
 
 Expected: FAIL on missing permissions, handlers, and dependency wiring.
 
-- [ ] **Step 3: Implement permissions and typed endpoints**
+- [x] **Step 3: Implement permissions and typed endpoints**
 
 Append `security.view`, `security.manage`, and `security.quarantine` to the seed list. Give regular users only `security.view`; admins receive all permissions through the existing admin loop. Update count-based RBAC assertions from 60 to 63.
 
@@ -295,13 +295,13 @@ Register routes with `security.view` for reads and `security.manage` for transit
 
 Wire the services through new `SecuritySvc` and `SecurityEvents` fields in `api.Dependencies` and construct them in `cmd/jenderal/main.go`.
 
-- [ ] **Step 4: Verify RBAC, API, and overview tests**
+- [x] **Step 4: Verify RBAC, API, and overview tests**
 
 Run: `go test ./internal/auth ./internal/security ./internal/api ./cmd/jenderal -count=1`
 
 Expected: PASS and existing route tests remain compatible.
 
-- [ ] **Step 5: Commit the Security Center API**
+- [x] **Step 5: Commit the Security Center API**
 
 ```bash
 git add internal/auth internal/security internal/api/router.go cmd/jenderal/main.go

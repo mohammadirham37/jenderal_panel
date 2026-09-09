@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 )
 
@@ -101,8 +102,8 @@ func TestGetUserPermissions(t *testing.T) {
 		t.Fatalf("get permissions: %v", err)
 	}
 
-	if len(perms) != 60 {
-		t.Errorf("expected 60 permissions for admin, got %d", len(perms))
+	if len(perms) != 63 {
+		t.Errorf("expected 63 permissions for admin, got %d", len(perms))
 	}
 }
 
@@ -156,8 +157,8 @@ func TestSeedIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count permissions: %v", err)
 	}
-	if count != 60 {
-		t.Errorf("expected 60 permissions after double seed, got %d", count)
+	if count != 63 {
+		t.Errorf("expected 63 permissions after double seed, got %d", count)
 	}
 
 	var roleCount int
@@ -167,5 +168,34 @@ func TestSeedIdempotent(t *testing.T) {
 	}
 	if roleCount != 2 {
 		t.Errorf("expected 2 roles after double seed, got %d", roleCount)
+	}
+}
+
+func TestSecurityPermissionsSeededForAdminAndViewForUser(t *testing.T) {
+	db := setupTestDB(t)
+	rbac := NewRBAC(db)
+	if err := rbac.Seed(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertRolePermission(t, db, "admin", "security.manage", true)
+	assertRolePermission(t, db, "admin", "security.quarantine", true)
+	assertRolePermission(t, db, "user", "security.view", true)
+	assertRolePermission(t, db, "user", "security.manage", false)
+}
+
+func assertRolePermission(t *testing.T, db interface {
+	QueryRow(string, ...any) *sql.Row
+}, role, permission string, want bool) {
+	t.Helper()
+	var count int
+	err := db.QueryRow(`SELECT COUNT(*) FROM role_permissions rp
+		JOIN roles r ON r.id = rp.role_id
+		JOIN permissions p ON p.id = rp.permission_id
+		WHERE r.name = ? AND p.name = ?`, role, permission).Scan(&count)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := count > 0; got != want {
+		t.Fatalf("role %q permission %q = %v, want %v", role, permission, got, want)
 	}
 }

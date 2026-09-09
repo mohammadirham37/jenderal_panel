@@ -26,6 +26,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
+	"github.com/mohammadirham37/jenderal_panel/internal/security"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
@@ -68,6 +69,8 @@ type Dependencies struct {
 	UpdateSvc      *update.Service
 	Exec           executor.CommandExecutor
 	Tasks          *taskrunner.Runner
+	SecuritySvc    *security.Service
+	SecurityEvents *security.EventService
 	StaticHandler  http.Handler
 }
 
@@ -107,6 +110,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	fileHandler := filemanager.NewHandler(deps.FileManagerSvc, deps.DB, deps.AuditSvc)
 	terminalHandler := terminal.NewHandler(deps.Exec, deps.AuditSvc)
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
+	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -554,6 +558,14 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/update/check", updateHandler.Check)
 			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
 				Post("/update/perform", updateHandler.Perform)
+
+			// Security Center
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/overview", securityHandler.Overview)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/events", securityHandler.ListEvents)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/events/{id}/transition", securityHandler.TransitionEvent)
 		})
 	})
 
