@@ -18,6 +18,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 )
@@ -55,6 +56,7 @@ type Service struct {
 	prov          *Provisioner
 	ipv6Available func() bool
 	mutations     *siteops.Coordinator
+	tasks         *taskrunner.Runner
 }
 
 // NewService creates a new website management service.

@@ -70,13 +70,22 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Check for website-scoped terminal query parameters.
+	websiteID := r.URL.Query().Get("website_id")
+	webUser := r.URL.Query().Get("web_user")
+	workdir := r.URL.Query().Get("workdir")
+
 	// Log session start.
+	sessionDetail := "terminal WebSocket session opened"
+	if websiteID != "" {
+		sessionDetail = "terminal WebSocket session opened for website " + websiteID
+	}
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
 		UserID: user.ID,
 		Action: "terminal_session_start",
 		Module: "terminal",
-		Target: "",
-		Detail: "terminal WebSocket session opened",
+		Target: websiteID,
+		Detail: sessionDetail,
 		IP:     r.RemoteAddr,
 	})
 
@@ -121,13 +130,21 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 			UserID: user.ID,
 			Action: "terminal_command",
 			Module: "terminal",
-			Target: "",
+			Target: websiteID,
 			Detail: req.Command,
 			IP:     r.RemoteAddr,
 		})
 
-		// Execute the command via sh -c.
-		result, execErr := h.exec.RunSudo(ctx, "sh", "-c", req.Command)
+		// Execute the command. When website-scoped params are present,
+		// run as the web user in the specified working directory.
+		var result *executor.Result
+		var execErr error
+		if webUser != "" && workdir != "" {
+			wrappedCmd := "cd " + workdir + " && " + req.Command
+			result, execErr = h.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", wrappedCmd, webUser)
+		} else {
+			result, execErr = h.exec.RunSudo(ctx, "sh", "-c", req.Command)
+		}
 
 		resp := wsResponse{
 			Type: "output",

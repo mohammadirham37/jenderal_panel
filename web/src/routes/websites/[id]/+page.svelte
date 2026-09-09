@@ -1,10 +1,13 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
 	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
-	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
+	import { decodeTerminalMessage } from '$lib/terminal-message.js';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
+
+	// ─── Interfaces ───────────────────────────────────────────────────
 
 	interface WebsiteDomain {
 		id: string;
@@ -26,36 +29,6 @@
 		created_at: string;
 	}
 
-	let website = $state<Website | null>(null);
-	let loading = $state(true);
-	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
-
-	// Domains
-	let addDomainName = $state('');
-	let addDomainType = $state('alias');
-	let addingDomain = $state(false);
-
-	// Config editor
-	let configContent = $state('');
-	let configLoading = $state(false);
-	let configError = $state('');
-	let configSaveMsg = $state('');
-	let showConfig = $state(false);
-
-	// Logs
-	let logTab = $state<'access' | 'error'>('access');
-	let accessLogs = $state('');
-	let errorLogs = $state('');
-	let logsLoading = $state(false);
-	let logsError = $state('');
-	let showLogs = $state(false);
-
-	// Delete confirm
-	let deleteConfirm = $state(false);
-
-	// File Manager
 	interface FileEntry {
 		name: string;
 		path: string;
@@ -66,65 +39,195 @@
 		mod_time: string;
 	}
 
+	interface CommandPreset {
+		label: string;
+		command: string;
+		category: string;
+		danger: boolean;
+	}
+
+	interface DeploymentEntry {
+		id: string;
+		commit: string;
+		branch: string;
+		status: string;
+		duration: number;
+		created_at: string;
+		log?: string;
+	}
+
+	// ─── Tabs ─────────────────────────────────────────────────────────
+
+	const tabs = ['Overview', 'Deployment', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains'] as const;
+	type Tab = typeof tabs[number];
+	let activeTab = $state<Tab>('Overview');
+
+	// ─── Core State ───────────────────────────────────────────────────
+
+	let website = $state<Website | null>(null);
+	let loading = $state(true);
+	let error = $state('');
+	let actionMsg = $state('');
+	let actionError = $state('');
+
+	// ─── Overview ─────────────────────────────────────────────────────
+
+	let deleteConfirm = $state(false);
+	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
+
+	// ─── Deployment ───────────────────────────────────────────────────
+
+	let gitProvider = $state<'github' | 'gitlab' | 'bitbucket' | 'custom'>('github');
+	let repoUrl = $state('');
+	let repoBranch = $state('main');
+	let repoVisibility = $state<'public' | 'private'>('public');
+
+	let deployKey = $state('');
+	let deployKeyLoading = $state(false);
+	let deployKeyError = $state('');
+	let deployKeyCopied = $state(false);
+
+	let deployTaskId = $state('');
+	let deploying = $state(false);
+
+	let uploadDeployFile: HTMLInputElement;
+	let uploadDeployTaskId = $state('');
+	let uploadingDeploy = $state(false);
+
+	let deployments = $state<DeploymentEntry[]>([]);
+	let deploymentsLoading = $state(false);
+	let expandedDeploymentId = $state<string | null>(null);
+
+	let deploymentTabInitialized = $state(false);
+
+	// ─── Commands ─────────────────────────────────────────────────────
+
+	let commandPresets = $state<CommandPreset[]>([]);
+	let commandsLoading = $state(false);
+	let commandsError = $state('');
+	let commandTaskId = $state('');
+	let commandsInitialized = $state(false);
+
+	// ─── Terminal ─────────────────────────────────────────────────────
+
+	let terminalOutput = $state('');
+	let terminalCommand = $state('');
+	let terminalConnected = $state(false);
+	let terminalConnecting = $state(false);
+	let terminalWs: WebSocket | null = null;
+	let terminalOutputEl: HTMLTextAreaElement;
+
+	// ─── Files ────────────────────────────────────────────────────────
+
 	let files = $state<FileEntry[]>([]);
 	let currentPath = $state('/');
 	let filesLoading = $state(false);
 	let filesError = $state('');
-	let showFiles = $state(false);
 	let fileActionMsg = $state('');
 	let fileActionError = $state('');
+	let filesInitialized = $state(false);
 
-	// File edit
 	let editingFile = $state<string | null>(null);
 	let editFileContent = $state('');
 	let editFileLoading = $state(false);
 
-	// Create dir/file
 	let showCreateDir = $state(false);
 	let newDirName = $state('');
 	let showCreateFile = $state(false);
 	let newFileName = $state('');
 
-	// Rename
 	let renamingFile = $state<string | null>(null);
 	let renameValue = $state('');
 
-	// Upload
 	let uploadInput: HTMLInputElement;
 
-	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
+	// ─── Logs ─────────────────────────────────────────────────────────
+
+	let logTab = $state<'access' | 'error'>('access');
+	let accessLogs = $state('');
+	let errorLogs = $state('');
+	let logsLoading = $state(false);
+	let logsError = $state('');
+	let logsInitialized = $state(false);
+
+	// ─── Config ───────────────────────────────────────────────────────
+
+	let configContent = $state('');
+	let configLoading = $state(false);
+	let configError = $state('');
+	let configSaveMsg = $state('');
+	let configInitialized = $state(false);
+
+	// ─── Domains ──────────────────────────────────────────────────────
+
+	let addDomainName = $state('');
+	let addDomainType = $state('alias');
+	let addingDomain = $state(false);
+
+	// ─── Helpers ──────────────────────────────────────────────────────
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
-			case 'active':
-				return 'bg-green-900 text-green-300';
-			case 'pending':
-			case 'installing':
-			case 'configuring':
-			case 'validating':
+			case 'active': return 'bg-green-900 text-green-300';
+			case 'pending': case 'installing': case 'configuring': case 'validating':
 				return 'bg-yellow-900 text-yellow-300 animate-pulse';
-			case 'failed':
-				return 'bg-red-900 text-red-300';
-			case 'suspended':
-			case 'disabled':
-				return 'bg-gray-700 text-gray-400';
-			default:
-				return 'bg-gray-700 text-gray-400';
+			case 'failed': return 'bg-red-900 text-red-300';
+			case 'suspended': case 'disabled': return 'bg-gray-700 text-gray-400';
+			default: return 'bg-gray-700 text-gray-400';
 		}
 	}
 
 	function domainTypeBadgeClass(type: string): string {
 		switch (type) {
-			case 'primary':
-				return 'bg-blue-900 text-blue-300';
-			case 'alias':
-				return 'bg-purple-900 text-purple-300';
-			case 'subdomain':
-				return 'bg-cyan-900 text-cyan-300';
-			default:
-				return 'bg-gray-700 text-gray-400';
+			case 'primary': return 'bg-blue-900 text-blue-300';
+			case 'alias': return 'bg-purple-900 text-purple-300';
+			case 'subdomain': return 'bg-cyan-900 text-cyan-300';
+			default: return 'bg-gray-700 text-gray-400';
 		}
 	}
+
+	function deployStatusBadgeClass(status: string): string {
+		switch (status) {
+			case 'success': case 'completed': return 'bg-green-900 text-green-300';
+			case 'running': return 'bg-yellow-900 text-yellow-300 animate-pulse';
+			case 'failed': return 'bg-red-900 text-red-300';
+			default: return 'bg-gray-700 text-gray-400';
+		}
+	}
+
+	function formatSize(bytes: number): string {
+		if (bytes === 0) return '-';
+		const units = ['B', 'KB', 'MB', 'GB'];
+		let i = 0;
+		let size = bytes;
+		while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+	}
+
+	function isTextFile(name: string): boolean {
+		const ext = name.split('.').pop()?.toLowerCase() || '';
+		return ['txt','html','css','js','ts','json','xml','yml','yaml','md','conf','cfg','ini','log','sh','bash','php','py','rb','env','htaccess','svg'].includes(ext);
+	}
+
+	function formatDuration(seconds: number): string {
+		if (seconds < 60) return `${seconds}s`;
+		const m = Math.floor(seconds / 60);
+		const s = seconds % 60;
+		return `${m}m ${s}s`;
+	}
+
+	function formatDate(dateStr: string): string {
+		return new Date(dateStr).toLocaleString();
+	}
+
+	const providerInstructions: Record<string, string> = {
+		github: 'Go to your repo → Settings → Deploy Keys → Add deploy key → Paste the key above',
+		gitlab: 'Go to your repo → Settings → Repository → Deploy Keys → Add key',
+		bitbucket: 'Go to your repo → Repository settings → Access keys → Add key',
+		custom: 'Add the public key to your Git server\'s authorized keys'
+	};
+
+	// ─── API Calls ────────────────────────────────────────────────────
 
 	async function loadWebsite() {
 		loading = true;
@@ -138,129 +241,40 @@
 		}
 	}
 
-	async function addDomain() {
-		if (!website || !addDomainName.trim()) return;
-		addingDomain = true;
-		actionMsg = '';
-		actionError = '';
-		try {
-			await api.post(`/api/v1/websites/${website.id}/domains`, {
-				name: addDomainName,
-				type: addDomainType
-			});
-			actionMsg = `Domain "${addDomainName}" added.`;
-			addDomainName = '';
-			addDomainType = 'alias';
-			await loadWebsite();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to add domain';
-		} finally {
-			addingDomain = false;
-		}
-	}
-
-	async function removeDomain(domainId: string) {
-		if (!website) return;
-		actionMsg = '';
-		actionError = '';
-		try {
-			await api.del(`/api/v1/websites/${website.id}/domains/${domainId}`);
-			actionMsg = 'Domain removed.';
-			await loadWebsite();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to remove domain';
-		}
-	}
-
-	async function loadConfig() {
-		if (!website) return;
-		configLoading = true;
-		configError = '';
-		try {
-			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/config`);
-			configContent = data.content || '';
-		} catch (err) {
-			configError = err instanceof Error ? err.message : 'Failed to load config';
-		} finally {
-			configLoading = false;
-		}
-	}
-
-	async function saveConfig() {
-		if (!website) return;
-		configSaveMsg = '';
-		configError = '';
-		try {
-			await api.put(`/api/v1/websites/${website.id}/config`, { content: configContent });
-			configSaveMsg = 'Configuration saved successfully.';
-		} catch (err) {
-			configError = err instanceof Error ? err.message : 'Failed to save config';
-		}
-	}
-
-	async function loadLogs(type: 'access' | 'error') {
-		if (!website) return;
-		logsLoading = true;
-		logsError = '';
-		try {
-			const data = await api.get<{ content: string }>(
-				`/api/v1/websites/${website.id}/logs/${type}?lines=100`
-			);
-			if (type === 'access') {
-				accessLogs = data.content || '';
-			} else {
-				errorLogs = data.content || '';
-			}
-		} catch (err) {
-			logsError = err instanceof Error ? err.message : 'Failed to load logs';
-		} finally {
-			logsLoading = false;
-		}
-	}
-
+	// Overview actions
 	async function suspendWebsite() {
 		if (!website) return;
-		actionMsg = '';
-		actionError = '';
+		actionMsg = ''; actionError = '';
 		try {
 			await api.post(`/api/v1/websites/${website.id}/suspend`);
 			actionMsg = 'Website suspended.';
 			await loadWebsite();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to suspend website';
-		}
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to suspend website'; }
 	}
 
 	async function enableWebsite() {
 		if (!website) return;
-		actionMsg = '';
-		actionError = '';
+		actionMsg = ''; actionError = '';
 		try {
 			await api.post(`/api/v1/websites/${website.id}/enable`);
 			actionMsg = 'Website enabled.';
 			await loadWebsite();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to enable website';
-		}
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to enable website'; }
 	}
 
 	async function retryWebsite() {
 		if (!website) return;
-		actionMsg = '';
-		actionError = '';
+		actionMsg = ''; actionError = '';
 		try {
 			await api.post(`/api/v1/websites/${website.id}/retry`);
 			actionMsg = 'Retry initiated.';
 			await loadWebsite();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to retry';
-		}
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to retry'; }
 	}
 
 	async function deleteWebsite() {
 		if (!website) return;
-		actionMsg = '';
-		actionError = '';
+		actionMsg = ''; actionError = '';
 		try {
 			await api.del(`/api/v1/websites/${website.id}`);
 			goto('/websites');
@@ -270,7 +284,222 @@
 		}
 	}
 
-	// File Manager functions
+	// Deployment
+	async function checkDeployKey() {
+		if (!website) return;
+		deployKeyLoading = true;
+		deployKeyError = '';
+		try {
+			const data = await api.get<{ public_key: string }>(`/api/v1/websites/${website.id}/deploy-key`);
+			deployKey = data.public_key || '';
+		} catch {
+			deployKey = '';
+		} finally {
+			deployKeyLoading = false;
+		}
+	}
+
+	async function generateDeployKey() {
+		if (!website) return;
+		deployKeyLoading = true;
+		deployKeyError = '';
+		try {
+			const data = await api.post<{ public_key: string }>(`/api/v1/websites/${website.id}/deploy-key`);
+			deployKey = data.public_key || '';
+		} catch (err) {
+			deployKeyError = err instanceof Error ? err.message : 'Failed to generate deploy key';
+		} finally {
+			deployKeyLoading = false;
+		}
+	}
+
+	async function deleteDeployKey() {
+		if (!website) return;
+		deployKeyLoading = true;
+		deployKeyError = '';
+		try {
+			await api.del(`/api/v1/websites/${website.id}/deploy-key`);
+			deployKey = '';
+		} catch (err) {
+			deployKeyError = err instanceof Error ? err.message : 'Failed to delete deploy key';
+		} finally {
+			deployKeyLoading = false;
+		}
+	}
+
+	async function copyDeployKey() {
+		try {
+			await navigator.clipboard.writeText(deployKey);
+			deployKeyCopied = true;
+			setTimeout(() => { deployKeyCopied = false; }, 2000);
+		} catch { /* clipboard not available */ }
+	}
+
+	async function deployNow() {
+		if (!website || !repoUrl.trim()) return;
+		deploying = true;
+		actionMsg = ''; actionError = '';
+		try {
+			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/deploy`, {
+				repo: repoUrl,
+				branch: repoBranch
+			});
+			deployTaskId = data.task_id || '';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to start deployment';
+		} finally {
+			deploying = false;
+		}
+	}
+
+	async function uploadDeploy(event: Event) {
+		if (!website) return;
+		const input = event.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		uploadingDeploy = true;
+		actionMsg = ''; actionError = '';
+		try {
+			const formData = new FormData();
+			formData.append('file', file);
+			const res = await fetch(`/api/v1/websites/${website.id}/upload-deploy`, {
+				method: 'POST',
+				headers: { 'X-CSRF-Token': getCSRFToken() },
+				credentials: 'include',
+				body: formData
+			});
+			if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+			const json = await res.json();
+			uploadDeployTaskId = json.data?.task_id || '';
+			actionMsg = 'Upload started.';
+			input.value = '';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to upload';
+		} finally {
+			uploadingDeploy = false;
+		}
+	}
+
+	async function loadDeployments() {
+		if (!website) return;
+		deploymentsLoading = true;
+		try {
+			deployments = await api.get<DeploymentEntry[]>(`/api/v1/websites/${website.id}/deployments`) || [];
+		} catch {
+			deployments = [];
+		} finally {
+			deploymentsLoading = false;
+		}
+	}
+
+	// Commands
+	async function loadCommandPresets() {
+		if (!website) return;
+		commandsLoading = true;
+		commandsError = '';
+		try {
+			commandPresets = await api.get<CommandPreset[]>(`/api/v1/websites/${website.id}/command-presets`) || [];
+		} catch (err) {
+			commandsError = err instanceof Error ? err.message : 'Failed to load command presets';
+		} finally {
+			commandsLoading = false;
+		}
+	}
+
+	async function runCommand(preset: CommandPreset) {
+		if (!website) return;
+		if (preset.danger && !confirm(`Are you sure you want to run "${preset.label}"? This is a destructive command.`)) return;
+		actionMsg = ''; actionError = '';
+		try {
+			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/run-command`, {
+				command: preset.label
+			});
+			commandTaskId = data.task_id || '';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to run command';
+		}
+	}
+
+	function groupedCommands(): Record<string, CommandPreset[]> {
+		const groups: Record<string, CommandPreset[]> = {};
+		for (const preset of commandPresets) {
+			const cat = preset.category || 'other';
+			if (!groups[cat]) groups[cat] = [];
+			groups[cat].push(preset);
+		}
+		return groups;
+	}
+
+	// Terminal
+	function connectTerminal() {
+		if (!website) return;
+		terminalConnecting = true;
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const wsUrl = `${protocol}//${location.host}/ws/terminal?web_user=${encodeURIComponent(website.web_user)}&workdir=${encodeURIComponent(website.document_root)}`;
+		terminalWs = new WebSocket(wsUrl);
+
+		terminalWs.onopen = () => {
+			terminalConnected = true;
+			terminalConnecting = false;
+			terminalOutput += '--- Connected ---\n';
+			scrollTerminal();
+		};
+
+		terminalWs.onmessage = (event) => {
+			const message = decodeTerminalMessage(event.data);
+			terminalOutput += message;
+			if (!message.endsWith('\n')) terminalOutput += '\n';
+			scrollTerminal();
+		};
+
+		terminalWs.onclose = () => {
+			terminalConnected = false;
+			terminalConnecting = false;
+			terminalOutput += '--- Disconnected ---\n';
+			scrollTerminal();
+		};
+
+		terminalWs.onerror = () => {
+			terminalConnected = false;
+			terminalConnecting = false;
+			terminalOutput += '--- Connection error ---\n';
+			scrollTerminal();
+		};
+	}
+
+	function disconnectTerminal() {
+		if (terminalWs) {
+			terminalWs.close();
+			terminalWs = null;
+		}
+		terminalConnected = false;
+		terminalConnecting = false;
+	}
+
+	async function scrollTerminal() {
+		await tick();
+		if (terminalOutputEl) terminalOutputEl.scrollTop = terminalOutputEl.scrollHeight;
+	}
+
+	function sendTerminalCommand() {
+		if (!terminalWs || !terminalConnected || !terminalCommand.trim()) return;
+		terminalOutput += `$ ${terminalCommand}\n`;
+		terminalWs.send(terminalCommand);
+		terminalCommand = '';
+		scrollTerminal();
+	}
+
+	function handleTerminalKeydown(e: KeyboardEvent) {
+		if (e.key === 'Enter') { e.preventDefault(); sendTerminalCommand(); }
+	}
+
+	function reconnectTerminal() {
+		disconnectTerminal();
+		terminalOutput = '';
+		connectTerminal();
+	}
+
+	// Files
 	async function loadFiles(path?: string) {
 		if (!website) return;
 		const requestedPath = path ?? fileManagerStartPath(website.document_root, website.web_user);
@@ -309,23 +538,6 @@
 		return result;
 	}
 
-	function formatSize(bytes: number): string {
-		if (bytes === 0) return '-';
-		const units = ['B', 'KB', 'MB', 'GB'];
-		let i = 0;
-		let size = bytes;
-		while (size >= 1024 && i < units.length - 1) {
-			size /= 1024;
-			i++;
-		}
-		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-	}
-
-	function isTextFile(name: string): boolean {
-		const ext = name.split('.').pop()?.toLowerCase() || '';
-		return ['txt', 'html', 'css', 'js', 'ts', 'json', 'xml', 'yml', 'yaml', 'md', 'conf', 'cfg', 'ini', 'log', 'sh', 'bash', 'php', 'py', 'rb', 'env', 'htaccess', 'svg'].includes(ext);
-	}
-
 	async function openFileEdit(name: string) {
 		if (!website) return;
 		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
@@ -345,8 +557,7 @@
 
 	async function saveFileEdit() {
 		if (!website || !editingFile) return;
-		fileActionMsg = '';
-		fileActionError = '';
+		fileActionMsg = ''; fileActionError = '';
 		try {
 			await createFileManagerAPI(api, website.id).write(editingFile, editFileContent);
 			fileActionMsg = 'File saved.';
@@ -359,8 +570,7 @@
 	async function deleteFile(name: string) {
 		if (!website) return;
 		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-		fileActionMsg = '';
-		fileActionError = '';
+		fileActionMsg = ''; fileActionError = '';
 		try {
 			await createFileManagerAPI(api, website.id).remove(filePath);
 			fileActionMsg = `"${name}" deleted.`;
@@ -373,8 +583,7 @@
 	async function createDir() {
 		if (!website || !newDirName.trim()) return;
 		const dirPath = currentPath === '/' ? `/${newDirName}` : `${currentPath}/${newDirName}`;
-		fileActionMsg = '';
-		fileActionError = '';
+		fileActionMsg = ''; fileActionError = '';
 		try {
 			await createFileManagerAPI(api, website.id).mkdir(dirPath);
 			fileActionMsg = `Directory "${newDirName}" created.`;
@@ -389,8 +598,7 @@
 	async function createFile() {
 		if (!website || !newFileName.trim()) return;
 		const filePath = currentPath === '/' ? `/${newFileName}` : `${currentPath}/${newFileName}`;
-		fileActionMsg = '';
-		fileActionError = '';
+		fileActionMsg = ''; fileActionError = '';
 		try {
 			await createFileManagerAPI(api, website.id).write(filePath, '');
 			fileActionMsg = `File "${newFileName}" created.`;
@@ -406,8 +614,7 @@
 		if (!website || !renameValue.trim()) return;
 		const oldPath = currentPath === '/' ? `/${oldName}` : `${currentPath}/${oldName}`;
 		const newPath = currentPath === '/' ? `/${renameValue}` : `${currentPath}/${renameValue}`;
-		fileActionMsg = '';
-		fileActionError = '';
+		fileActionMsg = ''; fileActionError = '';
 		try {
 			await createFileManagerAPI(api, website.id).rename(oldPath, newPath);
 			fileActionMsg = `Renamed "${oldName}" to "${renameValue}".`;
@@ -424,8 +631,7 @@
 		const input = event.target as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
-		fileActionMsg = '';
-		fileActionError = '';
+		fileActionMsg = ''; fileActionError = '';
 		try {
 			const formData = new FormData();
 			formData.append('file', file);
@@ -451,7 +657,143 @@
 		window.open(`/api/v1/websites/${website.id}/files/download?path=${encodeURIComponent(filePath)}`, '_blank');
 	}
 
+	// Logs
+	async function loadLogs(type: 'access' | 'error') {
+		if (!website) return;
+		logsLoading = true;
+		logsError = '';
+		try {
+			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/logs/${type}?lines=100`);
+			if (type === 'access') accessLogs = data.content || '';
+			else errorLogs = data.content || '';
+		} catch (err) {
+			logsError = err instanceof Error ? err.message : 'Failed to load logs';
+		} finally {
+			logsLoading = false;
+		}
+	}
+
+	// Config
+	async function loadConfig() {
+		if (!website) return;
+		configLoading = true;
+		configError = '';
+		try {
+			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/config`);
+			configContent = data.content || '';
+		} catch (err) {
+			configError = err instanceof Error ? err.message : 'Failed to load config';
+		} finally {
+			configLoading = false;
+		}
+	}
+
+	async function saveConfig() {
+		if (!website) return;
+		configSaveMsg = ''; configError = '';
+		try {
+			await api.put(`/api/v1/websites/${website.id}/config`, { content: configContent });
+			configSaveMsg = 'Configuration saved successfully.';
+		} catch (err) {
+			configError = err instanceof Error ? err.message : 'Failed to save config';
+		}
+	}
+
+	// Domains
+	async function addDomain() {
+		if (!website || !addDomainName.trim()) return;
+		addingDomain = true;
+		actionMsg = ''; actionError = '';
+		try {
+			await api.post(`/api/v1/websites/${website.id}/domains`, { name: addDomainName, type: addDomainType });
+			actionMsg = `Domain "${addDomainName}" added.`;
+			addDomainName = '';
+			addDomainType = 'alias';
+			await loadWebsite();
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to add domain';
+		} finally {
+			addingDomain = false;
+		}
+	}
+
+	async function removeDomain(domainId: string) {
+		if (!website) return;
+		actionMsg = ''; actionError = '';
+		try {
+			await api.del(`/api/v1/websites/${website.id}/domains/${domainId}`);
+			actionMsg = 'Domain removed.';
+			await loadWebsite();
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to remove domain';
+		}
+	}
+
+	// Copy utility
+	let copiedField = $state('');
+	async function copyText(text: string, field: string) {
+		try {
+			await navigator.clipboard.writeText(text);
+			copiedField = field;
+			setTimeout(() => { copiedField = ''; }, 2000);
+		} catch { /* clipboard not available */ }
+	}
+
+	// ─── Tab change effects ───────────────────────────────────────────
+
+	$effect(() => {
+		if (activeTab === 'Deployment' && !deploymentTabInitialized && website) {
+			deploymentTabInitialized = true;
+			checkDeployKey();
+			loadDeployments();
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'Commands' && !commandsInitialized && website) {
+			commandsInitialized = true;
+			loadCommandPresets();
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'Terminal' && website) {
+			if (!terminalConnected && !terminalConnecting) {
+				connectTerminal();
+			}
+		} else if (activeTab !== 'Terminal') {
+			disconnectTerminal();
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'Files' && !filesInitialized && website) {
+			filesInitialized = true;
+			loadFiles();
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'Logs' && !logsInitialized && website) {
+			logsInitialized = true;
+			loadLogs(logTab);
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'Config' && !configInitialized && website) {
+			configInitialized = true;
+			loadConfig();
+		}
+	});
+
+	// ─── Lifecycle ────────────────────────────────────────────────────
+
 	onMount(loadWebsite);
+
+	onDestroy(() => {
+		disconnectTerminal();
+	});
 </script>
 
 <div class="space-y-6">
@@ -498,434 +840,762 @@
 				<span>SSL: <span class={website.ssl_enabled ? 'text-green-400' : 'text-gray-300'}>{website.ssl_enabled ? 'Enabled' : 'Not configured'}</span></span>
 				<a href="/ssl" class="text-blue-400 hover:text-blue-300 transition-colors">Manage SSL Certificates</a>
 			</div>
-
-			{#if website.status === 'failed' && website.error_message}
-				<div class="mt-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-					{website.error_message}
-				</div>
-			{/if}
-
-			{#if pendingStatuses.includes(website.status)}
-				<div class="mt-3 p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
-					Provisioning in progress: <span class="font-medium">{website.status}</span>
-				</div>
-			{/if}
-
-			<!-- Actions -->
-			<div class="mt-4 flex flex-wrap gap-2">
-				{#if website.status === 'active'}
-					<button
-						onclick={suspendWebsite}
-						class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
-					>
-						Suspend
-					</button>
-				{/if}
-				{#if website.status === 'suspended' || website.status === 'disabled'}
-					<button
-						onclick={enableWebsite}
-						class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors cursor-pointer"
-					>
-						Enable
-					</button>
-				{/if}
-				{#if website.status === 'failed'}
-					<button
-						onclick={retryWebsite}
-						class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
-					>
-						Retry
-					</button>
-				{/if}
-
-				{#if deleteConfirm}
-					<div class="flex items-center gap-2 p-2 bg-red-900/30 border border-red-700 rounded-lg">
-						<span class="text-sm text-red-300">Delete this website, its SSL certificates, and all files? This cannot be undone.</span>
-						<button
-							onclick={deleteWebsite}
-							class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
-						>
-							Yes, Delete
-						</button>
-						<button
-							onclick={() => (deleteConfirm = false)}
-							class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
-						>
-							Cancel
-						</button>
-					</div>
-				{:else}
-					<button
-						onclick={() => (deleteConfirm = true)}
-						class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
-					>
-						Delete
-					</button>
-				{/if}
-			</div>
 		</div>
 
-		<WebsiteSectionNav websiteId={website.id} currentPath={page.url.pathname} />
+		<!-- Tab Navigation -->
+		<div class="flex flex-wrap gap-1 border-b border-gray-700 pb-0">
+			{#each tabs as tab}
+				<button
+					onclick={() => { activeTab = tab; }}
+					class="px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors cursor-pointer
+						{activeTab === tab
+							? 'bg-gray-800 text-white border border-gray-700 border-b-gray-800 -mb-px'
+							: 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
+				>
+					{tab}
+				</button>
+			{/each}
+		</div>
 
-		<!-- Domains -->
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<h3 class="text-lg font-semibold text-white mb-3">Domains</h3>
+		<!-- Tab Content -->
+		<div class="mt-0">
 
-			{#if website.domains && website.domains.length > 0}
-				<div class="space-y-2 mb-4">
-					{#each website.domains as domain}
-						<div class="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
-							<div class="flex items-center gap-3">
-								<span class="text-sm text-gray-200">{domain.name}</span>
-								<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {domainTypeBadgeClass(domain.type)}">
-									{domain.type}
-								</span>
-							</div>
-							{#if domain.type !== 'primary'}
+			<!-- ============================================================ -->
+			<!-- OVERVIEW TAB                                                  -->
+			<!-- ============================================================ -->
+			{#if activeTab === 'Overview'}
+				<div class="space-y-4">
+					{#if website.status === 'failed' && website.error_message}
+						<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+							{website.error_message}
+						</div>
+					{/if}
+
+					{#if pendingStatuses.includes(website.status)}
+						<div class="p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
+							Provisioning in progress: <span class="font-medium">{website.status}</span>
+						</div>
+					{/if}
+
+					<!-- Info Cards -->
+					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Document Root</div>
+							<div class="text-sm text-gray-200 font-mono">{website.document_root}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Web User</div>
+							<div class="text-sm text-gray-200 font-mono">{website.web_user}</div>
+						</div>
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Created</div>
+							<div class="text-sm text-gray-200">{formatDate(website.created_at)}</div>
+						</div>
+					</div>
+
+					<!-- Actions -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<h3 class="text-lg font-semibold text-white mb-3">Actions</h3>
+						<div class="flex flex-wrap gap-2">
+							{#if website.status === 'active'}
 								<button
-									onclick={() => removeDomain(domain.id)}
-									class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
+									onclick={suspendWebsite}
+									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
 								>
-									Remove
+									Suspend
+								</button>
+							{/if}
+							{#if website.status === 'suspended' || website.status === 'disabled'}
+								<button
+									onclick={enableWebsite}
+									class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors cursor-pointer"
+								>
+									Enable
+								</button>
+							{/if}
+							{#if website.status === 'failed'}
+								<button
+									onclick={retryWebsite}
+									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
+								>
+									Retry
+								</button>
+							{/if}
+
+							{#if deleteConfirm}
+								<div class="flex items-center gap-2 p-2 bg-red-900/30 border border-red-700 rounded-lg">
+									<span class="text-sm text-red-300">Delete this website, its SSL certificates, and all files? This cannot be undone.</span>
+									<button
+										onclick={deleteWebsite}
+										class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
+									>
+										Yes, Delete
+									</button>
+									<button
+										onclick={() => (deleteConfirm = false)}
+										class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
+									>
+										Cancel
+									</button>
+								</div>
+							{:else}
+								<button
+									onclick={() => (deleteConfirm = true)}
+									class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
+								>
+									Delete
 								</button>
 							{/if}
 						</div>
-					{/each}
-				</div>
-			{:else}
-				<p class="text-sm text-gray-400 mb-4">No additional domains configured.</p>
-			{/if}
-
-			<!-- Add Domain Form -->
-			<div class="flex flex-wrap items-end gap-3">
-				<div>
-					<label for="add-domain-name" class="block text-sm text-gray-400 mb-1">Domain Name</label>
-					<input
-						id="add-domain-name"
-						type="text"
-						bind:value={addDomainName}
-						placeholder="sub.example.com"
-						class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-				<div>
-					<label for="add-domain-type" class="block text-sm text-gray-400 mb-1">Type</label>
-					<select
-						id="add-domain-type"
-						bind:value={addDomainType}
-						class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					>
-						<option value="alias">Alias</option>
-						<option value="subdomain">Subdomain</option>
-					</select>
-				</div>
-				<button
-					onclick={addDomain}
-					disabled={addingDomain || !addDomainName.trim()}
-					class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-				>
-					{addingDomain ? 'Adding...' : 'Add Domain'}
-				</button>
-			</div>
-		</div>
-
-		<!-- Nginx Config -->
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<div class="flex items-center justify-between mb-3">
-				<h3 class="text-lg font-semibold text-white">Nginx Configuration</h3>
-				{#if !showConfig}
-					<button
-						onclick={() => { showConfig = true; loadConfig(); }}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						Edit Config
-					</button>
-				{:else}
-					<button
-						onclick={() => (showConfig = false)}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						Close
-					</button>
-				{/if}
-			</div>
-
-			{#if showConfig}
-				{#if configError}
-					<div class="mb-2 text-red-400 text-sm">{configError}</div>
-				{/if}
-				{#if configSaveMsg}
-					<div class="mb-2 text-green-400 text-sm">
-						{configSaveMsg}
-						<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">Dismiss</button>
 					</div>
-				{/if}
-
-				{#if configLoading}
-					<div class="text-gray-400 text-sm">Loading configuration...</div>
-				{:else}
-					<textarea
-						bind:value={configContent}
-						rows={20}
-						class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-					></textarea>
-					<div class="mt-2">
-						<button
-							onclick={saveConfig}
-							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-						>
-							Save Configuration
-						</button>
-					</div>
-				{/if}
-			{/if}
-		</div>
-
-		<!-- Logs -->
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<div class="flex items-center justify-between mb-3">
-				<h3 class="text-lg font-semibold text-white">Logs</h3>
-				{#if !showLogs}
-					<button
-						onclick={() => { showLogs = true; loadLogs(logTab); }}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						View Logs
-					</button>
-				{:else}
-					<button
-						onclick={() => (showLogs = false)}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						Close
-					</button>
-				{/if}
-			</div>
-
-			{#if showLogs}
-				<div class="flex gap-2 mb-4">
-					<button
-						onclick={() => { logTab = 'access'; loadLogs('access'); }}
-						class="px-3 py-1.5 text-sm rounded transition-colors cursor-pointer {logTab === 'access'
-							? 'bg-blue-600 text-white'
-							: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
-					>
-						Access Log
-					</button>
-					<button
-						onclick={() => { logTab = 'error'; loadLogs('error'); }}
-						class="px-3 py-1.5 text-sm rounded transition-colors cursor-pointer {logTab === 'error'
-							? 'bg-blue-600 text-white'
-							: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
-					>
-						Error Log
-					</button>
 				</div>
 
-				{#if logsError}
-					<div class="mb-2 text-red-400 text-sm">{logsError}</div>
-				{/if}
+			<!-- ============================================================ -->
+			<!-- DEPLOYMENT TAB                                                -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Deployment'}
+				<div class="space-y-6">
+					<!-- Git Repository -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<h3 class="text-lg font-semibold text-white mb-4">Git Repository</h3>
+						<div class="space-y-4">
+							<!-- Provider -->
+							<div>
+								<label for="git-provider" class="block text-sm text-gray-400 mb-1">Provider</label>
+								<select
+									id="git-provider"
+									bind:value={gitProvider}
+									class="w-full max-w-xs px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+								>
+									<option value="github">GitHub</option>
+									<option value="gitlab">GitLab</option>
+									<option value="bitbucket">Bitbucket</option>
+									<option value="custom">Custom</option>
+								</select>
+							</div>
 
-				<div class="flex items-center justify-end mb-2">
-					<button
-						onclick={() => loadLogs(logTab)}
-						disabled={logsLoading}
-						class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
-					>
-						{logsLoading ? 'Loading...' : 'Refresh'}
-					</button>
-				</div>
+							<!-- Repo URL -->
+							<div>
+								<label for="repo-url" class="block text-sm text-gray-400 mb-1">Repository URL</label>
+								<input
+									id="repo-url"
+									type="text"
+									bind:value={repoUrl}
+									placeholder="git@github.com:user/repo.git"
+									class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+								/>
+							</div>
 
-				<textarea
-					readonly
-					value={logTab === 'access' ? accessLogs : errorLogs}
-					class="w-full h-64 bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-xs font-mono resize-y focus:outline-none"
-				></textarea>
-			{/if}
-		</div>
+							<!-- Branch -->
+							<div>
+								<label for="repo-branch" class="block text-sm text-gray-400 mb-1">Branch</label>
+								<input
+									id="repo-branch"
+									type="text"
+									bind:value={repoBranch}
+									placeholder="main"
+									class="w-full max-w-xs px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+								/>
+							</div>
 
-		<!-- File Manager -->
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<div class="flex items-center justify-between mb-3">
-				<h3 class="text-lg font-semibold text-white">File Manager</h3>
-				{#if !showFiles}
-					<button
-						onclick={() => { showFiles = true; loadFiles(); }}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						Browse Files
-					</button>
-				{:else}
-					<button
-						onclick={() => { showFiles = false; editingFile = null; }}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-					>
-						Close
-					</button>
-				{/if}
-			</div>
+							<!-- Visibility -->
+							<div>
+								<span class="block text-sm text-gray-400 mb-2">Visibility</span>
+								<div class="flex gap-4">
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input type="radio" bind:group={repoVisibility} value="public" class="accent-blue-500" />
+										<span class="text-sm text-gray-200">Public</span>
+									</label>
+									<label class="flex items-center gap-2 cursor-pointer">
+										<input type="radio" bind:group={repoVisibility} value="private" class="accent-blue-500" />
+										<span class="text-sm text-gray-200">Private</span>
+									</label>
+								</div>
+							</div>
 
-			{#if showFiles}
-				{#if fileActionMsg}
-					<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-						{fileActionMsg}
-						<button onclick={() => (fileActionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-					</div>
-				{/if}
+							<!-- Deploy Key (visible when private) -->
+							{#if repoVisibility === 'private'}
+								<div class="p-4 bg-gray-900 rounded-lg border border-gray-700 space-y-3">
+									<h4 class="text-sm font-medium text-gray-300">Deploy Key</h4>
 
-				{#if fileActionError}
-					<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-						{fileActionError}
-						<button onclick={() => (fileActionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-					</div>
-				{/if}
+									{#if deployKeyError}
+										<div class="text-red-400 text-sm">{deployKeyError}</div>
+									{/if}
 
-				{#if editingFile}
-					<!-- File Editor -->
-					<div class="space-y-3">
-						<div class="flex items-center justify-between">
-							<span class="text-sm text-gray-300 font-mono">{editingFile}</span>
-							<button onclick={() => (editingFile = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Back</button>
+									{#if deployKey}
+										<div class="space-y-2">
+											<textarea
+												readonly
+												value={deployKey}
+												rows={4}
+												class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-xs font-mono resize-none focus:outline-none"
+											></textarea>
+											<div class="flex items-center gap-2">
+												<button
+													onclick={copyDeployKey}
+													class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer"
+												>
+													{deployKeyCopied ? 'Copied!' : 'Copy'}
+												</button>
+												<button
+													onclick={deleteDeployKey}
+													disabled={deployKeyLoading}
+													class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
+												>
+													Delete Key
+												</button>
+											</div>
+											<p class="text-xs text-gray-400 mt-2">
+												{providerInstructions[gitProvider]}
+											</p>
+										</div>
+									{:else}
+										<button
+											onclick={generateDeployKey}
+											disabled={deployKeyLoading}
+											class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+										>
+											{deployKeyLoading ? 'Generating...' : 'Generate Deploy Key'}
+										</button>
+									{/if}
+								</div>
+							{/if}
+
+							<!-- Deploy Now -->
+							<div class="flex items-center gap-3 pt-2">
+								<button
+									onclick={deployNow}
+									disabled={deploying || !repoUrl.trim()}
+									class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>
+									{deploying ? 'Deploying...' : 'Deploy Now'}
+								</button>
+							</div>
+
+							<TaskProgress bind:taskId={deployTaskId} storageKey="deploy-task-{website.id}" onComplete={() => loadDeployments()} />
 						</div>
-						{#if editFileLoading}
-							<div class="text-gray-400 text-sm">Loading file...</div>
+					</div>
+
+					<!-- Upload Files -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<h3 class="text-lg font-semibold text-white mb-4">Upload Files</h3>
+						<p class="text-sm text-gray-400 mb-3">Upload a ZIP or tar.gz archive to deploy directly.</p>
+						<div class="flex items-center gap-3">
+							<input
+								type="file"
+								accept=".zip,.tar.gz,.tgz"
+								bind:this={uploadDeployFile}
+								onchange={uploadDeploy}
+								class="hidden"
+							/>
+							<button
+								onclick={() => uploadDeployFile.click()}
+								disabled={uploadingDeploy}
+								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+							>
+								{uploadingDeploy ? 'Uploading...' : 'Upload & Extract'}
+							</button>
+						</div>
+						<TaskProgress bind:taskId={uploadDeployTaskId} storageKey="upload-deploy-task-{website.id}" />
+					</div>
+
+					<!-- Manual (SSH) -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<h3 class="text-lg font-semibold text-white mb-4">Manual (SSH)</h3>
+						<div class="space-y-3">
+							<div class="flex items-center gap-2">
+								<span class="text-sm text-gray-400">SSH:</span>
+								<code class="text-sm text-gray-200 font-mono bg-gray-900 px-2 py-1 rounded">ssh {website.web_user}@{typeof window !== 'undefined' ? window.location.hostname : 'localhost'}</code>
+								<button
+									onclick={() => copyText(`ssh ${website.web_user}@${window.location.hostname}`, 'ssh')}
+									class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors cursor-pointer"
+								>
+									{copiedField === 'ssh' ? 'Copied!' : 'Copy'}
+								</button>
+							</div>
+							<div class="flex items-center gap-2">
+								<span class="text-sm text-gray-400">Document Root:</span>
+								<code class="text-sm text-gray-200 font-mono bg-gray-900 px-2 py-1 rounded">{website.document_root}</code>
+								<button
+									onclick={() => copyText(website?.document_root ?? '', 'docroot')}
+									class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors cursor-pointer"
+								>
+									{copiedField === 'docroot' ? 'Copied!' : 'Copy'}
+								</button>
+							</div>
+							<button
+								onclick={() => { activeTab = 'Terminal'; }}
+								class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors cursor-pointer"
+							>
+								Open Terminal
+							</button>
+						</div>
+					</div>
+
+					<!-- Deployment History -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-white">Deployment History</h3>
+							<button
+								onclick={loadDeployments}
+								disabled={deploymentsLoading}
+								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
+							>
+								{deploymentsLoading ? 'Loading...' : 'Refresh'}
+							</button>
+						</div>
+
+						{#if deploymentsLoading && deployments.length === 0}
+							<div class="text-gray-400 text-sm">Loading deployments...</div>
+						{:else if deployments.length === 0}
+							<div class="text-gray-400 text-sm">No deployments yet.</div>
 						{:else}
-							<textarea
-								bind:value={editFileContent}
-								rows={20}
-								class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-							></textarea>
-							<button onclick={saveFileEdit} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
-								Save File
+							<div class="overflow-x-auto">
+								<table class="w-full">
+									<thead>
+										<tr class="border-b border-gray-700">
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Commit</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Branch</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Duration</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Date</th>
+										</tr>
+									</thead>
+									<tbody class="divide-y divide-gray-700">
+										{#each deployments as dep}
+											<tr
+												class="hover:bg-gray-750 cursor-pointer"
+												onclick={() => { expandedDeploymentId = expandedDeploymentId === dep.id ? null : dep.id; }}
+											>
+												<td class="px-4 py-2 text-sm text-gray-200 font-mono">{dep.commit ? dep.commit.slice(0, 8) : '-'}</td>
+												<td class="px-4 py-2 text-sm text-gray-200">{dep.branch || '-'}</td>
+												<td class="px-4 py-2">
+													<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {deployStatusBadgeClass(dep.status)}">{dep.status}</span>
+												</td>
+												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration ? formatDuration(dep.duration) : '-'}</td>
+												<td class="px-4 py-2 text-sm text-gray-400">{formatDate(dep.created_at)}</td>
+											</tr>
+											{#if expandedDeploymentId === dep.id && dep.log}
+												<tr>
+													<td colspan="5" class="px-4 py-2">
+														<pre class="text-xs text-gray-400 bg-gray-950 rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">{dep.log}</pre>
+													</td>
+												</tr>
+											{/if}
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+					</div>
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- COMMANDS TAB                                                   -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Commands'}
+				<div class="space-y-6">
+					{#if commandsLoading}
+						<div class="text-gray-400 text-sm">Loading command presets...</div>
+					{:else if commandsError}
+						<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{commandsError}</div>
+					{:else if commandPresets.length === 0}
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+							<p class="text-gray-400 text-sm">No command presets available for this website.</p>
+						</div>
+					{:else}
+						{#each Object.entries(groupedCommands()) as [category, presets]}
+							<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+								<h3 class="text-lg font-semibold text-white mb-3 capitalize">{category}</h3>
+								<div class="flex flex-wrap gap-2">
+									{#each presets as preset}
+										<button
+											onclick={() => runCommand(preset)}
+											class="px-3 py-2 text-sm rounded transition-colors cursor-pointer
+												{preset.danger
+													? 'bg-red-600 hover:bg-red-700 text-white'
+													: 'bg-gray-700 hover:bg-gray-600 text-gray-200'}"
+										>
+											{preset.label}
+										</button>
+									{/each}
+								</div>
+							</div>
+						{/each}
+					{/if}
+
+					<TaskProgress bind:taskId={commandTaskId} storageKey="cmd-task-{website.id}" />
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- FILES TAB                                                     -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Files'}
+				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+					<h3 class="text-lg font-semibold text-white mb-3">File Manager</h3>
+
+					{#if fileActionMsg}
+						<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
+							{fileActionMsg}
+							<button onclick={() => (fileActionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+						</div>
+					{/if}
+
+					{#if fileActionError}
+						<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+							{fileActionError}
+							<button onclick={() => (fileActionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+						</div>
+					{/if}
+
+					{#if editingFile}
+						<div class="space-y-3">
+							<div class="flex items-center justify-between">
+								<span class="text-sm text-gray-300 font-mono">{editingFile}</span>
+								<button onclick={() => (editingFile = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Back</button>
+							</div>
+							{#if editFileLoading}
+								<div class="text-gray-400 text-sm">Loading file...</div>
+							{:else}
+								<textarea
+									bind:value={editFileContent}
+									rows={20}
+									class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+								></textarea>
+								<button onclick={saveFileEdit} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
+									Save File
+								</button>
+							{/if}
+						</div>
+					{:else}
+						<!-- Breadcrumb -->
+						<div class="flex items-center gap-1 mb-3 text-sm">
+							{#each breadcrumbParts() as part, i}
+								{#if i > 0}
+									<span class="text-gray-500">/</span>
+								{/if}
+								<button
+									onclick={() => loadFiles(part.path)}
+									class="text-blue-400 hover:text-blue-300 cursor-pointer font-mono"
+								>
+									{part.name}
+								</button>
+							{/each}
+						</div>
+
+						<!-- Toolbar -->
+						<div class="flex flex-wrap gap-2 mb-3">
+							<input type="file" bind:this={uploadInput} onchange={uploadFile} class="hidden" />
+							<button onclick={() => uploadInput.click()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Upload</button>
+							<button onclick={() => { showCreateDir = true; showCreateFile = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create Dir</button>
+							<button onclick={() => { showCreateFile = true; showCreateDir = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create File</button>
+							<button onclick={() => loadFiles(currentPath)} disabled={filesLoading} class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer">
+								Refresh
+							</button>
+						</div>
+
+						{#if showCreateDir}
+							<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
+								<div>
+									<label for="new-dir" class="block text-xs text-gray-400 mb-1">Directory Name</label>
+									<input id="new-dir" type="text" bind:value={newDirName} placeholder="new-folder" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								</div>
+								<button onclick={createDir} disabled={!newDirName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
+								<button onclick={() => { showCreateDir = false; newDirName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
+							</div>
+						{/if}
+
+						{#if showCreateFile}
+							<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
+								<div>
+									<label for="new-file" class="block text-xs text-gray-400 mb-1">File Name</label>
+									<input id="new-file" type="text" bind:value={newFileName} placeholder="index.html" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+								</div>
+								<button onclick={createFile} disabled={!newFileName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
+								<button onclick={() => { showCreateFile = false; newFileName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
+							</div>
+						{/if}
+
+						{#if filesError}
+							<div class="mb-2 text-red-400 text-sm">{filesError}</div>
+						{/if}
+
+						{#if filesLoading}
+							<div class="text-gray-400 text-sm">Loading files...</div>
+						{:else if files.length === 0}
+							<div class="text-gray-400 text-sm">Empty directory.</div>
+						{:else}
+							<div class="overflow-x-auto">
+								<table class="w-full">
+									<thead>
+										<tr class="border-b border-gray-700">
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Permissions</th>
+											<th class="text-right px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
+										</tr>
+									</thead>
+									<tbody class="divide-y divide-gray-700">
+										{#if currentPath !== '/'}
+											<tr class="hover:bg-gray-750">
+												<td class="px-4 py-2" colspan="5">
+													<button onclick={navigateUp} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">..</button>
+												</td>
+											</tr>
+										{/if}
+										{#each files as entry}
+											<tr class="hover:bg-gray-750">
+												<td class="px-4 py-2">
+													{#if renamingFile === entry.name}
+														<div class="flex items-center gap-2">
+															<input type="text" bind:value={renameValue} class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-48" />
+															<button onclick={() => renameFile(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer">OK</button>
+															<button onclick={() => { renamingFile = null; renameValue = ''; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer">X</button>
+														</div>
+													{:else if entry.is_dir}
+														<button onclick={() => navigateTo(entry.name)} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">{entry.name}</button>
+													{:else}
+														<span class="text-sm text-gray-200 font-mono">{entry.name}</span>
+													{/if}
+												</td>
+												<td class="px-4 py-2">
+													{#if entry.is_dir}
+														<svg class="w-4 h-4 text-yellow-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+															<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
+														</svg>
+													{:else}
+														<svg class="w-4 h-4 text-gray-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
+															<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+														</svg>
+													{/if}
+												</td>
+												<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
+												<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.permissions}</td>
+												<td class="px-4 py-2 text-right">
+													<div class="flex justify-end gap-1.5">
+														{#if !entry.is_dir && isTextFile(entry.name)}
+															<button onclick={() => openFileEdit(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Edit</button>
+														{/if}
+														<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Rename</button>
+														{#if !entry.is_dir}
+															<button onclick={() => downloadFile(entry.name)} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Download</button>
+														{/if}
+														<button onclick={() => deleteFile(entry.name)} class="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>
+													</div>
+												</td>
+											</tr>
+										{/each}
+									</tbody>
+								</table>
+							</div>
+						{/if}
+					{/if}
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- TERMINAL TAB                                                  -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Terminal'}
+				<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+					<div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+						<div class="flex items-center gap-3">
+							<h3 class="text-sm font-semibold text-white">Terminal</h3>
+							<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium {terminalConnected ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}">
+								<span class="w-1.5 h-1.5 rounded-full {terminalConnected ? 'bg-green-400' : 'bg-red-400'}"></span>
+								{terminalConnecting ? 'Connecting...' : terminalConnected ? 'Connected' : 'Disconnected'}
+							</span>
+						</div>
+						{#if !terminalConnected && !terminalConnecting}
+							<button
+								onclick={reconnectTerminal}
+								class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer"
+							>
+								Reconnect
 							</button>
 						{/if}
 					</div>
-				{:else}
-					<!-- Breadcrumb -->
-					<div class="flex items-center gap-1 mb-3 text-sm">
-						{#each breadcrumbParts() as part, i}
-							{#if i > 0}
-								<span class="text-gray-500">/</span>
-							{/if}
-							<button
-								onclick={() => loadFiles(part.path)}
-								class="text-blue-400 hover:text-blue-300 cursor-pointer font-mono"
-							>
-								{part.name}
-							</button>
-						{/each}
-					</div>
 
-					<!-- Toolbar -->
-					<div class="flex flex-wrap gap-2 mb-3">
-						<input type="file" bind:this={uploadInput} onchange={uploadFile} class="hidden" />
-						<button onclick={() => uploadInput.click()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Upload</button>
-						<button onclick={() => { showCreateDir = true; showCreateFile = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create Dir</button>
-						<button onclick={() => { showCreateFile = true; showCreateDir = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create File</button>
-						<button onclick={() => loadFiles(currentPath)} disabled={filesLoading} class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer">
-							Refresh
+					<textarea
+						bind:this={terminalOutputEl}
+						readonly
+						value={terminalOutput}
+						class="w-full h-96 bg-gray-950 p-4 text-green-400 text-sm font-mono resize-y focus:outline-none border-none"
+					></textarea>
+
+					<div class="flex border-t border-gray-700">
+						<span class="flex items-center px-3 text-green-400 text-sm font-mono bg-gray-900">$</span>
+						<input
+							type="text"
+							bind:value={terminalCommand}
+							onkeydown={handleTerminalKeydown}
+							disabled={!terminalConnected}
+							placeholder={terminalConnected ? 'Type a command...' : 'Not connected'}
+							class="flex-1 px-3 py-3 bg-gray-900 text-white text-sm font-mono focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+						/>
+						<button
+							onclick={sendTerminalCommand}
+							disabled={!terminalConnected || !terminalCommand.trim()}
+							class="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors cursor-pointer"
+						>
+							Send
+						</button>
+					</div>
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- LOGS TAB                                                      -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Logs'}
+				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+					<h3 class="text-lg font-semibold text-white mb-3">Logs</h3>
+
+					<div class="flex gap-2 mb-4">
+						<button
+							onclick={() => { logTab = 'access'; loadLogs('access'); }}
+							class="px-3 py-1.5 text-sm rounded transition-colors cursor-pointer {logTab === 'access'
+								? 'bg-blue-600 text-white'
+								: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
+						>
+							Access Log
+						</button>
+						<button
+							onclick={() => { logTab = 'error'; loadLogs('error'); }}
+							class="px-3 py-1.5 text-sm rounded transition-colors cursor-pointer {logTab === 'error'
+								? 'bg-blue-600 text-white'
+								: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
+						>
+							Error Log
 						</button>
 					</div>
 
-					<!-- Create Dir Form -->
-					{#if showCreateDir}
-						<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
-							<div>
-								<label for="new-dir" class="block text-xs text-gray-400 mb-1">Directory Name</label>
-								<input id="new-dir" type="text" bind:value={newDirName} placeholder="new-folder" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-							</div>
-							<button onclick={createDir} disabled={!newDirName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
-							<button onclick={() => { showCreateDir = false; newDirName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
+					{#if logsError}
+						<div class="mb-2 text-red-400 text-sm">{logsError}</div>
+					{/if}
+
+					<div class="flex items-center justify-end mb-2">
+						<button
+							onclick={() => loadLogs(logTab)}
+							disabled={logsLoading}
+							class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
+						>
+							{logsLoading ? 'Loading...' : 'Refresh'}
+						</button>
+					</div>
+
+					<textarea
+						readonly
+						value={logTab === 'access' ? accessLogs : errorLogs}
+						class="w-full h-64 bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-xs font-mono resize-y focus:outline-none"
+					></textarea>
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- CONFIG TAB                                                    -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Config'}
+				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+					<h3 class="text-lg font-semibold text-white mb-3">Nginx Configuration</h3>
+
+					{#if configError}
+						<div class="mb-2 text-red-400 text-sm">{configError}</div>
+					{/if}
+					{#if configSaveMsg}
+						<div class="mb-2 text-green-400 text-sm">
+							{configSaveMsg}
+							<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">Dismiss</button>
 						</div>
 					{/if}
 
-					<!-- Create File Form -->
-					{#if showCreateFile}
-						<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
-							<div>
-								<label for="new-file" class="block text-xs text-gray-400 mb-1">File Name</label>
-								<input id="new-file" type="text" bind:value={newFileName} placeholder="index.html" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-							</div>
-							<button onclick={createFile} disabled={!newFileName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
-							<button onclick={() => { showCreateFile = false; newFileName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
-						</div>
-					{/if}
-
-					{#if filesError}
-						<div class="mb-2 text-red-400 text-sm">{filesError}</div>
-					{/if}
-
-					{#if filesLoading}
-						<div class="text-gray-400 text-sm">Loading files...</div>
-					{:else if files.length === 0}
-						<div class="text-gray-400 text-sm">Empty directory.</div>
+					{#if configLoading}
+						<div class="text-gray-400 text-sm">Loading configuration...</div>
 					{:else}
-						<div class="overflow-x-auto">
-							<table class="w-full">
-								<thead>
-									<tr class="border-b border-gray-700">
-										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
-										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
-										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
-										<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Permissions</th>
-										<th class="text-right px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
-									</tr>
-								</thead>
-								<tbody class="divide-y divide-gray-700">
-									{#if currentPath !== '/'}
-										<tr class="hover:bg-gray-750">
-											<td class="px-4 py-2" colspan="5">
-												<button onclick={navigateUp} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">..</button>
-											</td>
-										</tr>
-									{/if}
-									{#each files as entry}
-										<tr class="hover:bg-gray-750">
-											<td class="px-4 py-2">
-												{#if renamingFile === entry.name}
-													<div class="flex items-center gap-2">
-														<input type="text" bind:value={renameValue} class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-48" />
-														<button onclick={() => renameFile(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer">OK</button>
-														<button onclick={() => { renamingFile = null; renameValue = ''; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer">X</button>
-													</div>
-												{:else if entry.is_dir}
-													<button onclick={() => navigateTo(entry.name)} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">{entry.name}</button>
-												{:else}
-													<span class="text-sm text-gray-200 font-mono">{entry.name}</span>
-												{/if}
-											</td>
-											<td class="px-4 py-2">
-												{#if entry.is_dir}
-													<svg class="w-4 h-4 text-yellow-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-														<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-													</svg>
-												{:else}
-													<svg class="w-4 h-4 text-gray-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-														<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-													</svg>
-												{/if}
-											</td>
-											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
-											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.permissions}</td>
-											<td class="px-4 py-2 text-right">
-												<div class="flex justify-end gap-1.5">
-													{#if !entry.is_dir && isTextFile(entry.name)}
-														<button onclick={() => openFileEdit(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Edit</button>
-													{/if}
-													<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Rename</button>
-													{#if !entry.is_dir}
-														<button onclick={() => downloadFile(entry.name)} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Download</button>
-													{/if}
-													<button onclick={() => deleteFile(entry.name)} class="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>
-												</div>
-											</td>
-										</tr>
-									{/each}
-								</tbody>
-							</table>
+						<textarea
+							bind:value={configContent}
+							rows={20}
+							class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+						></textarea>
+						<div class="mt-2 flex gap-2">
+							<button
+								onclick={saveConfig}
+								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+							>
+								Save Configuration
+							</button>
+							<button
+								onclick={loadConfig}
+								class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+							>
+								Reload
+							</button>
 						</div>
 					{/if}
-				{/if}
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- DOMAINS TAB                                                   -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Domains'}
+				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+					<h3 class="text-lg font-semibold text-white mb-3">Domains</h3>
+
+					{#if website.domains && website.domains.length > 0}
+						<div class="space-y-2 mb-4">
+							{#each website.domains as domain}
+								<div class="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
+									<div class="flex items-center gap-3">
+										<span class="text-sm text-gray-200">{domain.name}</span>
+										<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {domainTypeBadgeClass(domain.type)}">
+											{domain.type}
+										</span>
+									</div>
+									{#if domain.type !== 'primary'}
+										<button
+											onclick={() => removeDomain(domain.id)}
+											class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
+										>
+											Remove
+										</button>
+									{/if}
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-sm text-gray-400 mb-4">No additional domains configured.</p>
+					{/if}
+
+					<!-- Add Domain Form -->
+					<div class="flex flex-wrap items-end gap-3">
+						<div>
+							<label for="add-domain-name" class="block text-sm text-gray-400 mb-1">Domain Name</label>
+							<input
+								id="add-domain-name"
+								type="text"
+								bind:value={addDomainName}
+								placeholder="sub.example.com"
+								class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+							/>
+						</div>
+						<div>
+							<label for="add-domain-type" class="block text-sm text-gray-400 mb-1">Type</label>
+							<select
+								id="add-domain-type"
+								bind:value={addDomainType}
+								class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+							>
+								<option value="alias">Alias</option>
+								<option value="subdomain">Subdomain</option>
+							</select>
+						</div>
+						<button
+							onclick={addDomain}
+							disabled={addingDomain || !addDomainName.trim()}
+							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+						>
+							{addingDomain ? 'Adding...' : 'Add Domain'}
+						</button>
+					</div>
+				</div>
 			{/if}
 		</div>
 	{/if}

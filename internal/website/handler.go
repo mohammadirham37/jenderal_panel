@@ -250,6 +250,93 @@ func (h *Handler) ErrorLog(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
 }
 
+// GenerateDeployKey handles POST /api/websites/{id}/deploy-key.
+func (h *Handler) GenerateDeployKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	pubKey, err := h.svc.GenerateDeployKey(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.deploy_key.generate", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"public_key": pubKey})
+}
+
+// GetDeployKey handles GET /api/websites/{id}/deploy-key.
+func (h *Handler) GetDeployKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	pubKey, exists, err := h.svc.GetDeployKey(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if !exists {
+		httputil.JSONError(w, http.StatusNotFound, "NOT_FOUND", "no deploy key found")
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]string{"public_key": pubKey})
+}
+
+// DeleteDeployKey handles DELETE /api/websites/{id}/deploy-key.
+func (h *Handler) DeleteDeployKey(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.DeleteDeployKey(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.deploy_key.delete", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// GetCommandPresets handles GET /api/websites/{id}/command-presets.
+func (h *Handler) GetCommandPresets(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	presets, err := h.svc.GetCommandPresets(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, presets)
+}
+
+// RunCommand handles POST /api/websites/{id}/run-command.
+func (h *Handler) RunCommand(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Command string `json:"command"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	taskID, err := h.svc.RunCommand(r.Context(), id, req.Command)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.run_command", id, req.Command)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// UploadDeploy handles POST /api/websites/{id}/upload-deploy.
+func (h *Handler) UploadDeploy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	r.ParseMultipartForm(500 << 20) // 500MB max
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "file required")
+		return
+	}
+	defer file.Close()
+	taskID, err := h.svc.UploadArchive(r.Context(), id, file, header.Filename)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.upload_deploy", id, header.Filename)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // parseLines extracts the "lines" query parameter, defaulting to 100.
 func parseLines(r *http.Request) int {
 	if s := r.URL.Query().Get("lines"); s != "" {

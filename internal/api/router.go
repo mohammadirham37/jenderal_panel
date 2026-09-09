@@ -283,6 +283,18 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/domains", websiteHandler.AddDomain)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Delete("/websites/{id}/domains/{did}", websiteHandler.RemoveDomain)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/deploy-key", websiteHandler.GenerateDeployKey)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/deploy-key", websiteHandler.GetDeployKey)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Delete("/websites/{id}/deploy-key", websiteHandler.DeleteDeployKey)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/command-presets", websiteHandler.GetCommandPresets)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/run-command", websiteHandler.RunCommand)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/upload-deploy", websiteHandler.UploadDeploy)
 
 			// PHP
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
