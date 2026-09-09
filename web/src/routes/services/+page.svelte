@@ -1,7 +1,15 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import { composerActionPath } from '$lib/developer-dependencies.js';
 	import type { ServiceStatus } from '$lib/types';
+
+	interface DependencyStatus {
+		name: string;
+		version: string;
+		installed: boolean;
+	}
 
 	let services = $state<ServiceStatus[]>([]);
 	let loading = $state(true);
@@ -9,6 +17,12 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
+	let dependencies = $state<DependencyStatus[]>([]);
+	let dependenciesLoading = $state(true);
+	let dependencyError = $state('');
+	let currentTaskId = $state('');
+	let composer = $derived(dependencies.find((item) => item.name === 'composer'));
+	let composerInProgress = $derived(!!currentTaskId);
 
 	async function loadServices() {
 		try {
@@ -17,6 +31,42 @@
 			error = err instanceof Error ? err.message : 'Failed to load services';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadDependencies() {
+		dependenciesLoading = true;
+		dependencyError = '';
+		try {
+			dependencies = (await api.get<DependencyStatus[]>('/api/v1/services/dependencies')) || [];
+		} catch (err) {
+			dependencyError = err instanceof Error ? err.message : 'Failed to load developer dependencies';
+		} finally {
+			dependenciesLoading = false;
+		}
+	}
+
+	async function manageComposer() {
+		if (!composer || composerInProgress) return;
+		actionMsg = '';
+		actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>(composerActionPath(composer));
+			currentTaskId = result.task_id;
+			actionMsg = composer.installed
+				? 'Composer update started. See progress below.'
+				: 'Composer installation started. See progress below.';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to start Composer operation';
+		}
+	}
+
+	function onComposerComplete(task: { status?: string; error?: string }) {
+		if (task?.status === 'completed') {
+			actionMsg = 'Composer operation completed successfully.';
+			void loadDependencies();
+		} else {
+			actionError = task?.error || 'Composer operation failed.';
 		}
 	}
 
@@ -38,7 +88,9 @@
 		}
 	}
 
-	onMount(loadServices);
+	onMount(() => {
+		void Promise.all([loadServices(), loadDependencies()]);
+	});
 </script>
 
 <div class="space-y-6">
@@ -61,6 +113,43 @@
 			</button>
 		</div>
 	{/if}
+
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_composer_task" onComplete={onComposerComplete} />
+
+	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+			<div>
+				<h3 class="text-lg font-semibold text-white">Developer Dependencies</h3>
+				<p class="mt-1 text-sm text-gray-400">Tools required for automatic PHP framework setup.</p>
+			</div>
+			<a href="/nodejs" class="text-sm text-blue-400 hover:text-blue-300">Manage Node.js</a>
+		</div>
+
+		{#if dependenciesLoading}
+			<p class="mt-4 text-sm text-gray-400">Checking Composer...</p>
+		{:else if dependencyError}
+			<p class="mt-4 text-sm text-red-400">{dependencyError}</p>
+		{:else if composer}
+			<div class="mt-4 flex flex-col gap-3 rounded-lg border border-gray-700 bg-gray-900/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+				<div>
+					<div class="flex items-center gap-2">
+						<span class="font-medium text-white">Composer</span>
+						<span class="rounded-full px-2 py-0.5 text-xs font-medium {composer.installed ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'}">
+							{composer.installed ? 'Installed' : 'Not Installed'}
+						</span>
+					</div>
+					<p class="mt-1 text-sm text-gray-400">Version: {composer.version || '-'}</p>
+				</div>
+				<button
+					onclick={manageComposer}
+					disabled={composerInProgress}
+					class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+				>
+					{composerInProgress ? 'Processing...' : composer.installed ? 'Update' : 'Install'}
+				</button>
+			</div>
+		{/if}
+	</div>
 
 	{#if loading}
 		<div class="text-gray-400">Loading services...</div>

@@ -19,6 +19,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
+	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -170,6 +171,7 @@ func cmdServe() {
 	fileManagerSvc := filemanager.NewService(exec, auditSvc)
 	tasks := taskrunner.New()
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
+	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
@@ -197,6 +199,7 @@ func cmdServe() {
 		PHPSvc:         phpSvc,
 		SSLSvc:         sslSvc,
 		DeploymentSvc:  deploySvc,
+		DependencySvc:  dependencySvc,
 		CronSvc:        cronSvc,
 		QueueSvc:       queueSvc,
 		NodeSvc:        nodeSvc,

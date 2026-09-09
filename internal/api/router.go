@@ -14,6 +14,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
+	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -54,6 +55,7 @@ type Dependencies struct {
 	PHPSvc         *php.Service
 	SSLSvc         *ssl.Service
 	DeploymentSvc  *deployment.Service
+	DependencySvc  *dependency.Service
 	CronSvc        *cron.Service
 	QueueSvc       *queue.Service
 	NodeSvc        *nodejs.Service
@@ -82,6 +84,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	authHandler := auth.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)
 	systemHandler := system.NewHandler(deps.SystemInfo, deps.Metrics, deps.AuditSvc, deps.LogSvc)
 	serviceHandler := service.NewHandler(deps.ServiceMgr, deps.AuditSvc)
+	dependencyHandler := dependency.NewHandler(deps.DependencySvc, deps.AuditSvc, deps.Tasks)
 	userHandler := user.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)
 	auditHandler := audit.NewHandler(deps.AuditSvc)
 	settingsHandler := settings.NewHandler(deps.SettingsSvc)
@@ -133,6 +136,11 @@ func NewRouter(deps Dependencies) http.Handler {
 
 			// Services
 			r.Get("/services", serviceHandler.List)
+			r.Get("/services/dependencies", dependencyHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
+				Post("/services/composer/install", dependencyHandler.InstallComposer)
+			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
+				Post("/services/composer/update", dependencyHandler.UpdateComposer)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
 				Post("/services/{name}/start", serviceHandler.Start)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).

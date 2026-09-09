@@ -28,7 +28,8 @@ const pages = [
 	['php', 'jenderal_php_task'],
 	['nodejs', 'jenderal_nodejs_task'],
 	['databases', 'jenderal_db_task'],
-	['docker', 'jenderal_docker_task']
+	['docker', 'jenderal_docker_task'],
+	['services', 'jenderal_composer_task']
 ];
 
 for (const [page, storageKey] of pages) {
