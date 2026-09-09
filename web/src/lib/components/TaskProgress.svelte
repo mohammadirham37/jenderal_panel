@@ -3,7 +3,7 @@
 	import { api } from '$lib/api';
 	import { createTaskPoller } from '$lib/task-poller.js';
 
-	let { taskId = $bindable(''), storageKey = '', onComplete = () => {} }: { taskId: string; storageKey?: string; onComplete?: () => void } = $props();
+	let { taskId = $bindable(''), storageKey = '', onComplete = () => {} }: { taskId: string; storageKey?: string; onComplete?: (task: any) => void } = $props();
 
 	let task = $state<any>(null);
 	let pollError = $state('');
@@ -37,9 +37,9 @@
 				task = value;
 				pollError = '';
 			},
-			onComplete: () => {
+			onComplete: (completedTask: any) => {
 				if (storageKey) localStorage.removeItem(storageKey);
-				onComplete();
+				onComplete(completedTask);
 			},
 			onError: (error: unknown) => {
 				pollError = error instanceof Error ? error.message : 'Unable to refresh task progress';

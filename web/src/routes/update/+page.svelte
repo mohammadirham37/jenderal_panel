@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import { cacheBustedURL, waitForUpdatedPanel } from '$lib/update-readiness.js';
 
 	interface UpdateInfo {
 		current_version: string;
@@ -18,13 +19,16 @@
 	let updateError = $state('');
 	let confirmUpdate = $state(false);
 	let currentTaskId = $state('');
+	let expectedUpdateVersion = $state('');
+	let reloadTimedOut = $state(false);
 	let updateInProgress = $derived(updating || !!currentTaskId);
+	const updateTargetStorageKey = 'jenderal_update_target';
 
 	async function checkUpdate() {
 		loading = true;
 		error = '';
 		try {
-			info = await api.get<UpdateInfo>('/api/v1/update/check');
+			info = await api.getNoStore<UpdateInfo>(`/api/v1/update/check?_=${Date.now()}`);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to check for updates';
 		} finally {
@@ -37,8 +41,11 @@
 		updating = true;
 		updateMsg = '';
 		updateError = '';
+		reloadTimedOut = false;
 		currentTaskId = '';
 		try {
+			expectedUpdateVersion = info?.latest_version || '';
+			if (expectedUpdateVersion) localStorage.setItem(updateTargetStorageKey, expectedUpdateVersion);
 			const result = await api.post<{ task_id: string }>('/api/v1/update/perform');
 			currentTaskId = result.task_id;
 			updateMsg = 'Update started. See progress below. Panel will restart after completion.';
@@ -48,15 +55,43 @@
 		}
 	}
 
-	function onTaskComplete() {
+	async function onTaskComplete(task: { status?: string; error?: string }) {
 		updating = false;
-		updateMsg = 'Update completed! Panel is restarting... Refresh this page in a few seconds.';
-		setTimeout(() => {
-			window.location.reload();
-		}, 5000);
+		if (task?.status === 'failed') {
+			updateError = task.error || 'Panel update failed.';
+			return;
+		}
+
+		updateMsg = 'Update completed. Waiting for the updated panel to restart...';
+		const target = expectedUpdateVersion || localStorage.getItem(updateTargetStorageKey) || info?.latest_version || '';
+		if (!target) {
+			reloadTimedOut = true;
+			updateMsg = 'Update completed, but the target version could not be confirmed.';
+			return;
+		}
+
+		const ready = await waitForUpdatedPanel({
+			expectedVersion: target,
+			check: () => api.getNoStore<UpdateInfo>(`/api/v1/update/check?_=${Date.now()}`)
+		});
+		if (ready) {
+			localStorage.removeItem(updateTargetStorageKey);
+			window.location.replace(cacheBustedURL(window.location.href));
+			return;
+		}
+
+		reloadTimedOut = true;
+		updateMsg = 'Update completed, but automatic reload timed out. The panel may still be restarting.';
 	}
 
-	onMount(checkUpdate);
+	function reloadPanel() {
+		window.location.replace(cacheBustedURL(window.location.href));
+	}
+
+	onMount(() => {
+		expectedUpdateVersion = localStorage.getItem(updateTargetStorageKey) || '';
+		void checkUpdate();
+	});
 </script>
 
 <div class="space-y-6">
@@ -82,6 +117,15 @@
 			{updateError}
 			<button onclick={() => (updateError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
 		</div>
+	{/if}
+
+	{#if reloadTimedOut}
+		<button
+			onclick={reloadPanel}
+			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+		>
+			Reload Panel
+		</button>
 	{/if}
 
 	{#if loading}

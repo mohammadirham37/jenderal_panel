@@ -16,7 +16,7 @@ export function getCSRFToken(): string {
 	return csrfToken;
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, init: RequestInit = {}): Promise<T> {
 	const headers: Record<string, string> = {
 		'Content-Type': 'application/json'
 	};
@@ -30,6 +30,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 	}
 
 	const res = await fetch(path, {
+		...init,
 		method,
 		headers,
 		credentials: 'include',
@@ -53,6 +54,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 export const api = {
 	get<T>(path: string): Promise<T> {
 		return request<T>('GET', path);
+	},
+	getNoStore<T>(path: string): Promise<T> {
+		return request<T>('GET', path, undefined, { cache: 'no-store' });
 	},
 	post<T>(path: string, body?: unknown): Promise<T> {
 		return request<T>('POST', path, body);
