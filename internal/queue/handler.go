@@ -52,9 +52,38 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusCreated, worker)
 }
 
+// CreateForWebsite handles POST /api/websites/{id}/queue-workers.
+func (h *Handler) CreateForWebsite(w http.ResponseWriter, r *http.Request) {
+	var req QueueWorkerRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	req.WebsiteID = chi.URLParam(r, "id")
+	worker, err := h.svc.Create(r.Context(), req)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "create_queue_worker", worker.ID, "created queue worker: "+worker.Command)
+	httputil.JSON(w, http.StatusCreated, worker)
+}
+
 // List handles GET /api/queue-workers.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	workers, err := h.svc.List(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, workers)
+}
+
+// ListForWebsite handles GET /api/websites/{id}/queue-workers.
+func (h *Handler) ListForWebsite(w http.ResponseWriter, r *http.Request) {
+	workers, err := h.svc.ListByWebsite(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		httputil.HandleError(w, err)
 		return

@@ -299,6 +299,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				Put("/php/{version}/config", phpHandler.SaveConfig)
 
 			// SSL
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.view")).
+				Get("/websites/{id}/ssl", sslHandler.ListForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Post("/websites/{id}/ssl/issue", sslHandler.IssueForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+				Post("/websites/{id}/ssl/custom", sslHandler.InstallCustomForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
 				Post("/ssl/issue", sslHandler.Issue)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
@@ -326,6 +332,10 @@ func NewRouter(deps Dependencies) http.Handler {
 
 			// Cron Jobs
 			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
+				Get("/websites/{id}/cron-jobs", cronHandler.ListForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Post("/websites/{id}/cron-jobs", cronHandler.CreateForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
 				Get("/cron-jobs", cronHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
 				Post("/cron-jobs", cronHandler.Create)
@@ -341,6 +351,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/cron-jobs/{id}/disable", cronHandler.Disable)
 
 			// Queue Workers
+			r.With(auth.RequirePermission(deps.RBAC, "queue.view")).
+				Get("/websites/{id}/queue-workers", queueHandler.ListForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+				Post("/websites/{id}/queue-workers", queueHandler.CreateForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "queue.view")).
 				Get("/queue-workers", queueHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).

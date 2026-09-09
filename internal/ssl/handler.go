@@ -59,8 +59,21 @@ func (h *Handler) Issue(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
+	h.issue(w, r, req.WebsiteID, req.Domain)
+}
 
-	cert, err := h.svc.Issue(r.Context(), req.WebsiteID, req.Domain)
+// IssueForWebsite handles POST /api/websites/{id}/ssl/issue.
+func (h *Handler) IssueForWebsite(w http.ResponseWriter, r *http.Request) {
+	var req issueRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.issue(w, r, chi.URLParam(r, "id"), req.Domain)
+}
+
+func (h *Handler) issue(w http.ResponseWriter, r *http.Request, websiteID, domain string) {
+	cert, err := h.svc.Issue(r.Context(), websiteID, domain)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -82,9 +95,23 @@ func (h *Handler) InstallCustom(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
+	h.installCustom(w, r, req.WebsiteID, req)
+}
 
+// InstallCustomForWebsite handles POST /api/websites/{id}/ssl/custom.
+func (h *Handler) InstallCustomForWebsite(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
+	var req customRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.installCustom(w, r, chi.URLParam(r, "id"), req)
+}
+
+func (h *Handler) installCustom(w http.ResponseWriter, r *http.Request, websiteID string, req customRequest) {
 	cert, err := h.svc.InstallCustom(
-		r.Context(), req.WebsiteID, req.Domain,
+		r.Context(), websiteID, req.Domain,
 		[]byte(req.CertificatePEM), []byte(req.PrivateKeyPEM),
 	)
 	req.CertificatePEM = ""
@@ -105,6 +132,16 @@ func (h *Handler) InstallCustom(w http.ResponseWriter, r *http.Request) {
 // List handles GET /api/ssl/certificates.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	certs, err := h.svc.List(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, certs)
+}
+
+// ListForWebsite handles GET /api/websites/{id}/ssl.
+func (h *Handler) ListForWebsite(w http.ResponseWriter, r *http.Request) {
+	certs, err := h.svc.ListByWebsite(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		httputil.HandleError(w, err)
 		return

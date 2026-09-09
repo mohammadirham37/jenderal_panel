@@ -44,6 +44,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, jobs)
 }
 
+// ListForWebsite handles GET /api/websites/{id}/cron-jobs.
+func (h *Handler) ListForWebsite(w http.ResponseWriter, r *http.Request) {
+	jobs, err := h.svc.ListByWebsite(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, jobs)
+}
+
 // Create handles POST /api/cron-jobs.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req CronJobRequest
@@ -52,6 +62,25 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	job, err := h.svc.Create(r.Context(), req)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "create_cron_job", job.ID, "created cron job: "+job.Command)
+	httputil.JSON(w, http.StatusCreated, job)
+}
+
+// CreateForWebsite handles POST /api/websites/{id}/cron-jobs.
+func (h *Handler) CreateForWebsite(w http.ResponseWriter, r *http.Request) {
+	var req CronJobRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	req.WebsiteID = chi.URLParam(r, "id")
 	job, err := h.svc.Create(r.Context(), req)
 	if err != nil {
 		httputil.HandleError(w, err)
