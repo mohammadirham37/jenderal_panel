@@ -260,6 +260,22 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		AppType:           w.AppType,
 		Profile:           NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType),
 		IPv6:              p.ipv6Available(),
+		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
+	}
+	if result, err := p.exec.RunSudo(ctx, "/usr/bin/install", "-d", "-m", "0755", "/etc/nginx/jenderal/security/sites"); err != nil || result.ExitCode != 0 {
+		p.fail(ctx, websiteID, "create security snippet directory failed")
+		return
+	}
+	securityFile, checkErr := p.exec.RunSudo(ctx, "/usr/bin/test", "-f", vhostData.SecurityInclude)
+	if checkErr != nil {
+		p.fail(ctx, websiteID, "check security snippet failed: "+checkErr.Error())
+		return
+	}
+	if securityFile.ExitCode != 0 {
+		if err := p.writeSystemFile(ctx, "# Jenderal Traffic Guard: observe configuration not enabled yet\n", vhostData.SecurityInclude); err != nil {
+			p.fail(ctx, websiteID, "write security snippet failed: "+err.Error())
+			return
+		}
 	}
 
 	vhostContent, err := RenderVhost(vhostData)

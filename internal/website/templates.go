@@ -18,6 +18,7 @@ type VhostData struct {
 	Profile           string
 	IPv6              bool
 	RedirectDomains   []string
+	SecurityInclude   string
 }
 
 const DefaultACMEChallengeRoot = "/var/lib/jenderal/acme-challenges"
@@ -209,6 +210,7 @@ const profileHTTPTemplate = `{{ if .ApplicationDomains }}server {
 
     access_log {{ .LogDir }}/access.log;
     error_log {{ .LogDir }}/error.log;
+    {{ if .SecurityInclude }}include {{ .SecurityInclude }};{{ end }}
 {{ .Directives.Server }}
     location ^~ /.well-known/acme-challenge/ {
         root {{ .ACMEChallengeRoot }};
@@ -248,6 +250,7 @@ const profileTLSTemplate = `server {
 
     access_log {{ .LogDir }}/access.log;
     error_log {{ .LogDir }}/error.log;
+    {{ if .SecurityInclude }}include {{ .SecurityInclude }};{{ end }}
 
     ssl_certificate {{ .CertificatePath }};
     ssl_certificate_key {{ .PrivateKeyPath }};

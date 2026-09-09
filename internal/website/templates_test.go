@@ -46,6 +46,23 @@ func TestRenderHTTPAndTLSProfiles(t *testing.T) {
 	}
 }
 
+func TestGeneratedWebsiteIncludesOpaqueSecuritySnippet(t *testing.T) {
+	base := VhostData{Domain: "example.com", DocumentRoot: "/home/web_site/public", LogDir: "/home/web_site/logs", AppType: "static", SecurityInclude: "/etc/nginx/jenderal/security/sites/01SITE.conf"}
+	httpOutput, err := RenderVhost(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tlsOutput, err := RenderTLSVhost(TLSVhostData{VhostData: base, TLSDomain: "example.com", CertificatePath: "/cert.pem", PrivateKeyPath: "/key.pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, output := range []string{httpOutput, tlsOutput} {
+		if !strings.Contains(output, "include /etc/nginx/jenderal/security/sites/01SITE.conf;") {
+			t.Fatalf("security include missing:\n%s", output)
+		}
+	}
+}
+
 func TestRenderVhost_PHP(t *testing.T) {
 	data := VhostData{
 		Domain:       "example.com",

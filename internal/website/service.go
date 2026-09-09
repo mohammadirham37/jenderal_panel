@@ -861,6 +861,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		Profile:           NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
+		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 	}
 
 	content, err := RenderVhost(vhostData)
