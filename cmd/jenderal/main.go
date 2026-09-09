@@ -162,10 +162,11 @@ func cmdServe() {
 	backupSvc := backup.NewService(db, exec, auditSvc, "/var/lib/jenderal/backups")
 	backupScheduler := backup.NewScheduler(backupSvc)
 	alertSvc := alert.NewService(db, auditSvc)
+	alertSvc.SetTargetProviders(serviceMgr, sslSvc)
 	notifSvc := notification.NewService(db)
 	alertChecker := alert.NewChecker(alertSvc, notifSvc, func() model.ServerMetrics {
 		return metricsCollector.Buffer().Latest()
-	})
+	}, serviceMgr, sslSvc)
 	fileManagerSvc := filemanager.NewService(exec, auditSvc)
 	tasks := taskrunner.New()
 	updateSvc := update.NewService(exec, buildVersion(), tasks)

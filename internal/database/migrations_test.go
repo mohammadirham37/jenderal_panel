@@ -19,7 +19,7 @@ func TestMigrate(t *testing.T) {
 	tables := []string{
 		"users", "roles", "permissions", "user_roles",
 		"role_permissions", "sessions", "audit_logs",
-		"settings", "server_metrics",
+		"settings", "server_metrics", "alert_rule_targets",
 	}
 
 	for _, table := range tables {

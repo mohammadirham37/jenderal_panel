@@ -5,11 +5,15 @@
 	interface AlertRule {
 		id: string;
 		metric: string;
+		target: string;
 		operator: string;
 		threshold: number;
+		duration_s: number;
 		enabled: boolean;
 		created_at: string;
 	}
+	interface ServiceStatus { name: string; installed: boolean; }
+	interface SSLCertificate { domain: string; status: string; }
 
 	interface AlertHistory {
 		id: string;
@@ -23,6 +27,8 @@
 
 	let rules = $state<AlertRule[]>([]);
 	let history = $state<AlertHistory[]>([]);
+	let services = $state<ServiceStatus[]>([]);
+	let certificates = $state<SSLCertificate[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	let actionMsg = $state('');
@@ -32,14 +38,18 @@
 	let newMetric = $state('cpu');
 	let newOperator = $state('gt');
 	let newThreshold = $state(80);
+	let newTarget = $state('');
+	let newDuration = $state(0);
 
 	// Edit state
 	let editingRule = $state<AlertRule | null>(null);
 	let editMetric = $state('');
 	let editOperator = $state('');
 	let editThreshold = $state(0);
+	let editTarget = $state('');
+	let editDuration = $state(0);
 
-	const metricOptions = ['cpu', 'ram', 'disk', 'ssl_expiry', 'service_down'];
+	const metricOptions = ['cpu', 'ram', 'disk', 'load1', 'load5', 'load15', 'ssl_expiry', 'service_down'];
 	const operatorOptions = ['gt', 'lt', 'eq'];
 
 	function operatorLabel(op: string): string {
@@ -52,13 +62,19 @@
 	}
 
 	async function loadData() {
+		loading = true;
+		error = '';
 		try {
-			const [rulesData, historyData] = await Promise.all([
-				api.get<AlertRule[]>('/api/v1/alerts/rules'),
-				api.get<AlertHistory[]>('/api/v1/alerts/history')
+			const [rulesData, historyData, servicesData, certificatesData] = await Promise.all([
+				api.get<AlertRule[]>('/api/v1/alert-rules'),
+				api.get<AlertHistory[]>('/api/v1/alert-history'),
+				api.get<ServiceStatus[]>('/api/v1/services'),
+				api.get<SSLCertificate[]>('/api/v1/ssl')
 			]);
 			rules = rulesData || [];
 			history = (historyData || []).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+			services = (servicesData || []).filter((service) => service.installed);
+			certificates = (certificatesData || []).filter((certificate) => certificate.status === 'active');
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load alerts';
 		} finally {
@@ -70,15 +86,19 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post('/api/v1/alerts/rules', {
+			await api.post('/api/v1/alert-rules', {
 				metric: newMetric,
+				target: newMetric === 'service_down' || newMetric === 'ssl_expiry' ? newTarget : '',
 				operator: newOperator,
-				threshold: newThreshold
+				threshold: Number(newThreshold),
+				duration_s: Number(newDuration)
 			});
 			actionMsg = 'Alert rule created.';
 			newMetric = 'cpu';
 			newOperator = 'gt';
 			newThreshold = 80;
+			newTarget = '';
+			newDuration = 0;
 			await loadData();
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to create rule';
@@ -89,7 +109,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.put(`/api/v1/alerts/rules/${rule.id}`, { enabled: !rule.enabled });
+			await api.put(`/api/v1/alert-rules/${rule.id}`, { enabled: !rule.enabled });
 			actionMsg = `Rule ${rule.enabled ? 'disabled' : 'enabled'}.`;
 			await loadData();
 		} catch (err) {
@@ -102,6 +122,8 @@
 		editMetric = rule.metric;
 		editOperator = rule.operator;
 		editThreshold = rule.threshold;
+		editTarget = rule.target || '';
+		editDuration = rule.duration_s || 0;
 	}
 
 	async function saveEdit() {
@@ -109,10 +131,12 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.put(`/api/v1/alerts/rules/${editingRule.id}`, {
+			await api.put(`/api/v1/alert-rules/${editingRule.id}`, {
 				metric: editMetric,
+				target: editMetric === 'service_down' || editMetric === 'ssl_expiry' ? editTarget : '',
 				operator: editOperator,
-				threshold: editThreshold,
+				threshold: Number(editThreshold),
+				duration_s: Number(editDuration),
 				enabled: editingRule.enabled
 			});
 			actionMsg = 'Rule updated.';
@@ -127,7 +151,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.del(`/api/v1/alerts/rules/${ruleId}`);
+			await api.del(`/api/v1/alert-rules/${ruleId}`);
 			actionMsg = 'Rule deleted.';
 			await loadData();
 		} catch (err) {
@@ -172,8 +196,10 @@
 						<thead>
 							<tr class="border-b border-gray-700">
 								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Metric</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Target</th>
 								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Operator</th>
 								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Threshold</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Duration</th>
 								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Enabled</th>
 								<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
 							</tr>
@@ -190,6 +216,13 @@
 											</select>
 										</td>
 										<td class="px-4 py-3">
+											{#if editMetric === 'service_down'}
+												<select bind:value={editTarget} class="max-w-40 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select service</option>{#each services as service}<option value={service.name}>{service.name}</option>{/each}</select>
+											{:else if editMetric === 'ssl_expiry'}
+												<select bind:value={editTarget} class="max-w-44 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select domain</option>{#each certificates as certificate}<option value={certificate.domain}>{certificate.domain}</option>{/each}</select>
+											{:else}<span class="text-gray-500">—</span>{/if}
+										</td>
+										<td class="px-4 py-3">
 											<select bind:value={editOperator} class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
 												{#each operatorOptions as op}
 													<option value={op}>{operatorLabel(op)}</option>
@@ -199,6 +232,7 @@
 										<td class="px-4 py-3">
 											<input type="number" bind:value={editThreshold} class="w-24 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
 										</td>
+										<td class="px-4 py-3"><input type="number" min="0" bind:value={editDuration} class="w-24 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm" /></td>
 										<td class="px-4 py-3"></td>
 										<td class="px-4 py-3 text-right">
 											<div class="flex justify-end gap-2">
@@ -208,8 +242,10 @@
 										</td>
 									{:else}
 										<td class="px-4 py-3 text-sm text-white font-mono">{rule.metric}</td>
+										<td class="px-4 py-3 text-sm text-gray-300 font-mono">{rule.target || '—'}</td>
 										<td class="px-4 py-3 text-sm text-gray-300 font-mono">{operatorLabel(rule.operator)}</td>
 										<td class="px-4 py-3 text-sm text-gray-300 font-mono">{rule.threshold}</td>
+										<td class="px-4 py-3 text-sm text-gray-300 font-mono">{rule.duration_s}s</td>
 										<td class="px-4 py-3">
 											<button
 												onclick={() => toggleRule(rule)}
@@ -243,6 +279,11 @@
 						{/each}
 					</select>
 				</div>
+				{#if newMetric === 'service_down'}
+					<div><label for="alert-target-service" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Target service</label><select id="alert-target-service" bind:value={newTarget} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select service</option>{#each services as service}<option value={service.name}>{service.name}</option>{/each}</select></div>
+				{:else if newMetric === 'ssl_expiry'}
+					<div><label for="alert-target-domain" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Target domain</label><select id="alert-target-domain" bind:value={newTarget} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select domain</option>{#each certificates as certificate}<option value={certificate.domain}>{certificate.domain}</option>{/each}</select></div>
+				{/if}
 				<div>
 					<label for="alert-operator" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Operator</label>
 					<select id="alert-operator" bind:value={newOperator} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
@@ -254,6 +295,10 @@
 				<div>
 					<label for="alert-threshold" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Threshold</label>
 					<input id="alert-threshold" type="number" bind:value={newThreshold} class="w-24 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+				</div>
+				<div>
+					<label for="alert-duration" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Duration (s)</label>
+					<input id="alert-duration" type="number" min="0" bind:value={newDuration} class="w-28 px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm" />
 				</div>
 				<button onclick={addRule} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
 					Add

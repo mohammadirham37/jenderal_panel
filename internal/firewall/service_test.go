@@ -78,6 +78,17 @@ func TestParseStatus_Inactive(t *testing.T) {
 	}
 }
 
+func TestStatusReturnsCommandFailure(t *testing.T) {
+	mock := &executor.MockExecutor{RunSudoFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+		return &executor.Result{ExitCode: 1, Stderr: "ufw: command not found"}, nil
+	}}
+
+	_, err := NewService(mock, nil).Status(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "ufw: command not found") {
+		t.Fatalf("Status() error = %v, want command stderr", err)
+	}
+}
+
 func TestIsSSHRule(t *testing.T) {
 	tests := []struct {
 		to   string

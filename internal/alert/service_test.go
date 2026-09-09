@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -297,5 +298,63 @@ func TestResolveAlert(t *testing.T) {
 	err = svc.ResolveAlert(ctx, "nonexistent")
 	if err == nil {
 		t.Error("expected not found error")
+	}
+}
+
+func TestRuleTargetRoundTripAndUnresolvedLookup(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, nil)
+	ctx := context.Background()
+	rule, err := svc.CreateRule(ctx, model.AlertRule{Metric: "service_down", Operator: "eq", Threshold: 1, Target: "nginx", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetRule(ctx, rule.ID)
+	if err != nil || got.Target != "nginx" {
+		t.Fatalf("GetRule() = %#v, %v; want target nginx", got, err)
+	}
+	if _, found, err := svc.FindUnresolvedByRule(ctx, rule.ID); err != nil || found {
+		t.Fatalf("empty unresolved lookup = found %v, err %v", found, err)
+	}
+	event, err := svc.LogAlert(ctx, rule.ID, rule.Metric, 1, "nginx is down")
+	if err != nil {
+		t.Fatal(err)
+	}
+	open, found, err := svc.FindUnresolvedByRule(ctx, rule.ID)
+	if err != nil || !found || open.ID != event.ID {
+		t.Fatalf("unresolved lookup = %#v, %v, %v", open, found, err)
+	}
+}
+
+func TestTargetValidationUsesConfiguredProviders(t *testing.T) {
+	svc := NewService(setupTestDB(t), nil)
+	now := time.Now().UTC()
+	serviceProvider := checkerServices{statuses: map[string]*model.ServiceStatus{"nginx": {Name: "nginx"}}}
+	svc.SetTargetProviders(
+		serviceProvider,
+		checkerCertificates{certificates: []model.SSLCertificate{{Domain: "example.com", Status: "active", ExpiresAt: now.Add(24 * time.Hour)}}},
+	)
+	ctx := context.Background()
+	if _, err := svc.CreateRule(ctx, model.AlertRule{Metric: "service_down", Target: "missing", Operator: "eq", Threshold: 1}); err == nil {
+		t.Fatal("missing service target was accepted")
+	}
+	if _, err := svc.CreateRule(ctx, model.AlertRule{Metric: "ssl_expiry", Target: "missing.example", Operator: "lt", Threshold: 14}); err == nil {
+		t.Fatal("missing certificate target was accepted")
+	}
+	rule, err := svc.CreateRule(ctx, model.AlertRule{Metric: "ssl_expiry", Target: "example.com", Operator: "lt", Threshold: 14})
+	if err != nil {
+		t.Fatalf("active certificate target rejected: %v", err)
+	}
+	if err := svc.UpdateRule(ctx, rule.ID, model.AlertRule{Metric: "service_down", Target: "missing", Operator: "eq", Threshold: 1}); err == nil {
+		t.Fatal("missing service target was accepted during update")
+	}
+	serviceRule, err := svc.CreateRule(ctx, model.AlertRule{Metric: "service_down", Target: "nginx", Operator: "eq", Threshold: 1, Enabled: true})
+	if err != nil {
+		t.Fatalf("available service target rejected: %v", err)
+	}
+	delete(serviceProvider.statuses, "nginx")
+	serviceRule.Enabled = false
+	if err := svc.UpdateRule(ctx, serviceRule.ID, serviceRule); err != nil {
+		t.Fatalf("disable rule with stale target: %v", err)
 	}
 }

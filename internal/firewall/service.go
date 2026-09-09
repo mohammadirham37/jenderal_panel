@@ -38,6 +38,13 @@ func (s *Service) Status(ctx context.Context) (*model.FirewallStatus, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ufw status: %w", err)
 	}
+	if result.ExitCode != 0 {
+		message := strings.TrimSpace(result.Stderr)
+		if message == "" {
+			message = "failed to read firewall status"
+		}
+		return nil, model.NewDomainError("UFW_ERROR", message, nil)
+	}
 	return parseUFWStatus(result.Stdout), nil
 }
 

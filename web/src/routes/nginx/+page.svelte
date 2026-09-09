@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import LogViewer from '$lib/components/LogViewer.svelte';
+	import { parseSimpleNginxConfig, switchNginxConfigMode, updateSimpleNginxConfig } from '$lib/nginx-config.js';
 
 	interface NginxStatus {
 		installed: boolean;
@@ -28,6 +29,39 @@
 	let configLoading = $state(false);
 	let configError = $state('');
 	let configSaveMsg = $state('');
+	let configMode = $state<'simple' | 'manual'>('simple');
+	let simpleConfig = $state<Record<string, string>>({});
+	let simpleConfigErrors = $state<string[]>([]);
+	const simpleFields = [
+		{ key: 'worker_processes', label: 'Worker Processes', help: 'auto or a positive number', type: 'text' },
+		{ key: 'worker_connections', label: 'Worker Connections', help: 'Maximum connections per worker', type: 'number' },
+		{ key: 'client_max_body_size', label: 'Maximum Upload Size', help: 'For example 64M', type: 'text' },
+		{ key: 'keepalive_timeout', label: 'Keepalive Timeout', help: 'Seconds', type: 'number' },
+		{ key: 'server_tokens', label: 'Show Nginx Version', help: 'Controls server_tokens', type: 'toggle' },
+		{ key: 'gzip', label: 'Gzip Compression', help: 'Compress supported responses', type: 'toggle' }
+	];
+
+	function refreshSimpleConfig() {
+		const parsed = parseSimpleNginxConfig(configContent);
+		simpleConfig = parsed.values;
+		simpleConfigErrors = parsed.errors;
+	}
+
+	function changeConfigMode(target: 'simple' | 'manual') {
+		const next = switchNginxConfigMode({ mode: configMode, draft: configContent }, target);
+		configMode = next.mode;
+		if (target === 'simple') refreshSimpleConfig();
+	}
+
+	function setSimpleField(key: string, value: string) {
+		try {
+			configContent = updateSimpleNginxConfig(configContent, key, value);
+			refreshSimpleConfig();
+			configError = '';
+		} catch (err) {
+			configError = err instanceof Error ? err.message : 'Invalid configuration value';
+		}
+	}
 
 	// Sites
 	let sites = $state<NginxSite[]>([]);
@@ -61,6 +95,7 @@
 		try {
 			const data = await api.get<{ content: string }>('/api/v1/nginx/config');
 			configContent = data.content || '';
+			refreshSimpleConfig();
 		} catch (err) {
 			configError = err instanceof Error ? err.message : 'Failed to load config';
 		} finally {
@@ -279,7 +314,13 @@
 	<!-- Config Editor -->
 	{#if status?.installed}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<h3 class="text-lg font-semibold text-white mb-3">Configuration</h3>
+			<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+				<h3 class="text-lg font-semibold text-white">Configuration</h3>
+				<div class="inline-flex rounded-lg border border-gray-600 bg-gray-900 p-1" aria-label="Nginx configuration mode">
+					<button onclick={() => changeConfigMode('simple')} class="rounded-md px-3 py-1.5 text-sm {configMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}">Simple</button>
+					<button onclick={() => changeConfigMode('manual')} class="rounded-md px-3 py-1.5 text-sm {configMode === 'manual' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}">Manual</button>
+				</div>
+			</div>
 
 			{#if configError}
 				<div class="mb-2 text-red-400 text-sm">{configError}</div>
@@ -294,15 +335,33 @@
 			{#if configLoading}
 				<div class="text-gray-400 text-sm">Loading configuration...</div>
 			{:else}
-				<textarea
-					bind:value={configContent}
-					rows={20}
-					class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-				></textarea>
+				{#if configMode === 'simple'}
+					{#each simpleConfigErrors as parseError}
+						<div class="mb-2 rounded border border-yellow-700 bg-yellow-900/40 p-3 text-sm text-yellow-300">{parseError} Switch to Manual mode to repair the structure.</div>
+					{/each}
+					<div class="grid gap-4 md:grid-cols-2">
+						{#each simpleFields as field}
+							<div>
+								<label for="nginx-{field.key}" class="mb-1 block text-sm font-medium text-gray-200">{field.label}</label>
+								{#if field.type === 'toggle'}
+									<select id="nginx-{field.key}" value={simpleConfig[field.key]} onchange={(event) => setSimpleField(field.key, event.currentTarget.value)} class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-white">
+										<option value="on">On</option><option value="off">Off</option>
+									</select>
+								{:else}
+									<input id="nginx-{field.key}" type={field.type} min={field.type === 'number' ? '0' : undefined} value={simpleConfig[field.key]} onchange={(event) => setSimpleField(field.key, event.currentTarget.value)} class="w-full rounded border border-gray-600 bg-gray-900 px-3 py-2 text-white" />
+								{/if}
+								<p class="mt-1 text-xs text-gray-400">{field.help}</p>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<textarea bind:value={configContent} oninput={() => (simpleConfigErrors = [])} rows={20} class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+				{/if}
 				<div class="mt-2">
 					<button
 						onclick={saveConfig}
-						class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+						disabled={simpleConfigErrors.length > 0}
+						class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 					>
 						Save Configuration
 					</button>

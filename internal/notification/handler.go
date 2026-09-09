@@ -8,7 +8,6 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
-	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // Handler handles notification channel HTTP requests.
@@ -42,38 +41,67 @@ func (h *Handler) ListChannels(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
-	httputil.JSON(w, http.StatusOK, channels)
+	responses := make([]ChannelResponse, 0, len(channels))
+	for _, channel := range channels {
+		response, err := channelResponse(channel)
+		if err != nil {
+			httputil.HandleError(w, err)
+			return
+		}
+		responses = append(responses, response)
+	}
+	httputil.JSON(w, http.StatusOK, responses)
 }
 
 // CreateChannel handles POST /api/notification-channels.
 func (h *Handler) CreateChannel(w http.ResponseWriter, r *http.Request) {
-	var req model.NotificationChannel
+	var req CreateChannelRequest
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	ch, err := h.svc.CreateChannel(r.Context(), req)
+	channel, err := req.Channel()
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	ch, err := h.svc.CreateChannel(r.Context(), channel)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
 	h.logAction(r, "create_notification_channel", ch.ID, "created "+ch.Type+" notification channel")
-	httputil.JSON(w, http.StatusCreated, ch)
+	response, err := channelResponse(ch)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusCreated, response)
 }
 
 // UpdateChannel handles PUT /api/notification-channels/{id}.
 func (h *Handler) UpdateChannel(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	var req model.NotificationChannel
+	var req UpdateChannelRequest
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	if err := h.svc.UpdateChannel(r.Context(), id, req); err != nil {
+	current, err := h.svc.GetChannel(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	channel, err := req.Merge(current)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.UpdateChannel(r.Context(), id, channel); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}

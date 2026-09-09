@@ -18,6 +18,56 @@ type Handler struct {
 	audit *audit.Service
 }
 
+// CreateRuleRequest keeps omitted enabled distinct from an explicit false.
+type CreateRuleRequest struct {
+	Metric    string  `json:"metric"`
+	Target    string  `json:"target"`
+	Operator  string  `json:"operator"`
+	Threshold float64 `json:"threshold"`
+	DurationS int     `json:"duration_s"`
+	Enabled   *bool   `json:"enabled"`
+}
+
+func (r CreateRuleRequest) Rule() model.AlertRule {
+	enabled := true
+	if r.Enabled != nil {
+		enabled = *r.Enabled
+	}
+	return model.AlertRule{Metric: r.Metric, Target: r.Target, Operator: r.Operator, Threshold: r.Threshold, DurationS: r.DurationS, Enabled: enabled}
+}
+
+// UpdateRuleRequest allows safe toggle-only and field-specific updates.
+type UpdateRuleRequest struct {
+	Metric    *string  `json:"metric"`
+	Target    *string  `json:"target"`
+	Operator  *string  `json:"operator"`
+	Threshold *float64 `json:"threshold"`
+	DurationS *int     `json:"duration_s"`
+	Enabled   *bool    `json:"enabled"`
+}
+
+func (r UpdateRuleRequest) Merge(rule model.AlertRule) model.AlertRule {
+	if r.Metric != nil {
+		rule.Metric = *r.Metric
+	}
+	if r.Target != nil {
+		rule.Target = *r.Target
+	}
+	if r.Operator != nil {
+		rule.Operator = *r.Operator
+	}
+	if r.Threshold != nil {
+		rule.Threshold = *r.Threshold
+	}
+	if r.DurationS != nil {
+		rule.DurationS = *r.DurationS
+	}
+	if r.Enabled != nil {
+		rule.Enabled = *r.Enabled
+	}
+	return rule
+}
+
 // NewHandler creates a new alert Handler.
 func NewHandler(svc *Service, auditSvc *audit.Service) *Handler {
 	return &Handler{svc: svc, audit: auditSvc}
@@ -48,13 +98,13 @@ func (h *Handler) ListRules(w http.ResponseWriter, r *http.Request) {
 
 // CreateRule handles POST /api/alert-rules.
 func (h *Handler) CreateRule(w http.ResponseWriter, r *http.Request) {
-	var req model.AlertRule
+	var req CreateRuleRequest
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	rule, err := h.svc.CreateRule(r.Context(), req)
+	rule, err := h.svc.CreateRule(r.Context(), req.Rule())
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -79,13 +129,18 @@ func (h *Handler) GetRule(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) UpdateRule(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	var req model.AlertRule
+	var req UpdateRuleRequest
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	if err := h.svc.UpdateRule(r.Context(), id, req); err != nil {
+	current, err := h.svc.GetRule(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.UpdateRule(r.Context(), id, req.Merge(current)); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
