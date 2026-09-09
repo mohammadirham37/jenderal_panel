@@ -14,6 +14,7 @@ cmd/jenderal/web_build/
 # IDE
 .idea/
 .vscode/
+.worktrees/
 *.swp
 *.swo
 
