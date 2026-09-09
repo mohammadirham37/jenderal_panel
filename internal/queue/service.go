@@ -33,7 +33,7 @@ WantedBy=multi-user.target
 type QueueWorkerRequest struct {
 	WebsiteID string `json:"website_id"`
 	Command   string `json:"command"`
-	NumWorkers int   `json:"num_workers"`
+	NumWorkers int    `json:"num_workers"`
 }
 
 // Service manages queue worker CRUD operations and systemd unit management.
@@ -168,6 +168,14 @@ func (s *Service) List(ctx context.Context) ([]model.QueueWorker, error) {
 
 // ListByWebsite returns all queue workers for a specific website.
 func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.QueueWorker, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM websites WHERE id = ?`, websiteID).Scan(&exists); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, model.ErrNotFound
+		}
+		return nil, fmt.Errorf("validate website: %w", err)
+	}
+
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, website_id, command, num_workers, auto_restart, status, created_at, updated_at
 		 FROM queue_workers WHERE website_id = ? ORDER BY created_at DESC`, websiteID)

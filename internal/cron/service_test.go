@@ -3,12 +3,14 @@ package cron
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -30,7 +32,7 @@ func insertTestWebsite(t *testing.T, db *sql.DB, id, webUser string) {
 	_, err := db.Exec(
 		`INSERT INTO websites (id, domain, app_type, document_root, web_user, status, ssl_enabled, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, "example.com", "php", "/home/"+webUser+"/public", webUser, "active", 0,
+		id, id+".example.com", "php", "/home/"+webUser+"/public", webUser, "active", 0,
 		"2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z",
 	)
 	if err != nil {
@@ -159,5 +161,34 @@ func TestList(t *testing.T) {
 	}
 	if len(jobs) != 2 {
 		t.Errorf("expected 2 jobs, got %d", len(jobs))
+	}
+}
+
+func TestListByWebsiteValidatesWebsiteAndScopesResults(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "site-a", "user-a")
+	insertTestWebsite(t, db, "site-b", "user-b")
+	insertTestWebsite(t, db, "site-empty", "user-empty")
+	_, err := db.Exec(`INSERT INTO cron_jobs (id, website_id, command, schedule, enabled, created_at, updated_at)
+		VALUES ('cron-a', 'site-a', 'cmd-a', '* * * * *', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+		       ('cron-b', 'site-b', 'cmd-b', '* * * * *', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`)
+	if err != nil {
+		t.Fatalf("insert cron jobs: %v", err)
+	}
+	svc := NewService(db, mockExecutor(), nil)
+	jobs, err := svc.ListByWebsite(context.Background(), "site-a")
+	if err != nil {
+		t.Fatalf("ListByWebsite: %v", err)
+	}
+	if len(jobs) != 1 || jobs[0].ID != "cron-a" {
+		t.Fatalf("jobs = %#v, want only cron-a", jobs)
+	}
+	emptyJobs, err := svc.ListByWebsite(context.Background(), "site-empty")
+	if err != nil || len(emptyJobs) != 0 {
+		t.Fatalf("empty website jobs = %#v, error = %v, want empty result", emptyJobs, err)
+	}
+	_, err = svc.ListByWebsite(context.Background(), "missing-site")
+	if !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("error = %v, want model.ErrNotFound", err)
 	}
 }

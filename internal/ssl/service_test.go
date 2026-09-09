@@ -3,6 +3,7 @@ package ssl
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -436,6 +437,7 @@ func TestList(t *testing.T) {
 
 	insertTestWebsite(t, db, "ws-003", "list1.example.com")
 	insertTestWebsite(t, db, "ws-004", "list2.example.com")
+	insertTestWebsite(t, db, "ws-empty", "empty.example.com")
 
 	acme := &MockACMEClient{
 		ObtainFunc: func(domain, webroot string) ([]byte, []byte, error) {
@@ -475,6 +477,14 @@ func TestList(t *testing.T) {
 	}
 	if len(wsCerts) != 1 {
 		t.Errorf("expected 1 certificate for ws-003, got %d", len(wsCerts))
+	}
+	emptyCerts, err := svc.ListByWebsite(context.Background(), "ws-empty")
+	if err != nil || len(emptyCerts) != 0 {
+		t.Fatalf("empty website certs = %#v, error = %v, want empty result", emptyCerts, err)
+	}
+	_, err = svc.ListByWebsite(context.Background(), "missing-site")
+	if !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("error = %v, want model.ErrNotFound", err)
 	}
 }
 
