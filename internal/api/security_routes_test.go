@@ -36,6 +36,11 @@ func TestSecurityRoutesRegistered(t *testing.T) {
 		http.MethodPost + " /api/v1/security/malware/quarantine/{id}/restore":        false,
 		http.MethodPost + " /api/v1/security/malware/quarantine/{id}/false-positive": false,
 		http.MethodDelete + " /api/v1/security/malware/quarantine/{id}":              false,
+		http.MethodGet + " /api/v1/security/traffic/profiles":                        false,
+		http.MethodGet + " /api/v1/security/traffic/websites/{id}/buckets":           false,
+		http.MethodPut + " /api/v1/security/traffic/websites/{id}":                   false,
+		http.MethodPost + " /api/v1/security/traffic/websites/{id}/observe":          false,
+		http.MethodPost + " /api/v1/security/traffic/cloudflare/refresh":             false,
 	}
 	if err := chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		key := method + " " + route

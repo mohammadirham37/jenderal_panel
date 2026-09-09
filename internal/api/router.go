@@ -35,48 +35,50 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
+	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/user"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 )
 
 type Dependencies struct {
-	DB             *sql.DB
-	Logger         *slog.Logger
-	AuthSvc        *auth.Service
-	RBAC           *auth.RBAC
-	AuditSvc       *audit.Service
-	SystemInfo     *system.Info
-	Metrics        *system.MetricsCollector
-	ServiceMgr     service.ServiceManager
-	SettingsSvc    *settings.Service
-	NginxSvc       *nginx.Service
-	FirewallSvc    *firewall.Service
-	ProcessSvc     *process.Service
-	LogSvc         *system.LogService
-	WebsiteSvc     *website.Service
-	PHPSvc         *php.Service
-	SSLSvc         *ssl.Service
-	DeploymentSvc  *deployment.Service
-	DependencySvc  *dependency.Service
-	CronSvc        *cron.Service
-	QueueSvc       *queue.Service
-	NodeSvc        *nodejs.Service
-	DBManagerSvc   *dbmanager.Service
-	DockerSvc      *docker.Service
-	BackupSvc      *backup.Service
-	AlertSvc       *alert.Service
-	NotifSvc       *notification.Service
-	FileManagerSvc *filemanager.Service
-	UpdateSvc      *update.Service
-	Exec           executor.CommandExecutor
-	Tasks          *taskrunner.Runner
-	SecuritySvc    *security.Service
-	SecurityEvents *security.EventService
-	Fail2banSvc    *fail2ban.Service
-	MalwareSvc     *malware.Service
-	MalwareRepo    *malware.Repository
-	StaticHandler  http.Handler
+	DB              *sql.DB
+	Logger          *slog.Logger
+	AuthSvc         *auth.Service
+	RBAC            *auth.RBAC
+	AuditSvc        *audit.Service
+	SystemInfo      *system.Info
+	Metrics         *system.MetricsCollector
+	ServiceMgr      service.ServiceManager
+	SettingsSvc     *settings.Service
+	NginxSvc        *nginx.Service
+	FirewallSvc     *firewall.Service
+	ProcessSvc      *process.Service
+	LogSvc          *system.LogService
+	WebsiteSvc      *website.Service
+	PHPSvc          *php.Service
+	SSLSvc          *ssl.Service
+	DeploymentSvc   *deployment.Service
+	DependencySvc   *dependency.Service
+	CronSvc         *cron.Service
+	QueueSvc        *queue.Service
+	NodeSvc         *nodejs.Service
+	DBManagerSvc    *dbmanager.Service
+	DockerSvc       *docker.Service
+	BackupSvc       *backup.Service
+	AlertSvc        *alert.Service
+	NotifSvc        *notification.Service
+	FileManagerSvc  *filemanager.Service
+	UpdateSvc       *update.Service
+	Exec            executor.CommandExecutor
+	Tasks           *taskrunner.Runner
+	SecuritySvc     *security.Service
+	SecurityEvents  *security.EventService
+	Fail2banSvc     *fail2ban.Service
+	MalwareSvc      *malware.Service
+	MalwareRepo     *malware.Repository
+	TrafficGuardSvc *trafficguard.Service
+	StaticHandler   http.Handler
 }
 
 func NewRouter(deps Dependencies) http.Handler {
@@ -118,6 +120,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
 	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
+	trafficHandler := trafficguard.NewHandler(deps.TrafficGuardSvc, deps.Tasks, deps.AuditSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -617,6 +620,11 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/security/malware/quarantine/{id}/false-positive", malwareHandler.FalsePositive)
 			r.With(auth.RequirePermission(deps.RBAC, "security.quarantine")).
 				Delete("/security/malware/quarantine/{id}", malwareHandler.DeleteQuarantine)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).Get("/security/traffic/profiles", trafficHandler.Profiles)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).Get("/security/traffic/websites/{id}/buckets", trafficHandler.Buckets)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Put("/security/traffic/websites/{id}", trafficHandler.Apply)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/traffic/websites/{id}/observe", trafficHandler.Reset)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/traffic/cloudflare/refresh", trafficHandler.Refresh)
 		})
 	})
 

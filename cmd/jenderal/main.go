@@ -42,6 +42,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
+	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 )
@@ -189,7 +190,13 @@ func cmdServe() {
 	malwareSvc := malware.NewService(malwareRepo, malwareResolver, exec, malwareFiles, "/var/lib/jenderal/quarantine", securityEvents)
 	malwareSvc.UseWalker(malware.NewSudoTargetWalker(exec))
 	malwareScheduler := malware.NewScheduler(malwareRepo, tasks, malwareSvc, time.Local)
-	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc, malwareSvc)
+	trafficRepo := trafficguard.NewRepository(db)
+	cloudflareUpdater := trafficguard.NewCloudflareUpdater(trafficRepo, nil, securityEvents)
+	trafficNginx := trafficguard.NewNginxManager(exec, nil, trafficRepo)
+	trafficSvc := trafficguard.NewService(db, trafficRepo, trafficNginx, cloudflareUpdater)
+	trafficCollector := trafficguard.NewCollector(db, trafficRepo, exec, securityEvents)
+	trafficWorker := trafficguard.NewWorker(trafficCollector, cloudflareUpdater)
+	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc, malwareSvc, trafficSvc)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
@@ -203,42 +210,43 @@ func cmdServe() {
 	}
 
 	router := api.NewRouter(api.Dependencies{
-		Logger:         logger,
-		AuthSvc:        authSvc,
-		RBAC:           rbac,
-		AuditSvc:       auditSvc,
-		SystemInfo:     systemInfo,
-		Metrics:        metricsCollector,
-		ServiceMgr:     serviceMgr,
-		SettingsSvc:    settingsSvc,
-		NginxSvc:       nginxSvc,
-		FirewallSvc:    firewallSvc,
-		ProcessSvc:     processSvc,
-		LogSvc:         logSvc,
-		WebsiteSvc:     websiteSvc,
-		PHPSvc:         phpSvc,
-		SSLSvc:         sslSvc,
-		DeploymentSvc:  deploySvc,
-		DependencySvc:  dependencySvc,
-		CronSvc:        cronSvc,
-		QueueSvc:       queueSvc,
-		NodeSvc:        nodeSvc,
-		DBManagerSvc:   dbManagerSvc,
-		DockerSvc:      dockerSvc,
-		BackupSvc:      backupSvc,
-		AlertSvc:       alertSvc,
-		NotifSvc:       notifSvc,
-		FileManagerSvc: fileManagerSvc,
-		UpdateSvc:      updateSvc,
-		Exec:           exec,
-		Tasks:          tasks,
-		SecuritySvc:    securitySvc,
-		SecurityEvents: securityEvents,
-		Fail2banSvc:    fail2banSvc,
-		MalwareSvc:     malwareSvc,
-		MalwareRepo:    malwareRepo,
-		DB:             db,
-		StaticHandler:  staticHandler(),
+		Logger:          logger,
+		AuthSvc:         authSvc,
+		RBAC:            rbac,
+		AuditSvc:        auditSvc,
+		SystemInfo:      systemInfo,
+		Metrics:         metricsCollector,
+		ServiceMgr:      serviceMgr,
+		SettingsSvc:     settingsSvc,
+		NginxSvc:        nginxSvc,
+		FirewallSvc:     firewallSvc,
+		ProcessSvc:      processSvc,
+		LogSvc:          logSvc,
+		WebsiteSvc:      websiteSvc,
+		PHPSvc:          phpSvc,
+		SSLSvc:          sslSvc,
+		DeploymentSvc:   deploySvc,
+		DependencySvc:   dependencySvc,
+		CronSvc:         cronSvc,
+		QueueSvc:        queueSvc,
+		NodeSvc:         nodeSvc,
+		DBManagerSvc:    dbManagerSvc,
+		DockerSvc:       dockerSvc,
+		BackupSvc:       backupSvc,
+		AlertSvc:        alertSvc,
+		NotifSvc:        notifSvc,
+		FileManagerSvc:  fileManagerSvc,
+		UpdateSvc:       updateSvc,
+		Exec:            exec,
+		Tasks:           tasks,
+		SecuritySvc:     securitySvc,
+		SecurityEvents:  securityEvents,
+		Fail2banSvc:     fail2banSvc,
+		MalwareSvc:      malwareSvc,
+		MalwareRepo:     malwareRepo,
+		TrafficGuardSvc: trafficSvc,
+		DB:              db,
+		StaticHandler:   staticHandler(),
 	})
 
 	// Background workers use a context that cancels on process exit
@@ -259,6 +267,7 @@ func cmdServe() {
 	alertChecker.Start(bgCtx)
 	fail2banSvc.StartReconciler(bgCtx)
 	malwareScheduler.Start(bgCtx)
+	trafficWorker.Start(bgCtx)
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {

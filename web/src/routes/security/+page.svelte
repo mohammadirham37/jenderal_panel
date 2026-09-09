@@ -15,8 +15,14 @@
 		formatSignatureAge,
 		normalizeMalwareStatus
 	} from '$lib/malware.js';
+	import {
+		buildTrafficProfile,
+		enforcementWarning,
+		observationProgress,
+		summarizeTraffic
+	} from '$lib/traffic-guard.js';
 
-	type Tab = 'overview' | 'fail2ban' | 'malware' | 'events';
+	type Tab = 'overview' | 'fail2ban' | 'malware' | 'traffic' | 'events';
 	interface ComponentStatus {
 		name: string;
 		state: string;
@@ -99,6 +105,17 @@
 	}
 	interface MalwareSchedule { id?: string; enabled: boolean; local_time: string; mode: string; website_ids: string[] }
 	interface Website { id: string; domain: string; status: string }
+	interface TrafficProfile {
+		website_id: string; mode: 'observe' | 'balanced' | 'strict' | 'custom';
+		proxy_mode: 'direct' | 'cloudflare' | 'custom'; proxy_header: string; proxy_cidrs: string[];
+		requests_per_second: number; burst: number; connections: number;
+		observe_started_at: string; created_at: string; updated_at: string;
+	}
+	interface TrafficBucket {
+		bucket_at: string; requests: number; status_4xx: number; status_5xx: number;
+		status_429: number; bytes: number; peak_rps: number;
+		top_ips: Record<string, number>; top_paths: Record<string, number>;
+	}
 
 	let activeTab = $state<Tab>('overview');
 	let editMode = $state<'simple' | 'advanced'>('simple');
@@ -136,12 +153,39 @@
 	let onAccessEnabled = $state(false);
 	let preventionEnabled = $state(false);
 	let preventionConfirmed = $state(false);
+	let trafficProfiles = $state<TrafficProfile[]>([]);
+	let trafficBuckets = $state<TrafficBucket[]>([]);
+	let selectedTrafficWebsite = $state('');
+	let trafficMode = $state<TrafficProfile['mode']>('observe');
+	let trafficProxyMode = $state<TrafficProfile['proxy_mode']>('direct');
+	let trafficProxyHeader = $state('X-Forwarded-For');
+	let trafficProxyCIDRs = $state('');
+	let trafficRPS = $state(10);
+	let trafficBurst = $state(20);
+	let trafficConnections = $state(20);
+	let trafficConfirmed = $state(false);
+	let trafficSummary = $derived(summarizeTraffic(trafficBuckets));
+	let trafficPeak = $derived(Math.max(1, ...trafficBuckets.map((bucket) => bucket.requests)));
+	let topTrafficPaths = $derived.by(() => {
+		const totals = new Map<string, number>();
+		for (const bucket of trafficBuckets) for (const [path, count] of Object.entries(bucket.top_paths || {})) totals.set(path, (totals.get(path) || 0) + count);
+		return [...totals.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+	});
+	let selectedTrafficProfile = $derived(trafficProfiles.find((profile) => profile.website_id === selectedTrafficWebsite));
+	let trafficObservation = $derived(observationProgress(selectedTrafficProfile?.observe_started_at));
+	let trafficCondition = $derived.by(() => {
+		const severities = events.filter((event) => event.category === 'traffic' && (event.status === 'open' || event.status === 'acknowledged')).map((event) => event.severity);
+		if (severities.includes('critical')) return 'Critical';
+		if (severities.includes('high')) return 'High';
+		if (severities.includes('medium')) return 'Warning';
+		return 'Normal';
+	});
 
 	async function loadData() {
 		loading = true;
 		error = '';
 		try {
-			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData] = await Promise.all([
+			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData, trafficData] = await Promise.all([
 				api.get<Overview>('/api/v1/security/overview'),
 				api.get<Fail2banStatus>('/api/v1/security/fail2ban'),
 				api.get<Ban[]>('/api/v1/security/fail2ban/bans'),
@@ -150,7 +194,8 @@
 				api.get<MalwareScan[]>('/api/v1/security/malware/scans'),
 				api.get<QuarantineItem[]>('/api/v1/security/malware/quarantine'),
 				api.get<MalwareSchedule[]>('/api/v1/security/malware/schedules'),
-				api.get<Website[]>('/api/v1/websites')
+				api.get<Website[]>('/api/v1/websites'),
+				api.get<TrafficProfile[]>('/api/v1/security/traffic/profiles')
 			]);
 			overview = normalizeOverview(overviewData) as Overview;
 			fail2ban = { ...statusData, jails: statusData?.jails || [] };
@@ -167,7 +212,11 @@
 			quarantine = quarantineData || [];
 			malwareSchedules = scheduleData || [];
 			websites = (websiteData || []).filter((website) => website.status === 'active' || website.status === 'suspended');
+			trafficProfiles = trafficData || [];
 			if (!selectedWebsite && websites.length > 0) selectedWebsite = websites[0].id;
+			if (!selectedTrafficWebsite && websites.length > 0) selectedTrafficWebsite = websites[0].id;
+			syncTrafficForm();
+			await loadTrafficBuckets();
 			if (malwareSchedules.length > 0) {
 				scheduleEnabled = malwareSchedules[0].enabled;
 				scheduleTime = malwareSchedules[0].local_time;
@@ -180,6 +229,66 @@
 		} finally {
 			loading = false;
 		}
+	}
+
+	function syncTrafficForm() {
+		const profile = trafficProfiles.find((item) => item.website_id === selectedTrafficWebsite);
+		if (!profile) return;
+		trafficMode = profile.mode;
+		trafficProxyMode = profile.proxy_mode;
+		trafficProxyHeader = profile.proxy_header || 'X-Forwarded-For';
+		trafficProxyCIDRs = (profile.proxy_cidrs || []).join('\n');
+		trafficRPS = profile.requests_per_second;
+		trafficBurst = profile.burst;
+		trafficConnections = profile.connections;
+		trafficConfirmed = false;
+	}
+
+	async function loadTrafficBuckets() {
+		if (!selectedTrafficWebsite) { trafficBuckets = []; return; }
+		try { trafficBuckets = await api.get<TrafficBucket[]>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/buckets`) || []; }
+		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to load Traffic Guard evidence.'; trafficBuckets = []; }
+	}
+
+	async function chooseTrafficWebsite(id: string) {
+		selectedTrafficWebsite = id;
+		syncTrafficForm();
+		await loadTrafficBuckets();
+	}
+
+	async function applyTrafficGuard() {
+		if (!selectedTrafficWebsite) { actionError = 'Select a website first.'; return; }
+		busy = 'traffic-apply'; actionError = ''; actionMessage = '';
+		try {
+			const payload = buildTrafficProfile({
+				mode: trafficMode, proxy_mode: trafficProxyMode, proxy_header: trafficProxyHeader,
+				proxy_cidrs: trafficProxyCIDRs.split(/[\s,]+/).filter(Boolean),
+				requests_per_second: Number(trafficRPS), burst: Number(trafficBurst), connections: Number(trafficConnections)
+			});
+			if (trafficMode !== 'observe' && !trafficConfirmed) throw new Error('Confirm HTTP enforcement before applying this profile.');
+			const result = await api.put<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}`, { ...payload, confirm: trafficMode !== 'observe' && trafficConfirmed });
+			currentTaskId = result.task_id; actionMessage = 'Traffic Guard configuration is being validated and applied.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to apply Traffic Guard.'; }
+		finally { busy = ''; }
+	}
+
+	async function resetTrafficObserve() {
+		if (!selectedTrafficWebsite) return;
+		busy = 'traffic-observe'; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/observe`, {});
+			currentTaskId = result.task_id; actionMessage = 'Traffic Guard is returning to Observe Mode.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to restore Observe Mode.'; }
+		finally { busy = ''; }
+	}
+
+	async function refreshCloudflareCIDRs() {
+		busy = 'traffic-cloudflare'; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/security/traffic/cloudflare/refresh', {});
+			currentTaskId = result.task_id; actionMessage = 'Official Cloudflare CIDR refresh started.';
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to refresh Cloudflare CIDRs.'; }
+		finally { busy = ''; }
 	}
 
 	async function installMalware(mode: 'low_memory' | 'daemon') {
@@ -383,7 +492,7 @@
 	</div>
 
 	<div class="flex gap-1 overflow-x-auto rounded-xl border border-gray-700 bg-gray-900 p-1">
-		{#each ['overview', 'fail2ban', 'malware', 'events'] as tab}
+		{#each ['overview', 'fail2ban', 'malware', 'traffic', 'events'] as tab}
 			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{tab}</button>
 		{/each}
 	</div>
@@ -531,6 +640,64 @@
 					{#if quarantine.length === 0}<p class="mt-4 text-sm text-gray-400">No quarantined files.</p>{:else}<div class="mt-4 space-y-3">{#each quarantine as item}<article class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="rounded-full bg-red-900 px-2 py-0.5 text-xs text-red-300">{item.signature}</span><span class="text-xs text-gray-400">{item.status.replaceAll('_', ' ')}</span></div><p class="mt-2 break-all font-mono text-sm text-white">{item.original_path}</p><p class="mt-1 break-all font-mono text-xs text-gray-500">SHA-256 {item.sha256}</p><p class="mt-1 text-xs text-gray-400">Detected {new Date(item.detected_at).toLocaleString()} · {item.size_bytes} bytes</p></div><div class="flex flex-wrap gap-2">{#if item.status === 'quarantined' || item.status === 'false_positive'}<a download href={`/api/v1/security/malware/quarantine/${item.id}/download`} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300">Download</a><button onclick={() => restoreQuarantine(item)} disabled={busy !== ''} class="rounded border border-green-700 px-3 py-1.5 text-xs text-green-300 disabled:opacity-50">Restore</button>{#if item.status === 'quarantined'}<button onclick={() => markFalsePositive(item)} disabled={busy !== ''} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-50">False positive</button>{/if}<button onclick={() => deleteQuarantine(item)} disabled={busy !== ''} class="rounded bg-red-700 px-3 py-1.5 text-xs text-white disabled:opacity-50">Delete permanently</button>{/if}</div></div></article>{/each}</div>{/if}
 				</section>
 			{/if}
+		</div>
+	{:else if activeTab === 'traffic'}
+		<div class="space-y-4">
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+					<div>
+						<div class="flex flex-wrap items-center gap-2"><h3 class="text-lg font-semibold text-white">Traffic Guard</h3><span class="rounded-full bg-blue-900 px-2 py-0.5 text-xs text-blue-300">HTTP layer</span><span class="rounded-full px-2 py-0.5 text-xs {trafficCondition === 'Critical' ? 'bg-red-900 text-red-300' : trafficCondition === 'High' || trafficCondition === 'Warning' ? 'bg-yellow-900 text-yellow-300' : 'bg-green-900 text-green-300'}">{trafficCondition}</span></div>
+						<p class="mt-1 max-w-3xl text-sm text-gray-400">Observe traffic per website, preserve the real client IP behind an explicitly trusted proxy, then optionally apply bounded Nginx limits.</p>
+					</div>
+					<select value={selectedTrafficWebsite} onchange={(event) => chooseTrafficWebsite(event.currentTarget.value)} class="min-w-64 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white">
+						<option value="">Select website</option>{#each websites as website}<option value={website.id}>{website.domain}</option>{/each}
+					</select>
+				</div>
+				<div class="mt-5 rounded-lg border border-blue-800 bg-blue-950/40 p-4">
+					<div class="flex items-center justify-between text-sm"><span class="font-medium text-blue-200">24-hour observation</span><span class="text-blue-300">{trafficObservation}%</span></div>
+					<div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-700"><div class="h-full rounded-full bg-blue-500 transition-all" style={`width: ${trafficObservation}%`}></div></div>
+					<p class="mt-2 text-xs text-gray-400">Enforcement remains unavailable until a complete 24-hour observation period has been recorded. Observe Mode never rejects a request.</p>
+				</div>
+			</section>
+
+			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">Requests / 24h</p><p class="mt-1 text-xl font-semibold text-white">{trafficSummary.requests.toLocaleString()}</p></div>
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">Peak RPS</p><p class="mt-1 text-xl font-semibold text-white">{trafficSummary.peakRPS}</p></div>
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">4xx</p><p class="mt-1 text-xl font-semibold text-yellow-300">{trafficSummary.status4xx}</p></div>
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">5xx</p><p class="mt-1 text-xl font-semibold text-red-300">{trafficSummary.status5xx}</p></div>
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">HTTP 429</p><p class="mt-1 text-xl font-semibold text-blue-300">{trafficSummary.status429}</p></div>
+			</div>
+
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Request activity</h3><p class="mt-1 text-sm text-gray-400">Latest collected minute buckets; collection continues after panel restarts.</p></div><span class="text-xs text-gray-500">Last {Math.min(30, trafficBuckets.length)} minutes shown</span></div>
+				{#if trafficBuckets.length === 0}<p class="mt-6 text-sm text-gray-400">No completed access-log buckets are available yet.</p>{:else}
+					<div class="mt-5 flex h-32 items-end gap-1 overflow-hidden" aria-label="Request chart">
+						{#each trafficBuckets.slice(-30) as bucket}<div title={`${new Date(bucket.bucket_at).toLocaleTimeString()}: ${bucket.requests} requests`} class="min-w-1 flex-1 rounded-t bg-blue-500/80" style={`height: ${Math.max(3, (bucket.requests / trafficPeak) * 100)}%`}></div>{/each}
+					</div>
+				{/if}
+			</section>
+
+			<div class="grid gap-4 lg:grid-cols-2">
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Top client IPs</h3>{#if trafficSummary.topIPs.length === 0}<p class="mt-4 text-sm text-gray-400">No client evidence yet.</p>{:else}<div class="mt-4 space-y-2">{#each trafficSummary.topIPs.slice(0, 10) as [ip, count]}<div class="flex items-center justify-between rounded border border-gray-700 bg-gray-900/50 px-3 py-2"><code class="text-sm text-gray-200">{ip}</code><span class="text-xs text-gray-400">{count} requests</span></div>{/each}</div>{/if}</section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Top paths</h3>{#if topTrafficPaths.length === 0}<p class="mt-4 text-sm text-gray-400">No path evidence yet.</p>{:else}<div class="mt-4 space-y-2">{#each topTrafficPaths as [path, count]}<div class="flex items-center justify-between gap-3 rounded border border-gray-700 bg-gray-900/50 px-3 py-2"><code class="truncate text-sm text-gray-200">{path}</code><span class="shrink-0 text-xs text-gray-400">{count}</span></div>{/each}</div>{/if}</section>
+			</div>
+
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div><h3 class="font-semibold text-white">Protection profile</h3><p class="mt-1 text-sm text-gray-400">A candidate is written atomically, tested with <code>nginx -t</code>, reloaded, health-checked, and rolled back on failure.</p></div>
+				<div class="mt-5 grid gap-4 md:grid-cols-2">
+					<label><span class="text-sm text-gray-300">Mode</span><select bind:value={trafficMode} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="observe">Observe (recommended first)</option><option value="balanced" disabled={trafficObservation < 100}>Balanced</option><option value="strict" disabled={trafficObservation < 100}>Strict</option><option value="custom" disabled={trafficObservation < 100}>Custom</option></select></label>
+					<label><span class="text-sm text-gray-300">Traffic source</span><select bind:value={trafficProxyMode} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="direct">Direct to VPS</option><option value="cloudflare">Cloudflare proxy</option><option value="custom">Custom trusted proxy</option></select></label>
+					{#if trafficProxyMode === 'cloudflare'}<div class="rounded-lg border border-gray-700 bg-gray-900/50 p-3 text-sm text-gray-300 md:col-span-2"><p>Uses only <code>CF-Connecting-IP</code> from official Cloudflare CIDRs.</p><button onclick={refreshCloudflareCIDRs} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded border border-blue-600 px-3 py-1.5 text-xs text-blue-300 disabled:opacity-50">Refresh official CIDRs</button></div>{/if}
+					{#if trafficProxyMode === 'custom'}
+						<label><span class="text-sm text-gray-300">Forwarded IP header</span><select bind:value={trafficProxyHeader} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option>X-Forwarded-For</option><option>X-Real-IP</option><option>CF-Connecting-IP</option></select></label>
+						<label><span class="text-sm text-gray-300">Exact trusted proxy CIDRs</span><textarea bind:value={trafficProxyCIDRs} rows="3" placeholder="203.0.113.0/24" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea></label>
+					{/if}
+					{#if trafficMode === 'custom'}<label><span class="text-sm text-gray-300">Requests per second</span><input type="number" min="1" max="1000" bind:value={trafficRPS} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label><label><span class="text-sm text-gray-300">Burst</span><input type="number" min="1" max="5000" bind:value={trafficBurst} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label><label><span class="text-sm text-gray-300">Connections per IP</span><input type="number" min="1" max="1000" bind:value={trafficConnections} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>{/if}
+				</div>
+				<div class="mt-5 rounded-lg border {trafficMode === 'observe' ? 'border-blue-800 bg-blue-950/30 text-blue-200' : 'border-yellow-700 bg-yellow-950/30 text-yellow-200'} p-4 text-sm">{enforcementWarning(trafficMode)}</div>
+				{#if trafficMode !== 'observe'}<label class="mt-4 flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/20 p-3 text-sm text-yellow-200"><input class="mt-1" type="checkbox" bind:checked={trafficConfirmed} /><span>I confirm that this origin-level profile may return HTTP 429 to excess requests and that upstream volumetric protection is separate.</span></label>{/if}
+				<div class="mt-5 flex flex-wrap gap-3"><button onclick={applyTrafficGuard} disabled={!selectedTrafficWebsite || busy !== '' || !!currentTaskId || (trafficMode !== 'observe' && (!trafficConfirmed || trafficObservation < 100))} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Validate & Apply</button><button onclick={resetTrafficObserve} disabled={!selectedTrafficWebsite || selectedTrafficProfile?.mode === 'observe' || busy !== '' || !!currentTaskId} class="rounded-lg border border-green-700 px-4 py-2 text-sm text-green-300 disabled:opacity-50">Return to Observe</button></div>
+			</section>
 		</div>
 	{:else}
 		<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
