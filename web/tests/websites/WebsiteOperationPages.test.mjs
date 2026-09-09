@@ -38,6 +38,25 @@ function collectAttributeValues(node, name, values = []) {
 	return values;
 }
 
+function collectRouteReloadEffects(node, effects = []) {
+	if (!node || typeof node !== 'object') return effects;
+	if (
+		node.type === 'CallExpression' &&
+		node.callee?.type === 'Identifier' &&
+		node.callee.name === '$effect'
+	) {
+		effects.push(node);
+	}
+	for (const value of Object.values(node)) {
+		if (Array.isArray(value)) {
+			for (const item of value) collectRouteReloadEffects(item, effects);
+		} else if (value && typeof value === 'object') {
+			collectRouteReloadEffects(value, effects);
+		}
+	}
+	return effects;
+}
+
 test('builds encoded scoped endpoints for every website operation module', () => {
 	assert.equal(typeof websiteOperationAPI, 'function');
 	assert.deepEqual(websiteOperationAPI('site/1'), {
@@ -59,5 +78,18 @@ for (const operationPage of operationPages) {
 		const result = compile(source, { filename: operationPage.url.pathname, generate: 'server' });
 		const ids = collectAttributeValues(result.ast, 'id');
 		assert.equal(ids.includes(operationPage.selectorID), false);
+	});
+
+	test(`${operationPage.name} reloads after a same-route website ID change`, () => {
+		const source = readFileSync(operationPage.url, 'utf8');
+		const result = compile(source, { filename: operationPage.url.pathname, generate: 'server' });
+		const effects = collectRouteReloadEffects(result.ast);
+		const reloadEffect = effects.find((effect) => {
+			const effectSource = source.slice(effect.start, effect.end);
+			return effectSource.includes('websiteID') && effectSource.includes('loadWebsite(websiteID)');
+		});
+
+		assert.ok(reloadEffect, 'route changes must reload through a websiteID-tracked $effect');
+		assert.doesNotMatch(source, /\bonMount\s*\(/);
 	});
 }

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
@@ -29,8 +29,12 @@
 		domains?: { name: string; type: string }[];
 	}
 
+	let websiteID = $derived(page.params.id ?? '');
+	let operationAPI = $derived(websiteOperationAPI(websiteID));
 	let certificates = $state<SSLCertificate[]>([]);
 	let website = $state<Website | null>(null);
+	let loadedWebsiteID = $state('');
+	let currentWebsite = $derived(loadedWebsiteID === websiteID ? website : null);
 	let loading = $state(false);
 	let loadingWebsite = $state(true);
 	let websiteError = $state('');
@@ -46,7 +50,7 @@
 	let certificatePEM = $state('');
 	let privateKeyPEM = $state('');
 	let issuing = $state(false);
-	let issueDomains = $derived(domainsForWebsite(website ? [website] : [], website?.id || ''));
+	let issueDomains = $derived(domainsForWebsite(currentWebsite ? [currentWebsite] : [], currentWebsite?.id || ''));
 
 	// Confirm dialogs
 	let revokeConfirmId = $state<string | null>(null);
@@ -54,8 +58,7 @@
 
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
-	let websiteID = $derived(page.params.id ?? '');
-	let operationAPI = $derived(websiteOperationAPI(websiteID));
+	let websiteLoadGeneration = 0;
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
@@ -108,12 +111,29 @@
 		return certs.some((c) => c.status === 'pending' || c.status === 'issuing');
 	}
 
-	function startPolling() {
+	function isCurrentRequest(requestedWebsiteID: string, generation: number): boolean {
+		return websiteID === requestedWebsiteID && websiteLoadGeneration === generation;
+	}
+
+	function isCurrentRouteWebsite(requestedWebsiteID: string, generation: number): boolean {
+		return isCurrentRequest(requestedWebsiteID, generation) && loadedWebsiteID === requestedWebsiteID && website !== null;
+	}
+
+	function startPolling(
+		scopedAPI = operationAPI,
+		requestedWebsiteID = websiteID,
+		generation = websiteLoadGeneration
+	) {
 		stopPolling();
 		pollTimer = setInterval(async () => {
-			if (!website) return;
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				stopPolling();
+				return;
+			}
 			try {
-				certificates = (await api.get<SSLCertificate[]>(operationAPI.ssl)) || [];
+				const nextCertificates = (await api.get<SSLCertificate[]>(scopedAPI.ssl)) || [];
+				if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
+				certificates = nextCertificates;
 				if (!hasPending(certificates)) {
 					stopPolling();
 				}
@@ -130,128 +150,211 @@
 		}
 	}
 
-	async function loadCertificates() {
-		if (!website) {
+	async function loadCertificates(
+		scopedAPI = operationAPI,
+		requestedWebsiteID = websiteID,
+		generation = websiteLoadGeneration
+	) {
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) {
 			certificates = [];
 			return;
 		}
 		loading = true;
 		error = '';
 		try {
-			certificates = (await api.get<SSLCertificate[]>(operationAPI.ssl)) || [];
+			const nextCertificates = (await api.get<SSLCertificate[]>(scopedAPI.ssl)) || [];
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
+			certificates = nextCertificates;
 			if (hasPending(certificates)) {
-				startPolling();
+				startPolling(scopedAPI, requestedWebsiteID, generation);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load SSL certificates';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				error = err instanceof Error ? err.message : 'Failed to load SSL certificates';
+			}
 		} finally {
-			loading = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				loading = false;
+			}
 		}
 	}
 
-	async function loadWebsite() {
-		loadingWebsite = true;
-		websiteError = '';
+	function resetForWebsiteChange() {
 		stopPolling();
 		website = null;
+		loadedWebsiteID = '';
 		certificates = [];
-		try {
-			website = await api.get<Website>(operationAPI.website);
-			await loadCertificates();
-		} catch (err) {
-			websiteError = err instanceof Error ? err.message : 'Failed to load website';
-		} finally {
+		loading = false;
+		error = '';
+		actionMsg = '';
+		actionError = '';
+		actionInProgress = false;
+		showIssueForm = false;
+		issueDomain = '';
+		installMode = 'letsencrypt';
+		certificatePEM = '';
+		privateKeyPEM = '';
+		issuing = false;
+		revokeConfirmId = null;
+		deleteConfirmId = null;
+	}
+
+	async function loadWebsite(requestedWebsiteID: string) {
+		const generation = ++websiteLoadGeneration;
+		loadingWebsite = true;
+		websiteError = '';
+		resetForWebsiteChange();
+		if (!requestedWebsiteID) {
+			websiteError = 'Website ID is required';
 			loadingWebsite = false;
+			return;
+		}
+		const scopedAPI = websiteOperationAPI(requestedWebsiteID);
+		try {
+			const loadedWebsite = await api.get<Website>(scopedAPI.website);
+			if (!isCurrentRequest(requestedWebsiteID, generation)) return;
+			website = loadedWebsite;
+			loadedWebsiteID = requestedWebsiteID;
+			await loadCertificates(scopedAPI, requestedWebsiteID, generation);
+		} catch (err) {
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				websiteError = err instanceof Error ? err.message : 'Failed to load website';
+			}
+		} finally {
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				loadingWebsite = false;
+			}
 		}
 	}
 
 	async function issueCertificate() {
-		if (!formIsValid()) return;
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation) || !formIsValid()) return;
 		issuing = true;
 		actionMsg = '';
 		actionError = '';
 		try {
-			const request = buildWebsiteSSLInstallRequest(installMode, websiteID, {
+			const request = buildWebsiteSSLInstallRequest(installMode, requestedWebsiteID, {
 				domain: issueDomain,
 				certificatePEM,
 				privateKeyPEM
 			});
 			const installed = await api.post<SSLCertificate>(request.path, request.body);
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			const installError = certificateInstallError(installed);
 			if (installError) throw new Error(installError);
 			actionMsg = installMode === 'custom'
 				? `Custom SSL certificate installed for "${issueDomain}".`
 				: `Let's Encrypt certificate installed for "${issueDomain}".`;
 			closeIssueForm();
-			await loadCertificates();
+			await loadCertificates(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to install certificate';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				actionError = err instanceof Error ? err.message : 'Failed to install certificate';
+			}
 		} finally {
-			issuing = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				issuing = false;
+			}
 		}
 	}
 
 	function formIsValid(): boolean {
-		if (!website || !issueDomain) return false;
+		if (!currentWebsite || !issueDomain) return false;
 		if (installMode === 'custom') return !!certificatePEM.trim() && !!privateKeyPEM.trim();
 		return true;
 	}
 
 	async function renewCertificate(cert: SSLCertificate) {
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		actionMsg = '';
 		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.post(`/api/v1/ssl/${cert.id}/renew`);
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = `Renewal started for "${cert.domain}".`;
-			await loadCertificates();
+			await loadCertificates(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to renew certificate';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				actionError = err instanceof Error ? err.message : 'Failed to renew certificate';
+			}
 		} finally {
-			actionInProgress = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				actionInProgress = false;
+			}
 		}
 	}
 
 	async function revokeCertificate(id: string) {
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		revokeConfirmId = null;
 		actionMsg = '';
 		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.post(`/api/v1/ssl/${id}/revoke`);
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = 'Certificate revoked.';
-			await loadCertificates();
+			await loadCertificates(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to revoke certificate';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				actionError = err instanceof Error ? err.message : 'Failed to revoke certificate';
+			}
 		} finally {
-			actionInProgress = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				actionInProgress = false;
+			}
 		}
 	}
 
 	async function deleteCertificate(id: string) {
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		deleteConfirmId = null;
 		actionMsg = '';
 		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.del(`/api/v1/ssl/${id}`);
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = 'Certificate deleted.';
-			await loadCertificates();
+			await loadCertificates(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete certificate';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				actionError = err instanceof Error ? err.message : 'Failed to delete certificate';
+			}
 		} finally {
-			actionInProgress = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				actionInProgress = false;
+			}
 		}
 	}
 
 	async function toggleAutoRenew(cert: SSLCertificate) {
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		actionMsg = '';
 		actionError = '';
 		try {
 			await api.put(`/api/v1/ssl/${cert.id}`, { auto_renew: !cert.auto_renew });
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			cert.auto_renew = !cert.auto_renew;
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update auto-renew';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				actionError = err instanceof Error ? err.message : 'Failed to update auto-renew';
+			}
 		}
 	}
 
@@ -279,7 +382,9 @@
 		privateKeyPEM = '';
 	}
 
-	onMount(loadWebsite);
+	$effect(() => {
+		void loadWebsite(websiteID);
+	});
 
 	onDestroy(() => {
 		stopPolling();
@@ -291,11 +396,11 @@
 		<div class="text-gray-400">Loading website...</div>
 	{:else if websiteError}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
-	{:else if website}
+	{:else if currentWebsite}
 	<div class="flex items-center justify-between">
 		<div>
 			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
-			<h2 class="text-2xl font-bold text-white">SSL Certificates · {website.domain}</h2>
+			<h2 class="text-2xl font-bold text-white">SSL Certificates · {currentWebsite.domain}</h2>
 		</div>
 		<button
 			onclick={() => showIssueForm ? closeIssueForm() : openIssueForm()}
@@ -305,7 +410,7 @@
 		</button>
 	</div>
 
-	<WebsiteSectionNav websiteId={website.id} currentPath={page.url.pathname} />
+	<WebsiteSectionNav websiteId={currentWebsite.id} currentPath={page.url.pathname} />
 
 	{#if actionMsg}
 		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
@@ -348,7 +453,7 @@
 					id="ssl-domain"
 					bind:value={issueDomain}
 					class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					disabled={!website}
+					disabled={!currentWebsite}
 				>
 					<option value="">Select a domain...</option>
 					{#each issueDomains as domain}

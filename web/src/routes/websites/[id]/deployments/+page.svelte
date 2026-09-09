@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
@@ -23,7 +23,11 @@
 		status: string;
 	}
 
+	let websiteID = $derived(page.params.id ?? '');
+	let operationAPI = $derived(websiteOperationAPI(websiteID));
 	let website = $state<Website | null>(null);
+	let loadedWebsiteID = $state('');
+	let currentWebsite = $derived(loadedWebsiteID === websiteID ? website : null);
 	let deployments = $state<Deployment[]>([]);
 	let loading = $state(false);
 	let loadingWebsite = $state(true);
@@ -43,8 +47,7 @@
 
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
-	let websiteID = $derived(page.params.id ?? '');
-	let operationAPI = $derived(websiteOperationAPI(websiteID));
+	let websiteLoadGeneration = 0;
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
@@ -90,12 +93,29 @@
 		return deps.some((d) => d.status === 'running' || d.status === 'pending');
 	}
 
-	function startPolling() {
+	function isCurrentRequest(requestedWebsiteID: string, generation: number): boolean {
+		return websiteID === requestedWebsiteID && websiteLoadGeneration === generation;
+	}
+
+	function isCurrentRouteWebsite(requestedWebsiteID: string, generation: number): boolean {
+		return isCurrentRequest(requestedWebsiteID, generation) && loadedWebsiteID === requestedWebsiteID && website !== null;
+	}
+
+	function startPolling(
+		scopedAPI = operationAPI,
+		requestedWebsiteID = websiteID,
+		generation = websiteLoadGeneration
+	) {
 		stopPolling();
 		pollTimer = setInterval(async () => {
-			if (!website) return;
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				stopPolling();
+				return;
+			}
 			try {
-				deployments = (await api.get<Deployment[]>(operationAPI.deployments)) || [];
+				const nextDeployments = (await api.get<Deployment[]>(scopedAPI.deployments)) || [];
+				if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
+				deployments = nextDeployments;
 				if (!hasRunning(deployments)) {
 					stopPolling();
 				}
@@ -112,60 +132,106 @@
 		}
 	}
 
-	async function loadWebsite() {
-		loadingWebsite = true;
-		websiteError = '';
+	function resetForWebsiteChange() {
 		stopPolling();
 		website = null;
+		loadedWebsiteID = '';
 		deployments = [];
-		try {
-			website = await api.get<Website>(operationAPI.website);
-			await loadDeployments();
-		} catch (err) {
-			websiteError = err instanceof Error ? err.message : 'Failed to load website';
-		} finally {
+		loading = false;
+		error = '';
+		actionMsg = '';
+		actionError = '';
+		showDeployForm = false;
+		deployRepoUrl = '';
+		deployBranch = 'main';
+		deploying = false;
+		expandedId = null;
+	}
+
+	async function loadWebsite(requestedWebsiteID: string) {
+		const generation = ++websiteLoadGeneration;
+		loadingWebsite = true;
+		websiteError = '';
+		resetForWebsiteChange();
+		if (!requestedWebsiteID) {
+			websiteError = 'Website ID is required';
 			loadingWebsite = false;
+			return;
+		}
+		const scopedAPI = websiteOperationAPI(requestedWebsiteID);
+		try {
+			const loadedWebsite = await api.get<Website>(scopedAPI.website);
+			if (!isCurrentRequest(requestedWebsiteID, generation)) return;
+			website = loadedWebsite;
+			loadedWebsiteID = requestedWebsiteID;
+			await loadDeployments(scopedAPI, requestedWebsiteID, generation);
+		} catch (err) {
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				websiteError = err instanceof Error ? err.message : 'Failed to load website';
+			}
+		} finally {
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				loadingWebsite = false;
+			}
 		}
 	}
 
-	async function loadDeployments() {
-		if (!website) {
+	async function loadDeployments(
+		scopedAPI = operationAPI,
+		requestedWebsiteID = websiteID,
+		generation = websiteLoadGeneration
+	) {
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) {
 			deployments = [];
 			return;
 		}
 		loading = true;
 		error = '';
 		try {
-			deployments = (await api.get<Deployment[]>(operationAPI.deployments)) || [];
+			const nextDeployments = (await api.get<Deployment[]>(scopedAPI.deployments)) || [];
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
+			deployments = nextDeployments;
 			if (hasRunning(deployments)) {
-				startPolling();
+				startPolling(scopedAPI, requestedWebsiteID, generation);
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load deployments';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				error = err instanceof Error ? err.message : 'Failed to load deployments';
+			}
 		} finally {
-			loading = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				loading = false;
+			}
 		}
 	}
 
 	async function deploy() {
-		if (!website || !deployRepoUrl.trim()) return;
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation) || !deployRepoUrl.trim()) return;
 		deploying = true;
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post(operationAPI.deploy, {
+			await api.post(scopedAPI.deploy, {
 				repo_url: deployRepoUrl.trim(),
 				branch: deployBranch.trim() || 'main'
 			});
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = 'Deployment started.';
 			showDeployForm = false;
 			deployRepoUrl = '';
 			deployBranch = 'main';
-			await loadDeployments();
+			await loadDeployments(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to start deployment';
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				actionError = err instanceof Error ? err.message : 'Failed to start deployment';
+			}
 		} finally {
-			deploying = false;
+			if (isCurrentRequest(requestedWebsiteID, generation)) {
+				deploying = false;
+			}
 		}
 	}
 
@@ -173,7 +239,9 @@
 		expandedId = expandedId === id ? null : id;
 	}
 
-	onMount(loadWebsite);
+	$effect(() => {
+		void loadWebsite(websiteID);
+	});
 
 	onDestroy(() => {
 		stopPolling();
@@ -185,11 +253,11 @@
 		<div class="text-gray-400">Loading website...</div>
 	{:else if websiteError}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
-	{:else if website}
+	{:else if currentWebsite}
 	<div class="flex items-center justify-between">
 		<div>
 			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
-			<h2 class="text-2xl font-bold text-white">Deployments · {website.domain}</h2>
+			<h2 class="text-2xl font-bold text-white">Deployments · {currentWebsite.domain}</h2>
 		</div>
 		<button
 			onclick={() => (showDeployForm = !showDeployForm)}
@@ -199,7 +267,7 @@
 		</button>
 	</div>
 
-	<WebsiteSectionNav websiteId={website.id} currentPath={page.url.pathname} />
+	<WebsiteSectionNav websiteId={currentWebsite.id} currentPath={page.url.pathname} />
 
 	{#if actionMsg}
 		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
