@@ -206,7 +206,7 @@ func (i *Installer) bootstrapLaravel(ctx context.Context, w websiteRow, root str
 			return fmt.Errorf("save Laravel environment failed")
 		}
 	}
-	if err := run("check PHP SQLite extension", php, "-r", `if (!extension_loaded('pdo_sqlite')) { fwrite(STDERR, "Missing pdo_sqlite: run sudo apt-get install " . $argv[1] . " in Terminal, then retry Laravel repair.\n"); exit(1); }`, "php"+w.PHPVersion+"-sqlite3"); err != nil {
+	if err := run("check PHP SQLite extension", php, "-r", `if (!extension_loaded('pdo_sqlite')) { fwrite(STDERR, "Missing pdo_sqlite: run sudo apt-get install " . $argv[1] . " in Terminal, then retry this operation.\n"); exit(1); }`, "php"+w.PHPVersion+"-sqlite3"); err != nil {
 		return err
 	}
 	prepare := `set -eu; root=$1; db=$2

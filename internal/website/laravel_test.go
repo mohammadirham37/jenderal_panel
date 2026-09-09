@@ -224,3 +224,35 @@ func TestLaravelBootstrapRetainsFailureDiagnostics(t *testing.T) {
 		})
 	}
 }
+
+func TestLaravelSQLiteDiagnosticNamesPackageAndWorksForProvisioningOrRepair(t *testing.T) {
+	php, err := exec.LookPath("php")
+	if err != nil {
+		t.Skip("PHP CLI required to execute extension diagnostic")
+	}
+	var logs strings.Builder
+	mock := &executor.MockExecutor{RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if strings.Contains(strings.Join(args, " "), `cat -- "$root/.env"`) {
+			return &executor.Result{Stdout: "APP_KEY=base64:keep\nDB_CONNECTION=sqlite\nDB_DATABASE=\"/home/web_example_com/app/database/database.sqlite\"\n"}, nil
+		}
+		for index, arg := range args {
+			if arg == "-r" {
+				// Replace only extension detection; execute the actual diagnostic even
+				// on PHP builds that compile SQLite in statically.
+				phpArgs := []string{"-n", "-d", "disable_functions=extension_loaded", "-r", "function extension_loaded($name) { return false; } " + args[index+1]}
+				phpArgs = append(phpArgs, args[index+2:]...)
+				output, err := exec.CommandContext(ctx, php, phpArgs...).CombinedOutput()
+				if err == nil {
+					t.Fatal("expected missing-extension diagnostic to fail")
+				}
+				return &executor.Result{ExitCode: 1, Stderr: string(output)}, nil
+			}
+		}
+		t.Fatal("unexpected operation before SQLite preflight")
+		return nil, nil
+	}}
+	err = NewInstaller(mock).bootstrapLaravel(context.Background(), automaticRow("laravel", "12", "blade", "", "empty"), "/home/web_example_com/app", false, func(_, output string) error { logs.WriteString(output); return nil })
+	if err == nil || !strings.Contains(logs.String(), "sudo apt-get install php8.3-sqlite3") || !strings.Contains(logs.String(), "retry this operation") {
+		t.Fatalf("unusable extension diagnostic: %v\n%s", err, logs.String())
+	}
+}
