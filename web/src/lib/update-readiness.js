@@ -43,3 +43,16 @@ export function cacheBustedURL(href, token = Date.now().toString()) {
 	url.searchParams.set('_panel_reload', token);
 	return url.toString();
 }
+
+/**
+ * Classify persisted update recovery state against a fresh panel version.
+ * @param {string} currentVersion
+ * @param {string} targetVersion
+ * @param {string} taskID
+ * @returns {'none' | 'active' | 'complete' | 'stale'}
+ */
+export function classifyUpdateRecovery(currentVersion, targetVersion, taskID) {
+	if (!targetVersion) return 'none';
+	if (currentVersion === targetVersion) return 'complete';
+	return taskID ? 'active' : 'stale';
+}

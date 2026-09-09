@@ -3,11 +3,20 @@ import assert from 'node:assert/strict';
 
 let cacheBustedURL;
 let waitForUpdatedPanel;
+let classifyUpdateRecovery;
 try {
-	({ cacheBustedURL, waitForUpdatedPanel } = await import('../../src/lib/update-readiness.js'));
+	({ cacheBustedURL, waitForUpdatedPanel, classifyUpdateRecovery } = await import('../../src/lib/update-readiness.js'));
 } catch {
 	// The first TDD run reaches the assertions before the helper exists.
 }
+
+test('classifies persisted update recovery state', () => {
+	assert.equal(typeof classifyUpdateRecovery, 'function', 'expected update recovery classifier');
+	assert.equal(classifyUpdateRecovery('old', 'new', ''), 'stale');
+	assert.equal(classifyUpdateRecovery('old', 'new', 'task-1'), 'active');
+	assert.equal(classifyUpdateRecovery('new', 'new', 'task-1'), 'complete');
+	assert.equal(classifyUpdateRecovery('old', '', ''), 'none');
+});
 
 test('waits through restart errors and stale versions until the new panel responds', async () => {
 	assert.equal(typeof waitForUpdatedPanel, 'function', 'expected update readiness helper');

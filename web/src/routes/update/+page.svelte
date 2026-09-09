@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import { cacheBustedURL, waitForUpdatedPanel } from '$lib/update-readiness.js';
+	import { cacheBustedURL, classifyUpdateRecovery, waitForUpdatedPanel } from '$lib/update-readiness.js';
 
 	interface UpdateInfo {
 		current_version: string;
@@ -25,12 +25,21 @@
 	let reloadWatcherGeneration = 0;
 	let updateInProgress = $derived(updating || !!currentTaskId);
 	const updateTargetStorageKey = 'jenderal_update_target';
+	const updateTaskStorageKey = 'jenderal_update_task';
 
 	async function checkUpdate() {
 		loading = true;
 		error = '';
 		try {
 			info = await api.getNoStore<UpdateInfo>(`/api/v1/update/check?_=${Date.now()}`);
+			const recovery = classifyUpdateRecovery(info.current_version, expectedUpdateVersion, currentTaskId);
+			if (recovery === 'complete' || recovery === 'stale') {
+				localStorage.removeItem(updateTargetStorageKey);
+				if (recovery === 'complete') localStorage.removeItem(updateTaskStorageKey);
+				expectedUpdateVersion = '';
+				if (recovery === 'complete') currentTaskId = '';
+				updating = false;
+			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to check for updates';
 		} finally {
@@ -76,7 +85,7 @@
 		updating = false;
 		if (ready) {
 			localStorage.removeItem(updateTargetStorageKey);
-			localStorage.removeItem('jenderal_update_task');
+			localStorage.removeItem(updateTaskStorageKey);
 			currentTaskId = '';
 			window.location.replace(cacheBustedURL(window.location.href));
 			return;
@@ -122,8 +131,8 @@
 
 	onMount(() => {
 		expectedUpdateVersion = localStorage.getItem(updateTargetStorageKey) || '';
+		currentTaskId = localStorage.getItem(updateTaskStorageKey) || '';
 		void checkUpdate();
-		if (expectedUpdateVersion) void resumeUpdateReload();
 	});
 </script>
 
