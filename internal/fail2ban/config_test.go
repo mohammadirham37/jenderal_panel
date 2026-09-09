@@ -35,3 +35,23 @@ func TestRenderRejectsPermanentOrInvalidNetworkSettings(t *testing.T) {
 		t.Fatal("invalid ignore address accepted")
 	}
 }
+
+func TestManagedSettingsRoundTrip(t *testing.T) {
+	want := SafeSettings()
+	want.IgnoreIPs = append(want.IgnoreIPs, "203.0.113.8/32")
+	want.EnabledJails = []string{"nginx-http-auth"}
+	content, err := Render(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseSettings(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SSHDEnabled || got.MaxRetry != 5 || got.BanTimeSeconds != 900 || len(got.EnabledJails) != 1 {
+		t.Fatalf("settings = %#v", got)
+	}
+	if !strings.Contains(strings.Join(got.IgnoreIPs, " "), "203.0.113.8/32") {
+		t.Fatalf("ignore IPs = %#v", got.IgnoreIPs)
+	}
+}

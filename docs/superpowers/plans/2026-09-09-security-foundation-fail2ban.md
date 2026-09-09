@@ -450,7 +450,7 @@ git commit -m "feat(security): expose fail2ban operations"
 - Consumes: overview, events, Fail2ban, and task endpoints from Tasks 3 and 5.
 - Produces: navigation entry `/security`, Simple/Advanced Fail2ban forms, setup status, bans table, and persistent `TaskProgress` integration.
 
-- [ ] **Step 1: Write failing frontend helper tests**
+- [x] **Step 1: Write failing frontend helper tests**
 
 ```js
 test('safe preset cannot produce a permanent ban', () => {
@@ -466,13 +466,13 @@ test('overview condition always includes human-readable reasons', () => {
 });
 ```
 
-- [ ] **Step 2: Run frontend tests and verify RED**
+- [x] **Step 2: Run frontend tests and verify RED**
 
 Run: `cd web && node --test tests/security/SecurityCenter.test.mjs`
 
 Expected: FAIL because `security.js` does not exist.
 
-- [ ] **Step 3: Implement helpers and the responsive page**
+- [x] **Step 3: Implement helpers and the responsive page**
 
 Export `buildSafeFail2banSettings`, `validateBan`, `normalizeOverview`, `conditionTone`, and `formatBanExpiry`. Use literal IP/CIDR strings and defer authoritative validation to the backend.
 
@@ -480,13 +480,13 @@ The page contains Overview, Fail2ban, and Events tabs. Fail2ban starts in Simple
 
 Add `nav.security_center` translations (`Security Center`, `Pusat Keamanan`) and place it first in the Security navigation group using the existing shield icon.
 
-- [ ] **Step 4: Verify tests, type checks, and build**
+- [x] **Step 4: Verify tests, type checks, and build**
 
 Run: `cd web && npm test && npm run check && npm run build`
 
 Expected: all Node tests pass, Svelte reports zero errors, and the production bundle builds.
 
-- [ ] **Step 5: Commit the first Security Center UI**
+- [x] **Step 5: Commit the first Security Center UI**
 
 ```bash
 git add web/src/lib/security.js web/tests/security web/src/routes/security web/src/routes/+layout.svelte web/src/lib/stores/language.ts web/package.json

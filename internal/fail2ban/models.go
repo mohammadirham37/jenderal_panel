@@ -21,6 +21,7 @@ type Status struct {
 	Message   string    `json:"message,omitempty"`
 	SSHPort   int       `json:"ssh_port,omitempty"`
 	Jails     []Jail    `json:"jails"`
+	Settings  Settings  `json:"settings"`
 	CheckedAt time.Time `json:"checked_at"`
 }
 

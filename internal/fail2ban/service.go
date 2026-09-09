@@ -48,7 +48,7 @@ func (s *Service) Check(ctx context.Context) security.ComponentStatus {
 func (s *Service) Name() string { return "fail2ban" }
 
 func (s *Service) Status(ctx context.Context) (Status, error) {
-	status := Status{State: "not_installed", CheckedAt: s.now(), Jails: []Jail{}}
+	status := Status{State: "not_installed", CheckedAt: s.now(), Jails: []Jail{}, Settings: SafeSettings()}
 	versionResult, err := s.exec.Run(ctx, "fail2ban-client", "--version")
 	if err != nil || versionResult.ExitCode != 0 {
 		status.Message = "Fail2ban is not installed."
@@ -56,6 +56,10 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	status.Installed = true
 	status.Version = parseVersion(versionResult.Stdout + "\n" + versionResult.Stderr)
+	status.Settings, err = s.Settings(ctx)
+	if err != nil {
+		return Status{}, err
+	}
 
 	serviceResult, err := s.exec.RunSudo(ctx, "systemctl", "show", "fail2ban", "--property=ActiveState,SubState,UnitFileState")
 	if err != nil {
@@ -107,6 +111,17 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	status.State = "running"
 	status.Message = "Fail2ban is running."
 	return status, nil
+}
+
+func (s *Service) Settings(ctx context.Context) (Settings, error) {
+	content, exists, err := s.files.Read(ctx, managedConfigPath)
+	if err != nil {
+		return Settings{}, fmt.Errorf("read managed fail2ban settings: %w", err)
+	}
+	if !exists {
+		return SafeSettings(), nil
+	}
+	return ParseSettings(content)
 }
 
 func (s *Service) Install(ctx context.Context) error {

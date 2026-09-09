@@ -50,6 +50,7 @@
 		{
 			key: 'nav.group.security',
 			items: [
+				{ href: '/security', labelKey: 'nav.security_center', icon: 'shield' },
 				{ href: '/firewall', labelKey: 'nav.firewall', icon: 'shield' },
 				{ href: '/users', labelKey: 'nav.users', icon: 'users' },
 				{ href: '/alerts', labelKey: 'nav.alerts', icon: 'bell' },

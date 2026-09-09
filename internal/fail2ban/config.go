@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -17,6 +18,53 @@ var knownJails = map[string]string{
 	"nginx-limit-req": "nginx-limit-req",
 	"nginx-botsearch": "nginx-botsearch",
 	"nginx-badbots":   "nginx-badbots",
+}
+
+func ParseSettings(content string) (Settings, error) {
+	settings := SafeSettings()
+	settings.SSHDEnabled = false
+	settings.EnabledJails = nil
+	settings.IgnoreIPs = nil
+	section := ""
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(strings.SplitN(rawLine, "#", 2)[0])
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key, value := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		if section == "DEFAULT" {
+			switch key {
+			case "ignoreip":
+				settings.IgnoreIPs = strings.Fields(value)
+			case "maxretry":
+				settings.MaxRetry, _ = strconv.Atoi(value)
+			case "findtime":
+				settings.FindTimeSeconds, _ = strconv.Atoi(value)
+			case "bantime":
+				settings.BanTimeSeconds, _ = strconv.Atoi(value)
+			}
+			continue
+		}
+		if key == "enabled" && strings.EqualFold(value, "true") {
+			if section == "sshd" {
+				settings.SSHDEnabled = true
+			} else if _, allowed := knownJails[section]; allowed {
+				settings.EnabledJails = append(settings.EnabledJails, section)
+			}
+		}
+	}
+	if _, _, err := validateSettings(settings); err != nil {
+		return Settings{}, fmt.Errorf("parse managed fail2ban settings: %w", err)
+	}
+	return settings, nil
 }
 
 func SafeSettings() Settings {
