@@ -32,6 +32,16 @@ func TestPostureTreatsUnavailableSecurityUpdateToolAsUnknown(t *testing.T) {
 	}
 }
 
+func TestAppArmorParserSupportsProfileArraysAndTextFallback(t *testing.T) {
+	if count, ok := appArmorModeCount([]byte(`["a","b"]`)); !ok || count != 2 {
+		t.Fatalf("array count=%d ok=%v", count, ok)
+	}
+	enforced, complain, ok := parseAppArmorText("10 profiles are in enforce mode.\n2 profiles are in complain mode.\n")
+	if !ok || enforced != 10 || complain != 2 {
+		t.Fatalf("enforced=%d complain=%d ok=%v", enforced, complain, ok)
+	}
+}
+
 func postureFixture(t *testing.T, results map[string]*executor.Result) *executor.MockExecutor {
 	run := func(_ context.Context, name string, args ...string) (*executor.Result, error) {
 		key := strings.TrimSpace(name + " " + strings.Join(args, " "))

@@ -52,3 +52,23 @@ func TestEnsureProfilePreservesObservationStart(t *testing.T) {
 		t.Fatalf("observation start changed: %s", p.ObserveStartedAt)
 	}
 }
+
+func TestRepeatedBucketCommitMergesTopEvidence(t *testing.T) {
+	r := testRepo(t)
+	now := time.Now().UTC().Truncate(time.Minute)
+	for _, b := range []MinuteBucket{
+		{WebsiteID: "site", BucketAt: now, Requests: 2, TopIPs: map[string]int{"1.1.1.1": 2}, TopPaths: map[string]int{}, TopAgents: map[string]int{}},
+		{WebsiteID: "site", BucketAt: now, Requests: 3, TopIPs: map[string]int{"1.1.1.1": 1, "2.2.2.2": 2}, TopPaths: map[string]int{}, TopAgents: map[string]int{}},
+	} {
+		if err := r.CommitBucket(context.Background(), b, LogCursor{WebsiteID: "site", Inode: 1, Offset: int64(b.Requests), UpdatedAt: now}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := r.Bucket(context.Background(), "site", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Requests != 5 || got.TopIPs["1.1.1.1"] != 3 || got.TopIPs["2.2.2.2"] != 2 {
+		t.Fatalf("bucket=%#v", got)
+	}
+}

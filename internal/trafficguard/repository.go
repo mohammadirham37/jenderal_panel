@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -38,7 +39,30 @@ func (r *Repository) CommitBuckets(ctx context.Context, buckets []MinuteBucket, 
 	}
 	defer tx.Rollback()
 	for _, b := range buckets {
-		_, err = tx.ExecContext(ctx, `INSERT INTO traffic_minute_buckets(website_id,bucket_at,requests,status_4xx,status_5xx,status_429,bytes,peak_rps,top_ips,top_paths,top_agents) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(website_id,bucket_at) DO UPDATE SET requests=requests+excluded.requests,status_4xx=status_4xx+excluded.status_4xx,status_5xx=status_5xx+excluded.status_5xx,status_429=status_429+excluded.status_429,bytes=bytes+excluded.bytes,peak_rps=MAX(peak_rps,excluded.peak_rps),top_ips=excluded.top_ips,top_paths=excluded.top_paths,top_agents=excluded.top_agents`, b.WebsiteID, ts(b.BucketAt), b.Requests, b.Status4xx, b.Status5xx, b.Status429, b.Bytes, b.PeakRPS, enc(b.TopIPs), enc(b.TopPaths), enc(b.TopAgents))
+		var requests, status4xx, status5xx, status429, peakRPS int
+		var bytes int64
+		var ips, paths, agents string
+		rowErr := tx.QueryRowContext(ctx, `SELECT requests,status_4xx,status_5xx,status_429,bytes,peak_rps,top_ips,top_paths,top_agents FROM traffic_minute_buckets WHERE website_id=? AND bucket_at=?`, b.WebsiteID, ts(b.BucketAt)).Scan(&requests, &status4xx, &status5xx, &status429, &bytes, &peakRPS, &ips, &paths, &agents)
+		if rowErr == nil {
+			b.Requests += requests
+			b.Status4xx += status4xx
+			b.Status5xx += status5xx
+			b.Status429 += status429
+			b.Bytes += bytes
+			if peakRPS > b.PeakRPS {
+				b.PeakRPS = peakRPS
+			}
+			var oldIPs, oldPaths, oldAgents map[string]int
+			_ = json.Unmarshal([]byte(ips), &oldIPs)
+			_ = json.Unmarshal([]byte(paths), &oldPaths)
+			_ = json.Unmarshal([]byte(agents), &oldAgents)
+			b.TopIPs = mergeTop(oldIPs, b.TopIPs)
+			b.TopPaths = mergeTop(oldPaths, b.TopPaths)
+			b.TopAgents = mergeTop(oldAgents, b.TopAgents)
+		} else if !errors.Is(rowErr, sql.ErrNoRows) {
+			return rowErr
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO traffic_minute_buckets(website_id,bucket_at,requests,status_4xx,status_5xx,status_429,bytes,peak_rps,top_ips,top_paths,top_agents) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(website_id,bucket_at) DO UPDATE SET requests=excluded.requests,status_4xx=excluded.status_4xx,status_5xx=excluded.status_5xx,status_429=excluded.status_429,bytes=excluded.bytes,peak_rps=excluded.peak_rps,top_ips=excluded.top_ips,top_paths=excluded.top_paths,top_agents=excluded.top_agents`, b.WebsiteID, ts(b.BucketAt), b.Requests, b.Status4xx, b.Status5xx, b.Status429, b.Bytes, b.PeakRPS, enc(b.TopIPs), enc(b.TopPaths), enc(b.TopAgents))
 		if err != nil {
 			return err
 		}
@@ -48,6 +72,38 @@ func (r *Repository) CommitBuckets(ctx context.Context, buckets []MinuteBucket, 
 		return err
 	}
 	return tx.Commit()
+}
+
+func mergeTop(first, second map[string]int) map[string]int {
+	combined := map[string]int{}
+	for key, count := range first {
+		combined[key] += count
+	}
+	for key, count := range second {
+		combined[key] += count
+	}
+	type entry struct {
+		key   string
+		count int
+	}
+	items := make([]entry, 0, len(combined))
+	for key, count := range combined {
+		items = append(items, entry{key, count})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].count != items[j].count {
+			return items[i].count > items[j].count
+		}
+		return items[i].key < items[j].key
+	})
+	if len(items) > 20 {
+		items = items[:20]
+	}
+	out := map[string]int{}
+	for _, item := range items {
+		out[item.key] = item.count
+	}
+	return out
 }
 
 func (r *Repository) Baseline(ctx context.Context, id string) (Baseline, error) {

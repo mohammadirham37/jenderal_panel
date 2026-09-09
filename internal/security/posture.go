@@ -52,6 +52,9 @@ func (p *PostureChecker) command(ctx context.Context, name string, args ...strin
 	if err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, fmt.Errorf("probe returned no result")
+	}
 	if len(result.Stdout)+len(result.Stderr) > maxPostureOutput {
 		return nil, fmt.Errorf("probe output exceeded 1 MiB")
 	}
@@ -78,18 +81,27 @@ func (p *PostureChecker) checkUFW(ctx context.Context, report *PostureReport) {
 
 func (p *PostureChecker) checkAppArmor(ctx context.Context, report *PostureReport) {
 	r, err := p.command(ctx, "aa-status", "--json")
-	if err != nil || r.ExitCode != 0 {
+	enforced, complain, parsed := 0, 0, false
+	if err == nil && r.ExitCode == 0 {
+		var value struct {
+			Profiles map[string]json.RawMessage `json:"profiles"`
+		}
+		if json.Unmarshal([]byte(r.Stdout), &value) == nil && value.Profiles != nil {
+			enforced, _ = appArmorModeCount(value.Profiles["enforce"])
+			complain, _ = appArmorModeCount(value.Profiles["complain"])
+			parsed = true
+		}
+	}
+	if !parsed {
+		text, textErr := p.command(ctx, "aa-status")
+		if textErr == nil && text.ExitCode == 0 {
+			enforced, complain, parsed = parseAppArmorText(text.Stdout)
+		}
+	}
+	if !parsed {
 		report.Components["apparmor"] = "unknown"
 		return
 	}
-	var value struct {
-		Profiles map[string]int `json:"profiles"`
-	}
-	if json.Unmarshal([]byte(r.Stdout), &value) != nil || value.Profiles == nil {
-		report.Components["apparmor"] = "unknown"
-		return
-	}
-	enforced, complain := value.Profiles["enforce"], value.Profiles["complain"]
 	if complain > 0 {
 		report.Components["apparmor"] = "mixed"
 		report.Findings = append(report.Findings, Finding{Code: "apparmor_profiles_not_enforced", Component: "apparmor", Severity: SeverityMedium, State: "mixed", Summary: fmt.Sprintf("%d AppArmor profile(s) are in complain mode", complain), Remediation: "Review the affected profiles before changing their mode.", Evidence: map[string]any{"enforced": enforced, "complain": complain}})
@@ -100,6 +112,43 @@ func (p *PostureChecker) checkAppArmor(ctx context.Context, report *PostureRepor
 		return
 	}
 	report.Components["apparmor"] = "healthy"
+}
+
+func appArmorModeCount(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var count int
+	if json.Unmarshal(raw, &count) == nil {
+		return count, count >= 0
+	}
+	var profiles []any
+	if json.Unmarshal(raw, &profiles) == nil {
+		return len(profiles), true
+	}
+	return 0, false
+}
+
+func parseAppArmorText(output string) (int, int, bool) {
+	enforced, complain, matched := 0, 0, false
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) == 0 {
+			continue
+		}
+		count, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "profiles are in enforce mode") || strings.Contains(lower, "profile is in enforce mode") {
+			enforced, matched = count, true
+		}
+		if strings.Contains(lower, "profiles are in complain mode") || strings.Contains(lower, "profile is in complain mode") {
+			complain, matched = count, true
+		}
+	}
+	return enforced, complain, matched
 }
 
 func (p *PostureChecker) checkSSH(ctx context.Context, report *PostureReport) {

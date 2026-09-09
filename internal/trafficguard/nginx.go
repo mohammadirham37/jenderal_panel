@@ -118,8 +118,13 @@ func (m *NginxManager) ApplyWebsite(ctx context.Context, w model.Website, p Webs
 	if err = m.EnsureBase(ctx); err != nil {
 		return err
 	}
+	zonePath, previousZone, zoneExisted := "", "", false
 	if p.Mode == "custom" {
-		zonePath := "/etc/nginx/conf.d/jenderal-traffic-zone-" + w.ID + ".conf"
+		zonePath = "/etc/nginx/conf.d/jenderal-traffic-zone-" + w.ID + ".conf"
+		previousZone, zoneExisted, err = m.files.Read(ctx, zonePath)
+		if err != nil {
+			return err
+		}
 		zoneConfig := fmt.Sprintf("# Managed by Jenderal Panel\nlimit_req_zone $binary_remote_addr zone=%s:10m rate=%dr/s;\n", customZoneName(w.ID), p.RequestsPerSecond)
 		if err = m.applyFile(ctx, zonePath, zoneConfig); err != nil {
 			return err
@@ -128,6 +133,11 @@ func (m *NginxManager) ApplyWebsite(ctx context.Context, w model.Website, p Webs
 	snippet := renderTrafficSnippet(p, realIP)
 	path := "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf"
 	if err = m.applyFile(ctx, path, snippet); err != nil {
+		if zonePath != "" {
+			if rollbackErr := m.restoreFile(context.Background(), zonePath, previousZone, zoneExisted); rollbackErr != nil {
+				return fmt.Errorf("%v; custom rate zone rollback failed: %w", err, rollbackErr)
+			}
+		}
 		return err
 	}
 	return m.repo.SaveProfile(ctx, p)
@@ -174,30 +184,32 @@ func renderTrafficSnippet(p WebsiteProfile, realIP string) string {
 }
 
 func customZoneName(websiteID string) string { return "jenderal_custom_" + websiteID }
+
+func (m *NginxManager) restoreFile(ctx context.Context, path, previous string, existed bool) error {
+	var err error
+	if existed {
+		err = m.files.Write(ctx, path, previous)
+	} else {
+		err = m.files.Remove(ctx, path)
+	}
+	if err != nil {
+		return err
+	}
+	return m.validate(ctx)
+}
+
 func (m *NginxManager) applyFile(ctx context.Context, path, content string) error {
 	previous, existed, err := m.files.Read(ctx, path)
 	if err != nil {
 		return err
 	}
+	if existed && previous == content {
+		return nil
+	}
 	if err = m.files.Write(ctx, path, content); err != nil {
 		return err
 	}
-	validate := func() error {
-		r, e := m.exec.RunSudo(ctx, "/usr/sbin/nginx", "-t")
-		if e != nil || r.ExitCode != 0 {
-			return errors.New("Nginx configuration test failed")
-		}
-		r, e = m.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
-		if e != nil || r.ExitCode != 0 {
-			return errors.New("Nginx reload failed")
-		}
-		r, e = m.exec.RunSudo(ctx, "systemctl", "is-active", "--quiet", "nginx")
-		if e != nil || r.ExitCode != 0 {
-			return errors.New("Nginx health confirmation failed")
-		}
-		return nil
-	}
-	if err = validate(); err == nil {
+	if err = m.validate(ctx); err == nil {
 		return nil
 	}
 	if existed {
@@ -207,4 +219,20 @@ func (m *NginxManager) applyFile(ctx context.Context, path, content string) erro
 	}
 	_, _ = m.exec.RunSudo(context.Background(), "systemctl", "reload", "nginx")
 	return err
+}
+
+func (m *NginxManager) validate(ctx context.Context) error {
+	r, e := m.exec.RunSudo(ctx, "/usr/sbin/nginx", "-t")
+	if e != nil || r.ExitCode != 0 {
+		return errors.New("Nginx configuration test failed")
+	}
+	r, e = m.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
+	if e != nil || r.ExitCode != 0 {
+		return errors.New("Nginx reload failed")
+	}
+	r, e = m.exec.RunSudo(ctx, "systemctl", "is-active", "--quiet", "nginx")
+	if e != nil || r.ExitCode != 0 {
+		return errors.New("Nginx health confirmation failed")
+	}
+	return nil
 }

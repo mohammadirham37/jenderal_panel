@@ -176,6 +176,14 @@ func boundedCount(values map[string]int, key string) {
 	}
 	if len(values) < 20 {
 		values[key] = 1
+		return
+	}
+	for existing, count := range values {
+		if count <= 1 {
+			delete(values, existing)
+		} else {
+			values[existing] = count - 1
+		}
 	}
 }
 func (c *Collector) record(ctx context.Context, id string, a Anomaly, now time.Time) {
