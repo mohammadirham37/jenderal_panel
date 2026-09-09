@@ -257,16 +257,19 @@ func TestChangeRuntimeRollsBackMetadataAndUnitOnRestartFailure(t *testing.T) {
 func TestChangeRuntimeRestoresPreviousDefaultWhenPostInstallVerificationFails(t *testing.T) {
 	db := setupTestDB(t)
 	insertTestWebsite(t, db, "site-verify", "verify.example.com", "web_verify", "/home/web_verify/public")
-	aliasCalls := 0
-	var restored []string
+	aliasReads := 0
+	var restored string
 	mock := newMockExec()
 	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
 		if name == "-u" {
-			aliasCalls++
-			if aliasCalls == 1 {
-				return mockResult("24\n", "", 0), nil
-			}
-			restored = append([]string(nil), args...)
+			aliasReads++
+			return mockResult("24\n", "", 0), nil
+		}
+		return mockResult("", "", 0), nil
+	}
+	mock.RunSudoWithInputFunc = func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
+		if name == "-u" {
+			restored = input
 		}
 		return mockResult("", "", 0), nil
 	}
@@ -282,8 +285,8 @@ func TestChangeRuntimeRestoresPreviousDefaultWhenPostInstallVerificationFails(t 
 	if err == nil || !strings.Contains(err.Error(), "verification failed") {
 		t.Fatalf("ChangeRuntime() error=%v", err)
 	}
-	if aliasCalls != 2 || !strings.Contains(strings.Join(restored, "\x00"), "\x0024") {
-		t.Fatalf("aliasCalls=%d restored=%q", aliasCalls, restored)
+	if aliasReads != 1 || restored != "24\n" {
+		t.Fatalf("aliasReads=%d restored=%q", aliasReads, restored)
 	}
 	var stored string
 	if err := db.QueryRow(`SELECT node_version FROM websites WHERE id = 'site-verify'`).Scan(&stored); err != nil {
@@ -291,6 +294,248 @@ func TestChangeRuntimeRestoresPreviousDefaultWhenPostInstallVerificationFails(t 
 	}
 	if stored != "24" {
 		t.Fatalf("stored version=%q, want 24", stored)
+	}
+}
+
+func TestChangeRuntimePreservesExistingEmptyDefaultAlias(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "site-empty-alias", "empty-alias.example.com", "web_empty_alias", "/home/web_empty_alias/public")
+	var restoredInputs []string
+	mock := newMockExec()
+	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "-u" {
+			return mockResult("", "", 0), nil
+		}
+		return mockResult("", "", 0), nil
+	}
+	mock.RunSudoWithInputFunc = func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
+		restoredInputs = append(restoredInputs, input)
+		return mockResult("", "", 0), nil
+	}
+	svc := NewService(db, mock, nil)
+	svc.runtime = fakeRuntime{
+		detect: func(context.Context, string, string) (noderuntime.Status, error) {
+			return noderuntime.Status{}, errors.New("verification failed")
+		},
+		install:      func(context.Context, string, string, func(string)) error { return nil },
+		installPanel: func(context.Context, func(string)) error { return nil },
+	}
+
+	err := svc.ChangeRuntime(context.Background(), "site-empty-alias", "22", nil)
+	if err == nil || !strings.Contains(err.Error(), "verification failed") {
+		t.Fatalf("ChangeRuntime() error=%v", err)
+	}
+	if len(restoredInputs) != 1 || restoredInputs[0] != "" {
+		t.Fatalf("restored alias inputs=%q, want one exact empty write", restoredInputs)
+	}
+}
+
+func TestReadDefaultAliasRecognizesProvenFirstInstallAbsence(t *testing.T) {
+	mock := newMockExec()
+	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+		if name != "-u" {
+			t.Fatalf("unexpected command %s %v", name, args)
+		}
+		if args[2] == "/usr/bin/cat" {
+			return mockResult("", "No such file", 1), nil
+		}
+		flag, path := args[3], args[4]
+		switch {
+		case flag == "-d" && strings.HasSuffix(path, "/.nvm"):
+			return mockResult("", "", 0), nil
+		case flag == "-x" && strings.HasSuffix(path, "/.nvm"):
+			return mockResult("", "", 0), nil
+		default:
+			return mockResult("", "", 1), nil
+		}
+	}
+	svc := NewService(setupTestDB(t), mock, nil)
+
+	snapshot, err := svc.readDefaultAlias(context.Background(), "web_first_install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.exists || snapshot.content != "" {
+		t.Fatalf("snapshot=%#v, want proven absent alias", snapshot)
+	}
+}
+
+func TestChangeRuntimeFailsBeforeInstallWhenSnapshotCannotBeRead(t *testing.T) {
+	tests := []struct {
+		name    string
+		withApp bool
+		mock    func(string, ...string) (*executor.Result, error)
+	}{
+		{
+			name:    "existing unit unreadable",
+			withApp: true,
+			mock: func(name string, args ...string) (*executor.Result, error) {
+				if name == "cat" {
+					return mockResult("", "permission denied", 1), nil
+				}
+				if name == "test" && len(args) >= 2 && args[0] == "-e" {
+					return mockResult("", "", 0), nil
+				}
+				return mockResult("", "", 0), nil
+			},
+		},
+		{
+			name: "default alias parent unreadable",
+			mock: func(name string, args ...string) (*executor.Result, error) {
+				if name == "-u" && len(args) >= 4 && args[2] == "/usr/bin/cat" {
+					return mockResult("", "permission denied", 1), nil
+				}
+				if name == "-u" && len(args) >= 5 && args[2] == "/usr/bin/test" {
+					if args[3] == "-d" && strings.HasSuffix(args[4], "/.nvm/alias") {
+						return mockResult("", "", 0), nil
+					}
+					if args[3] == "-x" && strings.HasSuffix(args[4], "/.nvm/alias") {
+						return mockResult("", "", 1), nil
+					}
+					return mockResult("", "", 1), nil
+				}
+				return mockResult("", "", 0), nil
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			db := setupTestDB(t)
+			insertTestWebsite(t, db, "site-snapshot", "snapshot.example.com", "web_snapshot", "/home/web_snapshot/public")
+			if tt.withApp {
+				now := "2026-09-09T00:00:00Z"
+				if _, err := db.Exec(`INSERT INTO nodejs_apps
+					(id, website_id, node_version, package_mgr, start_cmd, port, status, created_at, updated_at)
+					VALUES ('snapshot-app', 'site-snapshot', '24', 'npm', 'server.js', 3000, 'stopped', ?, ?)`, now, now); err != nil {
+					t.Fatal(err)
+				}
+			}
+			installCalls := 0
+			mock := newMockExec()
+			mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+				return tt.mock(name, args...)
+			}
+			runtime := installedRuntime("22")
+			runtime.install = func(context.Context, string, string, func(string)) error {
+				installCalls++
+				return nil
+			}
+			svc := NewService(db, mock, nil)
+			svc.runtime = runtime
+
+			if err := svc.ChangeRuntime(context.Background(), "site-snapshot", "22", nil); err == nil {
+				t.Fatal("ChangeRuntime() error=nil, want snapshot failure")
+			}
+			if installCalls != 0 {
+				t.Fatalf("runtime install calls=%d, want no mutation", installCalls)
+			}
+		})
+	}
+}
+
+func TestChangeRuntimeFailsBeforeInstallOnUnexpectedSystemdProbeExit(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "site-probe", "probe.example.com", "web_probe", "/home/web_probe/public")
+	now := "2026-09-09T00:00:00Z"
+	if _, err := db.Exec(`INSERT INTO nodejs_apps
+		(id, website_id, node_version, package_mgr, start_cmd, port, status, created_at, updated_at)
+		VALUES ('probe-app', 'site-probe', '24', 'npm', 'server.js', 3000, 'stopped', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	installCalls := 0
+	mock := newMockExec()
+	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "cat" {
+			return mockResult("[Service]\nExecStart=/usr/bin/node server.js\n", "", 0), nil
+		}
+		if name == "systemctl" && args[0] == "is-active" {
+			return mockResult("", "probe failed", 2), nil
+		}
+		return mockResult("", "", 0), nil
+	}
+	runtime := installedRuntime("22")
+	runtime.install = func(context.Context, string, string, func(string)) error {
+		installCalls++
+		return nil
+	}
+	svc := NewService(db, mock, nil)
+	svc.runtime = runtime
+
+	if err := svc.ChangeRuntime(context.Background(), "site-probe", "22", nil); err == nil || !strings.Contains(err.Error(), "probe failed") {
+		t.Fatalf("ChangeRuntime() error=%v", err)
+	}
+	if installCalls != 0 {
+		t.Fatalf("runtime install calls=%d, want no mutation", installCalls)
+	}
+}
+
+func TestUnitUsesWebsiteRuntimeRequiresActiveExactDirectives(t *testing.T) {
+	home := "/home/web_strict"
+	valid := "[Unit]\nDescription=Node\n[Service]\nEnvironment=\"NVM_DIR=/home/web_strict/.nvm\"\nEnvironment=\"NODE_VERSION=24\"\nEnvironment=\"PATH=/usr/local/bin:/usr/bin:/bin\"\nExecStart=/home/web_strict/.nvm/nvm-exec node server.js\n"
+	if !unitUsesWebsiteRuntime(valid, home, "24", "node") {
+		t.Fatal("panel-generated unit was not recognized")
+	}
+	for _, command := range []string{"yarn", "pnpm"} {
+		unit := strings.Replace(valid, "nvm-exec node ", "nvm-exec "+command+" ", 1)
+		if !unitUsesWebsiteRuntime(unit, home, "24", command) {
+			t.Fatalf("panel-generated %s unit was not recognized", command)
+		}
+	}
+	misleading := []string{
+		"[Service]\n# Environment=\"NODE_VERSION=24\"\n# ExecStart=/home/web_strict/.nvm/nvm-exec node server.js\nEnvironment=\"NODE_VERSION=20\"\nExecStart=/usr/bin/node server.js\n",
+		"[Service]\nEnvironment=\"NODE_VERSION=24\"\nExecStart=/usr/bin/node server.js ExecStart=/home/web_strict/.nvm/nvm-exec node\n",
+		"[Service]\nEnvironment=\"NODE_VERSION=24\"\nEnvironment=\"NODE_VERSION=20\"\nExecStart=/home/web_strict/.nvm/nvm-exec node server.js\n",
+		"[Service]\nEnvironment=\"NVM_DIR=/home/web_strict/.nvm\"\nEnvironment=\"NODE_VERSION=24\"\nEnvironment=\"PATH=/usr/local/bin:/usr/bin:/bin\"\nExecStart=/home/web_strict/.nvm/nvm-exec /usr/bin/node server.js\n",
+		"[Service]\nEnvironment=\"NODE_VERSION=24\"\nExecStart=/home/web_strict/.nvm/nvm-exec node server.js\\\n --ambiguous\n",
+	}
+	for _, unit := range misleading {
+		if unitUsesWebsiteRuntime(unit, home, "24", "node") {
+			t.Fatalf("misleading unit accepted:\n%s", unit)
+		}
+	}
+}
+
+func TestTenantRuntimeCommandRejectsGlobalPackageManagerFallback(t *testing.T) {
+	mock := newMockExec()
+	resolved := "/usr/bin/yarn\n"
+	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+		return mockResult(resolved, "", 0), nil
+	}
+	svc := NewService(setupTestDB(t), mock, nil)
+	if svc.tenantRuntimeCommand(context.Background(), "web_strict", "24", "/home/web_strict", "yarn") {
+		t.Fatal("global yarn fallback was accepted as tenant-owned")
+	}
+	resolved = "/home/web_strict/.nvm/versions/node/v24.9.0/bin/yarn\n"
+	if !svc.tenantRuntimeCommand(context.Background(), "web_strict", "24", "/home/web_strict", "yarn") {
+		t.Fatal("tenant NVM yarn was rejected")
+	}
+}
+
+func TestLegacyGlobalDependenciesExplainsTenantPackageManagerRequirement(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "site-yarn", "yarn.example.com", "web_yarn", "/home/web_yarn/public")
+	now := "2026-09-09T00:00:00Z"
+	if _, err := db.Exec(`INSERT INTO nodejs_apps
+		(id, website_id, node_version, package_mgr, start_cmd, port, status, created_at, updated_at)
+		VALUES ('yarn-app', 'site-yarn', '24', 'yarn', 'start', 3000, 'stopped', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	mock := newMockExec()
+	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "cat" {
+			return mockResult("[Service]\nEnvironment=\"NVM_DIR=/home/web_yarn/.nvm\"\nEnvironment=\"NODE_VERSION=24\"\nEnvironment=\"PATH=/usr/local/bin:/usr/bin:/bin\"\nExecStart=/home/web_yarn/.nvm/nvm-exec yarn start\n", "", 0), nil
+		}
+		return mockResult("/usr/bin/yarn\n", "", 0), nil
+	}
+	svc := NewService(db, mock, nil)
+	svc.runtime = installedRuntime("24")
+
+	dependencies, err := svc.legacyGlobalDependencies(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dependencies) != 1 || !strings.Contains(dependencies[0], "install yarn") || !strings.Contains(dependencies[0], "NVM runtime") {
+		t.Fatalf("dependencies=%v, want actionable tenant yarn requirement", dependencies)
 	}
 }
 
@@ -414,7 +659,7 @@ func TestGlobalRemovalRequiresMigratedAppsAndPanelRuntime(t *testing.T) {
 
 	mock.RunSudoFunc = func(_ context.Context, name string, args ...string) (*executor.Result, error) {
 		if name == "cat" {
-			return mockResult("[Service]\nEnvironment=\"NODE_VERSION=24\"\nExecStart=/home/web_global/.nvm/nvm-exec node server.js\n", "", 0), nil
+			return mockResult("[Service]\nEnvironment=\"NVM_DIR=/home/web_global/.nvm\"\nEnvironment=\"NODE_VERSION=24\"\nEnvironment=\"PATH=/usr/local/bin:/usr/bin:/bin\"\nExecStart=/home/web_global/.nvm/nvm-exec node server.js\n", "", 0), nil
 		}
 		return mockResult("", "", 0), nil
 	}
@@ -515,7 +760,7 @@ func TestGlobalRemovalRechecksDependenciesAfterPanelBootstrap(t *testing.T) {
 		VALUES ('recheck-app', 'site-recheck', '24', 'npm', 'server.js', 3000, 'running', ?, ?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
-	unit := "[Service]\nEnvironment=\"NODE_VERSION=24\"\nExecStart=/home/web_recheck/.nvm/nvm-exec node server.js\n"
+	unit := "[Service]\nEnvironment=\"NVM_DIR=/home/web_recheck/.nvm\"\nEnvironment=\"NODE_VERSION=24\"\nEnvironment=\"PATH=/usr/local/bin:/usr/bin:/bin\"\nExecStart=/home/web_recheck/.nvm/nvm-exec node server.js\n"
 	aptCalls := 0
 	mock := newMockExec()
 	mock.RunFunc = func(context.Context, string, ...string) (*executor.Result, error) {

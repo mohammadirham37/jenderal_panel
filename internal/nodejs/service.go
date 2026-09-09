@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -163,17 +164,17 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 	proxyContent := s.buildNginxProxy(app.Port, website.Domain)
 	proxyPath := "/etc/nginx/conf.d/jenderal-node-" + id + ".conf"
 	if err := s.writeFileViaSudo(ctx, proxyPath, proxyContent); err != nil {
-		_, _ = s.exec.RunSudo(context.WithoutCancel(ctx), "rm", "-f", unitPath)
-		return model.NodeApp{}, fmt.Errorf("write nginx proxy config: %w", err)
+		primary := fmt.Errorf("write nginx proxy config: %w", err)
+		return model.NodeApp{}, joinCleanupError(primary, s.cleanupCreatedConfigs(ctx, unitPath, proxyPath))
 	}
 
 	if err := s.runSudoOK(ctx, "systemctl", "daemon-reload"); err != nil {
-		s.cleanupCreatedConfigs(ctx, unitPath, proxyPath)
-		return model.NodeApp{}, fmt.Errorf("reload systemd: %w", err)
+		primary := fmt.Errorf("reload systemd: %w", err)
+		return model.NodeApp{}, joinCleanupError(primary, s.cleanupCreatedConfigs(ctx, unitPath, proxyPath))
 	}
 	if err := s.runSudoOK(ctx, "systemctl", "reload", "nginx"); err != nil {
-		s.cleanupCreatedConfigs(ctx, unitPath, proxyPath)
-		return model.NodeApp{}, fmt.Errorf("reload nginx: %w", err)
+		primary := fmt.Errorf("reload nginx: %w", err)
+		return model.NodeApp{}, joinCleanupError(primary, s.cleanupCreatedConfigs(ctx, unitPath, proxyPath))
 	}
 
 	_, err = s.db.ExecContext(ctx,
@@ -185,20 +186,36 @@ func (s *Service) CreateApp(ctx context.Context, req CreateAppRequest) (model.No
 		nowStr, nowStr,
 	)
 	if err != nil {
-		s.cleanupCreatedConfigs(ctx, unitPath, proxyPath)
-		return model.NodeApp{}, fmt.Errorf("insert nodejs app: %w", err)
+		primary := fmt.Errorf("insert nodejs app: %w", err)
+		return model.NodeApp{}, joinCleanupError(primary, s.cleanupCreatedConfigs(ctx, unitPath, proxyPath))
 	}
 
 	return app, nil
 }
 
-func (s *Service) cleanupCreatedConfigs(ctx context.Context, paths ...string) {
-	cleanupCtx := context.WithoutCancel(ctx)
+func (s *Service) cleanupCreatedConfigs(ctx context.Context, paths ...string) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	var failures []error
 	for _, path := range paths {
-		_, _ = s.exec.RunSudo(cleanupCtx, "rm", "-f", path)
+		if err := s.runSudoOK(cleanupCtx, "rm", "-f", "--", path); err != nil {
+			failures = append(failures, fmt.Errorf("remove %s: %w", path, err))
+		}
 	}
-	_, _ = s.exec.RunSudo(cleanupCtx, "systemctl", "daemon-reload")
-	_, _ = s.exec.RunSudo(cleanupCtx, "systemctl", "reload", "nginx")
+	if err := s.runSudoOK(cleanupCtx, "systemctl", "daemon-reload"); err != nil {
+		failures = append(failures, fmt.Errorf("reload systemd after cleanup: %w", err))
+	}
+	if err := s.runSudoOK(cleanupCtx, "systemctl", "reload", "nginx"); err != nil {
+		failures = append(failures, fmt.Errorf("reload nginx after cleanup: %w", err))
+	}
+	return errors.Join(failures...)
+}
+
+func joinCleanupError(primary, cleanup error) error {
+	if cleanup == nil {
+		return primary
+	}
+	return errors.Join(primary, fmt.Errorf("cleanup failed: %w", cleanup))
 }
 
 // Get returns a Node.js app by ID.

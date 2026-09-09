@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,9 @@ func newMockExec() *executor.MockExecutor {
 				version := args[len(args)-2]
 				return mockResult("nvm_state=ready\nnvm_version=v0.40.7\ninstalled=true\nnode_version=v"+version+".1.0\nnpm_version=11.0.0\n", "", 0), nil
 			}
+			return mockResult("", "", 0), nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
 			return mockResult("", "", 0), nil
 		},
 	}
@@ -225,6 +229,52 @@ func TestCreateApp_Validation(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected error for invalid package_mgr")
+	}
+}
+
+func TestCreateAppReportsCancellationIndependentCleanupFailures(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "site-cleanup", "cleanup.example.com", "web_cleanup", "/home/web_cleanup/public")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cpCalls := 0
+	var removed []string
+	cleanupHadDeadline := true
+	cleanupWasCanceled := false
+	mock := newMockExec()
+	mock.RunSudoFunc = func(callCtx context.Context, name string, args ...string) (*executor.Result, error) {
+		switch name {
+		case "cp":
+			cpCalls++
+			if cpCalls == 2 {
+				cancel()
+				return mockResult("", "proxy write failed", 1), nil
+			}
+		case "rm":
+			if _, ok := callCtx.Deadline(); !ok {
+				cleanupHadDeadline = false
+			}
+			if callCtx.Err() != nil {
+				cleanupWasCanceled = true
+			}
+			removed = append(removed, args[len(args)-1])
+			return mockResult("", "cleanup remove failed", 1), nil
+		}
+		return mockResult("", "", 0), nil
+	}
+	svc := NewService(db, mock, nil)
+	svc.runtime = installedRuntime("24")
+
+	_, err := svc.CreateApp(ctx, CreateAppRequest{WebsiteID: "site-cleanup", StartCmd: "server.js", Port: 3000})
+	if err == nil || !strings.Contains(err.Error(), "proxy write failed") || !strings.Contains(err.Error(), "cleanup remove failed") {
+		t.Fatalf("CreateApp() error=%v, want primary and cleanup failures", err)
+	}
+	if len(removed) != 2 || !strings.HasSuffix(removed[0], ".service") || !strings.HasSuffix(removed[1], ".conf") {
+		t.Fatalf("cleanup removed=%v, want unit and potentially partial proxy", removed)
+	}
+	if !cleanupHadDeadline || cleanupWasCanceled {
+		t.Fatalf("cleanup context deadline=%v canceled=%v", cleanupHadDeadline, cleanupWasCanceled)
 	}
 }
 

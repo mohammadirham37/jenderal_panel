@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 )
@@ -114,8 +115,8 @@ type unitSnapshot struct {
 }
 
 type defaultSnapshot struct {
-	value  string
-	exists bool
+	content string
+	exists  bool
 }
 
 func (s *Service) ChangeRuntime(ctx context.Context, websiteID, version string, log func(string)) error {
@@ -151,7 +152,7 @@ func (s *Service) ChangeRuntime(ctx context.Context, websiteID, version string, 
 		return err
 	}
 	rollback := func(cause error) error {
-		rollbackErr := s.rollbackActivation(ctx, website, version, previousDefault, snapshots, log)
+		rollbackErr := s.rollbackActivation(ctx, website, previousDefault, snapshots, log)
 		if rollbackErr != nil {
 			return fmt.Errorf("%w (rollback failed: %v)", cause, rollbackErr)
 		}
@@ -248,7 +249,16 @@ func (s *Service) readSystemFile(ctx context.Context, path string) (string, bool
 		return "", false, errors.New("executor returned no result")
 	}
 	if result.ExitCode != 0 {
-		return "", false, nil
+		absent, probeErr := pathAbsentAfterReadFailure(ctx, path, func(ctx context.Context, flag, candidate string) (*executor.Result, error) {
+			return s.exec.RunSudo(ctx, "test", flag, candidate)
+		})
+		if probeErr != nil {
+			return "", false, probeErr
+		}
+		if absent {
+			return "", false, nil
+		}
+		return "", false, commandFailure("read "+path, result)
 	}
 	return result.Stdout, true, nil
 }
@@ -261,7 +271,25 @@ func (s *Service) systemdState(ctx context.Context, action, service string) (boo
 	if result == nil {
 		return false, fmt.Errorf("%s %s: executor returned no result", action, service)
 	}
-	return result.ExitCode == 0, nil
+	switch action {
+	case "is-active":
+		switch result.ExitCode {
+		case 0:
+			return true, nil
+		case 3, 4:
+			return false, nil
+		}
+	case "is-enabled":
+		switch result.ExitCode {
+		case 0:
+			return true, nil
+		case 1, 4:
+			return false, nil
+		}
+	default:
+		return false, fmt.Errorf("unsupported systemd state action %q", action)
+	}
+	return false, commandFailure(action+" "+service, result)
 }
 
 func (s *Service) readDefaultAlias(ctx context.Context, user string) (defaultSnapshot, error) {
@@ -276,22 +304,39 @@ func (s *Service) readDefaultAlias(ctx context.Context, user string) (defaultSna
 	if result == nil {
 		return defaultSnapshot{}, errors.New("read Node.js default alias: executor returned no result")
 	}
-	value := strings.TrimSpace(result.Stdout)
-	return defaultSnapshot{value: value, exists: result.ExitCode == 0 && value != ""}, nil
+	if result.ExitCode == 0 {
+		return defaultSnapshot{content: result.Stdout, exists: true}, nil
+	}
+	path := home + "/.nvm/alias/default"
+	absent, probeErr := pathAbsentAfterReadFailure(ctx, path, func(ctx context.Context, flag, candidate string) (*executor.Result, error) {
+		return s.exec.RunSudo(ctx, "-u", user, "--", "/usr/bin/test", flag, candidate)
+	})
+	if probeErr != nil {
+		return defaultSnapshot{}, fmt.Errorf("read Node.js default alias: %w", probeErr)
+	}
+	if absent {
+		return defaultSnapshot{}, nil
+	}
+	return defaultSnapshot{}, commandFailure("read Node.js default alias", result)
 }
 
-func (s *Service) restoreDefaultAlias(ctx context.Context, user, activeVersion string, previous defaultSnapshot) error {
-	script := `. "$NVM_DIR/nvm.sh"; nvm unalias default >/dev/null`
-	args := []string{"-c", script, "--"}
-	if previous.exists {
-		script = `. "$NVM_DIR/nvm.sh"; nvm alias default "$1" >/dev/null`
-		args = []string{"-c", script, "--", previous.value}
-	}
-	execArgs, err := noderuntime.ExecArgs(user, activeVersion, "/bin/bash", args...)
+func (s *Service) restoreDefaultAlias(ctx context.Context, user string, previous defaultSnapshot) error {
+	home, err := noderuntime.Home(user)
 	if err != nil {
 		return err
 	}
-	result, err := s.exec.RunSudo(ctx, "-u", execArgs...)
+	path := home + "/.nvm/alias/default"
+	if !previous.exists {
+		result, err := s.exec.RunSudo(ctx, "-u", user, "--", "/usr/bin/rm", "-f", "--", path)
+		if err != nil {
+			return err
+		}
+		if result == nil || result.ExitCode != 0 {
+			return errors.New("remove Node.js default alias failed")
+		}
+		return nil
+	}
+	result, err := s.exec.RunSudoWithInput(ctx, previous.content, "-u", user, "--", "/usr/bin/tee", "--", path)
 	if err != nil {
 		return err
 	}
@@ -301,7 +346,7 @@ func (s *Service) restoreDefaultAlias(ctx context.Context, user, activeVersion s
 	return nil
 }
 
-func (s *Service) rollbackActivation(ctx context.Context, website websiteRuntimeRow, activeVersion string, previousDefault defaultSnapshot, snapshots []unitSnapshot, log func(string)) error {
+func (s *Service) rollbackActivation(ctx context.Context, website websiteRuntimeRow, previousDefault defaultSnapshot, snapshots []unitSnapshot, log func(string)) error {
 	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 	defer cancel()
 	if log != nil {
@@ -339,7 +384,7 @@ func (s *Service) rollbackActivation(ctx context.Context, website websiteRuntime
 			failures = append(failures, err.Error())
 		}
 	}
-	if err := s.restoreDefaultAlias(rollbackCtx, website.WebUser, activeVersion, previousDefault); err != nil {
+	if err := s.restoreDefaultAlias(rollbackCtx, website.WebUser, previousDefault); err != nil {
 		failures = append(failures, err.Error())
 	}
 	if len(failures) > 0 {
@@ -422,16 +467,16 @@ func (s *Service) RemoveGlobal(ctx context.Context, log func(string)) error {
 }
 
 func (s *Service) legacyGlobalDependencies(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT a.id, w.web_user, w.node_version
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id, a.package_mgr, w.web_user, w.node_version
 		FROM nodejs_apps a JOIN websites w ON w.id = a.website_id ORDER BY a.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list Node.js application dependencies: %w", err)
 	}
-	type dependency struct{ id, user, version string }
+	type dependency struct{ id, packageManager, user, version string }
 	var apps []dependency
 	for rows.Next() {
 		var app dependency
-		if err := rows.Scan(&app.id, &app.user, &app.version); err != nil {
+		if err := rows.Scan(&app.id, &app.packageManager, &app.user, &app.version); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -465,11 +510,159 @@ func (s *Service) legacyGlobalDependencies(ctx context.Context) ([]string, error
 		if err != nil {
 			return nil, err
 		}
-		if !exists || !strings.Contains(unit, "ExecStart="+home+"/.nvm/nvm-exec ") || !strings.Contains(unit, `Environment="NODE_VERSION=`+app.version+`"`) {
+		command := "node"
+		if app.packageManager == "yarn" || app.packageManager == "pnpm" {
+			command = app.packageManager
+		}
+		if !exists || !unitUsesWebsiteRuntime(unit, home, app.version, command) {
 			legacy = append(legacy, app.id)
+			continue
+		}
+		if command != "node" && !s.tenantRuntimeCommand(ctx, app.user, app.version, home, command) {
+			legacy = append(legacy, app.id+" (install "+command+" in this website's NVM runtime)")
 		}
 	}
 	return legacy, nil
+}
+
+func pathAbsentAfterReadFailure(ctx context.Context, path string, runTest func(context.Context, string, string) (*executor.Result, error)) (bool, error) {
+	for _, flag := range []string{"-e", "-L"} {
+		matched, err := checkedPathTest(ctx, runTest, flag, path)
+		if err != nil {
+			return false, err
+		}
+		if matched {
+			return false, nil
+		}
+	}
+	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
+		isDir, err := checkedPathTest(ctx, runTest, "-d", parent)
+		if err != nil {
+			return false, err
+		}
+		if isDir {
+			searchable, err := checkedPathTest(ctx, runTest, "-x", parent)
+			if err != nil {
+				return false, err
+			}
+			if !searchable {
+				return false, fmt.Errorf("cannot prove %s is absent: parent directory %s is not searchable", path, parent)
+			}
+			return true, nil
+		}
+		if parent == "/" || parent == "." {
+			return false, fmt.Errorf("cannot prove %s is absent", path)
+		}
+	}
+}
+
+func checkedPathTest(ctx context.Context, runTest func(context.Context, string, string) (*executor.Result, error), flag, path string) (bool, error) {
+	result, err := runTest(ctx, flag, path)
+	if err != nil {
+		return false, err
+	}
+	if result == nil {
+		return false, errors.New("path probe returned no result")
+	}
+	switch result.ExitCode {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	default:
+		return false, commandFailure("test "+flag+" "+path, result)
+	}
+}
+
+func commandFailure(action string, result *executor.Result) error {
+	detail := strings.TrimSpace(result.Stderr)
+	if detail == "" {
+		detail = fmt.Sprintf("exit status %d", result.ExitCode)
+	}
+	return fmt.Errorf("%s: %s", action, detail)
+}
+
+func unitUsesWebsiteRuntime(unit, home, version, command string) bool {
+	if command != "node" && command != "yarn" && command != "pnpm" {
+		return false
+	}
+	lines := strings.Split(unit, "\n")
+	inService := false
+	serviceSections := 0
+	execStart := ""
+	requiredEnv := map[string]bool{
+		`"NVM_DIR=` + home + `/.nvm"`:         false,
+		`"NODE_VERSION=` + version + `"`:      false,
+		`"PATH=/usr/local/bin:/usr/bin:/bin"`: false,
+	}
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+		if strings.HasSuffix(line, "\\") {
+			return false
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			inService = line == "[Service]"
+			if inService {
+				serviceSections++
+				if serviceSections > 1 {
+					return false
+				}
+			}
+			continue
+		}
+		if !inService {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return false
+		}
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		switch key {
+		case "ExecStart":
+			if execStart != "" || value == "" {
+				return false
+			}
+			execStart = value
+		case "Environment":
+			for reserved := range requiredEnv {
+				name := strings.SplitN(strings.TrimPrefix(reserved, `"`), "=", 2)[0]
+				if strings.Contains(value, name+"=") {
+					if value != reserved || requiredEnv[reserved] {
+						return false
+					}
+					requiredEnv[reserved] = true
+				}
+			}
+		case "EnvironmentFile", "UnsetEnvironment":
+			return false
+		}
+	}
+	if !strings.HasPrefix(execStart, home+"/.nvm/nvm-exec "+command+" ") {
+		return false
+	}
+	for _, found := range requiredEnv {
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) tenantRuntimeCommand(ctx context.Context, user, version, home, command string) bool {
+	args, err := noderuntime.ExecArgs(user, version, "/bin/sh", "-c", `resolved=$(command -v "$1") || exit; /usr/bin/readlink -f -- "$resolved"`, "--", command)
+	if err != nil {
+		return false
+	}
+	result, err := s.exec.RunSudo(ctx, "-u", args...)
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return false
+	}
+	resolved := strings.TrimSpace(result.Stdout)
+	return filepath.Clean(resolved) == resolved && strings.HasPrefix(resolved, home+"/.nvm/versions/node/") && !strings.ContainsAny(resolved, "\r\n")
 }
 
 func (s *Service) runSudoOK(ctx context.Context, name string, args ...string) error {
