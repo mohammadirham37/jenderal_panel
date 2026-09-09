@@ -5,6 +5,47 @@ import (
 	"testing"
 )
 
+func TestRenderHTTPAndTLSProfiles(t *testing.T) {
+	tests := []struct {
+		profile string
+		root    string
+		want    []string
+		notWant []string
+	}{
+		{"static", "/home/web_site/public", []string{"index index.html index.htm;", "try_files $uri $uri/ =404;"}, []string{"fastcgi_pass"}},
+		{"php", "/home/web_site/public", []string{"index index.php index.html index.htm;", "include fastcgi_params;", "fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;"}, nil},
+		{"codeigniter3", "/home/web_site/public", []string{"try_files $uri $uri/ /index.php?$query_string;", "error_page 404 /index.php;"}, nil},
+		{"codeigniter4", "/home/web_site/app/public", []string{"root /home/web_site/app/public;", "try_files $uri $uri/ /index.php?$query_string;"}, nil},
+		{"laravel", "/home/web_site/app/public", []string{"root /home/web_site/app/public;", "location ~ ^/index\\.php(/|$)", "fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;", "add_header X-Content-Type-Options nosniff always;", "location ~ /\\.(?!well-known).*"}, []string{"location ~ \\.php$"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.profile, func(t *testing.T) {
+			base := VhostData{Domain: "example.com", DocumentRoot: tt.root, LogDir: "/home/web_site/logs", PHPVersion: "8.3", AppType: "php", Profile: tt.profile}
+			httpOutput, err := RenderVhost(base)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tlsOutput, err := RenderTLSVhost(TLSVhostData{VhostData: base, TLSDomain: "example.com", CertificatePath: "/cert.pem", PrivateKeyPath: "/key.pem"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, output := range []string{httpOutput, tlsOutput} {
+				for _, want := range tt.want {
+					if !strings.Contains(output, want) {
+						t.Errorf("%s output missing %q:\n%s", tt.profile, want, output)
+					}
+				}
+				for _, notWant := range tt.notWant {
+					if strings.Contains(output, notWant) {
+						t.Errorf("%s output unexpectedly contains %q:\n%s", tt.profile, notWant, output)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestRenderVhost_PHP(t *testing.T) {
 	data := VhostData{
 		Domain:       "example.com",

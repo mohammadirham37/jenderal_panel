@@ -16,15 +16,17 @@ import (
 )
 
 type siteRecord struct {
-	WebsiteID     string
-	PrimaryDomain string
-	Domain        string
-	DocumentRoot  string
-	PHPVersion    string
-	AppType       string
-	Status        string
-	LogDir        string
-	Aliases       []string
+	WebsiteID        string
+	PrimaryDomain    string
+	Domain           string
+	DocumentRoot     string
+	PHPVersion       string
+	AppType          string
+	Framework        string
+	FrameworkVersion string
+	Status           string
+	LogDir           string
+	Aliases          []string
 }
 
 type activationRequest struct {
@@ -50,16 +52,17 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	var site siteRecord
 	var webUser string
-	var phpVersion sql.NullString
+	var phpVersion, framework, frameworkVersion sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.status, w.web_user
+		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.status, w.web_user,
+		        w.framework, w.framework_version
 		 FROM websites w
 		 JOIN domains d ON d.website_id = w.id
 		 WHERE w.id = ? AND d.name = ?`,
 		websiteID, domain,
 	).Scan(
 		&site.WebsiteID, &site.PrimaryDomain, &site.Domain, &site.DocumentRoot,
-		&phpVersion, &site.AppType, &site.Status, &webUser,
+		&phpVersion, &site.AppType, &site.Status, &webUser, &framework, &frameworkVersion,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -68,6 +71,8 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 		return siteRecord{}, fmt.Errorf("load website domain: %w", err)
 	}
 	site.PHPVersion = phpVersion.String
+	site.Framework = framework.String
+	site.FrameworkVersion = frameworkVersion.String
 	site.LogDir = "/home/" + webUser + "/logs"
 
 	rows, err := s.db.QueryContext(ctx,
@@ -149,6 +154,7 @@ func (s *Service) beginCertificateActivation(ctx context.Context, req activation
 		LogDir:            req.Site.LogDir,
 		PHPVersion:        req.Site.PHPVersion,
 		AppType:           req.Site.AppType,
+		Profile:           websiteconfig.NginxProfileFor(req.Site.Framework, req.Site.FrameworkVersion, req.Site.AppType),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   req.RedirectDomains,
 	}
@@ -219,6 +225,7 @@ func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectD
 		LogDir:            site.LogDir,
 		PHPVersion:        site.PHPVersion,
 		AppType:           site.AppType,
+		Profile:           websiteconfig.NginxProfileFor(site.Framework, site.FrameworkVersion, site.AppType),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
 	})

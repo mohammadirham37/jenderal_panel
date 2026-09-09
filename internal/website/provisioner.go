@@ -179,6 +179,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		LogDir:            logDir,
 		PHPVersion:        w.PHPVersion,
 		AppType:           w.AppType,
+		Profile:           NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType),
 		IPv6:              p.ipv6Available(),
 	}
 

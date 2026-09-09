@@ -191,6 +191,26 @@ func comparePHP(left, right string) int {
 	return strings.Compare(left, right)
 }
 
+// NginxProfileFor derives the renderer profile for persisted and legacy rows.
+func NginxProfileFor(framework, frameworkVersion, appType string) string {
+	switch framework {
+	case "laravel":
+		return "laravel"
+	case "codeigniter":
+		if strings.HasPrefix(frameworkVersion, "3") {
+			return "codeigniter3"
+		}
+		return "codeigniter4"
+	}
+	if appType == "static" {
+		return "static"
+	}
+	if appType == "laravel" {
+		return "laravel"
+	}
+	return "php"
+}
+
 func valueOr(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

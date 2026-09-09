@@ -15,6 +15,7 @@ type VhostData struct {
 	LogDir            string
 	PHPVersion        string
 	AppType           string
+	Profile           string
 	IPv6              bool
 	RedirectDomains   []string
 }
@@ -198,6 +199,132 @@ const tlsVhostStaticTemplate = `server {
 }
 `
 
+const profileHTTPTemplate = `{{ if .ApplicationDomains }}server {
+    listen 80;
+    {{ if .IPv6 }}listen [::]:80;{{ end }}
+
+    server_name {{ .ApplicationDomains }};
+    root {{ .DocumentRoot }};
+    index {{ .Directives.Index }};
+
+    access_log {{ .LogDir }}/access.log;
+    error_log {{ .LogDir }}/error.log;
+{{ .Directives.Server }}
+    location ^~ /.well-known/acme-challenge/ {
+        root {{ .ACMEChallengeRoot }};
+        try_files $uri =404;
+    }
+
+{{ .Directives.Location }}
+{{ .Directives.PHP }}
+{{ .Directives.Hidden }}
+}
+{{ end }}{{ range .RedirectDomains }}
+server {
+    listen 80;
+    {{ if $.IPv6 }}listen [::]:80;{{ end }}
+
+    server_name {{ . }};
+    root {{ $.DocumentRoot }};
+
+    location ^~ /.well-known/acme-challenge/ {
+        root {{ $.ACMEChallengeRoot }};
+        try_files $uri =404;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+{{ end }}`
+
+const profileTLSTemplate = `server {
+    listen 443 ssl;
+    {{ if .IPv6 }}listen [::]:443 ssl;{{ end }}
+
+    server_name {{ .TLSDomain }};
+    root {{ .DocumentRoot }};
+    index {{ .Directives.Index }};
+
+    access_log {{ .LogDir }}/access.log;
+    error_log {{ .LogDir }}/error.log;
+
+    ssl_certificate {{ .CertificatePath }};
+    ssl_certificate_key {{ .PrivateKeyPath }};
+    ssl_protocols TLSv1.2 TLSv1.3;
+{{ .Directives.Server }}
+{{ .Directives.Location }}
+{{ .Directives.PHP }}
+{{ .Directives.Hidden }}
+}
+`
+
+type nginxProfileDirectives struct {
+	Index    string
+	Server   string
+	Location string
+	PHP      string
+	Hidden   string
+}
+
+func directivesFor(data VhostData) nginxProfileDirectives {
+	profile := data.Profile
+	if profile == "" {
+		if data.AppType == "static" {
+			profile = "static"
+		} else if data.AppType == "laravel" {
+			profile = "laravel"
+		} else {
+			profile = "php"
+		}
+	}
+	standardHidden := `    location ~ /\. {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }`
+	standardPHP := `    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php` + data.PHPVersion + `-fpm-` + data.Domain + `.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+    }`
+	switch profile {
+	case "static":
+		return nginxProfileDirectives{Index: "index.html index.htm", Location: `    location / {
+        try_files $uri $uri/ =404;
+    }`, Hidden: standardHidden}
+	case "codeigniter3":
+		return nginxProfileDirectives{Index: "index.php index.html index.htm", Server: "    error_page 404 /index.php;\n", Location: `    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }`, PHP: standardPHP, Hidden: standardHidden}
+	case "codeigniter4":
+		return nginxProfileDirectives{Index: "index.php index.html index.htm", Location: `    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }`, PHP: standardPHP, Hidden: standardHidden}
+	case "laravel":
+		return nginxProfileDirectives{Index: "index.php", Server: `    add_header X-Frame-Options SAMEORIGIN always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+`, Location: `    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }`, PHP: `    location ~ ^/index\.php(/|$) {
+        include fastcgi_params;
+        fastcgi_pass unix:/run/php/php` + data.PHPVersion + `-fpm-` + data.Domain + `.sock;
+        fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
+        fastcgi_param DOCUMENT_ROOT $realpath_root;
+        internal;
+    }`, Hidden: `    location ~ /\.(?!well-known).* {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }`}
+	default:
+		return nginxProfileDirectives{Index: "index.php index.html index.htm", Location: `    location / {
+		try_files $uri $uri/ /index.php?$query_string;
+	}`, PHP: standardPHP, Hidden: standardHidden}
+	}
+}
+
 const poolTemplate = `[{{ .Domain }}]
 user = {{ .WebUser }}
 group = {{ .WebUser }}
@@ -224,17 +351,13 @@ request_slowlog_timeout = 10s
 // RenderVhost renders an Nginx virtual host configuration using the given data.
 // The AppType field selects between a PHP-enabled template and a static template.
 func RenderVhost(data VhostData) (string, error) {
-	tmplStr := vhostPHPTemplate
-	if data.AppType == "static" {
-		tmplStr = vhostStaticTemplate
-	}
-
-	tmpl, err := template.New("vhost").Parse(tmplStr)
+	tmpl, err := template.New("vhost").Parse(profileHTTPTemplate)
 	if err != nil {
 		return "", err
 	}
 
 	renderData := prepareHTTPVhostData(data)
+	renderData.Directives = directivesFor(data)
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, renderData); err != nil {
 		return "", err
@@ -245,6 +368,7 @@ func RenderVhost(data VhostData) (string, error) {
 type httpVhostData struct {
 	VhostData
 	ApplicationDomains string
+	Directives         nginxProfileDirectives
 }
 
 func prepareHTTPVhostData(data VhostData) httpVhostData {
@@ -303,18 +427,17 @@ func uniqueDomains(domains []string) []string {
 
 // RenderTLSVhost renders one HTTPS application server for a registered domain.
 func RenderTLSVhost(data TLSVhostData) (string, error) {
-	tmplStr := tlsVhostPHPTemplate
-	if data.AppType == "static" {
-		tmplStr = tlsVhostStaticTemplate
-	}
-
-	tmpl, err := template.New("tls-vhost").Parse(tmplStr)
+	tmpl, err := template.New("tls-vhost").Parse(profileTLSTemplate)
 	if err != nil {
 		return "", err
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	renderData := struct {
+		TLSVhostData
+		Directives nginxProfileDirectives
+	}{data, directivesFor(data.VhostData)}
+	if err := tmpl.Execute(&buf, renderData); err != nil {
 		return "", err
 	}
 	return buf.String(), nil

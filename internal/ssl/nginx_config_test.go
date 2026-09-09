@@ -10,6 +10,50 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
 
+func TestLaravelProfileSurvivesCertificateActivation(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-laravel-profile", "laravel.example.com")
+	if _, err := db.Exec(`UPDATE websites SET app_type = 'laravel', framework = 'laravel', framework_version = '13', document_root = '/home/web_laravel_example_com/app/public' WHERE id = 'ws-laravel-profile'`); err != nil {
+		t.Fatal(err)
+	}
+
+	installed := map[string]string{}
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			if name == "install" && len(args) == 4 {
+				content, err := os.ReadFile(args[2])
+				if err != nil {
+					t.Fatal(err)
+				}
+				installed[args[3]] = string(content)
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, nil, "/etc/jenderal/ssl")
+	svc.ipv6Available = func() bool { return false }
+	site, err := svc.loadSiteForDomain(context.Background(), "ws-laravel-profile", "laravel.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.activateCertificate(context.Background(), activationRequest{Site: site, CertificatePEM: []byte("cert"), PrivateKeyPEM: []byte("key")}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/etc/nginx/sites-available/laravel.example.com", "/etc/nginx/sites-available/laravel.example.com.ssl"} {
+		config := installed[path]
+		if !strings.Contains(config, "root /home/web_laravel_example_com/app/public;") || !strings.Contains(config, "location ~ ^/index\\.php(/|$)") {
+			t.Errorf("Laravel routing was not preserved in %s:\n%s", path, config)
+		}
+	}
+}
+
 func TestActivateCertificateRendersIPv4AndRedirect(t *testing.T) {
 	installed := make(map[string]string)
 	mock := &executor.MockExecutor{

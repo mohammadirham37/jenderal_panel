@@ -810,6 +810,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		LogDir:            logDir,
 		PHPVersion:        w.PHPVersion,
 		AppType:           w.AppType,
+		Profile:           NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
 	}
