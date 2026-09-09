@@ -5,34 +5,28 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/oklog/ulid/v2"
 )
 
 // RunFunc keeps multi-step service work visible through the same task API as
 // command tasks. Its lifetime is independent of the initiating HTTP request.
 func (r *Runner) RunFunc(name string, work func(context.Context, func(string)) error) string {
-	task := &Task{ID: ulid.Make().String(), Name: name, Status: "running", StartedAt: time.Now().UTC()}
-	r.mu.Lock()
-	r.tasks[task.ID] = task
-	r.mu.Unlock()
+	return r.RunFuncWithOptions(Options{Name: name, Timeout: 30 * time.Minute}, work)
+}
+
+func (r *Runner) RunFuncWithOptions(options Options, work func(context.Context, func(string)) error) string {
+	if options.Timeout <= 0 {
+		options.Timeout = 30 * time.Minute
+	}
+	task := r.startTask(options)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), options.Timeout)
 		defer cancel()
 		var err error
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				err = fmt.Errorf("background task panicked: %v", recovered)
 			}
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			task.EndedAt = time.Now().UTC()
-			if err != nil {
-				task.Status = "failed"
-				task.Error = err.Error()
-			} else {
-				task.Status = "completed"
-			}
+			r.finishTask(task.ID, err)
 		}()
 		log := func(output string) {
 			if output == "" {
@@ -41,9 +35,7 @@ func (r *Runner) RunFunc(name string, work func(context.Context, func(string)) e
 			if !strings.HasSuffix(output, "\n") {
 				output += "\n"
 			}
-			r.mu.Lock()
-			task.Output += output
-			r.mu.Unlock()
+			r.appendOutput(task.ID, output)
 		}
 		err = work(ctx, log)
 		if err == nil {

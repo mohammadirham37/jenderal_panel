@@ -59,7 +59,7 @@
 - Produces: `taskrunner.NewPersistent(*sql.DB) (*Runner, error)`; existing `New()` remains in-memory for tests.
 - Produces: task JSON fields `module` and `updated_at`; existing fields remain compatible.
 
-- [ ] **Step 1: Write failing persistence and recovery tests**
+- [x] **Step 1: Write failing persistence and recovery tests**
 
 ```go
 func TestPersistentRunnerRestoresCompletedOutput(t *testing.T) {
@@ -90,13 +90,13 @@ func TestPersistentRunnerMarksInterruptedWorkFailed(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `go test ./internal/taskrunner ./internal/database -run 'Persistent|Migrate' -count=1`
 
 Expected: FAIL because the migration, store, module field, and persistent constructor do not exist.
 
-- [ ] **Step 3: Add the schema and minimal store-backed runner**
+- [x] **Step 3: Add the schema and minimal store-backed runner**
 
 Use this schema:
 
@@ -146,13 +146,13 @@ Route `Run`, `RunMultiple`, and `RunFunc` through shared task creation, bounded 
 
 In `cmd/jenderal/main.go`, replace `taskrunner.New()` with `taskrunner.NewPersistent(db)` and fail startup with a clear log entry if restoration fails.
 
-- [ ] **Step 4: Verify focused and package tests**
+- [x] **Step 4: Verify focused and package tests**
 
 Run: `go test ./internal/taskrunner ./internal/database ./cmd/jenderal -count=1`
 
 Expected: PASS, including existing non-interactive sudo behavior.
 
-- [ ] **Step 5: Commit the durable task slice**
+- [x] **Step 5: Commit the durable task slice**
 
 ```bash
 git add internal/database/migrations/021_persistent_tasks.sql internal/database/migrations_test.go internal/taskrunner cmd/jenderal/main.go

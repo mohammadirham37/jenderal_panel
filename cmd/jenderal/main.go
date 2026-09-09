@@ -169,7 +169,11 @@ func cmdServe() {
 		return metricsCollector.Buffer().Latest()
 	}, serviceMgr, sslSvc)
 	fileManagerSvc := filemanager.NewService(exec, auditSvc)
-	tasks := taskrunner.New()
+	tasks, err := taskrunner.NewPersistent(db)
+	if err != nil {
+		logger.Error("initialize task runner failed", "error", err)
+		os.Exit(1)
+	}
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
