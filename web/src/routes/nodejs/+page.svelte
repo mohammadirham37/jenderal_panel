@@ -4,6 +4,7 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	interface Runtime {
+		error_message?: string;
 		website_id: string; domain: string; web_user: string; selected_version: string;
 		installed: boolean; installed_version: string; npm_version: string; nvm_version: string; nvm_state: string;
 	}
@@ -113,6 +114,7 @@
 						<p class="font-medium text-white">{runtime.domain}</p>
 						<p class="text-xs text-gray-400">{runtime.web_user} · Selected: {runtime.selected_version || 'None'}</p>
 						<p class="text-sm text-gray-300">{runtime.installed ? 'Node ' + runtime.installed_version + ' · npm ' + runtime.npm_version : 'Runtime not installed'} · NVM {runtime.nvm_version || runtime.nvm_state}</p>
+						{#if runtime.error_message}<p class="text-sm text-red-400">{runtime.error_message}</p>{/if}
 					</div>
 					<div class="flex gap-2">
 						<select aria-label={'Node.js version for ' + runtime.domain} bind:value={choices[runtime.website_id]} disabled={busy} class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200">
