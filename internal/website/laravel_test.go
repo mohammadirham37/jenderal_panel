@@ -27,6 +27,7 @@ func TestLaravelEnvironment(t *testing.T) {
 		{name: "relative database", input: "APP_KEY='base64:keep'\nDB_CONNECTION=sqlite\nDB_DATABASE=database/custom.sqlite\n", path: root + "/database/custom.sqlite"},
 		{name: "absolute database", input: "APP_KEY=base64:keep\nDB_CONNECTION=sqlite\nDB_DATABASE=" + root + "/database/custom.sqlite\n", path: root + "/database/custom.sqlite"},
 		{name: "implicit external driver", input: "APP_KEY=base64:keep\nDB_HOST=127.0.0.1\nDB_USERNAME=production\nDB_DATABASE=production\n", unchanged: true},
+		{name: "ambiguous database without driver", input: "APP_KEY=base64:keep\nDB_DATABASE=production\n", unchanged: true},
 		{name: "external database", input: "APP_KEY=base64:keep\nDB_CONNECTION=mysql\nDB_DATABASE=production\n", unchanged: true},
 		{name: "external URL", input: "DB_CONNECTION=sqlite\nDB_URL='postgres://example/db'\n", unchanged: true},
 		{name: "outside project", input: "DB_CONNECTION=sqlite\nDB_DATABASE=/tmp/other.sqlite\n", wantError: true},

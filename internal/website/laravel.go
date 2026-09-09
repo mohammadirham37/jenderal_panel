@@ -72,7 +72,7 @@ func laravelEnvironment(content, root string, fresh bool) (string, string, bool,
 		return "", "", false, fmt.Errorf("resolve DB_CONNECTION before Laravel repair")
 	}
 	if !fresh && connection == "" {
-		for _, key := range []string{"DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD"} {
+		for _, key := range []string{"DB_DATABASE", "DB_HOST", "DB_PORT", "DB_USERNAME", "DB_PASSWORD"} {
 			if values[key] != "" {
 				return content, "", false, nil
 			}
