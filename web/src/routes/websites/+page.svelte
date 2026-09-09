@@ -29,10 +29,12 @@
 		document_root: string; prerequisites: string[]; php_compatibility: { version: string; enabled: boolean; reason: string }[];
 	}
 	interface WebsiteSelection {
+		node_version: string;
 		template: string; php_version: string; framework_version: string; frontend_stack: string;
 		inertia_adapter: string; project_variant: string; setup_mode: string;
 	}
 	interface WebsiteOptions {
+		node_versions: string[];
 		php_versions: RuntimeOption[]; dependencies: DependencyOption[]; profiles: ProfileOption[];
 		inertia_adapters: string[]; defaults: WebsiteSelection;
 	}
@@ -61,7 +63,7 @@
 	// Create form
 	let showCreateForm = $state(false);
 	let createDomain = $state('');
-	let selection = $state<WebsiteSelection>({ template: 'php', php_version: '', framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only' });
+	let selection = $state<WebsiteSelection>({ template: 'php', php_version: '', framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only', node_version: '' });
 	let creating = $state(false);
 	let installedPHP = $derived(options ? availablePHPVersions(options) as RuntimeOption[] : []);
 	let combination = $derived(options ? selectedCombination(options, selection) : null);
@@ -306,7 +308,7 @@
 				{#if selection.template === 'laravel'}
 					<div>
 						<label for="framework-version" class="block text-sm text-gray-400 mb-1">Laravel Version</label>
-						<select id="framework-version" bind:value={selection.framework_version} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+						<select id="framework-version" value={selection.framework_version} onchange={(event) => { selection.framework_version = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
 							{#each laravelVersions as version}<option value={version}>Laravel {version}</option>{/each}
 						</select>
 					</div>
@@ -319,7 +321,7 @@
 					{#if selection.frontend_stack === 'inertia'}
 						<div>
 							<label for="inertia-adapter" class="block text-sm text-gray-400 mb-1">Inertia Adapter</label>
-							<select id="inertia-adapter" bind:value={selection.inertia_adapter} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+							<select id="inertia-adapter" value={selection.inertia_adapter} onchange={(event) => { selection.inertia_adapter = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
 								{#each options?.inertia_adapters || [] as adapter}<option value={adapter}>{adapter[0].toUpperCase() + adapter.slice(1)}</option>{/each}
 							</select>
 						</div>
@@ -327,7 +329,7 @@
 					{#if selection.frontend_stack !== 'blade'}
 						<div>
 							<label for="project-variant" class="block text-sm text-gray-400 mb-1">Project</label>
-							<select id="project-variant" bind:value={selection.project_variant} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+							<select id="project-variant" value={selection.project_variant} onchange={(event) => { selection.project_variant = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
 								<option value="empty">Empty project</option><option value="starter-kit">Starter kit</option>
 							</select>
 						</div>
@@ -335,9 +337,17 @@
 				{/if}
 				<div>
 					<label for="setup-mode" class="block text-sm text-gray-400 mb-1">Setup</label>
-					<select id="setup-mode" bind:value={selection.setup_mode} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+					<select id="setup-mode" value={selection.setup_mode} onchange={(event) => { selection.setup_mode = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
 						<option value="config-only">Nginx config only</option><option value="auto-install">Install framework automatically</option>
 					</select>
+				</div>
+				<div>
+					<label for="website-node-version" class="block text-sm text-gray-400 mb-1">Node.js (NVM per website)</label>
+					<select id="website-node-version" bind:value={selection.node_version} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
+						<option value="" disabled={selection.setup_mode === 'auto-install' && combination?.prerequisites?.includes('node')}>None</option>
+						{#each options?.node_versions || [] as version}<option value={version}>Node.js {version}{version === '24' ? ' (recommended)' : ''}</option>{/each}
+					</select>
+					<p class="mt-1 text-xs text-gray-400">{selection.setup_mode === 'config-only' ? 'Selection is saved only. Install the runtime later on the Node.js page.' : 'Node.js is installed under this website user; global Node.js is not required.'}</p>
 				</div>
 			</div>
 			{#if combination}

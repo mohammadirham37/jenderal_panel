@@ -1,9 +1,18 @@
 /** @typedef {{ version: string, installed: boolean, running?: boolean }} PHPOption */
 /** @typedef {{ name: string, installed: boolean, version: string, manage_url: string }} DependencyOption */
 /** @typedef {{ version: string, enabled: boolean, reason: string }} CompatibilityOption */
-/** @typedef {{ template: string, php_version: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string }} WebsiteSelection */
+/** @typedef {{ template: string, php_version: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, node_version?: string }} WebsiteSelection */
 /** @typedef {{ template: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, enabled: boolean, reason: string, document_root: string, prerequisites: string[], php_compatibility: CompatibilityOption[] }} ProfileOption */
 /** @typedef {{ php_versions: PHPOption[], dependencies: DependencyOption[], profiles: ProfileOption[], inertia_adapters: string[], defaults: WebsiteSelection }} WebsiteFormOptions */
+
+/**
+ * @param {{requires_node: boolean, setup_mode: string}} profile
+ * @param {string | undefined} selected
+ */
+export function normalizeNodeVersion(profile, selected) {
+	const version = ['20', '22', '24'].includes(selected || '') ? selected : '';
+	return version || (profile.requires_node && profile.setup_mode === 'auto-install' ? '24' : '');
+}
 
 /**
  * Return only PHP runtimes detected as installed by the backend.
@@ -29,7 +38,8 @@ export function normalizeWebsiteSelection(selection, options) {
 		frontend_stack: selection.frontend_stack || '',
 		inertia_adapter: selection.inertia_adapter || '',
 		project_variant: selection.project_variant || 'empty',
-		setup_mode: selection.setup_mode || defaults.setup_mode || 'config-only'
+		setup_mode: selection.setup_mode || defaults.setup_mode || 'config-only',
+		node_version: normalizeNodeVersion({requires_node: false, setup_mode: ''}, selection.node_version)
 	};
 
 	if (normalized.template === 'static') {
@@ -53,6 +63,11 @@ export function normalizeWebsiteSelection(selection, options) {
 	if (normalized.frontend_stack === 'blade') {
 		normalized.project_variant = 'empty';
 	}
+	const profile = (options?.profiles || []).find((item) =>
+		item.template === normalized.template && item.framework_version === normalized.framework_version &&
+		item.frontend_stack === normalized.frontend_stack && (item.inertia_adapter || '') === normalized.inertia_adapter &&
+		(item.project_variant || 'empty') === normalized.project_variant && item.setup_mode === normalized.setup_mode);
+	normalized.node_version = normalizeNodeVersion({requires_node: !!profile?.prerequisites?.includes('node'), setup_mode: normalized.setup_mode}, normalized.node_version);
 	return normalized;
 }
 
@@ -86,6 +101,7 @@ export function selectedCombination(options, selection) {
 	/** @type {DependencyOption[]} */
 	const missing = [];
 	for (const name of profile.prerequisites || []) {
+		if (name === 'node') continue;
 		const dependency = dependencies.find((item) => item.name === name);
 		if (dependency && !dependency.installed) missing.push(dependency);
 	}

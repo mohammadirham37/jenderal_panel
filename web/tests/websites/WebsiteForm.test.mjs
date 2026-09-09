@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
 	availablePHPVersions,
 	normalizeWebsiteSelection,
+	normalizeNodeVersion,
 	selectedCombination
 } from '../../src/lib/website-form.js';
 
@@ -53,10 +54,25 @@ test('backend PHP incompatibility reason wins', () => {
 	assert.equal(result.reason, 'Laravel 13 requires PHP 8.3 or newer');
 });
 
-test('missing dependencies retain their management links', () => {
+test('missing Composer retains its management link while global Node is not required', () => {
 	const result = selectedCombination(options, { template: 'laravel', php_version: '8.3', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install' });
 	assert.equal(result.enabled, false);
-	assert.deepEqual(result.missing_dependencies.map((item) => item.manage_url), ['/services', '/nodejs']);
+	assert.deepEqual(result.missing_dependencies.map((item) => item.manage_url), ['/services']);
+});
+
+test('Node selection defaults and explicit choices follow build requirements', () => {
+	assert.equal(normalizeNodeVersion({requires_node: true, setup_mode: 'auto-install'}, undefined), '24');
+	assert.equal(normalizeNodeVersion({requires_node: true, setup_mode: 'auto-install'}, '22'), '22');
+	assert.equal(normalizeNodeVersion({requires_node: false, setup_mode: 'config-only'}, ''), '');
+	assert.equal(normalizeNodeVersion({requires_node: false, setup_mode: 'config-only'}, '20'), '20');
+});
+
+test('Inertia auto installation chooses per-website Node even without global Node', () => {
+	const selection = {template: 'laravel', php_version: '8.3', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install'};
+	assert.equal(normalizeWebsiteSelection(selection, options).node_version, '24');
+	assert.equal(normalizeWebsiteSelection({...selection, node_version: '22'}, options).node_version, '22');
+	const ready = {...options, dependencies: [{name: 'composer', installed: true, version: '2', manage_url: '/services'}]};
+	assert.equal(selectedCombination(ready, selection).enabled, true);
 });
 
 test('Laravel Inertia Svelte normalization preserves six profile fields', () => {

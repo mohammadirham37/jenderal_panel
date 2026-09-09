@@ -1,454 +1,170 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, apiRaw } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
-	interface NodeVersion {
-		version: string;
-		installed: boolean;
-		lts: boolean;
+	interface Runtime {
+		website_id: string; domain: string; web_user: string; selected_version: string;
+		installed: boolean; installed_version: string; npm_version: string; nvm_version: string; nvm_state: string;
 	}
-
 	interface NodeApp {
-		id: string;
-		website_id: string;
-		website_domain?: string;
-		domain: string;
-		node_version: string;
-		package_manager: string;
-		build_command: string;
-		start_command: string;
-		port: number;
-		status: string;
-		created_at: string;
+		id: string; website_id: string; node_version: string; package_mgr: string;
+		build_cmd: string; start_cmd: string; port: number; status: string;
 	}
-
-	interface Website {
-		id: string;
-		domain: string;
-		app_type: string;
-		status: string;
-	}
-
-	let versions = $state<NodeVersion[]>([]);
+	let runtimes = $state<Runtime[]>([]);
 	let apps = $state<NodeApp[]>([]);
-	let websites = $state<Website[]>([]);
-	let loadingVersions = $state(true);
-	let loadingApps = $state(true);
+	let globalNode = $state({installed: false, version: '', package: ''});
+	let choices = $state<Record<string, string>>({});
+	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
 	let actionError = $state('');
-	let installingVersion = $state<string | null>(null);
+	let actionMsg = $state('');
 	let currentTaskId = $state('');
-	let installInProgress = $derived(installingVersion !== null || !!currentTaskId);
-
-	// Create form
+	let acting = $state(false);
+	let busy = $derived(acting || !!currentTaskId);
+	let confirmGlobal = $state(false);
+	let deleteConfirmId = $state('');
 	let showCreateForm = $state(false);
 	let createWebsiteId = $state('');
-	let createNodeVersion = $state('');
 	let createPackageMgr = $state('npm');
 	let createBuildCmd = $state('');
-	let createStartCmd = $state('');
+	let createStartCmd = $state('server.js');
 	let createPort = $state(3000);
-	let creating = $state(false);
+	let availableWebsites = $derived(runtimes.filter((runtime) => runtime.installed));
+	let selectedRuntime = $derived(runtimes.find((runtime) => runtime.website_id === createWebsiteId));
 
-	// Delete confirm
-	let deleteConfirmId = $state<string | null>(null);
-
-	function statusBadgeClass(status: string): string {
-		switch (status) {
-			case 'running':
-				return 'bg-green-900/50 text-green-400';
-			case 'stopped':
-				return 'bg-gray-700 text-gray-400';
-			case 'failed':
-				return 'bg-red-900/50 text-red-400';
-			case 'starting':
-			case 'building':
-			case 'installing':
-				return 'bg-yellow-900/50 text-yellow-400 animate-pulse';
-			default:
-				return 'bg-gray-700 text-gray-400';
-		}
+	async function load() {
+		loading = true; error = '';
+		try {
+			const [runtimeData, appData, globalData] = await Promise.all([
+				api.get<Runtime[]>('/api/v1/nodejs/runtimes'),
+				api.get<NodeApp[]>('/api/v1/nodejs/apps'),
+				api.get<typeof globalNode>('/api/v1/nodejs/global')
+			]);
+			runtimes = runtimeData || []; apps = appData || []; globalNode = globalData;
+			choices = Object.fromEntries(runtimes.map((runtime) => [runtime.website_id, runtime.selected_version || '24']));
+		} catch (err) { error = err instanceof Error ? err.message : 'Failed to load Node.js'; }
+		finally { loading = false; }
 	}
 
-	async function loadVersions() {
-		loadingVersions = true;
+	async function installRuntime(runtime: Runtime) {
+		if (busy) return;
+		acting = true; actionError = ''; actionMsg = '';
 		try {
-			versions = (await api.get<NodeVersion[]>('/api/v1/nodejs/versions')) || [];
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load Node.js versions';
-		} finally {
-			loadingVersions = false;
-		}
-	}
-
-	async function loadApps() {
-		loadingApps = true;
-		try {
-			apps = (await api.get<NodeApp[]>('/api/v1/nodejs/apps')) || [];
-		} catch (err) {
-			if (!error) {
-				error = err instanceof Error ? err.message : 'Failed to load Node.js apps';
-			}
-		} finally {
-			loadingApps = false;
-		}
-	}
-
-	async function loadWebsites() {
-		try {
-			websites = (await api.get<Website[]>('/api/v1/websites')) || [];
-		} catch {
-			// Non-critical
-		}
-	}
-
-	async function installVersion(version: string) {
-		installingVersion = version;
-		actionMsg = '';
-		actionError = '';
-		try {
-			const result = await api.post<{ task_id: string }>('/api/v1/nodejs/install', { version });
+			const result = await api.post<{task_id: string}>('/api/v1/nodejs/runtimes/' + runtime.website_id, {version: choices[runtime.website_id]});
 			currentTaskId = result.task_id;
-			actionMsg = `Node.js ${version} installation started.`;
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to install Node.js version';
-		} finally {
-			installingVersion = null;
-		}
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Runtime installation failed'; }
+		finally { acting = false; }
+	}
+
+	async function removeGlobal() {
+		if (busy || !confirmGlobal) return;
+		acting = true; actionError = ''; actionMsg = ''; confirmGlobal = false;
+		try {
+			const result = await apiRaw<{task_id: string}>('DELETE', '/api/v1/nodejs/global', {confirm: true});
+			currentTaskId = result.data.task_id;
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Global Node.js removal failed'; }
+		finally { acting = false; }
 	}
 
 	async function createApp() {
-		if (!createWebsiteId || !createNodeVersion || !createStartCmd.trim()) return;
-		creating = true;
-		actionMsg = '';
-		actionError = '';
+		if (busy || !selectedRuntime?.installed || !createStartCmd.trim()) return;
+		acting = true; actionError = ''; actionMsg = '';
 		try {
 			await api.post('/api/v1/nodejs/apps', {
-				website_id: createWebsiteId,
-				node_version: createNodeVersion,
-				package_manager: createPackageMgr,
-				build_command: createBuildCmd.trim(),
-				start_command: createStartCmd.trim(),
-				port: createPort
+				website_id: createWebsiteId, package_mgr: createPackageMgr,
+				build_cmd: createBuildCmd.trim(), start_cmd: createStartCmd.trim(), port: createPort
 			});
-			actionMsg = 'Node.js app created successfully.';
-			showCreateForm = false;
-			createWebsiteId = '';
-			createNodeVersion = '';
-			createPackageMgr = 'npm';
-			createBuildCmd = '';
-			createStartCmd = '';
-			createPort = 3000;
-			await loadApps();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create Node.js app';
-		} finally {
-			creating = false;
-		}
+			showCreateForm = false; createWebsiteId = ''; actionMsg = 'Node.js app created.';
+			await load();
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to create app'; }
+		finally { acting = false; }
 	}
 
-	async function startApp(id: string) {
-		actionMsg = '';
-		actionError = '';
+	async function appAction(id: string, action: string) {
+		if (busy) return;
+		acting = true; actionError = ''; actionMsg = ''; deleteConfirmId = '';
 		try {
-			await api.post(`/api/v1/nodejs/apps/${id}/start`);
-			actionMsg = 'App started.';
-			await loadApps();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to start app';
-		}
+			if (action === 'delete') await api.del('/api/v1/nodejs/apps/' + id);
+			else await api.post('/api/v1/nodejs/apps/' + id + '/' + action);
+			actionMsg = 'Application updated.'; await load();
+		} catch (err) { actionError = err instanceof Error ? err.message : 'Application action failed'; }
+		finally { acting = false; }
 	}
-
-	async function stopApp(id: string) {
-		actionMsg = '';
-		actionError = '';
-		try {
-			await api.post(`/api/v1/nodejs/apps/${id}/stop`);
-			actionMsg = 'App stopped.';
-			await loadApps();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to stop app';
-		}
-	}
-
-	async function restartApp(id: string) {
-		actionMsg = '';
-		actionError = '';
-		try {
-			await api.post(`/api/v1/nodejs/apps/${id}/restart`);
-			actionMsg = 'App restarted.';
-			await loadApps();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to restart app';
-		}
-	}
-
-	async function deleteApp(id: string) {
-		deleteConfirmId = null;
-		actionMsg = '';
-		actionError = '';
-		try {
-			await api.del(`/api/v1/nodejs/apps/${id}`);
-			actionMsg = 'Node.js app deleted.';
-			await loadApps();
-		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete app';
-		}
-	}
-
-	function openCreateForm() {
-		showCreateForm = true;
-		loadWebsites();
-	}
-
-	onMount(() => {
-		loadVersions();
-		loadApps();
-		loadWebsites();
-	});
+	onMount(() => { void load(); });
 </script>
 
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Node.js</h2>
+	<p class="text-sm text-gray-400">Manage Node.js with NVM under each website user. Applications inherit their website runtime.</p>
+	{#if error}<div role="alert" class="rounded border border-red-800 p-4 text-red-400">{error} <button onclick={load} disabled={busy} class="underline">Retry</button></div>{/if}
+	{#if actionError}<p role="alert" class="text-red-400">{actionError}</p>{/if}
+	{#if actionMsg}<p role="status" class="text-green-400">{actionMsg}</p>{/if}
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; void load(); }} />
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
-
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
-
-	<!-- Node Versions Section -->
-	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-		<h3 class="text-lg font-semibold text-white mb-4">Node.js Versions</h3>
-		{#if loadingVersions}
-			<div class="text-gray-400 text-sm">Loading versions...</div>
-		{:else if versions.length === 0}
-			<div class="text-gray-400 text-sm">No Node.js versions available. Install one to get started.</div>
+	<section class="rounded-lg border border-gray-700 bg-gray-800 p-5 space-y-4">
+		<h3 class="text-lg font-semibold text-white">Website runtimes</h3>
+		{#if loading}<p class="text-gray-400">Loading runtimes...</p>
+		{:else if runtimes.length === 0}<p class="text-gray-400">Create a website first to configure its Node.js runtime.</p>
 		{:else}
-			<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-				{#each versions as ver}
-					<div class="flex items-center justify-between bg-gray-900 rounded-lg px-4 py-3 border border-gray-700">
-						<div>
-							<span class="text-sm text-white font-medium">{ver.version}</span>
-							{#if ver.lts}
-								<span class="ml-1.5 text-xs bg-blue-900/50 text-blue-400 px-1.5 py-0.5 rounded">LTS</span>
-							{/if}
-						</div>
-						{#if ver.installed}
-							<span class="text-xs bg-green-900/50 text-green-400 px-2 py-0.5 rounded font-medium">Installed</span>
-						{:else}
-							<button
-								onclick={() => installVersion(ver.version)}
-								disabled={installInProgress}
-								class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
-							>
-								{installingVersion === ver.version ? 'Installing...' : 'Install'}
-							</button>
-						{/if}
+			{#each runtimes as runtime (runtime.website_id)}
+				<div class="flex flex-wrap items-center justify-between gap-4 border-t border-gray-700 pt-4">
+					<div>
+						<p class="font-medium text-white">{runtime.domain}</p>
+						<p class="text-xs text-gray-400">{runtime.web_user} · Selected: {runtime.selected_version || 'None'}</p>
+						<p class="text-sm text-gray-300">{runtime.installed ? 'Node ' + runtime.installed_version + ' · npm ' + runtime.npm_version : 'Runtime not installed'} · NVM {runtime.nvm_version || runtime.nvm_state}</p>
 					</div>
-				{/each}
-			</div>
+					<div class="flex gap-2">
+						<select aria-label={'Node.js version for ' + runtime.domain} bind:value={choices[runtime.website_id]} disabled={busy} class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200">
+							{#each ['20', '22', '24'] as version}<option value={version}>Node.js {version}</option>{/each}
+						</select>
+						<button onclick={() => installRuntime(runtime)} disabled={busy} class="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50">{runtime.installed ? 'Install / update' : 'Install'}</button>
+					</div>
+				</div>
+			{/each}
 		{/if}
-	</div>
+	</section>
 
-	<!-- Node.js Apps Section -->
-	<div class="flex items-center justify-between">
-		<h3 class="text-lg font-semibold text-white">Applications</h3>
-		<button
-			onclick={() => (showCreateForm ? (showCreateForm = false) : openCreateForm())}
-			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-		>
-			{showCreateForm ? 'Cancel' : 'Create App'}
-		</button>
-	</div>
-
-	<!-- Create App Form -->
-	{#if showCreateForm}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<h3 class="text-lg font-semibold text-white mb-4">New Node.js Application</h3>
-			<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-				<div>
-					<label for="node-website" class="block text-sm text-gray-400 mb-1">Website</label>
-					<select
-						id="node-website"
-						bind:value={createWebsiteId}
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					>
-						<option value="">Select a website...</option>
-						{#each websites as website}
-							<option value={website.id}>{website.domain}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label for="node-version" class="block text-sm text-gray-400 mb-1">Node Version</label>
-					<select
-						id="node-version"
-						bind:value={createNodeVersion}
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					>
-						<option value="">Select version...</option>
-						{#each versions.filter((v) => v.installed) as ver}
-							<option value={ver.version}>{ver.version}{ver.lts ? ' (LTS)' : ''}</option>
-						{/each}
-					</select>
-				</div>
-				<div>
-					<label for="node-pkg" class="block text-sm text-gray-400 mb-1">Package Manager</label>
-					<select
-						id="node-pkg"
-						bind:value={createPackageMgr}
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					>
-						<option value="npm">npm</option>
-						<option value="yarn">yarn</option>
-						<option value="pnpm">pnpm</option>
-					</select>
-				</div>
-				<div>
-					<label for="node-build" class="block text-sm text-gray-400 mb-1">Build Command</label>
-					<input
-						id="node-build"
-						type="text"
-						bind:value={createBuildCmd}
-						placeholder="npm run build"
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-				<div>
-					<label for="node-start" class="block text-sm text-gray-400 mb-1">Start Command</label>
-					<input
-						id="node-start"
-						type="text"
-						bind:value={createStartCmd}
-						placeholder="npm start"
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-				<div>
-					<label for="node-port" class="block text-sm text-gray-400 mb-1">Port</label>
-					<input
-						id="node-port"
-						type="number"
-						bind:value={createPort}
-						min="1024"
-						max="65535"
-						class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-			</div>
-			<div class="mt-4">
-				<button
-					onclick={createApp}
-					disabled={creating || !createWebsiteId || !createNodeVersion || !createStartCmd.trim()}
-					class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-				>
-					{creating ? 'Creating...' : 'Create'}
-				</button>
-			</div>
-		</div>
+	{#if globalNode.installed}
+		<section class="rounded-lg border border-yellow-800 p-5 space-y-3">
+			<h3 class="font-semibold text-white">Legacy global Node.js {globalNode.version}</h3>
+			<p class="text-sm text-gray-400">Removal is optional and explicit. Check applications outside this panel first; they may still depend on global Node.js. Website NVM runtimes are kept.</p>
+			{#if confirmGlobal}
+				<p class="text-yellow-300">Remove the global Node.js package after preparing the panel build runtime?</p>
+				<button onclick={removeGlobal} disabled={busy} class="rounded bg-red-600 px-4 py-2 text-white disabled:opacity-50">Confirm removal</button>
+				<button onclick={() => confirmGlobal = false} disabled={busy} class="px-4 py-2 text-gray-300">Cancel</button>
+			{:else}<button onclick={() => confirmGlobal = true} disabled={busy} class="rounded border border-red-700 px-4 py-2 text-red-400 disabled:opacity-50">Remove global Node.js</button>{/if}
+		</section>
 	{/if}
 
-	<!-- Apps Table -->
-	{#if loadingApps}
-		<div class="text-gray-400">Loading Node.js apps...</div>
-	{:else if error}
-		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
-	{:else if apps.length === 0}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-			<p class="text-gray-400">No Node.js applications configured yet.</p>
-		</div>
-	{:else}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-			<div class="overflow-x-auto">
-				<table class="w-full">
-					<thead>
-						<tr class="border-b border-gray-700">
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Domain</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Node Version</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Port</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
-							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
-						</tr>
-					</thead>
-					<tbody class="divide-y divide-gray-700">
-						{#each apps as app}
-							<tr class="hover:bg-gray-750">
-								<td class="px-4 py-3 text-sm text-white font-medium">{app.domain || app.website_domain || '-'}</td>
-								<td class="px-4 py-3 text-sm text-gray-300">{app.node_version}</td>
-								<td class="px-4 py-3 text-sm text-gray-300">{app.port}</td>
-								<td class="px-4 py-3">
-									<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {statusBadgeClass(app.status)}">
-										{app.status}
-									</span>
-								</td>
-								<td class="px-4 py-3 text-right">
-									<div class="flex items-center justify-end gap-2">
-										{#if app.status === 'stopped' || app.status === 'failed'}
-											<button
-												onclick={() => startApp(app.id)}
-												class="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Start
-											</button>
-										{/if}
-										{#if app.status === 'running'}
-											<button
-												onclick={() => stopApp(app.id)}
-												class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Stop
-											</button>
-										{/if}
-										{#if app.status === 'running' || app.status === 'failed'}
-											<button
-												onclick={() => restartApp(app.id)}
-												class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Restart
-											</button>
-										{/if}
-										{#if deleteConfirmId === app.id}
-											<span class="text-xs text-red-400">Delete?</span>
-											<button
-												onclick={() => deleteApp(app.id)}
-												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Yes
-											</button>
-											<button
-												onclick={() => (deleteConfirmId = null)}
-												class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Cancel
-											</button>
-										{:else}
-											<button
-												onclick={() => (deleteConfirmId = app.id)}
-												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Delete
-											</button>
-										{/if}
-									</div>
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
+	<section class="rounded-lg border border-gray-700 bg-gray-800 p-5 space-y-4">
+		<div class="flex items-center justify-between"><h3 class="text-lg font-semibold text-white">Applications</h3><button onclick={() => showCreateForm = !showCreateForm} disabled={busy || loading} class="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50">Create app</button></div>
+		{#if showCreateForm}
+			<form onsubmit={(event) => { event.preventDefault(); void createApp(); }} class="space-y-3 rounded border border-gray-700 p-4">
+				<label class="block text-sm text-gray-300">Website
+					<select bind:value={createWebsiteId} required disabled={busy} class="mt-1 block w-full rounded border border-gray-600 bg-gray-900 p-2">
+						<option value="">Select website</option>{#each availableWebsites as runtime}<option value={runtime.website_id}>{runtime.domain} — Node.js {runtime.selected_version}</option>{/each}
+					</select>
+				</label>
+				<p class="text-xs text-gray-400">{selectedRuntime ? 'Inherited runtime: Node.js ' + selectedRuntime.selected_version : 'Only websites with an installed runtime are available.'}</p>
+				<label class="block text-sm text-gray-300">Package manager<select bind:value={createPackageMgr} disabled={busy} class="ml-3 rounded bg-gray-900 p-2"><option value="npm">npm</option><option value="yarn">yarn</option><option value="pnpm">pnpm</option></select></label>
+				<label class="block text-sm text-gray-300">Build command (optional)<input bind:value={createBuildCmd} disabled={busy} class="mt-1 block w-full rounded bg-gray-900 p-2" placeholder="npm run build" /></label>
+				<label class="block text-sm text-gray-300">Start arguments<input bind:value={createStartCmd} required disabled={busy} class="mt-1 block w-full rounded bg-gray-900 p-2" placeholder={createPackageMgr === 'npm' ? 'server.js' : 'start'} /></label>
+				<p class="text-xs text-gray-400">For npm, enter a Node.js entry file and arguments (for example server.js). For yarn/pnpm, enter script arguments; the package manager must be available in this website runtime.</p>
+				<label class="block text-sm text-gray-300">Port<input type="number" min="1" max="65535" required bind:value={createPort} disabled={busy} class="ml-3 rounded bg-gray-900 p-2" /></label>
+				<button type="submit" disabled={busy || !selectedRuntime?.installed} class="rounded bg-green-600 px-4 py-2 text-white disabled:opacity-50">Create</button>
+			</form>
+		{/if}
+		{#if !loading && apps.length === 0}<p class="text-gray-400">No Node.js applications yet.</p>{/if}
+		{#each apps as app (app.id)}
+			<div class="flex flex-wrap items-center justify-between gap-3 border-t border-gray-700 pt-3">
+				<div><p class="text-white">{runtimes.find((runtime) => runtime.website_id === app.website_id)?.domain || app.website_id}</p><p class="text-sm text-gray-400">Node.js {app.node_version} · Port {app.port} · {app.status}</p></div>
+				<div class="flex flex-wrap gap-2">
+					{#each ['start', 'stop', 'restart'] as action}<button onclick={() => appAction(app.id, action)} disabled={busy} class="rounded border border-gray-600 px-3 py-1 text-gray-200 disabled:opacity-50">{action}</button>{/each}
+					{#if deleteConfirmId === app.id}<button onclick={() => appAction(app.id, 'delete')} disabled={busy} class="text-red-400">Confirm delete</button><button onclick={() => deleteConfirmId = ''} class="text-gray-400">Cancel</button>
+					{:else}<button onclick={() => deleteConfirmId = app.id} disabled={busy} class="text-red-400 disabled:opacity-50">Delete</button>{/if}
+				</div>
 			</div>
-		</div>
-	{/if}
-
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; loadVersions(); }} />
+		{/each}
+	</section>
 </div>
