@@ -20,8 +20,10 @@ const (
 )
 
 const (
-	detectTimeout  = 15 * time.Second
-	installTimeout = 15 * time.Minute
+	detectTimeout         = 15 * time.Second
+	installTimeout        = 15 * time.Minute
+	detectCommandTimeout  = "10s"
+	installCommandTimeout = "14m"
 )
 
 const (
@@ -88,7 +90,7 @@ func ExecArgs(user, version, command string, args ...string) ([]string, error) {
 	return append(result, args...), nil
 }
 
-func runtimeShellArgs(user, version, script string) ([]string, error) {
+func runtimeShellArgs(user, version, commandTimeout, script string) ([]string, error) {
 	home, err := Home(user)
 	if err != nil {
 		return nil, err
@@ -101,12 +103,13 @@ func runtimeShellArgs(user, version, script string) ([]string, error) {
 		"HOME=" + home, "USER=" + user, "LOGNAME=" + user,
 		"NVM_DIR=" + home + "/.nvm", "NODE_VERSION=" + version,
 		"PATH=/usr/local/bin:/usr/bin:/bin",
+		"/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", commandTimeout,
 		"/bin/bash", "-c", script, "--", user, version, home,
 	}, nil
 }
 
 func (s *Service) Detect(ctx context.Context, user, version string) (Status, error) {
-	args, err := runtimeShellArgs(user, version, detectScript)
+	args, err := runtimeShellArgs(user, version, detectCommandTimeout, detectScript)
 	if err != nil {
 		return Status{}, err
 	}
@@ -162,7 +165,7 @@ func parseStatus(output, requestedMajor string) (Status, error) {
 }
 
 func (s *Service) Install(ctx context.Context, user, version string, log func(string)) error {
-	args, err := runtimeShellArgs(user, version, installScript)
+	args, err := runtimeShellArgs(user, version, installCommandTimeout, installScript)
 	if err != nil {
 		return err
 	}

@@ -5,9 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -53,86 +51,19 @@ func TestRunContextCancel(t *testing.T) {
 	}
 }
 
-func TestRunContextCancelTerminatesProcessGroupAndRunsCleanup(t *testing.T) {
-	dir := t.TempDir()
-	pidPath := filepath.Join(dir, "child.pid")
-	cleanupPath := filepath.Join(dir, "cleanup")
+func TestRunContextCancelAllowsCleanupTrap(t *testing.T) {
+	cleanupPath := filepath.Join(t.TempDir(), "cleanup")
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		for {
-			if _, err := os.Stat(pidPath); err == nil {
-				cancel()
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
+		time.Sleep(50 * time.Millisecond)
+		cancel()
 	}()
-	script := `trap 'printf cleaned > "$2"; exit 143' TERM; sleep 30 & child=$!; printf '%s' "$child" > "$1"; wait "$child"`
-	_, err := NewExecutor(time.Minute).Run(ctx, "/bin/bash", "-c", script, "--", pidPath, cleanupPath)
+	_, err := NewExecutor(time.Minute).Run(ctx, "/bin/bash", "-c", `trap 'printf cleaned > "$1"; exit 143' TERM; while :; do sleep .02; done`, "--", cleanupPath)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if got, readErr := os.ReadFile(cleanupPath); readErr != nil || string(got) != "cleaned" {
 		t.Fatalf("cleanup = %q, %v", got, readErr)
-	}
-	pidBytes, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pid, err := strconv.Atoi(string(pidBytes))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if process, findErr := os.FindProcess(pid); findErr == nil {
-		if signalErr := process.Signal(os.Signal(syscall.Signal(0))); signalErr == nil {
-			t.Fatalf("descendant process %d survived cancellation", pid)
-		}
-	}
-}
-
-func TestRunContextCancelKillsTermIgnoringDescendantAfterLeaderExits(t *testing.T) {
-	dir := t.TempDir()
-	pidPath := filepath.Join(dir, "child.pid")
-	cleanupPath := filepath.Join(dir, "cleanup")
-	heartbeatPath := filepath.Join(dir, "heartbeat")
-	ctx, cancel := context.WithCancel(context.Background())
-	go func() {
-		for {
-			if _, err := os.Stat(pidPath); err == nil {
-				cancel()
-				return
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}()
-	script := `trap 'printf cleaned > "$2"; exit 143' TERM; (trap '' TERM; exec >/dev/null 2>&1; while :; do printf x >> "$3"; sleep .02; done) & child=$!; while [ ! -s "$3" ]; do sleep .01; done; printf '%s' "$child" > "$1"; wait "$child"`
-	_, err := NewExecutor(time.Minute).Run(ctx, "/bin/bash", "-c", script, "--", pidPath, cleanupPath, heartbeatPath)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if got, readErr := os.ReadFile(cleanupPath); readErr != nil || string(got) != "cleaned" {
-		t.Fatalf("cleanup = %q, %v", got, readErr)
-	}
-	pidBytes, err := os.ReadFile(pidPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pid, err := strconv.Atoi(string(pidBytes))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = syscall.Kill(pid, syscall.SIGKILL) }()
-	before, err := os.Stat(heartbeatPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(150 * time.Millisecond)
-	after, err := os.Stat(heartbeatPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Size() != before.Size() {
-		t.Fatalf("TERM-ignoring descendant %d kept running: heartbeat grew from %d to %d", pid, before.Size(), after.Size())
 	}
 }
 

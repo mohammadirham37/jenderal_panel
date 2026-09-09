@@ -49,8 +49,7 @@ func (e *Executor) run(ctx context.Context, input *string, name string, args ...
 	start := time.Now()
 
 	cmd := exec.CommandContext(ctx, name, args...)
-	done := make(chan struct{})
-	configureCommandCancellation(cmd, done)
+	configureGracefulCancellation(cmd)
 	if input != nil {
 		cmd.Stdin = bytes.NewBufferString(*input)
 	}
@@ -59,10 +58,6 @@ func (e *Executor) run(ctx context.Context, input *string, name string, args ...
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
-	if ctx.Err() != nil {
-		finalizeCommandCancellation(cmd)
-	}
-	close(done)
 	duration := time.Since(start)
 
 	result := &Result{

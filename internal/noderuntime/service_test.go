@@ -73,7 +73,7 @@ func TestDetectStates(t *testing.T) {
 				if !ok || time.Until(deadline) > detectTimeout {
 					t.Fatalf("Detect did not impose timeout: %v, %v", deadline, ok)
 				}
-				if name != "-u" || len(args) < 13 || args[0] != "web_example" || args[10] != "/bin/bash" || args[11] != "-c" || args[len(args)-3] != "web_example" || args[len(args)-2] != "24" || args[len(args)-1] != "/home/web_example" {
+				if name != "-u" || len(args) < 19 || args[0] != "web_example" || args[10] != "/usr/bin/timeout" || args[11] != "--signal=TERM" || args[12] != "--kill-after=5s" || args[13] != "10s" || args[14] != "/bin/bash" || args[15] != "-c" || args[len(args)-3] != "web_example" || args[len(args)-2] != "24" || args[len(args)-1] != "/home/web_example" {
 					t.Fatalf("unexpected command: %q %#v", name, args)
 				}
 				return &executor.Result{Stdout: tt.output}, nil
@@ -108,6 +108,9 @@ func TestInstallRunsPinnedVerifiedScriptAndLogs(t *testing.T) {
 		}
 		if name != "-u" || args[0] != "web_example" || args[len(args)-3] != "web_example" || args[len(args)-2] != "24" || args[len(args)-1] != "/home/web_example" {
 			t.Fatalf("unexpected command: %q %#v", name, args)
+		}
+		if args[10] != "/usr/bin/timeout" || args[13] != "14m" {
+			t.Fatalf("install lacks internal supervisor: %#v", args)
 		}
 		script = args[len(args)-5]
 		return &executor.Result{Stdout: "Installing Node 24\nInstalled Node v24.8.0 with npm 11.6.0\n", Stderr: "download progress\n"}, nil
