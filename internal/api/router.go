@@ -236,6 +236,8 @@ func NewRouter(deps Dependencies) http.Handler {
 
 			// Websites
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/options", websiteHandler.Options)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites", websiteHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.create")).
 				Post("/websites", websiteHandler.Create)

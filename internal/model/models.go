@@ -142,18 +142,26 @@ type NetworkInterface struct {
 }
 
 type Website struct {
-	ID           string    `json:"id"`
-	Domain       string    `json:"domain"`
-	AppType      string    `json:"app_type"`
-	PHPVersion   string    `json:"php_version"`
-	DocumentRoot string    `json:"document_root"`
-	WebUser      string    `json:"web_user"`
-	Status       string    `json:"status"`
-	ErrorMessage string    `json:"error_message"`
-	SSLEnabled   bool      `json:"ssl_enabled"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Domains      []Domain  `json:"domains,omitempty"`
+	ID               string    `json:"id"`
+	Domain           string    `json:"domain"`
+	AppType          string    `json:"app_type"`
+	PHPVersion       string    `json:"php_version"`
+	DocumentRoot     string    `json:"document_root"`
+	WebUser          string    `json:"web_user"`
+	Status           string    `json:"status"`
+	ErrorMessage     string    `json:"error_message"`
+	SSLEnabled       bool      `json:"ssl_enabled"`
+	Framework        string    `json:"framework"`
+	FrameworkVersion string    `json:"framework_version"`
+	FrontendStack    string    `json:"frontend_stack"`
+	InertiaAdapter   string    `json:"inertia_adapter"`
+	ProjectVariant   string    `json:"project_variant"`
+	SetupMode        string    `json:"setup_mode"`
+	ProvisionStage   string    `json:"provision_stage"`
+	ProvisionLog     string    `json:"provision_log"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
+	Domains          []Domain  `json:"domains,omitempty"`
 }
 
 type Domain struct {

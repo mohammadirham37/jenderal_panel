@@ -3,8 +3,10 @@ package website
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
+	osexec "os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -27,9 +29,15 @@ var phpVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
 // CreateRequest holds the data for creating a new website.
 type CreateRequest struct {
-	Domain     string `json:"domain"`
-	AppType    string `json:"app_type"`
-	PHPVersion string `json:"php_version"`
+	Domain           string `json:"domain"`
+	AppType          string `json:"app_type,omitempty"`
+	PHPVersion       string `json:"php_version"`
+	Template         string `json:"template"`
+	FrameworkVersion string `json:"framework_version"`
+	FrontendStack    string `json:"frontend_stack"`
+	InertiaAdapter   string `json:"inertia_adapter"`
+	ProjectVariant   string `json:"project_variant"`
+	SetupMode        string `json:"setup_mode"`
 }
 
 // UpdateRequest holds the optional fields for updating a website.
@@ -59,6 +67,121 @@ func (s *Service) SetProvisioner(p *Provisioner) {
 	s.prov = p
 }
 
+type RuntimeOption struct {
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+}
+
+type DependencyOption struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Installed bool   `json:"installed"`
+	ManageURL string `json:"manage_url"`
+}
+
+type ProfileOption struct {
+	Template         string   `json:"template"`
+	FrameworkVersion string   `json:"framework_version"`
+	FrontendStack    string   `json:"frontend_stack"`
+	InertiaAdapter   string   `json:"inertia_adapter"`
+	ProjectVariant   string   `json:"project_variant"`
+	SetupMode        string   `json:"setup_mode"`
+	Enabled          bool     `json:"enabled"`
+	Reason           string   `json:"reason"`
+	MinimumPHP       string   `json:"minimum_php"`
+	DocumentRoot     string   `json:"document_root"`
+	Prerequisites    []string `json:"prerequisites"`
+}
+
+type WebsiteOptions struct {
+	PHPVersions     []RuntimeOption    `json:"php_versions"`
+	Dependencies    []DependencyOption `json:"dependencies"`
+	Profiles        []ProfileOption    `json:"profiles"`
+	InertiaAdapters []string           `json:"inertia_adapters"`
+}
+
+// Options reports host runtimes separately from the fixed website profile catalog.
+func (s *Service) Options(ctx context.Context) (WebsiteOptions, error) {
+	options := WebsiteOptions{InertiaAdapters: []string{"react", "vue", "svelte"}}
+	for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
+		result, err := s.exec.Run(ctx, "test", "-d", "/etc/php/"+version)
+		if err != nil {
+			return WebsiteOptions{}, fmt.Errorf("check PHP %s: %w", version, err)
+		}
+		options.PHPVersions = append(options.PHPVersions, RuntimeOption{Version: version, Installed: result.ExitCode == 0})
+	}
+
+	composer, err := s.commandDependency(ctx, "composer", "/services", "composer", "--version", "--no-ansi")
+	if err != nil {
+		return WebsiteOptions{}, err
+	}
+	node, err := s.commandDependency(ctx, "node", "/nodejs", "node", "--version")
+	if err != nil {
+		return WebsiteOptions{}, err
+	}
+	options.Dependencies = []DependencyOption{composer, node}
+	options.Profiles = websiteProfileOptions()
+	return options, nil
+}
+
+func (s *Service) commandDependency(ctx context.Context, label, manageURL, command string, args ...string) (DependencyOption, error) {
+	status := DependencyOption{Name: label, ManageURL: manageURL}
+	result, err := s.exec.Run(ctx, command, args...)
+	if errors.Is(err, osexec.ErrNotFound) {
+		return status, nil
+	}
+	if err != nil {
+		return status, fmt.Errorf("check %s: %w", label, err)
+	}
+	if result.ExitCode == 0 {
+		status.Installed = true
+		status.Version = parseDependencyVersion(label, result.Stdout)
+	}
+	return status, nil
+}
+
+func parseDependencyVersion(name, output string) string {
+	fields := strings.Fields(strings.TrimSpace(output))
+	if len(fields) == 0 {
+		return ""
+	}
+	if name == "composer" && len(fields) >= 3 && fields[0] == "Composer" && fields[1] == "version" {
+		return fields[2]
+	}
+	return strings.TrimPrefix(fields[0], "v")
+}
+
+func (s *Service) validateRuntimeRequirements(ctx context.Context, phpVersion string, profile Profile) error {
+	if profile.Template != "static" {
+		result, err := s.exec.Run(ctx, "test", "-d", "/etc/php/"+phpVersion)
+		if err != nil {
+			return fmt.Errorf("check PHP %s: %w", phpVersion, err)
+		}
+		if result.ExitCode != 0 {
+			return model.NewValidationError("PHP " + phpVersion + " is not installed; install it from /php")
+		}
+	}
+	if profile.RequiresComposer {
+		status, err := s.commandDependency(ctx, "composer", "/services", "composer", "--version", "--no-ansi")
+		if err != nil {
+			return err
+		}
+		if !status.Installed {
+			return model.NewValidationError("Composer is not installed; install it from /services")
+		}
+	}
+	if profile.RequiresNode {
+		status, err := s.commandDependency(ctx, "node", "/nodejs", "node", "--version")
+		if err != nil {
+			return err
+		}
+		if !status.Installed {
+			return model.NewValidationError("Node.js is not installed; install it from /nodejs")
+		}
+	}
+	return nil
+}
+
 // Create creates a new website record and queues it for provisioning.
 func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website, error) {
 	req.Domain = strings.TrimSpace(strings.ToLower(req.Domain))
@@ -69,21 +192,20 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		return model.Website{}, model.NewValidationError("invalid domain name")
 	}
 
-	if req.AppType == "" {
-		req.AppType = "php"
-	}
-	validTypes := map[string]bool{"php": true, "laravel": true, "static": true}
-	if !validTypes[req.AppType] {
-		return model.Website{}, model.NewValidationError("app_type must be php, laravel, or static")
-	}
-
-	if req.AppType != "static" && req.PHPVersion == "" {
+	if req.Template != "static" && req.AppType != "static" && req.PHPVersion == "" {
 		req.PHPVersion = "8.2"
+	}
+	profile, err := ResolveProfile(req)
+	if err != nil {
+		return model.Website{}, err
+	}
+	if err := s.validateRuntimeRequirements(ctx, req.PHPVersion, profile); err != nil {
+		return model.Website{}, err
 	}
 
 	webUser := DomainToUser(req.Domain)
 	homeDir := "/home/" + webUser
-	docRoot := homeDir + "/public"
+	docRoot := homeDir + "/" + profile.RelativeDocumentRoot
 
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
@@ -91,16 +213,22 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	domainID := ulid.Make().String()
 
 	w := model.Website{
-		ID:           websiteID,
-		Domain:       req.Domain,
-		AppType:      req.AppType,
-		PHPVersion:   req.PHPVersion,
-		DocumentRoot: docRoot,
-		WebUser:      webUser,
-		Status:       "pending",
-		SSLEnabled:   false,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ID:               websiteID,
+		Domain:           req.Domain,
+		AppType:          profile.AppType,
+		PHPVersion:       req.PHPVersion,
+		DocumentRoot:     docRoot,
+		WebUser:          webUser,
+		Status:           "pending",
+		SSLEnabled:       false,
+		Framework:        profile.Framework,
+		FrameworkVersion: profile.FrameworkVersion,
+		FrontendStack:    profile.FrontendStack,
+		InertiaAdapter:   profile.InertiaAdapter,
+		ProjectVariant:   profile.ProjectVariant,
+		SetupMode:        profile.SetupMode,
+		CreatedAt:        now,
+		UpdatedAt:        now,
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -110,10 +238,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, ssl_enabled, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, ssl_enabled,
+		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
+		 created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
+		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,
 		nowStr, nowStr,
 	)
 	if err != nil {
@@ -152,7 +283,8 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, document_root, web_user,
-		        status, error_message, ssl_enabled, created_at, updated_at
+		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
+		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -176,7 +308,8 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 func (s *Service) List(ctx context.Context) ([]model.Website, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, domain, app_type, php_version, document_root, web_user,
-		        status, error_message, ssl_enabled, created_at, updated_at
+		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
+		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log, created_at, updated_at
 		 FROM websites ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
@@ -868,14 +1001,15 @@ type scanner interface {
 // scanWebsite scans a single website row from *sql.Row.
 func scanWebsite(row *sql.Row) (model.Website, error) {
 	var w model.Website
-	var phpVersion, errorMessage sql.NullString
+	var phpVersion, errorMessage, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	var sslEnabled int
 	var createdStr, updatedStr string
 
 	err := row.Scan(
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
 		&w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
-		&sslEnabled, &createdStr, &updatedStr,
+		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
+		&projectVariant, &setupMode, &provisionStage, &provisionLog, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -883,6 +1017,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 
 	w.PHPVersion = phpVersion.String
 	w.ErrorMessage = errorMessage.String
+	assignProfileFields(&w, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog)
 	w.SSLEnabled = sslEnabled == 1
 	w.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	w.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
@@ -893,14 +1028,15 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 // scanWebsiteRows scans a single website row from *sql.Rows.
 func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 	var w model.Website
-	var phpVersion, errorMessage sql.NullString
+	var phpVersion, errorMessage, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	var sslEnabled int
 	var createdStr, updatedStr string
 
 	err := rows.Scan(
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
 		&w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
-		&sslEnabled, &createdStr, &updatedStr,
+		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
+		&projectVariant, &setupMode, &provisionStage, &provisionLog, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -908,11 +1044,23 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 
 	w.PHPVersion = phpVersion.String
 	w.ErrorMessage = errorMessage.String
+	assignProfileFields(&w, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog)
 	w.SSLEnabled = sslEnabled == 1
 	w.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	w.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 
 	return w, nil
+}
+
+func assignProfileFields(w *model.Website, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString) {
+	w.Framework = valueOr(framework.String, "none")
+	w.FrameworkVersion = frameworkVersion.String
+	w.FrontendStack = frontendStack.String
+	w.InertiaAdapter = inertiaAdapter.String
+	w.ProjectVariant = valueOr(projectVariant.String, "empty")
+	w.SetupMode = valueOr(setupMode.String, SetupConfigOnly)
+	w.ProvisionStage = provisionStage.String
+	w.ProvisionLog = provisionLog.String
 }
 
 // scanDomain scans a single domain row from *sql.Rows.

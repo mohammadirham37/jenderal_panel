@@ -64,6 +64,16 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, websites)
 }
 
+// Options handles GET /api/websites/options.
+func (h *Handler) Options(w http.ResponseWriter, r *http.Request) {
+	options, err := h.svc.Options(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, options)
+}
+
 // Get handles GET /api/websites/{id}.
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

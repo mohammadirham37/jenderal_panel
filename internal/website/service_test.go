@@ -10,6 +10,95 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
 
+func TestOptionsReportsInstalledRuntimesAndDependencies(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		switch name {
+		case "test":
+			path := args[len(args)-1]
+			if path == "/etc/php/8.2" || path == "/etc/php/8.4" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		case "composer":
+			return &executor.Result{ExitCode: 0, Stdout: "Composer version 2.10.3 2026-04-20"}, nil
+		case "node":
+			return &executor.Result{ExitCode: 0, Stdout: "v20.19.0\n"}, nil
+		default:
+			t.Fatalf("unexpected command: %s %v", name, args)
+			return nil, nil
+		}
+	}}
+
+	options, err := NewService(db, mock, nil).Options(context.Background())
+	if err != nil {
+		t.Fatalf("Options() error = %v", err)
+	}
+	var installed []string
+	for _, option := range options.PHPVersions {
+		if option.Installed {
+			installed = append(installed, option.Version)
+		}
+	}
+	if strings.Join(installed, ",") != "8.2,8.4" {
+		t.Fatalf("installed PHP versions = %v, want [8.2 8.4]", installed)
+	}
+	if len(options.Dependencies) != 2 || options.Dependencies[0].Version != "2.10.3" || options.Dependencies[1].Version != "20.19.0" {
+		t.Fatalf("dependencies = %#v", options.Dependencies)
+	}
+	if len(options.Profiles) == 0 {
+		t.Fatal("profile catalog is empty")
+	}
+}
+
+func TestCreateRejectsMissingPHPBeforeInsert(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		return &executor.Result{ExitCode: 1}, nil
+	}}
+
+	_, err := NewService(db, mock, nil).Create(context.Background(), CreateRequest{
+		Domain: "missing-php.example.com", Template: "laravel", FrameworkVersion: "12", PHPVersion: "8.2",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("Create() error = %v, want missing PHP validation", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("website rows = %d, want 0", count)
+	}
+}
+
+func TestCreatePersistsDerivedProfileAndCanonicalRoot(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		return &executor.Result{ExitCode: 0}, nil
+	}}
+	svc := NewService(db, mock, nil)
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "ci.example.com", Template: "codeigniter4", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.Framework != "codeigniter" || created.FrameworkVersion != "4" || created.DocumentRoot != "/home/web_ci_example_com/app/public" {
+		t.Fatalf("created website = %#v", created)
+	}
+	loaded, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Framework != created.Framework || loaded.SetupMode != "config-only" {
+		t.Fatalf("loaded profile = %#v", loaded)
+	}
+}
+
 func TestListCompletesWithSingleSQLiteConnection(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

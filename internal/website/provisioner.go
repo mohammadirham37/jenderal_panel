@@ -476,12 +476,20 @@ func (p *Provisioner) updateStatus(ctx context.Context, websiteID, status, error
 
 // websiteRow holds the fields needed during provisioning.
 type websiteRow struct {
-	ID           string
-	Domain       string
-	AppType      string
-	PHPVersion   string
-	DocumentRoot string
-	WebUser      string
+	ID               string
+	Domain           string
+	AppType          string
+	PHPVersion       string
+	DocumentRoot     string
+	WebUser          string
+	Framework        string
+	FrameworkVersion string
+	FrontendStack    string
+	InertiaAdapter   string
+	ProjectVariant   string
+	SetupMode        string
+	ProvisionStage   string
+	ProvisionLog     string
 }
 
 // domainRow holds the fields of a domain for provisioning.
@@ -493,15 +501,25 @@ type domainRow struct {
 // loadWebsite loads the minimal website fields needed for provisioning.
 func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, error) {
 	var w websiteRow
-	var phpVersion sql.NullString
+	var phpVersion, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	err := p.db.QueryRowContext(ctx,
-		`SELECT id, domain, app_type, php_version, document_root, web_user
+		`SELECT id, domain, app_type, php_version, document_root, web_user,
+		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log
 		 FROM websites WHERE id = ?`, id,
-	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.DocumentRoot, &w.WebUser)
+	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.DocumentRoot, &w.WebUser,
+		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog)
 	if err != nil {
 		return w, err
 	}
 	w.PHPVersion = phpVersion.String
+	w.Framework = valueOr(framework.String, "none")
+	w.FrameworkVersion = frameworkVersion.String
+	w.FrontendStack = frontendStack.String
+	w.InertiaAdapter = inertiaAdapter.String
+	w.ProjectVariant = valueOr(projectVariant.String, "empty")
+	w.SetupMode = valueOr(setupMode.String, SetupConfigOnly)
+	w.ProvisionStage = provisionStage.String
+	w.ProvisionLog = provisionLog.String
 	return w, nil
 }
 

@@ -41,6 +41,14 @@ func setupTestDB(t *testing.T) *sql.DB {
 		ssl_enabled   INTEGER NOT NULL DEFAULT 0,
 		created_at    TEXT NOT NULL,
 		updated_at    TEXT NOT NULL
+		,framework TEXT NOT NULL DEFAULT 'none'
+		,framework_version TEXT NOT NULL DEFAULT ''
+		,frontend_stack TEXT NOT NULL DEFAULT ''
+		,inertia_adapter TEXT NOT NULL DEFAULT ''
+		,project_variant TEXT NOT NULL DEFAULT 'empty'
+		,setup_mode TEXT NOT NULL DEFAULT 'config-only'
+		,provision_stage TEXT NOT NULL DEFAULT ''
+		,provision_log TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS domains (
 		id         TEXT PRIMARY KEY,
