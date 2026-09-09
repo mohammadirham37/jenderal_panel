@@ -20,6 +20,7 @@ func TestMigrateCreatesCoreTables(t *testing.T) {
 	for _, table := range []string{
 		"users", "roles", "permissions", "user_roles", "role_permissions", "sessions",
 		"audit_logs", "settings", "server_metrics", "alert_rule_targets", "websites", "background_tasks",
+		"security_settings", "security_events", "security_event_occurrences", "security_manual_bans",
 	} {
 		var name string
 		if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name); err != nil {

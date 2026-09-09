@@ -174,7 +174,7 @@ git commit -m "feat(tasks): persist background task progress"
 - Produces: `List(context.Context, EventFilter) ([]Event, int, error)`, `Transition(context.Context, string, EventStatus, time.Time) error`, and `Cleanup(context.Context, time.Time) error`.
 - Produces: `security.NotificationSender` with existing-compatible `SendAll(context.Context, string) error`.
 
-- [ ] **Step 1: Write failing event lifecycle tests**
+- [x] **Step 1: Write failing event lifecycle tests**
 
 ```go
 func TestRecordDeduplicatesOpenEventAndStoresOccurrence(t *testing.T) {
@@ -194,13 +194,13 @@ func TestTransitionRejectsInvalidStateChange(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests and verify RED**
+- [x] **Step 2: Run the tests and verify RED**
 
 Run: `go test ./internal/security ./internal/database -run 'Event|Migrate' -count=1`
 
 Expected: FAIL because the security tables and package do not exist.
 
-- [ ] **Step 3: Create additive schema and transactional event service**
+- [x] **Step 3: Create additive schema and transactional event service**
 
 Create `security_settings`, `security_events`, `security_event_occurrences`, and `security_manual_bans`. The manual-ban table records component, jail, address, requested expiry, actual expiry, and active/released state so expiry reconciliation survives restart. Store timestamps as RFC3339 UTC. Index `(status,last_seen DESC)`, `(component,last_seen DESC)`, occurrence `event_id`, and active manual-ban expiry.
 
@@ -218,13 +218,13 @@ type EventInput struct { Fingerprint, Category, Component, Resource, Evidence, R
 
 `Cleanup` deletes occurrences and resolved/false-positive events older than the `security.event_retention_days` setting (default 90), but never touches open events.
 
-- [ ] **Step 4: Verify event behavior and migrations**
+- [x] **Step 4: Verify event behavior and migrations**
 
 Run: `go test ./internal/security ./internal/database -count=1`
 
 Expected: PASS with one event, two occurrences, valid transitions, and idempotent migration execution.
 
-- [ ] **Step 5: Commit the event foundation**
+- [x] **Step 5: Commit the event foundation**
 
 ```bash
 git add internal/database/migrations/022_security_foundation.sql internal/database/migrations_test.go internal/security
