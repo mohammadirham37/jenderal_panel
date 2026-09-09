@@ -2,7 +2,12 @@ package executor
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -45,6 +50,43 @@ func TestRunContextCancel(t *testing.T) {
 	_, err := e.Run(ctx, "sleep", "10")
 	if err == nil {
 		t.Fatal("expected error due to cancelled context, got nil")
+	}
+}
+
+func TestRunContextCancelTerminatesProcessGroupAndRunsCleanup(t *testing.T) {
+	dir := t.TempDir()
+	pidPath := filepath.Join(dir, "child.pid")
+	cleanupPath := filepath.Join(dir, "cleanup")
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		for {
+			if _, err := os.Stat(pidPath); err == nil {
+				cancel()
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	script := `trap 'printf cleaned > "$2"; exit 143' TERM; sleep 30 & child=$!; printf '%s' "$child" > "$1"; wait "$child"`
+	_, err := NewExecutor(time.Minute).Run(ctx, "/bin/bash", "-c", script, "--", pidPath, cleanupPath)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got, readErr := os.ReadFile(cleanupPath); readErr != nil || string(got) != "cleaned" {
+		t.Fatalf("cleanup = %q, %v", got, readErr)
+	}
+	pidBytes, err := os.ReadFile(pidPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid, err := strconv.Atoi(string(pidBytes))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if process, findErr := os.FindProcess(pid); findErr == nil {
+		if signalErr := process.Signal(os.Signal(syscall.Signal(0))); signalErr == nil {
+			t.Fatalf("descendant process %d survived cancellation", pid)
+		}
 	}
 }
 

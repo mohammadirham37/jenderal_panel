@@ -3,6 +3,8 @@ package noderuntime
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -134,6 +136,40 @@ func TestInstallReportsFailedVerification(t *testing.T) {
 	err := New(fake).Install(context.Background(), "web_example", "24", nil)
 	if err == nil || !strings.Contains(err.Error(), "checksum verification failed") {
 		t.Fatalf("Install() error = %v", err)
+	}
+}
+
+func TestInstallScriptNeverSourcesOrMutatesUnknownTree(t *testing.T) {
+	home := t.TempDir()
+	nvmDir := filepath.Join(home, ".nvm")
+	if err := os.MkdirAll(filepath.Join(nvmDir, "alias"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	executed := filepath.Join(home, "unknown-nvm-executed")
+	if err := os.WriteFile(filepath.Join(nvmDir, "nvm.sh"), []byte("printf executed > \""+executed+"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvmDir, "alias", "default"), []byte("22\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nvmDir, "nvm-exec"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	result, err := executor.NewExecutor(time.Second).Run(context.Background(), "/usr/bin/env", "-i",
+		"HOME="+home, "NVM_DIR="+nvmDir, "PATH=/usr/local/bin:/usr/bin:/bin",
+		"/bin/bash", "-c", installScript, "--", "web_test", "24", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode != 69 {
+		t.Fatalf("exit = %d, stderr = %q", result.ExitCode, result.Stderr)
+	}
+	if _, err := os.Stat(executed); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unknown nvm.sh was executed: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(nvmDir, "alias", "default"))
+	if err != nil || string(got) != "22\n" {
+		t.Fatalf("default alias changed: %q, %v", got, err)
 	}
 }
 

@@ -253,12 +253,13 @@ done
 
 stage=''
 install_ok=false
+rollback_armed=false
 previous_default=''
 previous_default_exists=false
 cleanup() {
   status=$?
   trap - EXIT HUP INT TERM
-  if [ "$install_ok" != true ] && [ -f "$NVM_DIR/nvm.sh" ]; then
+  if [ "$rollback_armed" = true ] && [ "$install_ok" != true ]; then
     . "$NVM_DIR/nvm.sh"
     if [ "$previous_default_exists" = true ]; then nvm alias default "$previous_default" >/dev/null 2>&1 || true; else nvm unalias default >/dev/null 2>&1 || true; fi
   fi
@@ -302,6 +303,7 @@ fi
 echo "Installing Node $version"
 . "$NVM_DIR/nvm.sh"
 if [ -f "$NVM_DIR/alias/default" ]; then IFS= read -r previous_default < "$NVM_DIR/alias/default"; previous_default_exists=true; fi
+rollback_armed=true
 nvm install "$version"
 node_version=$(NODE_VERSION="$version" "$NVM_DIR/nvm-exec" node --version)
 npm_version=$(NODE_VERSION="$version" "$NVM_DIR/nvm-exec" npm --version)
