@@ -61,6 +61,18 @@ func TestRunNonZeroExit(t *testing.T) {
 	}
 }
 
+func TestRunWithInputPassesLiteralStdin(t *testing.T) {
+	e := NewExecutor(30 * time.Second)
+	input := "$(not-a-command) ' literal"
+	result, err := e.run(context.Background(), &input, "cat")
+	if err != nil {
+		t.Fatalf("run() error = %v", err)
+	}
+	if result.Stdout != input {
+		t.Fatalf("stdout = %q, want literal input %q", result.Stdout, input)
+	}
+}
+
 func TestMockExecutor(t *testing.T) {
 	mock := &MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*Result, error) {
@@ -76,6 +88,9 @@ func TestMockExecutor(t *testing.T) {
 				ExitCode: 0,
 				Duration: 5 * time.Millisecond,
 			}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*Result, error) {
+			return &Result{Stdout: input, ExitCode: 0}, nil
 		},
 	}
 
@@ -98,5 +113,13 @@ func TestMockExecutor(t *testing.T) {
 	}
 	if result.Stdout != "mocked sudo output" {
 		t.Fatalf("expected 'mocked sudo output', got %q", result.Stdout)
+	}
+
+	result, err = mock.RunSudoWithInput(ctx, "literal input", "anything")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Stdout != "literal input" {
+		t.Fatalf("expected literal input, got %q", result.Stdout)
 	}
 }

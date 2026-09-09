@@ -19,6 +19,7 @@ type Result struct {
 type CommandExecutor interface {
 	Run(ctx context.Context, name string, args ...string) (*Result, error)
 	RunSudo(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error)
 }
 
 // Executor implements CommandExecutor with a configurable default timeout.
@@ -35,6 +36,10 @@ func NewExecutor(defaultTimeout time.Duration) *Executor {
 // is applied. A non-zero exit code is not treated as an error; the exit code
 // is captured in Result.ExitCode.
 func (e *Executor) Run(ctx context.Context, name string, args ...string) (*Result, error) {
+	return e.run(ctx, nil, name, args...)
+}
+
+func (e *Executor) run(ctx context.Context, input *string, name string, args ...string) (*Result, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.DefaultTimeout)
@@ -44,6 +49,9 @@ func (e *Executor) Run(ctx context.Context, name string, args ...string) (*Resul
 	start := time.Now()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	if input != nil {
+		cmd.Stdin = bytes.NewBufferString(*input)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -82,10 +90,20 @@ func (e *Executor) RunSudo(ctx context.Context, name string, args ...string) (*R
 	return e.Run(ctx, "/usr/bin/sudo", sudoArgs...)
 }
 
+// RunSudoWithInput executes a sudo command and provides literal standard input
+// without involving a shell.
+func (e *Executor) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error) {
+	sudoArgs := make([]string, 0, len(args)+1)
+	sudoArgs = append(sudoArgs, name)
+	sudoArgs = append(sudoArgs, args...)
+	return e.run(ctx, &input, "/usr/bin/sudo", sudoArgs...)
+}
+
 // MockExecutor is a test double for CommandExecutor.
 type MockExecutor struct {
-	RunFunc     func(ctx context.Context, name string, args ...string) (*Result, error)
-	RunSudoFunc func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunFunc              func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoFunc          func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoWithInputFunc func(ctx context.Context, input, name string, args ...string) (*Result, error)
 }
 
 // Run delegates to RunFunc.
@@ -96,4 +114,9 @@ func (m *MockExecutor) Run(ctx context.Context, name string, args ...string) (*R
 // RunSudo delegates to RunSudoFunc.
 func (m *MockExecutor) RunSudo(ctx context.Context, name string, args ...string) (*Result, error) {
 	return m.RunSudoFunc(ctx, name, args...)
+}
+
+// RunSudoWithInput delegates to RunSudoWithInputFunc.
+func (m *MockExecutor) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error) {
+	return m.RunSudoWithInputFunc(ctx, input, name, args...)
 }

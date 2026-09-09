@@ -2,6 +2,7 @@ package filemanager
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
+
+const maxUploadBytes int64 = 32 << 20
 
 // Handler handles file manager HTTP requests.
 type Handler struct {
@@ -256,8 +259,15 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 32 MB max upload size.
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	// Enforce the request size before multipart parsing so io.ReadAll below
+	// cannot allocate beyond the documented upload limit.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			httputil.JSONError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "upload exceeds the 32 MB limit")
+			return
+		}
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")
 		return
 	}

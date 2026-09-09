@@ -1,8 +1,10 @@
 package filemanager
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -53,5 +55,44 @@ func TestBrowseUsesWebsiteRouteID(t *testing.T) {
 	}
 	if got := recorder.Body.String(); got != "/home/web_example_com" {
 		t.Fatalf("website base path = %q, want /home/web_example_com", got)
+	}
+}
+
+func TestUploadRejectsBodyLargerThanLimit(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+		CREATE TABLE websites (id TEXT PRIMARY KEY, document_root TEXT NOT NULL, web_user TEXT NOT NULL);
+		INSERT INTO websites (id, document_root, web_user) VALUES ('site-1', '/home/web_example_com/public', 'web_example_com');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "large.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("x"), (32<<20)+1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := NewHandler(NewService(nil, nil), db, nil)
+	router := chi.NewRouter()
+	router.Post("/websites/{id}/files/upload", handler.Upload)
+	req := httptest.NewRequest(http.MethodPost, "/websites/site-1/files/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("Upload status = %d, want 413; body = %s", recorder.Code, recorder.Body.String())
 	}
 }

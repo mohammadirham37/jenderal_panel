@@ -250,26 +250,23 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 		t.Fatal(err)
 	}
 	content := "$(touch /tmp/should-not-run) ' literal content"
-	var copiedContent string
+	var writtenContent string
 	mock := &executor.MockExecutor{
 		RunFunc: func(context.Context, string, ...string) (*executor.Result, error) {
 			t.Fatal("WriteFile must not invoke a shell")
 			return nil, nil
 		},
 		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
-			if name == "chown" {
-				return &executor.Result{ExitCode: 0}, nil
+			t.Fatalf("WriteFile must use the input-aware executor, got %q %q", name, args)
+			return nil, nil
+		},
+		RunSudoWithInputFunc: func(_ context.Context, input, name string, args ...string) (*executor.Result, error) {
+			writtenContent = input
+			if name != "-u" || len(args) != 5 || args[1] != "--" || args[2] != "tee" || args[3] != "--" {
+				t.Fatalf("RunSudoWithInput = %q %q, want -u <user> -- tee -- <target>", name, args)
 			}
-			if name != "cp" || len(args) != 4 || args[0] != "--remove-destination" || args[1] != "--" {
-				t.Fatalf("RunSudo = %q %q, want cp --remove-destination -- <temp> <target>", name, args)
-			}
-			got, err := os.ReadFile(args[2])
-			if err != nil {
-				t.Fatal(err)
-			}
-			copiedContent = string(got)
-			if args[3] != filepath.Join(resolvedBasePath, "name;touch injected") {
-				t.Fatalf("target = %q, want literal filename", args[3])
+			if args[4] != filepath.Join(resolvedBasePath, "name;touch injected") {
+				t.Fatalf("target = %q, want literal filename", args[4])
 			}
 			return &executor.Result{ExitCode: 0}, nil
 		},
@@ -279,8 +276,8 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
-	if copiedContent != content {
-		t.Fatalf("copied content = %q, want %q", copiedContent, content)
+	if writtenContent != content {
+		t.Fatalf("written content = %q, want %q", writtenContent, content)
 	}
 }
 

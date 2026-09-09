@@ -2,6 +2,7 @@ package filemanager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -118,25 +119,88 @@ func resolvePath(basePath, subPath string, allowMissing bool) (string, error) {
 	return resolvedTarget, nil
 }
 
-func rejectWebsiteRoot(basePath, target string) error {
-	resolvedBase, err := filepath.EvalSymlinks(filepath.Clean(basePath))
+func rejectWebsiteRoot(basePath, subPath string) error {
+	target, err := validatePath(basePath, subPath)
 	if err != nil {
-		return model.NewValidationError("website home is not accessible")
+		return err
 	}
-	if filepath.Clean(target) == filepath.Clean(resolvedBase) {
+	if filepath.Clean(target) == filepath.Clean(basePath) {
 		return model.NewValidationError("the website root cannot be modified")
 	}
 	return nil
 }
 
+func (s *Service) runAsWebsiteUser(ctx context.Context, basePath, name string, args ...string) (*executor.Result, error) {
+	webUser := filepath.Base(filepath.Clean(basePath))
+	sudoArgs := make([]string, 0, len(args)+3)
+	sudoArgs = append(sudoArgs, webUser, "--", name)
+	sudoArgs = append(sudoArgs, args...)
+	return s.exec.RunSudo(ctx, "-u", sudoArgs...)
+}
+
+func (s *Service) runAsWebsiteUserWithInput(ctx context.Context, basePath, input, name string, args ...string) (*executor.Result, error) {
+	webUser := filepath.Base(filepath.Clean(basePath))
+	sudoArgs := make([]string, 0, len(args)+3)
+	sudoArgs = append(sudoArgs, webUser, "--", name)
+	sudoArgs = append(sudoArgs, args...)
+	return s.exec.RunSudoWithInput(ctx, input, "-u", sudoArgs...)
+}
+
+func (s *Service) resolveWebsitePath(ctx context.Context, basePath, subPath string, allowMissing bool) (string, error) {
+	resolved, err := resolvePath(basePath, subPath, allowMissing)
+	if err == nil {
+		return resolved, nil
+	}
+
+	var domainErr *model.DomainError
+	if !errors.As(err, &domainErr) || (domainErr.Message != "path is not accessible" && domainErr.Message != "website home is not accessible") {
+		return "", err
+	}
+
+	// A website may legitimately use mode 0700. Resolve in that case as its
+	// owner, while keeping all subsequent operations under the same user.
+	target, validationErr := validatePath(basePath, subPath)
+	if validationErr != nil {
+		return "", validationErr
+	}
+	resolve := func(flag, path string) (string, error) {
+		result, runErr := s.runAsWebsiteUser(ctx, basePath, "realpath", flag, "--", path)
+		if runErr != nil {
+			return "", runErr
+		}
+		if result.ExitCode != 0 {
+			return "", model.NewValidationError("path is not accessible")
+		}
+		return strings.TrimSpace(result.Stdout), nil
+	}
+
+	resolvedBase, resolveErr := resolve("-e", filepath.Clean(basePath))
+	if resolveErr != nil {
+		return "", resolveErr
+	}
+	targetFlag := "-e"
+	if allowMissing {
+		targetFlag = "-m"
+	}
+	resolvedTarget, resolveErr := resolve(targetFlag, target)
+	if resolveErr != nil {
+		return "", resolveErr
+	}
+	rel, resolveErr := filepath.Rel(resolvedBase, resolvedTarget)
+	if resolveErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", model.NewValidationError("path escapes website home through a symlink")
+	}
+	return resolvedTarget, nil
+}
+
 // Browse lists the contents of a directory within the website's base path.
 func (s *Service) Browse(ctx context.Context, basePath, subPath string) ([]model.FileEntry, error) {
-	dir, err := resolvePath(basePath, subPath, false)
+	dir, err := s.resolveWebsitePath(ctx, basePath, subPath, false)
 	if err != nil {
 		return nil, err
 	}
 
-	result, err := s.exec.RunSudo(ctx, "ls", "-la", dir)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "ls", "-la", "--", dir)
 	if err != nil {
 		return nil, fmt.Errorf("file browse: %w", err)
 	}
@@ -149,12 +213,12 @@ func (s *Service) Browse(ctx context.Context, basePath, subPath string) ([]model
 
 // ReadFile reads the contents of a file within the website's base path.
 func (s *Service) ReadFile(ctx context.Context, basePath, filePath string) (string, error) {
-	full, err := resolvePath(basePath, filePath, false)
+	full, err := s.resolveWebsitePath(ctx, basePath, filePath, false)
 	if err != nil {
 		return "", err
 	}
 
-	result, err := s.exec.RunSudo(ctx, "cat", full)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "cat", "--", full)
 	if err != nil {
 		return "", fmt.Errorf("file read: %w", err)
 	}
@@ -165,48 +229,23 @@ func (s *Service) ReadFile(ctx context.Context, basePath, filePath string) (stri
 	return result.Stdout, nil
 }
 
-// WriteFile writes content to a file within the website's base path using a
-// temporary file and sudo cp to avoid permission issues.
+// WriteFile writes content as the website's Linux user so a path race cannot
+// turn a file-manager request into a privileged filesystem operation.
 func (s *Service) WriteFile(ctx context.Context, basePath, filePath, content string) error {
-	full, err := resolvePath(basePath, filePath, true)
+	if err := rejectWebsiteRoot(basePath, filePath); err != nil {
+		return err
+	}
+	full, err := s.resolveWebsitePath(ctx, basePath, filePath, true)
 	if err != nil {
 		return err
 	}
-	if err := rejectWebsiteRoot(basePath, full); err != nil {
-		return err
-	}
 
-	tmpFile, err := os.CreateTemp("", "jenderal_write_*.tmp")
+	result, err := s.runAsWebsiteUserWithInput(ctx, basePath, content, "tee", "--", full)
 	if err != nil {
-		return fmt.Errorf("create file write temp: %w", err)
-	}
-	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
-	if _, err := tmpFile.WriteString(content); err != nil {
-		_ = tmpFile.Close()
-		return fmt.Errorf("write file temp: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("close file temp: %w", err)
-	}
-
-	// --remove-destination prevents a last-moment destination symlink from
-	// being followed. All user-controlled values remain separate arguments.
-	result, err := s.exec.RunSudo(ctx, "cp", "--remove-destination", "--", tmpPath, full)
-	if err != nil {
-		return fmt.Errorf("file write copy: %w", err)
+		return fmt.Errorf("file write: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return model.NewDomainError("FILE_ERROR", "failed to copy file: "+result.Stderr, nil)
-	}
-
-	webUser := filepath.Base(filepath.Clean(basePath))
-	result, err = s.exec.RunSudo(ctx, "chown", "--", webUser+":"+webUser, full)
-	if err != nil {
-		return fmt.Errorf("file write ownership: %w", err)
-	}
-	if result.ExitCode != 0 {
-		return model.NewDomainError("FILE_ERROR", "failed to set file ownership: "+result.Stderr, nil)
+		return model.NewDomainError("FILE_ERROR", "failed to write file: "+result.Stderr, nil)
 	}
 
 	return nil
@@ -214,15 +253,15 @@ func (s *Service) WriteFile(ctx context.Context, basePath, filePath, content str
 
 // DeleteFile removes a file within the website's base path.
 func (s *Service) DeleteFile(ctx context.Context, basePath, filePath string) error {
-	full, err := resolvePath(basePath, filePath, false)
+	if err := rejectWebsiteRoot(basePath, filePath); err != nil {
+		return err
+	}
+	full, err := s.resolveWebsitePath(ctx, basePath, filePath, false)
 	if err != nil {
 		return err
 	}
-	if err := rejectWebsiteRoot(basePath, full); err != nil {
-		return err
-	}
 
-	result, err := s.exec.RunSudo(ctx, "rm", "-rf", "--", full)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "rm", "-rf", "--", full)
 	if err != nil {
 		return fmt.Errorf("file delete: %w", err)
 	}
@@ -235,22 +274,21 @@ func (s *Service) DeleteFile(ctx context.Context, basePath, filePath string) err
 
 // Rename renames or moves a file/directory within the website's base path.
 func (s *Service) Rename(ctx context.Context, basePath, oldPath, newPath string) error {
-	fullOld, err := resolvePath(basePath, oldPath, false)
+	if err := rejectWebsiteRoot(basePath, oldPath); err != nil {
+		return err
+	}
+	if err := rejectWebsiteRoot(basePath, newPath); err != nil {
+		return err
+	}
+	fullOld, err := s.resolveWebsitePath(ctx, basePath, oldPath, false)
 	if err != nil {
 		return err
 	}
-	fullNew, err := resolvePath(basePath, newPath, true)
+	fullNew, err := s.resolveWebsitePath(ctx, basePath, newPath, true)
 	if err != nil {
 		return err
 	}
-	if err := rejectWebsiteRoot(basePath, fullOld); err != nil {
-		return err
-	}
-	if err := rejectWebsiteRoot(basePath, fullNew); err != nil {
-		return err
-	}
-
-	result, err := s.exec.RunSudo(ctx, "mv", "--", fullOld, fullNew)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "mv", "--", fullOld, fullNew)
 	if err != nil {
 		return fmt.Errorf("file rename: %w", err)
 	}
@@ -263,15 +301,14 @@ func (s *Service) Rename(ctx context.Context, basePath, oldPath, newPath string)
 
 // CreateDir creates a directory (including parents) within the website's base path.
 func (s *Service) CreateDir(ctx context.Context, basePath, dirPath string) error {
-	full, err := resolvePath(basePath, dirPath, true)
+	if err := rejectWebsiteRoot(basePath, dirPath); err != nil {
+		return err
+	}
+	full, err := s.resolveWebsitePath(ctx, basePath, dirPath, true)
 	if err != nil {
 		return err
 	}
-	if err := rejectWebsiteRoot(basePath, full); err != nil {
-		return err
-	}
-
-	result, err := s.exec.RunSudo(ctx, "mkdir", "-p", "--", full)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "mkdir", "-p", "--", full)
 	if err != nil {
 		return fmt.Errorf("create dir: %w", err)
 	}
@@ -284,15 +321,14 @@ func (s *Service) CreateDir(ctx context.Context, basePath, dirPath string) error
 
 // Chmod changes the permissions of a file within the website's base path.
 func (s *Service) Chmod(ctx context.Context, basePath, filePath, mode string) error {
-	full, err := resolvePath(basePath, filePath, false)
+	if err := rejectWebsiteRoot(basePath, filePath); err != nil {
+		return err
+	}
+	full, err := s.resolveWebsitePath(ctx, basePath, filePath, false)
 	if err != nil {
 		return err
 	}
-	if err := rejectWebsiteRoot(basePath, full); err != nil {
-		return err
-	}
-
-	result, err := s.exec.RunSudo(ctx, "chmod", "--", mode, full)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "chmod", "--", mode, full)
 	if err != nil {
 		return fmt.Errorf("chmod: %w", err)
 	}
