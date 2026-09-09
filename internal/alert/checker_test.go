@@ -51,13 +51,15 @@ func TestCheckerHonorsDurationDeduplicatesAndResolves(t *testing.T) {
 	if events, _ := svc.ListHistory(context.Background(), 10); len(events) != 1 {
 		t.Fatalf("alert was not deduplicated: %d events", len(events))
 	}
+	if _, err := svc.LogAlert(context.Background(), rule.ID, rule.Metric, metrics.CPU, "historical duplicate"); err != nil {
+		t.Fatal(err)
+	}
 	metrics.CPU = 20
 	checker.Check(context.Background(), now.Add(180*time.Second))
 	events, _ := svc.ListHistory(context.Background(), 10)
-	if !events[0].Resolved || len(sender.messages) != 2 {
-		t.Fatalf("recovery = resolved %v, messages %d", events[0].Resolved, len(sender.messages))
+	if len(events) != 2 || !events[0].Resolved || !events[1].Resolved || len(sender.messages) != 2 {
+		t.Fatalf("recovery = events %#v, messages %d", events, len(sender.messages))
 	}
-	_ = rule
 }
 
 func TestCheckerEvaluatesServiceAndSSLTargets(t *testing.T) {

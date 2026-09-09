@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -322,5 +323,28 @@ func TestRuleTargetRoundTripAndUnresolvedLookup(t *testing.T) {
 	open, found, err := svc.FindUnresolvedByRule(ctx, rule.ID)
 	if err != nil || !found || open.ID != event.ID {
 		t.Fatalf("unresolved lookup = %#v, %v, %v", open, found, err)
+	}
+}
+
+func TestTargetValidationUsesConfiguredProviders(t *testing.T) {
+	svc := NewService(setupTestDB(t), nil)
+	now := time.Now().UTC()
+	svc.SetTargetProviders(
+		checkerServices{statuses: map[string]*model.ServiceStatus{"nginx": {Name: "nginx"}}},
+		checkerCertificates{certificates: []model.SSLCertificate{{Domain: "example.com", Status: "active", ExpiresAt: now.Add(24 * time.Hour)}}},
+	)
+	ctx := context.Background()
+	if _, err := svc.CreateRule(ctx, model.AlertRule{Metric: "service_down", Target: "missing", Operator: "eq", Threshold: 1}); err == nil {
+		t.Fatal("missing service target was accepted")
+	}
+	if _, err := svc.CreateRule(ctx, model.AlertRule{Metric: "ssl_expiry", Target: "missing.example", Operator: "lt", Threshold: 14}); err == nil {
+		t.Fatal("missing certificate target was accepted")
+	}
+	rule, err := svc.CreateRule(ctx, model.AlertRule{Metric: "ssl_expiry", Target: "example.com", Operator: "lt", Threshold: 14})
+	if err != nil {
+		t.Fatalf("active certificate target rejected: %v", err)
+	}
+	if err := svc.UpdateRule(ctx, rule.ID, model.AlertRule{Metric: "service_down", Target: "missing", Operator: "eq", Threshold: 1}); err == nil {
+		t.Fatal("missing service target was accepted during update")
 	}
 }

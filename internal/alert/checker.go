@@ -93,11 +93,14 @@ func (c *Checker) Check(ctx context.Context, now time.Time) {
 		if !evaluate(value, rule.Operator, rule.Threshold) {
 			c.clearPending(rule.ID)
 			if found {
-				if err := c.alertSvc.ResolveAlert(ctx, open.ID); err != nil {
+				resolved, err := c.alertSvc.ResolveAlertsByRule(ctx, rule.ID)
+				if err != nil {
 					log.Printf("[alert-checker] failed to resolve event %s: %v", open.ID, err)
 					continue
 				}
-				c.send(ctx, open.ID, fmt.Sprintf("Resolved: %s returned to normal (value %.2f)", ruleLabel(rule), value))
+				if resolved > 0 {
+					c.send(ctx, open.ID, fmt.Sprintf("Resolved: %s returned to normal (value %.2f)", ruleLabel(rule), value))
+				}
 			}
 			continue
 		}

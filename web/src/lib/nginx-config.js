@@ -84,7 +84,7 @@ function locateDirective(content, key, context, parsed) {
 		? { open: -1, close: content.length, depth: 0 }
 		: parsed.blocks[context];
 	if (!range) return null;
-	const pattern = new RegExp(`(^|\\n)([ \\t]*)${key}\\s+([^;\\n]+);`, 'g');
+	const pattern = new RegExp(`(^|[\\n{;])([ \\t]*)${key}\\s+([^;\\n]+);`, 'g');
 	let match;
 	while ((match = pattern.exec(parsed.clean)) !== null) {
 		const start = match.index + match[1].length;

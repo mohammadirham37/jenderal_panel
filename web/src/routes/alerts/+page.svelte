@@ -267,11 +267,6 @@
 						</tbody>
 					</table>
 				</div>
-				{#if newMetric === 'service_down'}
-					<div><label for="alert-target-service" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Target service</label><select id="alert-target-service" bind:value={newTarget} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select service</option>{#each services as service}<option value={service.name}>{service.name}</option>{/each}</select></div>
-				{:else if newMetric === 'ssl_expiry'}
-					<div><label for="alert-target-domain" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Target domain</label><select id="alert-target-domain" bind:value={newTarget} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select domain</option>{#each certificates as certificate}<option value={certificate.domain}>{certificate.domain}</option>{/each}</select></div>
-				{/if}
 			{/if}
 
 			<!-- Add Rule Form -->
@@ -284,6 +279,11 @@
 						{/each}
 					</select>
 				</div>
+				{#if newMetric === 'service_down'}
+					<div><label for="alert-target-service" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Target service</label><select id="alert-target-service" bind:value={newTarget} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select service</option>{#each services as service}<option value={service.name}>{service.name}</option>{/each}</select></div>
+				{:else if newMetric === 'ssl_expiry'}
+					<div><label for="alert-target-domain" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Target domain</label><select id="alert-target-domain" bind:value={newTarget} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm"><option value="">Select domain</option>{#each certificates as certificate}<option value={certificate.domain}>{certificate.domain}</option>{/each}</select></div>
+				{/if}
 				<div>
 					<label for="alert-operator" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Operator</label>
 					<select id="alert-operator" bind:value={newOperator} class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">

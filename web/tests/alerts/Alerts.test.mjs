@@ -11,4 +11,5 @@ test('alert page uses canonical routes and target-aware rule fields', async () =
 	assert.match(source, /load1/);
 	assert.match(source, /\/api\/v1\/services/);
 	assert.match(source, /\/api\/v1\/ssl/);
+	assert.ok(source.indexOf('alert-target-service') > source.indexOf('<!-- Add Rule Form -->'), 'target selector must remain in the add form when no rules exist');
 });

@@ -55,6 +55,14 @@ test('rejects invalid values and missing structural contexts', () => {
 	assert.throws(() => updateSimpleNginxConfig('events {}\n', 'gzip', 'on'), /http block/i);
 });
 
+test('reads and replaces directives written inline after a block brace', () => {
+	const inline = 'worker_processes auto;\nevents { worker_connections 1024; }\nhttp { gzip on; }\n';
+	assert.equal(parseSimpleNginxConfig(inline).values.worker_connections, '1024');
+	const updated = updateSimpleNginxConfig(inline, 'worker_connections', '2048');
+	assert.match(updated, /events \{ worker_connections 2048; \}/);
+	assert.equal((updated.match(/worker_connections/g) || []).length, 1);
+});
+
 test('mode switches preserve the current unsaved draft', () => {
 	assert.equal(typeof switchNginxConfigMode, 'function', 'expected an nginx mode switcher');
 	const state = { mode: 'manual', draft: config };

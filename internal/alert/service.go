@@ -14,8 +14,10 @@ import (
 
 // Service manages alert rules and alert history.
 type Service struct {
-	db    *sql.DB
-	audit *audit.Service
+	db       *sql.DB
+	audit    *audit.Service
+	services ServiceStatusProvider
+	certs    CertificateProvider
 }
 
 // NewService creates a new alert Service.
@@ -23,9 +25,15 @@ func NewService(db *sql.DB, auditSvc *audit.Service) *Service {
 	return &Service{db: db, audit: auditSvc}
 }
 
+// SetTargetProviders configures the sources used to validate target-aware rules.
+func (s *Service) SetTargetProviders(services ServiceStatusProvider, certs CertificateProvider) {
+	s.services = services
+	s.certs = certs
+}
+
 // CreateRule inserts a new alert rule.
 func (s *Service) CreateRule(ctx context.Context, rule model.AlertRule) (model.AlertRule, error) {
-	if err := validateRule(&rule); err != nil {
+	if err := s.validateRule(ctx, &rule); err != nil {
 		return model.AlertRule{}, err
 	}
 
@@ -62,7 +70,7 @@ func (s *Service) CreateRule(ctx context.Context, rule model.AlertRule) (model.A
 
 // UpdateRule updates an existing alert rule.
 func (s *Service) UpdateRule(ctx context.Context, id string, rule model.AlertRule) error {
-	if err := validateRule(&rule); err != nil {
+	if err := s.validateRule(ctx, &rule); err != nil {
 		return err
 	}
 
@@ -198,6 +206,19 @@ func (s *Service) ResolveAlert(ctx context.Context, id string) error {
 	return nil
 }
 
+// ResolveAlertsByRule marks every unresolved event for a rule as resolved.
+func (s *Service) ResolveAlertsByRule(ctx context.Context, ruleID string) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE alert_history SET resolved=1 WHERE rule_id=? AND resolved=0`, ruleID)
+	if err != nil {
+		return 0, fmt.Errorf("resolve alerts by rule: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("count resolved alerts: %w", err)
+	}
+	return n, nil
+}
+
 // FindUnresolvedByRule returns the newest unresolved event for a rule.
 func (s *Service) FindUnresolvedByRule(ctx context.Context, ruleID string) (model.AlertEvent, bool, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id, rule_id, metric, value, message, resolved, created_at
@@ -262,13 +283,39 @@ func scanRule(rows *sql.Rows) (model.AlertRule, error) {
 	return r, nil
 }
 
-func validateRule(rule *model.AlertRule) error {
+func (s *Service) validateRule(ctx context.Context, rule *model.AlertRule) error {
 	switch rule.Metric {
 	case "cpu", "ram", "disk", "load1", "load5", "load15":
 		rule.Target = ""
-	case "service_down", "ssl_expiry":
+	case "service_down":
 		if rule.Target == "" {
 			return model.NewValidationError("target is required for " + rule.Metric)
+		}
+		if s.services != nil {
+			status, err := s.services.Status(ctx, rule.Target)
+			if err != nil || status == nil {
+				return model.NewValidationError("service target is not available")
+			}
+		}
+	case "ssl_expiry":
+		if rule.Target == "" {
+			return model.NewValidationError("target is required for " + rule.Metric)
+		}
+		if s.certs != nil {
+			certificates, err := s.certs.List(ctx)
+			if err != nil {
+				return model.NewValidationError("certificate targets are not available")
+			}
+			found := false
+			for _, certificate := range certificates {
+				if certificate.Domain == rule.Target && certificate.Status == "active" {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return model.NewValidationError("active certificate target was not found")
+			}
 		}
 	default:
 		return model.NewValidationError("unsupported metric")

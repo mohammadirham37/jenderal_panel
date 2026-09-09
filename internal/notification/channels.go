@@ -11,7 +11,12 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
-var httpClient = &http.Client{Timeout: 10 * time.Second}
+var httpClient = &http.Client{
+	Timeout: 10 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // WebhookConfig holds the configuration for a webhook channel.
 type WebhookConfig struct {
@@ -55,11 +60,11 @@ func sendWebhook(ctx context.Context, config, message string) error {
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("webhook POST: %w", err)
+		return fmt.Errorf("webhook request failed")
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("webhook returned status %d", resp.StatusCode)
 	}
 	return nil
@@ -92,11 +97,11 @@ func sendTelegram(ctx context.Context, config, message string) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("telegram POST: %w", err)
+		return fmt.Errorf("telegram request failed")
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("telegram returned status %d", resp.StatusCode)
 	}
 	return nil
@@ -124,11 +129,11 @@ func sendDiscord(ctx context.Context, config, message string) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("discord POST: %w", err)
+		return fmt.Errorf("discord request failed")
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("discord returned status %d", resp.StatusCode)
 	}
 	return nil
