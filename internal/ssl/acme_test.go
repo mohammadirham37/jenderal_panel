@@ -44,6 +44,28 @@ func TestACMEDirectoryURLAllowsExplicitOverride(t *testing.T) {
 	}
 }
 
+func TestNewLegoClientOmitsInvalidACMEContactEmail(t *testing.T) {
+	client := NewLegoClient("admin@localhost", t.TempDir())
+	user, err := client.loadOrCreateAccount()
+	if err != nil {
+		t.Fatalf("loadOrCreateAccount() error = %v", err)
+	}
+	if got := user.GetEmail(); got != "" {
+		t.Fatalf("ACME contact email = %q, want omitted", got)
+	}
+}
+
+func TestNewLegoClientPreservesValidACMEContactEmail(t *testing.T) {
+	client := NewLegoClient("admin@example.com", t.TempDir())
+	user, err := client.loadOrCreateAccount()
+	if err != nil {
+		t.Fatalf("loadOrCreateAccount() error = %v", err)
+	}
+	if got := user.GetEmail(); got != "admin@example.com" {
+		t.Fatalf("ACME contact email = %q, want admin@example.com", got)
+	}
+}
+
 func TestNewHTTP01ProviderRejectsMissingWebroot(t *testing.T) {
 	if _, err := newHTTP01Provider(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Fatal("newHTTP01Provider() accepted a missing webroot")

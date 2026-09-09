@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
+	import { createFileManagerAPI } from '$lib/file-manager.js';
 
 	interface WebsiteDomain {
 		id: string;
@@ -54,9 +55,12 @@
 	// File Manager
 	interface FileEntry {
 		name: string;
-		type: 'file' | 'directory';
+		path: string;
+		is_dir: boolean;
 		size: number;
 		permissions: string;
+		owner: string;
+		mod_time: string;
 	}
 
 	let files = $state<FileEntry[]>([]);
@@ -269,7 +273,7 @@
 		filesLoading = true;
 		filesError = '';
 		try {
-			const data = await api.get<FileEntry[]>(`/api/v1/websites/${website.id}/files?path=${encodeURIComponent(path)}`);
+			const data = await createFileManagerAPI(api, website.id).browse(path) as FileEntry[];
 			files = data || [];
 			currentPath = path;
 		} catch (err) {
@@ -325,7 +329,7 @@
 		editingFile = filePath;
 		editFileContent = '';
 		try {
-			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/files/content?path=${encodeURIComponent(filePath)}`);
+			const data = await createFileManagerAPI(api, website.id).read(filePath) as { content: string };
 			editFileContent = data.content || '';
 		} catch (err) {
 			fileActionError = err instanceof Error ? err.message : 'Failed to read file';
@@ -340,7 +344,7 @@
 		fileActionMsg = '';
 		fileActionError = '';
 		try {
-			await api.put(`/api/v1/websites/${website.id}/files/content`, { path: editingFile, content: editFileContent });
+			await createFileManagerAPI(api, website.id).write(editingFile, editFileContent);
 			fileActionMsg = 'File saved.';
 			editingFile = null;
 		} catch (err) {
@@ -354,7 +358,7 @@
 		fileActionMsg = '';
 		fileActionError = '';
 		try {
-			await api.del(`/api/v1/websites/${website.id}/files?path=${encodeURIComponent(filePath)}`);
+			await createFileManagerAPI(api, website.id).remove(filePath);
 			fileActionMsg = `"${name}" deleted.`;
 			await loadFiles(currentPath);
 		} catch (err) {
@@ -368,7 +372,7 @@
 		fileActionMsg = '';
 		fileActionError = '';
 		try {
-			await api.post(`/api/v1/websites/${website.id}/files/directory`, { path: dirPath });
+			await createFileManagerAPI(api, website.id).mkdir(dirPath);
 			fileActionMsg = `Directory "${newDirName}" created.`;
 			newDirName = '';
 			showCreateDir = false;
@@ -384,7 +388,7 @@
 		fileActionMsg = '';
 		fileActionError = '';
 		try {
-			await api.post(`/api/v1/websites/${website.id}/files`, { path: filePath, content: '' });
+			await createFileManagerAPI(api, website.id).write(filePath, '');
 			fileActionMsg = `File "${newFileName}" created.`;
 			newFileName = '';
 			showCreateFile = false;
@@ -401,7 +405,7 @@
 		fileActionMsg = '';
 		fileActionError = '';
 		try {
-			await api.post(`/api/v1/websites/${website.id}/files/rename`, { old_path: oldPath, new_path: newPath });
+			await createFileManagerAPI(api, website.id).rename(oldPath, newPath);
 			fileActionMsg = `Renamed "${oldName}" to "${renameValue}".`;
 			renamingFile = null;
 			renameValue = '';
@@ -877,14 +881,14 @@
 														<button onclick={() => renameFile(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer">OK</button>
 														<button onclick={() => { renamingFile = null; renameValue = ''; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer">X</button>
 													</div>
-												{:else if entry.type === 'directory'}
+												{:else if entry.is_dir}
 													<button onclick={() => navigateTo(entry.name)} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">{entry.name}</button>
 												{:else}
 													<span class="text-sm text-gray-200 font-mono">{entry.name}</span>
 												{/if}
 											</td>
 											<td class="px-4 py-2">
-												{#if entry.type === 'directory'}
+												{#if entry.is_dir}
 													<svg class="w-4 h-4 text-yellow-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
 														<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
 													</svg>
@@ -894,15 +898,15 @@
 													</svg>
 												{/if}
 											</td>
-											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.type === 'file' ? formatSize(entry.size) : '-'}</td>
+											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
 											<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.permissions}</td>
 											<td class="px-4 py-2 text-right">
 												<div class="flex justify-end gap-1.5">
-													{#if entry.type === 'file' && isTextFile(entry.name)}
+													{#if !entry.is_dir && isTextFile(entry.name)}
 														<button onclick={() => openFileEdit(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Edit</button>
 													{/if}
 													<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Rename</button>
-													{#if entry.type === 'file'}
+													{#if !entry.is_dir}
 														<button onclick={() => downloadFile(entry.name)} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Download</button>
 													{/if}
 													<button onclick={() => deleteFile(entry.name)} class="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>

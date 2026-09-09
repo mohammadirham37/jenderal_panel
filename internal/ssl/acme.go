@@ -10,8 +10,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net/mail"
 	"os"
 	"path/filepath"
+	"strings"
 
 	legoacme "github.com/go-acme/lego/v4/acme"
 	"github.com/go-acme/lego/v4/certcrypto"
@@ -44,7 +46,24 @@ type LegoClient struct {
 // NewLegoClient creates a new LegoClient.
 // accountDir is the directory where the ACME account key and registration are persisted.
 func NewLegoClient(email, accountDir string) *LegoClient {
-	return &LegoClient{email: email, accountDir: accountDir}
+	return &LegoClient{email: normalizeACMEContactEmail(email), accountDir: accountDir}
+}
+
+func normalizeACMEContactEmail(value string) string {
+	email := strings.TrimSpace(value)
+	address, err := mail.ParseAddress(email)
+	if err != nil || address.Address != email {
+		return ""
+	}
+	at := strings.LastIndexByte(email, '@')
+	if at < 1 {
+		return ""
+	}
+	domain := email[at+1:]
+	if !strings.Contains(domain, ".") || strings.HasPrefix(domain, ".") || strings.HasSuffix(domain, ".") {
+		return ""
+	}
+	return email
 }
 
 func newHTTP01Provider(root string) (challenge.Provider, error) {

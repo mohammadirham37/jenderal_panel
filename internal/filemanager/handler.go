@@ -42,7 +42,7 @@ func (h *Handler) logAction(r *http.Request, action, target, detail string) {
 
 // getWebsite loads the website record and returns its document root base path.
 func (h *Handler) getWebsite(r *http.Request) (basePath string, err error) {
-	websiteID := chi.URLParam(r, "websiteID")
+	websiteID := chi.URLParam(r, "id")
 	if websiteID == "" {
 		return "", model.NewValidationError("website ID is required")
 	}
