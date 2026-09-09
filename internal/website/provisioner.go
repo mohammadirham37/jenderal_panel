@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -127,6 +128,10 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	}
 	if result.ExitCode != 0 {
 		p.fail(ctx, websiteID, "chown failed: "+strings.TrimSpace(result.Stderr))
+		return
+	}
+	if err := p.ensureServingPermissions(ctx, w); err != nil {
+		p.fail(ctx, websiteID, "set website permissions failed: "+err.Error())
 		return
 	}
 
@@ -271,6 +276,76 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	// Step 4: active
 	_ = p.updateStatus(ctx, websiteID, "active", "")
 	p.logAudit(ctx, "website_provisioned", websiteID, "provisioned website "+w.Domain)
+}
+
+// ensureServingPermissions makes the managed public directory reachable by
+// the Nginx worker without exposing directory listings from the account home.
+func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow) error {
+	if !webUserRegex.MatchString(w.WebUser) || w.WebUser != DomainToUser(w.Domain) {
+		return fmt.Errorf("unsafe stored web user %q", w.WebUser)
+	}
+	homeDir := filepath.Join("/home", w.WebUser)
+	documentRoot := filepath.Join(homeDir, "public")
+	if filepath.Clean(w.DocumentRoot) != documentRoot {
+		return nil
+	}
+	result, err := p.exec.RunSudo(ctx, "chown", "-h", w.WebUser+":www-data", "--", homeDir, documentRoot)
+	if err != nil {
+		return fmt.Errorf("assign Nginx group to website directories: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("assign Nginx group to website directories: %s", strings.TrimSpace(result.Stderr))
+	}
+	for _, permission := range []struct {
+		mode string
+		path string
+	}{
+		{mode: "0710", path: homeDir},
+		{mode: "0750", path: documentRoot},
+	} {
+		result, err := p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", permission.mode, "--", permission.path)
+		if err != nil {
+			return fmt.Errorf("chmod %s: %w", permission.path, err)
+		}
+		if result.ExitCode != 0 {
+			return fmt.Errorf("chmod %s: %s", permission.path, strings.TrimSpace(result.Stderr))
+		}
+	}
+	return nil
+}
+
+// RepairServingPermissions reconciles managed document roots created by older
+// panel versions. Custom document roots are intentionally left untouched.
+func (p *Provisioner) RepairServingPermissions(ctx context.Context) error {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id, domain, document_root, web_user FROM websites WHERE status IN ('active', 'suspended') ORDER BY created_at ASC`)
+	if err != nil {
+		return fmt.Errorf("list websites for permission repair: %w", err)
+	}
+	var websites []websiteRow
+	for rows.Next() {
+		var website websiteRow
+		if err := rows.Scan(&website.ID, &website.Domain, &website.DocumentRoot, &website.WebUser); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan website for permission repair: %w", err)
+		}
+		websites = append(websites, website)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("list websites for permission repair: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close website permission rows: %w", err)
+	}
+
+	var repairErrors []error
+	for _, website := range websites {
+		if err := p.ensureServingPermissions(ctx, website); err != nil {
+			repairErrors = append(repairErrors, fmt.Errorf("website %s: %w", website.ID, err))
+		}
+	}
+	return errors.Join(repairErrors...)
 }
 
 // ensureWebsiteFile creates a document-root file as the website user, while

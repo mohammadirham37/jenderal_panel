@@ -218,6 +218,9 @@ func cmdServe() {
 	defer bgCancel()
 
 	metricsCollector.Start(bgCtx)
+	if err := provisioner.RepairServingPermissions(bgCtx); err != nil {
+		logger.Warn("website permission reconciliation failed", "error", err)
+	}
 	provisioner.Start(bgCtx)
 	renewalWorker.Start(bgCtx)
 	deploySvc.Start(bgCtx)

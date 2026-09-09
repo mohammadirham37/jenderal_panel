@@ -213,6 +213,68 @@ func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
 	}
 }
 
+func TestEnsureServingPermissionsGrantsOnlyNginxGroupAccessWithoutPrivilegedChmod(t *testing.T) {
+	var commands [][]string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	w := websiteRow{
+		Domain:       "example.com",
+		WebUser:      "web_example_com",
+		DocumentRoot: "/home/web_example_com/public/.",
+	}
+
+	if err := NewProvisioner(nil, mock, nil).ensureServingPermissions(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{
+		{"chown", "-h", "web_example_com:www-data", "--", "/home/web_example_com", "/home/web_example_com/public"},
+		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com"},
+		{"-u", "web_example_com", "--", "chmod", "0750", "--", "/home/web_example_com/public"},
+	}
+	if len(commands) != len(want) {
+		t.Fatalf("permission commands = %q, want %q", commands, want)
+	}
+	for i := range want {
+		if strings.Join(commands[i], "\x00") != strings.Join(want[i], "\x00") {
+			t.Fatalf("permission command %d = %q, want %q", i, commands[i], want[i])
+		}
+	}
+}
+
+func TestRepairServingPermissionsUpdatesExistingActiveWebsites(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-active", "active.example.com", "static", "", "active")
+	insertTestWebsite(t, db, "ws-custom", "custom.example.com", "static", "", "active")
+	if _, err := db.Exec(`UPDATE websites SET document_root = '/srv/custom' WHERE id = 'ws-custom'`); err != nil {
+		t.Fatal(err)
+	}
+
+	var commands [][]string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+
+	if err := NewProvisioner(db, mock, nil).RepairServingPermissions(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 3 {
+		t.Fatalf("repair commands = %q, want only the managed default document root", commands)
+	}
+	for _, command := range commands {
+		if strings.Contains(strings.Join(command, " "), "/srv/custom") {
+			t.Fatalf("custom document root permissions were changed: %q", command)
+		}
+	}
+}
+
 func TestEnsureWebsiteFileAtomicallyPreservesConcurrentDestination(t *testing.T) {
 	var temporaryPath string
 	linked := false
