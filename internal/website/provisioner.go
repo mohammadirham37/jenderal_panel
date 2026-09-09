@@ -305,7 +305,7 @@ func (p *Provisioner) ensureWebsiteFile(ctx context.Context, w websiteRow, name,
 		return fmt.Errorf("set permissions on staged %s: %s", targetPath, strings.TrimSpace(result.Stderr))
 	}
 
-	result, err = p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "ln", "--", temporaryPath, targetPath)
+	result, err = p.exec.RunSudo(ctx, "-u", w.WebUser, "--", "ln", "-T", "--", temporaryPath, targetPath)
 	if err != nil {
 		return fmt.Errorf("publish %s: %w", targetPath, err)
 	}

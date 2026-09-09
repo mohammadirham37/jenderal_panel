@@ -228,6 +228,9 @@ func TestEnsureWebsiteFileAtomicallyPreservesConcurrentDestination(t *testing.T)
 		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
 			if name == "-u" && args[2] == "ln" {
 				linked = true
+				if len(args) < 7 || args[3] != "-T" || args[4] != "--" {
+					t.Fatalf("atomic publish must use ln -T --, got %q", args)
+				}
 				return &executor.Result{ExitCode: 1, Stderr: "File exists"}, nil
 			}
 			if name == "-u" && args[2] == "test" && args[3] == "-e" {
@@ -267,6 +270,9 @@ func TestEnsureWebsiteFilePreservesDanglingSymlink(t *testing.T) {
 		},
 		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
 			if name == "-u" && args[2] == "ln" {
+				if len(args) < 7 || args[3] != "-T" || args[4] != "--" {
+					t.Fatalf("symlink-safe publish must use ln -T --, got %q", args)
+				}
 				return &executor.Result{ExitCode: 1, Stderr: "File exists"}, nil
 			}
 			if name == "-u" && args[2] == "test" {
