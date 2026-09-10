@@ -13,6 +13,12 @@
 	let editingHostname = $state(false);
 	let editingTimezone = $state(false);
 
+	// Searchable timezone combobox state
+	let tzQuery = $state('');
+	let tzOpen = $state(false);
+	let tzHighlight = $state(0);
+	let tzEditRoot: HTMLElement | undefined = $state();
+
 	const fallbackTimezones = [
 		'Asia/Jakarta',
 		'Asia/Makassar',
@@ -84,6 +90,7 @@
 	}
 
 	async function saveTimezone() {
+		tzOpen = false;
 		try {
 			await api.post('/api/v1/server/timezone', { timezone: newTimezone });
 			editingTimezone = false;
@@ -94,8 +101,52 @@
 		}
 	}
 
+	// Keep the rendered list light; searching narrows to the wanted entry.
+	let filteredTimezones = $derived.by(() => {
+		const q = tzQuery.trim().toLowerCase();
+		const list = q ? timezoneOptions.filter((tz) => tz.toLowerCase().includes(q)) : timezoneOptions;
+		return list.slice(0, 100);
+	});
+
+	function openTzList() {
+		tzOpen = true;
+		const idx = filteredTimezones.indexOf(newTimezone);
+		tzHighlight = idx >= 0 ? idx : 0;
+	}
+
+	function selectTz(tz: string) {
+		newTimezone = tz;
+		tzQuery = '';
+		tzOpen = false;
+	}
+
+	function handleTzKeydown(e: KeyboardEvent) {
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			if (!tzOpen) openTzList();
+			else tzHighlight = Math.min(tzHighlight + 1, filteredTimezones.length - 1);
+		} else if (e.key === 'ArrowUp' && tzOpen) {
+			e.preventDefault();
+			tzHighlight = Math.max(tzHighlight - 1, 0);
+		} else if (e.key === 'Enter' && tzOpen) {
+			e.preventDefault();
+			const tz = filteredTimezones[tzHighlight];
+			if (tz) selectTz(tz);
+		} else if (e.key === 'Escape') {
+			tzOpen = false;
+		}
+	}
+
+	function handleWindowClick(e: MouseEvent) {
+		if (tzOpen && tzEditRoot && !tzEditRoot.contains(e.target as Node)) {
+			tzOpen = false;
+		}
+	}
+
 	onMount(loadInfo);
 </script>
+
+<svelte:window onclick={handleWindowClick} />
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
@@ -227,19 +278,68 @@
 				<div>
 					<div class="text-xs text-gray-400 uppercase tracking-wider">Timezone</div>
 					{#if editingTimezone}
-						<div class="flex items-center gap-2 mt-1">
-							<select
-								bind:value={newTimezone}
-								aria-label="Timezone"
-								class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-xs"
-							>
-								{#if !timezoneOptions.includes(newTimezone)}
-									<option value={newTimezone}>{newTimezone}</option>
+						<div class="flex items-start gap-2 mt-1" bind:this={tzEditRoot}>
+							<div class="relative">
+								<div class="relative">
+									<svg
+										class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400"
+										fill="none"
+										stroke="currentColor"
+										viewBox="0 0 24 24"
+										stroke-width="2"
+										aria-hidden="true"
+									>
+										<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+									</svg>
+									<input
+										type="text"
+										bind:value={tzQuery}
+										onfocus={openTzList}
+										oninput={() => {
+											tzOpen = true;
+											tzHighlight = 0;
+										}}
+										onkeydown={handleTzKeydown}
+										placeholder="Search timezone..."
+										aria-label="Search timezone"
+										autocomplete="off"
+										class="w-64 pl-8 pr-3 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+									/>
+								</div>
+								{#if tzOpen}
+									<ul
+										class="absolute z-20 mt-1 max-h-60 w-72 overflow-y-auto rounded-lg border border-gray-600 bg-gray-800 py-1 shadow-lg"
+										role="listbox"
+										aria-label="Timezone options"
+									>
+										{#each filteredTimezones as tz, i}
+											<li>
+												<button
+													type="button"
+													onclick={() => selectTz(tz)}
+													role="option"
+													aria-selected={tz === newTimezone}
+													class="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm cursor-pointer
+													{i === tzHighlight ? 'bg-blue-600/70 text-white' : 'text-gray-200 hover:bg-gray-700'}
+													{tz === newTimezone ? 'font-medium' : ''}"
+												>
+													<span>{tz}</span>
+													{#if tz === newTimezone}
+														<svg class="h-3.5 w-3.5 shrink-0 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
+															<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+														</svg>
+													{/if}
+												</button>
+											</li>
+										{:else}
+											<li class="px-3 py-2 text-sm text-gray-400">No matching timezone</li>
+										{/each}
+									</ul>
 								{/if}
-								{#each timezoneOptions as tz}
-									<option value={tz}>{tz}</option>
-								{/each}
-							</select>
+								<p class="mt-1 text-xs text-gray-400">
+									Current: <span class="text-gray-300">{newTimezone}</span>
+								</p>
+							</div>
 							<button
 								onclick={saveTimezone}
 								class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer"
@@ -249,6 +349,8 @@
 							<button
 								onclick={() => {
 									editingTimezone = false;
+									tzOpen = false;
+									tzQuery = '';
 									newTimezone = info!.timezone;
 								}}
 								class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer"
