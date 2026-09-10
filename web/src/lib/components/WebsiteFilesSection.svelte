@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, getCSRFToken } from '$lib/api';
-	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
+	import { createFileManagerAPI } from '$lib/file-manager.js';
 
 	interface FileEntry {
 		name: string;
@@ -16,7 +16,6 @@
 	interface WebsiteLite {
 		id: string;
 		domain: string;
-		document_root: string;
 		web_user: string;
 	}
 
@@ -162,7 +161,9 @@
 	// ─── API ──────────────────────────────────────────────────────────
 
 	async function loadFiles(path?: string) {
-		const requested = path ?? fileManagerStartPath(website.document_root, website.web_user);
+		// The tab always opens at the website root: the web user's home
+		// (e.g. web_example_com), not the document root subfolder.
+		const requested = path ?? '/';
 		filesLoading = true;
 		filesError = '';
 		try {

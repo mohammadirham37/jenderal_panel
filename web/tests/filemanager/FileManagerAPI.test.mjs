@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 let createFileManagerAPI;
-let fileManagerStartPath;
 try {
-	({ createFileManagerAPI, fileManagerStartPath } = await import('../../src/lib/file-manager.js'));
+	({ createFileManagerAPI } = await import('../../src/lib/file-manager.js'));
 } catch {}
 
 function recordingAPI() {
@@ -51,13 +50,11 @@ test('file uploads send the CSRF token required by the API middleware', async ()
 	assert.match(page, /'X-CSRF-Token': getCSRFToken\(\)/);
 });
 
-test('file manager opens at the website document root', async () => {
-	assert.equal(typeof fileManagerStartPath, 'function');
-	assert.equal(fileManagerStartPath('/home/web_php_example/public', 'web_php_example'), '/public');
-	assert.equal(fileManagerStartPath('/home/web_laravel_example/app/public', 'web_laravel_example'), '/app/public');
-	assert.equal(fileManagerStartPath('/home/web_laravel_example', 'web_laravel_example'), '/');
-	assert.equal(fileManagerStartPath('/srv/custom/public', 'web_custom_example'), '/');
-
+test('the Files tab opens at the website root', async () => {
 	const section = await readFile(new URL('../../src/lib/components/WebsiteFilesSection.svelte', import.meta.url), 'utf8');
-	assert.match(section, /fileManagerStartPath\(website\.document_root, website\.web_user\)/);
+	// The website root ('/') is the web user's home (e.g. web_example_com),
+	// so the initial listing must not descend into the document root.
+	assert.doesNotMatch(section, /fileManagerStartPath/);
+	assert.match(section, /let currentPath = \$state\('\/'\)/);
+	assert.match(section, /onMount\(\(\) => loadFiles\(\)\)/);
 });

@@ -1,21 +1,4 @@
 /**
- * Converts an absolute website document root into the path expected by the
- * website-scoped file manager, whose root is the website account home.
- *
- * @param {string} documentRoot
- * @param {string} webUser
- */
-export function fileManagerStartPath(documentRoot, webUser) {
-	if (!documentRoot || !webUser) return '/';
-
-	const homePath = `/home/${webUser}`;
-	if (documentRoot === homePath) return '/';
-	if (!documentRoot.startsWith(`${homePath}/`)) return '/';
-
-	return documentRoot.slice(homePath.length);
-}
-
-/**
  * Creates the website-scoped file manager client using the backend's routes
  * and HTTP methods.
  *
