@@ -1176,10 +1176,10 @@
 												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration ? formatDuration(dep.duration) : '-'}</td>
 												<td class="px-4 py-2 text-sm text-gray-400">{formatDate(dep.created_at)}</td>
 											</tr>
-											{#if expandedDeploymentId === dep.id && dep.log}
+											{#if expandedDeploymentId === dep.id}
 												<tr>
 													<td colspan="5" class="px-4 py-2">
-														<pre class="text-xs text-gray-400 bg-gray-950 rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono">{dep.log}</pre>
+														<pre class="text-xs bg-gray-950 rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? 'Deployment failed. Check git repository URL, branch name, and deploy key configuration.' : 'No output captured.')}</pre>
 													</td>
 												</tr>
 											{/if}

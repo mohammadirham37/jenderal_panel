@@ -144,24 +144,37 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		return true
 	}
 
+	// Check for deploy key and set GIT_SSH_COMMAND if exists.
+	homeDir := "/home/" + webUser
+	deployKeyPath := homeDir + "/.ssh/deploy_key"
+	gitSSHCmd := ""
+	res, err := s.exec.Run(ctx, "test", "-f", deployKeyPath)
+	if err == nil && res.ExitCode == 0 {
+		gitSSHCmd = fmt.Sprintf("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' ", deployKeyPath)
+		appendLog("deploy key found", nil, nil)
+	}
+
 	// Step 1: Check if .git dir exists in document_root.
-	res, err := s.exec.Run(ctx, "test", "-d", docRoot+"/.git")
+	res, err = s.exec.Run(ctx, "test", "-d", docRoot+"/.git")
 	gitExists := err == nil && res.ExitCode == 0
 
-	// Step 2/3: Clone or pull.
+	// Step 2/3: Clone or pull (run as web_user via sudo -u).
 	if gitExists {
-		res, err = s.exec.RunSudo(ctx, "sudo", "-u", webUser, "git", "-C", docRoot, "pull", "origin", d.Branch)
+		shellCmd := fmt.Sprintf("cd %s && %sgit pull origin %s", docRoot, gitSSHCmd, d.Branch)
+		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git pull", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
 		}
 	} else {
-		res, err = s.exec.RunSudo(ctx, "sudo", "-u", webUser, "git", "clone", repo, docRoot)
+		shellCmd := fmt.Sprintf("%sgit clone %s %s", gitSSHCmd, repo, docRoot)
+		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git clone", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
 		}
-		res, err = s.exec.RunSudo(ctx, "sudo", "-u", webUser, "git", "-C", docRoot, "checkout", d.Branch)
+		shellCmd = fmt.Sprintf("cd %s && git checkout %s", docRoot, d.Branch)
+		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git checkout", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
@@ -179,7 +192,8 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	// Step 5: Check if composer.json exists and run composer install.
 	res, err = s.exec.Run(ctx, "test", "-f", docRoot+"/composer.json")
 	if err == nil && res.ExitCode == 0 {
-		res, err = s.exec.RunSudo(ctx, "sudo", "-u", webUser, "composer", "install", "--no-dev", "--no-interaction", "-d", docRoot)
+		shellCmd := fmt.Sprintf("cd %s && composer install --no-dev --no-interaction", docRoot)
+		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("composer install", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
@@ -190,17 +204,17 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	res, err = s.exec.Run(ctx, "test", "-f", docRoot+"/artisan")
 	if err == nil && res.ExitCode == 0 {
 		artisanCmds := []struct {
-			label string
-			args  []string
+			label, cmd string
 		}{
-			{"artisan migrate", []string{"sudo", "-u", webUser, "php", docRoot + "/artisan", "migrate", "--force"}},
-			{"artisan config:cache", []string{"sudo", "-u", webUser, "php", docRoot + "/artisan", "config:cache"}},
-			{"artisan route:cache", []string{"sudo", "-u", webUser, "php", docRoot + "/artisan", "route:cache"}},
-			{"artisan view:cache", []string{"sudo", "-u", webUser, "php", docRoot + "/artisan", "view:cache"}},
+			{"artisan migrate", "php artisan migrate --force"},
+			{"artisan config:cache", "php artisan config:cache"},
+			{"artisan route:cache", "php artisan route:cache"},
+			{"artisan view:cache", "php artisan view:cache"},
 		}
-		for _, cmd := range artisanCmds {
-			res, err = s.exec.RunSudo(ctx, cmd.args[0], cmd.args[1:]...)
-			if !appendLog(cmd.label, res, err) {
+		for _, ac := range artisanCmds {
+			shellCmd := fmt.Sprintf("cd %s && %s", docRoot, ac.cmd)
+			res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
+			if !appendLog(ac.label, res, err) {
 				s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 				return
 			}
