@@ -179,6 +179,34 @@ func (s *Service) findDirWithFile(ctx context.Context, w model.Website, name str
 	return ""
 }
 
+// usesNvmRuntime reports whether the command's binary is provided by the
+// website's NVM runtime rather than installed system-wide.
+func usesNvmRuntime(binary string) bool {
+	switch binary {
+	case "npm", "yarn", "pnpm", "node":
+		return true
+	default:
+		return false
+	}
+}
+
+// buildCommandScript assembles the shell command the task runner executes as
+// the website user. Node.js package managers live inside the website's NVM
+// runtime (~/.nvm), which a non-interactive shell does not load, so they run
+// through nvm-exec with an actionable error when the runtime is missing.
+func buildCommandScript(w model.Website, workDir string, args []string) string {
+	joined := strings.Join(args, " ")
+	home := "/home/" + w.WebUser
+	if !usesNvmRuntime(args[0]) {
+		return "cd " + workDir + " && " + joined
+	}
+	nvmDir := home + "/.nvm"
+	return fmt.Sprintf(
+		"cd %[1]s && if [ -x %[2]s/nvm-exec ]; then NVM_DIR=%[2]s %[2]s/nvm-exec %[3]s; else echo \"Node.js runtime is not installed for this website — install it from the website detail page first\"; exit 127; fi",
+		workDir, nvmDir, joined,
+	)
+}
+
 // RunCommand executes a predefined command against a website in the
 // background. The command must be present in the allowedCommands map. Returns
 // the background task ID.
@@ -206,7 +234,7 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 		}
 	}
 
-	shellCmd := "cd " + workDir + " && " + strings.Join(args, " ")
+	shellCmd := buildCommandScript(w, workDir, args)
 
 	taskID := tr.Run(
 		command+" ("+w.Domain+")",

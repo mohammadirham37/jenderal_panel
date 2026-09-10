@@ -13,6 +13,41 @@
 	let editingHostname = $state(false);
 	let editingTimezone = $state(false);
 
+	const fallbackTimezones = [
+		'Asia/Jakarta',
+		'Asia/Makassar',
+		'Asia/Jayapura',
+		'Asia/Singapore',
+		'Asia/Kuala_Lumpur',
+		'Asia/Bangkok',
+		'Asia/Manila',
+		'Asia/Tokyo',
+		'Asia/Seoul',
+		'Asia/Shanghai',
+		'Asia/Kolkata',
+		'Asia/Dubai',
+		'Australia/Perth',
+		'Australia/Sydney',
+		'Europe/London',
+		'Europe/Paris',
+		'Europe/Berlin',
+		'Europe/Moscow',
+		'America/New_York',
+		'America/Chicago',
+		'America/Denver',
+		'America/Los_Angeles',
+		'UTC'
+	];
+
+	// Full IANA list when the browser provides it; keeps users from typos.
+	const timezoneOptions: string[] = (() => {
+		try {
+			const supported = (Intl as unknown as { supportedValuesOf?: (kind: 'timeZone') => string[] }).supportedValuesOf?.('timeZone');
+			if (supported && supported.length > 0) return supported;
+		} catch { /* older runtime */ }
+		return fallbackTimezones;
+	})();
+
 	async function loadInfo() {
 		try {
 			info = await api.get<ServerInfo>('/api/v1/server/info');
@@ -193,12 +228,18 @@
 					<div class="text-xs text-gray-400 uppercase tracking-wider">Timezone</div>
 					{#if editingTimezone}
 						<div class="flex items-center gap-2 mt-1">
-							<input
-								type="text"
+							<select
 								bind:value={newTimezone}
-								placeholder="e.g. Asia/Jakarta"
-								class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-							/>
+								aria-label="Timezone"
+								class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 max-w-xs"
+							>
+								{#if !timezoneOptions.includes(newTimezone)}
+									<option value={newTimezone}>{newTimezone}</option>
+								{/if}
+								{#each timezoneOptions as tz}
+									<option value={tz}>{tz}</option>
+								{/each}
+							</select>
 							<button
 								onclick={saveTimezone}
 								class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer"
