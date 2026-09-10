@@ -299,6 +299,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/run-command", websiteHandler.RunCommand)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/upload-deploy", websiteHandler.UploadDeploy)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/repair-layout", websiteHandler.RepairLayout)
 
 			// PHP
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).

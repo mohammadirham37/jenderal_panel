@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,6 +14,68 @@ import (
 )
 
 const sqliteExtensionMissingExitCode = 42
+
+// RepairProjectLayout fixes websites whose git repository was deployed into
+// the document root (<home>/app/public) instead of the project root
+// (<home>/app). It moves the misplaced repository up one level, restoring the
+// Laravel layout where Laravel's public/ directory is the nginx root.
+func (s *Service) RepairProjectLayout(ctx context.Context, websiteID string) (string, error) {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return "", err
+	}
+
+	home := "/home/" + w.WebUser
+	docRoot := filepath.Clean(w.DocumentRoot)
+	projectRoot := filepath.Join(home, "app")
+	if docRoot != projectRoot+"/public" {
+		return "", model.NewValidationError("this website does not use the nested Laravel layout (document root must be <home>/app/public)")
+	}
+
+	script := fmt.Sprintf(`set -e
+cd %[1]s
+[ -d public/.git ] || { echo 'No misplaced git repository found in public/'; exit 1; }
+[ -d public/public ] || { echo 'The repository has no public/ directory; refusing to move'; exit 1; }
+[ ! -e public-misplaced ] || { echo 'public-misplaced already exists — remove it first'; exit 1; }
+mv public public-misplaced
+shopt -s dotglob
+mv public-misplaced/* .
+rmdir public-misplaced
+echo 'Project moved to %[1]s; Laravel public/ is now the document root.'
+`, projectRoot)
+
+	unlock := s.mutations.Lock(websiteID)
+	defer unlock()
+
+	res, err := s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", script, w.WebUser)
+	if err != nil {
+		return "", fmt.Errorf("repair layout: %w", err)
+	}
+	output := strings.TrimSpace(res.Stdout + "\n" + res.Stderr)
+	if res.ExitCode != 0 {
+		return "", model.NewValidationError("repair layout failed: " + output)
+	}
+
+	if _, err := s.exec.RunSudo(ctx, "chown", "-R", w.WebUser+":"+w.WebUser, projectRoot); err != nil {
+		return "", fmt.Errorf("repair layout chown: %w", err)
+	}
+
+	return output, nil
+}
+
+// RepairLayout handles POST /api/websites/{id}/repair-layout.
+func (h *Handler) RepairLayout(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	output, err := h.svc.RepairProjectLayout(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "website.repair_layout", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"output": output})
+}
 
 func (i *Installer) installLaravelSQLiteExtension(ctx context.Context, row websiteRow, progress func(string, string) error) error {
 	if !supportedPHP(row.PHPVersion) {

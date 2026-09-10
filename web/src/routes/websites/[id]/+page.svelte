@@ -128,6 +128,7 @@
 	let uploadDeployFile: HTMLInputElement;
 	let uploadDeployTaskId = $state('');
 	let uploadingDeploy = $state(false);
+	let repairingLayout = $state(false);
 
 	let deployments = $state<DeploymentEntry[]>([]);
 	let deploymentsLoading = $state(false);
@@ -430,6 +431,21 @@
 			actionError = err instanceof Error ? err.message : 'Failed to start deployment';
 		} finally {
 			deploying = false;
+		}
+	}
+
+	async function repairLayout() {
+		if (!website) return;
+		if (!confirm('Move the git repository from app/public up to app/ so nginx serves the correct index.php? The site may briefly error during the move.')) return;
+		repairingLayout = true;
+		actionMsg = ''; actionError = '';
+		try {
+			const data = await api.post<{ output: string }>(`/api/v1/websites/${website.id}/repair-layout`, {});
+			actionMsg = data.output || 'Directory layout fixed.';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to repair directory layout';
+		} finally {
+			repairingLayout = false;
 		}
 	}
 
@@ -1339,6 +1355,19 @@
 								{/if}
 							</div>
 						</div>
+
+						{#if website.framework === 'laravel'}
+							<div class="pt-4 border-t border-gray-700">
+								<button
+									onclick={repairLayout}
+									disabled={repairingLayout}
+									class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>
+									{repairingLayout ? 'Fixing...' : 'Fix Directory Layout'}
+								</button>
+								<p class="text-xs text-gray-500 mt-2">Moves a git repository that was cloned into app/public up to app/ so nginx finds index.php. Use this if the site returns 403 after a git deploy.</p>
+							</div>
+						{/if}
 					</div>
 
 					<!-- Upload Files -->

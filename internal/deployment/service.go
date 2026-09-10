@@ -164,30 +164,36 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	if err == nil && res.ExitCode == 0 {
 		gitSSHCmd = fmt.Sprintf("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' ", deployKeyPath)
 		appendLog("deploy key found", nil, nil)
-	} else if strings.HasPrefix(repo, "git@") {
-		appendLog(fmt.Sprintf("deploy key not found at %s but repo is SSH (private) — clone may fail; generate a deploy key for this website", deployKeyPath), nil, nil)
 	}
 
-	// Step 1: Check if .git dir exists in document_root.
-	res, err = s.exec.Run(ctx, "test", "-d", docRoot+"/.git")
+	// The nginx root (document root) may be nested inside the project root:
+	// Laravel sites live in <home>/app with document root <home>/app/public.
+	// Git and build steps must operate on the project root.
+	projectRoot := docRoot
+	if docRoot == homeDir+"/app/public" {
+		projectRoot = homeDir + "/app"
+	}
+
+	// Step 1: Check if .git dir exists in the project root.
+	res, err = s.exec.Run(ctx, "test", "-d", projectRoot+"/.git")
 	gitExists := err == nil && res.ExitCode == 0
 
 	// Step 2/3: Clone or pull (run as web_user via sudo -u).
 	if gitExists {
-		shellCmd := fmt.Sprintf("cd %s && %sgit pull origin %s", docRoot, gitSSHCmd, d.Branch)
+		shellCmd := fmt.Sprintf("cd %s && %sgit pull origin %s", projectRoot, gitSSHCmd, d.Branch)
 		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git pull", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
 		}
 	} else {
-		shellCmd := fmt.Sprintf("%sgit clone %s %s", gitSSHCmd, repo, docRoot)
+		shellCmd := fmt.Sprintf("%sgit clone %s %s", gitSSHCmd, repo, projectRoot)
 		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git clone", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
 		}
-		shellCmd = fmt.Sprintf("cd %s && git checkout %s", docRoot, d.Branch)
+		shellCmd = fmt.Sprintf("cd %s && git checkout %s", projectRoot, d.Branch)
 		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git checkout", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
@@ -196,8 +202,8 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Step 4: Get commit hash (run as web_user to avoid git "dubious
-	// ownership" errors on the document root).
-	revCmd := fmt.Sprintf("cd %s && git rev-parse --short HEAD", docRoot)
+	// ownership" errors on the project root).
+	revCmd := fmt.Sprintf("cd %s && git rev-parse --short HEAD", projectRoot)
 	res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", revCmd, webUser)
 	commitHash := ""
 	if err == nil && res.ExitCode == 0 {
@@ -206,9 +212,9 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	appendLog("git rev-parse", res, err)
 
 	// Step 5: Check if composer.json exists and run composer install.
-	res, err = s.exec.Run(ctx, "test", "-f", docRoot+"/composer.json")
+	res, err = s.exec.Run(ctx, "test", "-f", projectRoot+"/composer.json")
 	if err == nil && res.ExitCode == 0 {
-		shellCmd := fmt.Sprintf("cd %s && composer install --no-dev --no-interaction", docRoot)
+		shellCmd := fmt.Sprintf("cd %s && composer install --no-dev --no-interaction", projectRoot)
 		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("composer install", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
@@ -217,7 +223,7 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Step 6: Check if artisan exists and run Laravel commands.
-	res, err = s.exec.Run(ctx, "test", "-f", docRoot+"/artisan")
+	res, err = s.exec.Run(ctx, "test", "-f", projectRoot+"/artisan")
 	if err == nil && res.ExitCode == 0 {
 		artisanCmds := []struct {
 			label, cmd string
@@ -228,7 +234,7 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 			{"artisan view:cache", "php artisan view:cache"},
 		}
 		for _, ac := range artisanCmds {
-			shellCmd := fmt.Sprintf("cd %s && %s", docRoot, ac.cmd)
+			shellCmd := fmt.Sprintf("cd %s && %s", projectRoot, ac.cmd)
 			res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 			if !appendLog(ac.label, res, err) {
 				s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
@@ -237,11 +243,19 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		}
 	}
 
-	// Step 7: chown document root.
-	res, err = s.exec.RunSudo(ctx, "chown", "-R", webUser+":"+webUser, docRoot)
+	// Step 7: chown the project root (covers a nested document root) and
+	// the document root itself.
+	res, err = s.exec.RunSudo(ctx, "chown", "-R", webUser+":"+webUser, projectRoot)
 	if !appendLog("chown", res, err) {
 		s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 		return
+	}
+	if docRoot != projectRoot {
+		res, err = s.exec.RunSudo(ctx, "chown", "-R", webUser+":"+webUser, docRoot)
+		if !appendLog("chown document root", res, err) {
+			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
+			return
+		}
 	}
 
 	// Success — update status.
