@@ -3,10 +3,10 @@
 	import { page } from '$app/state';
 	import { goto, replaceState } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
-	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
 	import { decodeTerminalMessage } from '$lib/terminal-message.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
+	import WebsiteFilesSection from '$lib/components/WebsiteFilesSection.svelte';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
@@ -27,19 +27,10 @@
 		status: string;
 		ssl_enabled: boolean;
 		framework: string;
+		nginx_profile?: string;
 		error_message?: string;
 		domains?: WebsiteDomain[];
 		created_at: string;
-	}
-
-	interface FileEntry {
-		name: string;
-		path: string;
-		is_dir: boolean;
-		size: number;
-		permissions: string;
-		owner: string;
-		mod_time: string;
 	}
 
 	interface CommandPreset {
@@ -169,28 +160,7 @@
 	let terminalOutputEl: HTMLTextAreaElement;
 
 	// ─── Files ────────────────────────────────────────────────────────
-
-	let files = $state<FileEntry[]>([]);
-	let currentPath = $state('/');
-	let filesLoading = $state(false);
-	let filesError = $state('');
-	let fileActionMsg = $state('');
-	let fileActionError = $state('');
-	let filesInitialized = $state(false);
-
-	let editingFile = $state<string | null>(null);
-	let editFileContent = $state('');
-	let editFileLoading = $state(false);
-
-	let showCreateDir = $state(false);
-	let newDirName = $state('');
-	let showCreateFile = $state(false);
-	let newFileName = $state('');
-
-	let renamingFile = $state<string | null>(null);
-	let renameValue = $state('');
-
-	let uploadInput: HTMLInputElement;
+	// The Files tab renders WebsiteFilesSection, which owns its own state.
 
 	// ─── Logs ─────────────────────────────────────────────────────────
 
@@ -208,6 +178,54 @@
 	let configError = $state('');
 	let configSaveMsg = $state('');
 	let configInitialized = $state(false);
+
+	// Nginx template engine
+	let profileChoice = $state('');
+	let profileSaving = $state(false);
+
+	const profileOptions: { value: string; label: string; description: string }[] = [
+		{ value: '', label: 'Auto (from app type)', description: 'Derives the template from the detected framework — recommended default.' },
+		{ value: 'php', label: 'Generic PHP', description: 'Standard PHP front-controller: try_files to index.php, all .php files executed.' },
+		{ value: 'laravel', label: 'Laravel', description: 'Hardened: only /index.php is executable, security headers, dotfiles blocked except .well-known.' },
+		{ value: 'codeigniter3', label: 'CodeIgniter 3', description: 'CI3 routing with 404 fallback to index.php.' },
+		{ value: 'codeigniter4', label: 'CodeIgniter 4', description: 'CI4 front-controller routing via index.php.' },
+		{ value: 'static', label: 'Static', description: 'Pure static files — no PHP handling at all.' }
+	];
+
+	let effectiveProfileLabel = $derived.by(() => {
+		if (!website) return '—';
+		const effective = website.nginx_profile || deriveAutoProfile(website);
+		const opt = profileOptions.find((o) => o.value === effective);
+		return opt ? opt.label : effective;
+	});
+
+	function deriveAutoProfile(w: Website): string {
+		if (w.app_type === 'static') return 'static';
+		if (w.framework === 'laravel' || w.app_type === 'laravel') return 'laravel';
+		return 'php';
+	}
+
+	let selectedProfileDescription = $derived(
+		profileOptions.find((o) => o.value === profileChoice)?.description || ''
+	);
+
+	async function applyNginxProfile() {
+		if (!website || profileSaving) return;
+		profileSaving = true;
+		configError = '';
+		configSaveMsg = '';
+		try {
+			await api.put(`/api/v1/websites/${website.id}/nginx-profile`, { profile: profileChoice });
+			configSaveMsg = profileChoice
+				? `Template set to "${profileOptions.find((o) => o.value === profileChoice)?.label}" — vhost regenerated.`
+				: 'Template reset to automatic — vhost regenerated.';
+			await Promise.all([loadWebsite(), loadConfig()]);
+		} catch (err) {
+			configError = err instanceof Error ? err.message : 'Failed to apply template';
+		} finally {
+			profileSaving = false;
+		}
+	}
 
 	// ─── Domains ──────────────────────────────────────────────────────
 
@@ -253,11 +271,6 @@
 		let size = bytes;
 		while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
 		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-	}
-
-	function isTextFile(name: string): boolean {
-		const ext = name.split('.').pop()?.toLowerCase() || '';
-		return ['txt','html','css','js','ts','json','xml','yml','yaml','md','conf','cfg','ini','log','sh','bash','php','py','rb','env','htaccess','svg'].includes(ext);
 	}
 
 	function formatDuration(seconds: number): string {
@@ -720,163 +733,7 @@
 		connectTerminal();
 	}
 
-	// Files
-	async function loadFiles(path?: string) {
-		if (!website) return;
-		const requestedPath = path ?? fileManagerStartPath(website.document_root, website.web_user);
-		filesLoading = true;
-		filesError = '';
-		try {
-			const data = await createFileManagerAPI(api, website.id).browse(requestedPath) as FileEntry[];
-			files = data || [];
-			currentPath = requestedPath;
-		} catch (err) {
-			filesError = err instanceof Error ? err.message : 'Failed to load files';
-		} finally {
-			filesLoading = false;
-		}
-	}
-
-	function navigateTo(name: string) {
-		const newPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-		loadFiles(newPath);
-	}
-
-	function navigateUp() {
-		const parts = currentPath.split('/').filter(Boolean);
-		parts.pop();
-		loadFiles(parts.length === 0 ? '/' : '/' + parts.join('/'));
-	}
-
-	function breadcrumbParts(): { name: string; path: string }[] {
-		const parts = currentPath.split('/').filter(Boolean);
-		const result = [{ name: '/', path: '/' }];
-		let accumulated = '';
-		for (const part of parts) {
-			accumulated += '/' + part;
-			result.push({ name: part, path: accumulated });
-		}
-		return result;
-	}
-
-	async function openFileEdit(name: string) {
-		if (!website) return;
-		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-		editFileLoading = true;
-		editingFile = filePath;
-		editFileContent = '';
-		try {
-			const data = await createFileManagerAPI(api, website.id).read(filePath) as { content: string };
-			editFileContent = data.content || '';
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to read file';
-			editingFile = null;
-		} finally {
-			editFileLoading = false;
-		}
-	}
-
-	async function saveFileEdit() {
-		if (!website || !editingFile) return;
-		fileActionMsg = ''; fileActionError = '';
-		try {
-			await createFileManagerAPI(api, website.id).write(editingFile, editFileContent);
-			fileActionMsg = 'File saved.';
-			editingFile = null;
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to save file';
-		}
-	}
-
-	async function deleteFile(name: string) {
-		if (!website) return;
-		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-		fileActionMsg = ''; fileActionError = '';
-		try {
-			await createFileManagerAPI(api, website.id).remove(filePath);
-			fileActionMsg = `"${name}" deleted.`;
-			await loadFiles(currentPath);
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to delete file';
-		}
-	}
-
-	async function createDir() {
-		if (!website || !newDirName.trim()) return;
-		const dirPath = currentPath === '/' ? `/${newDirName}` : `${currentPath}/${newDirName}`;
-		fileActionMsg = ''; fileActionError = '';
-		try {
-			await createFileManagerAPI(api, website.id).mkdir(dirPath);
-			fileActionMsg = `Directory "${newDirName}" created.`;
-			newDirName = '';
-			showCreateDir = false;
-			await loadFiles(currentPath);
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to create directory';
-		}
-	}
-
-	async function createFile() {
-		if (!website || !newFileName.trim()) return;
-		const filePath = currentPath === '/' ? `/${newFileName}` : `${currentPath}/${newFileName}`;
-		fileActionMsg = ''; fileActionError = '';
-		try {
-			await createFileManagerAPI(api, website.id).write(filePath, '');
-			fileActionMsg = `File "${newFileName}" created.`;
-			newFileName = '';
-			showCreateFile = false;
-			await loadFiles(currentPath);
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to create file';
-		}
-	}
-
-	async function renameFile(oldName: string) {
-		if (!website || !renameValue.trim()) return;
-		const oldPath = currentPath === '/' ? `/${oldName}` : `${currentPath}/${oldName}`;
-		const newPath = currentPath === '/' ? `/${renameValue}` : `${currentPath}/${renameValue}`;
-		fileActionMsg = ''; fileActionError = '';
-		try {
-			await createFileManagerAPI(api, website.id).rename(oldPath, newPath);
-			fileActionMsg = `Renamed "${oldName}" to "${renameValue}".`;
-			renamingFile = null;
-			renameValue = '';
-			await loadFiles(currentPath);
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to rename';
-		}
-	}
-
-	async function uploadFile(event: Event) {
-		if (!website) return;
-		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-		if (!file) return;
-		fileActionMsg = ''; fileActionError = '';
-		try {
-			const formData = new FormData();
-			formData.append('file', file);
-			formData.append('path', currentPath);
-			const res = await fetch(`/api/v1/websites/${website.id}/files/upload`, {
-				method: 'POST',
-				headers: { 'X-CSRF-Token': getCSRFToken() },
-				credentials: 'include',
-				body: formData
-			});
-			if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
-			fileActionMsg = `"${file.name}" uploaded.`;
-			input.value = '';
-			await loadFiles(currentPath);
-		} catch (err) {
-			fileActionError = err instanceof Error ? err.message : 'Failed to upload file';
-		}
-	}
-
-	function downloadFile(name: string) {
-		if (!website) return;
-		const filePath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
-		window.open(`/api/v1/websites/${website.id}/files/download?path=${encodeURIComponent(filePath)}`, '_blank');
-	}
+	// Files: handled by WebsiteFilesSection.
 
 	// Logs
 	async function loadLogs(type: 'access' | 'error') {
@@ -999,13 +856,6 @@
 	});
 
 	$effect(() => {
-		if (activeTab === 'Files' && !filesInitialized && website) {
-			filesInitialized = true;
-			loadFiles();
-		}
-	});
-
-	$effect(() => {
 		if (activeTab === 'Logs' && !logsInitialized && website) {
 			logsInitialized = true;
 			loadLogs(logTab);
@@ -1015,6 +865,7 @@
 	$effect(() => {
 		if (activeTab === 'Config' && !configInitialized && website) {
 			configInitialized = true;
+			profileChoice = website.nginx_profile || '';
 			loadConfig();
 		}
 	});
@@ -1633,167 +1484,7 @@
 			<!-- FILES TAB                                                     -->
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Files'}
-				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-					<h3 class="text-lg font-semibold text-white mb-3">File Manager</h3>
-
-					{#if fileActionMsg}
-						<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-							{fileActionMsg}
-							<button onclick={() => (fileActionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-						</div>
-					{/if}
-
-					{#if fileActionError}
-						<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-							{fileActionError}
-							<button onclick={() => (fileActionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-						</div>
-					{/if}
-
-					{#if editingFile}
-						<div class="space-y-3">
-							<div class="flex items-center justify-between">
-								<span class="text-sm text-gray-300 font-mono">{editingFile}</span>
-								<button onclick={() => (editingFile = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Back</button>
-							</div>
-							{#if editFileLoading}
-								<div class="text-gray-400 text-sm">Loading file...</div>
-							{:else}
-								<textarea
-									bind:value={editFileContent}
-									rows={20}
-									class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-								></textarea>
-								<button onclick={saveFileEdit} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
-									Save File
-								</button>
-							{/if}
-						</div>
-					{:else}
-						<!-- Breadcrumb -->
-						<div class="flex items-center gap-1 mb-3 text-sm">
-							{#each breadcrumbParts() as part, i}
-								{#if i > 0}
-									<span class="text-gray-500">/</span>
-								{/if}
-								<button
-									onclick={() => loadFiles(part.path)}
-									class="text-blue-400 hover:text-blue-300 cursor-pointer font-mono"
-								>
-									{part.name}
-								</button>
-							{/each}
-						</div>
-
-						<!-- Toolbar -->
-						<div class="flex flex-wrap gap-2 mb-3">
-							<input type="file" bind:this={uploadInput} onchange={uploadFile} class="hidden" />
-							<button onclick={() => uploadInput.click()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Upload</button>
-							<button onclick={() => { showCreateDir = true; showCreateFile = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create Dir</button>
-							<button onclick={() => { showCreateFile = true; showCreateDir = false; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Create File</button>
-							<button onclick={() => loadFiles(currentPath)} disabled={filesLoading} class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer">
-								Refresh
-							</button>
-						</div>
-
-						{#if showCreateDir}
-							<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
-								<div>
-									<label for="new-dir" class="block text-xs text-gray-400 mb-1">Directory Name</label>
-									<input id="new-dir" type="text" bind:value={newDirName} placeholder="new-folder" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								</div>
-								<button onclick={createDir} disabled={!newDirName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
-								<button onclick={() => { showCreateDir = false; newDirName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
-							</div>
-						{/if}
-
-						{#if showCreateFile}
-							<div class="flex items-end gap-2 mb-3 p-3 bg-gray-900 rounded-lg">
-								<div>
-									<label for="new-file" class="block text-xs text-gray-400 mb-1">File Name</label>
-									<input id="new-file" type="text" bind:value={newFileName} placeholder="index.html" class="px-3 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								</div>
-								<button onclick={createFile} disabled={!newFileName.trim()} class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">Create</button>
-								<button onclick={() => { showCreateFile = false; newFileName = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
-							</div>
-						{/if}
-
-						{#if filesError}
-							<div class="mb-2 text-red-400 text-sm">{filesError}</div>
-						{/if}
-
-						{#if filesLoading}
-							<div class="text-gray-400 text-sm">Loading files...</div>
-						{:else if files.length === 0}
-							<div class="text-gray-400 text-sm">Empty directory.</div>
-						{:else}
-							<div class="overflow-x-auto">
-								<table class="w-full">
-									<thead>
-										<tr class="border-b border-gray-700">
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Permissions</th>
-											<th class="text-right px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
-										</tr>
-									</thead>
-									<tbody class="divide-y divide-gray-700">
-										{#if currentPath !== '/'}
-											<tr class="hover:bg-gray-750">
-												<td class="px-4 py-2" colspan="5">
-													<button onclick={navigateUp} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">..</button>
-												</td>
-											</tr>
-										{/if}
-										{#each files as entry}
-											<tr class="hover:bg-gray-750">
-												<td class="px-4 py-2">
-													{#if renamingFile === entry.name}
-														<div class="flex items-center gap-2">
-															<input type="text" bind:value={renameValue} class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-48" />
-															<button onclick={() => renameFile(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer">OK</button>
-															<button onclick={() => { renamingFile = null; renameValue = ''; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer">X</button>
-														</div>
-													{:else if entry.is_dir}
-														<button onclick={() => navigateTo(entry.name)} class="text-sm text-blue-400 hover:text-blue-300 cursor-pointer font-mono">{entry.name}</button>
-													{:else}
-														<span class="text-sm text-gray-200 font-mono">{entry.name}</span>
-													{/if}
-												</td>
-												<td class="px-4 py-2">
-													{#if entry.is_dir}
-														<svg class="w-4 h-4 text-yellow-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-															<path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z" />
-														</svg>
-													{:else}
-														<svg class="w-4 h-4 text-gray-400 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-															<path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
-														</svg>
-													{/if}
-												</td>
-												<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.is_dir ? '-' : formatSize(entry.size)}</td>
-												<td class="px-4 py-2 text-sm text-gray-400 font-mono">{entry.permissions}</td>
-												<td class="px-4 py-2 text-right">
-													<div class="flex justify-end gap-1.5">
-														{#if !entry.is_dir && isTextFile(entry.name)}
-															<button onclick={() => openFileEdit(entry.name)} class="px-2 py-0.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Edit</button>
-														{/if}
-														<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Rename</button>
-														{#if !entry.is_dir}
-															<button onclick={() => downloadFile(entry.name)} class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Download</button>
-														{/if}
-														<button onclick={() => deleteFile(entry.name)} class="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>
-													</div>
-												</td>
-											</tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						{/if}
-					{/if}
-				</div>
+				<WebsiteFilesSection {website} />
 
 			<!-- ============================================================ -->
 			<!-- TERMINAL TAB                                                  -->
@@ -1896,42 +1587,84 @@
 			<!-- CONFIG TAB                                                    -->
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Config'}
-				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-					<h3 class="text-lg font-semibold text-white mb-3">Nginx Configuration</h3>
-
-					{#if configError}
-						<div class="mb-2 text-red-400 text-sm">{configError}</div>
-					{/if}
-					{#if configSaveMsg}
-						<div class="mb-2 text-green-400 text-sm">
-							{configSaveMsg}
-							<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">Dismiss</button>
+				<div class="space-y-4">
+					<!-- Template Engine -->
+					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+						<div class="mb-1 flex items-center gap-2.5">
+							<h3 class="text-lg font-semibold text-white">Template Engine</h3>
+							<span class="rounded-full bg-blue-900/50 px-2.5 py-0.5 text-[11px] font-semibold text-blue-300">
+								{effectiveProfileLabel}
+							</span>
 						</div>
-					{/if}
+						<p class="mb-4 text-sm text-gray-400">
+							Choose which nginx template generates this site's vhost. Applying a template regenerates the configuration below — manual edits will be overwritten.
+						</p>
 
-					{#if configLoading}
-						<div class="text-gray-400 text-sm">Loading configuration...</div>
-					{:else}
-						<textarea
-							bind:value={configContent}
-							rows={20}
-							class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-						></textarea>
-						<div class="mt-2 flex gap-2">
+						<div class="flex flex-wrap items-start gap-3">
+							<div class="min-w-56 flex-1">
+								<label for="nginx-profile" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-400">Template</label>
+								<select
+									id="nginx-profile"
+									bind:value={profileChoice}
+									disabled={profileSaving}
+									class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+								>
+									{#each profileOptions as opt}
+										<option value={opt.value}>{opt.label}</option>
+									{/each}
+								</select>
+								{#if selectedProfileDescription}
+									<p class="mt-2 text-xs leading-5 text-gray-500">{selectedProfileDescription}</p>
+								{/if}
+							</div>
 							<button
-								onclick={saveConfig}
-								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								onclick={applyNginxProfile}
+								disabled={profileSaving || (website.nginx_profile || '') === profileChoice}
+								class="mt-6 cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 							>
-								Save Configuration
-							</button>
-							<button
-								onclick={loadConfig}
-								class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-							>
-								Reload
+								{profileSaving ? 'Applying…' : 'Apply & Regenerate'}
 							</button>
 						</div>
-					{/if}
+					</div>
+
+					<!-- Manual editor -->
+					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+						<h3 class="text-lg font-semibold text-white mb-3">Nginx Configuration</h3>
+
+						{#if configError}
+							<div class="mb-2 text-red-400 text-sm">{configError}</div>
+						{/if}
+						{#if configSaveMsg}
+							<div class="mb-2 text-green-400 text-sm">
+								{configSaveMsg}
+								<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">Dismiss</button>
+							</div>
+						{/if}
+
+						{#if configLoading}
+							<div class="text-gray-400 text-sm">Loading configuration...</div>
+						{:else}
+							<textarea
+								bind:value={configContent}
+								rows={20}
+								class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+							></textarea>
+							<div class="mt-2 flex gap-2">
+								<button
+									onclick={saveConfig}
+									class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>
+									Save Configuration
+								</button>
+								<button
+									onclick={loadConfig}
+									class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+								>
+									Reload
+								</button>
+							</div>
+						{/if}
+					</div>
 				</div>
 
 			<!-- ============================================================ -->

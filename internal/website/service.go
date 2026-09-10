@@ -323,7 +323,8 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
-		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log, created_at, updated_at
+		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
+		        nginx_profile, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -348,7 +349,8 @@ func (s *Service) List(ctx context.Context) ([]model.Website, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
-		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log, created_at, updated_at
+		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
+		        nginx_profile, created_at, updated_at
 		 FROM websites ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
@@ -692,6 +694,39 @@ func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
 	return nil
 }
 
+// SetNginxProfile sets the per-website nginx template override and regenerates
+// the vhost config from the selected template. An empty profile returns to
+// automatic selection based on the app type.
+func (s *Service) SetNginxProfile(ctx context.Context, id, profile string) (model.Website, error) {
+	if !IsValidNginxProfile(profile) {
+		return model.Website{}, model.NewValidationError("unsupported nginx profile: "+profile)
+	}
+
+	unlock := s.mutations.Lock(id)
+	defer unlock()
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE websites SET nginx_profile = ?, updated_at = ? WHERE id = ?`,
+		profile, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return model.Website{}, fmt.Errorf("update nginx profile: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return model.Website{}, model.ErrNotFound
+	}
+
+	w, err := s.Get(ctx, id)
+	if err != nil {
+		return model.Website{}, err
+	}
+
+	if err := s.regenerateConfig(ctx, w, ""); err != nil {
+		return model.Website{}, fmt.Errorf("regenerate vhost from template: %w", err)
+	}
+
+	return w, nil
+}
+
 // AddDomain adds an alias or subdomain to a website and regenerates the nginx config.
 func (s *Service) AddDomain(ctx context.Context, websiteID, name, domainType string) error {
 	unlock := s.mutations.Lock(websiteID)
@@ -858,7 +893,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		LogDir:            logDir,
 		PHPVersion:        w.PHPVersion,
 		AppType:           w.AppType,
-		Profile:           NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType),
+		Profile:           NginxProfileForWebsite(w),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
@@ -1059,7 +1094,8 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
-		&projectVariant, &setupMode, &provisionStage, &provisionLog, &createdStr, &updatedStr,
+		&projectVariant, &setupMode, &provisionStage, &provisionLog,
+		&w.NginxProfile, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1086,7 +1122,8 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
-		&projectVariant, &setupMode, &provisionStage, &provisionLog, &createdStr, &updatedStr,
+		&projectVariant, &setupMode, &provisionStage, &provisionLog,
+		&w.NginxProfile, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err

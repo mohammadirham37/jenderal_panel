@@ -275,6 +275,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/config", websiteHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/config", websiteHandler.SaveConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/nginx-profile", websiteHandler.SetNginxProfile)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/access", websiteHandler.AccessLog)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).

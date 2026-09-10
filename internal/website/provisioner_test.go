@@ -51,6 +51,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		,provision_stage TEXT NOT NULL DEFAULT ''
 		,provision_log TEXT NOT NULL DEFAULT ''
 		,node_version TEXT NOT NULL DEFAULT '24'
+		,nginx_profile TEXT NOT NULL DEFAULT ''
 	);
 	CREATE TABLE IF NOT EXISTS domains (
 		id         TEXT PRIMARY KEY,

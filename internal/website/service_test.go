@@ -217,6 +217,71 @@ func TestCreatePersistsDerivedProfileAndCanonicalRoot(t *testing.T) {
 	}
 }
 
+func TestSetNginxProfileValidatesAndPersistsOverride(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var rendered string
+	mockResult := func() (*executor.Result, error) { return &executor.Result{ExitCode: 0}, nil }
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) { return mockResult() },
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// Capture the rendered vhost at the moment regeneration copies it
+			// out; the temp file is removed as soon as the call returns.
+			if name == "cp" && len(args) >= 2 && strings.Contains(args[0], "jenderal_website_regen_") {
+				if raw, readErr := os.ReadFile(args[0]); readErr == nil {
+					rendered = string(raw)
+				}
+			}
+			return mockResult()
+		},
+	}
+	svc := NewService(db, mock, nil)
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "app.example.com", Template: "php", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if _, err := svc.SetNginxProfile(context.Background(), created.ID, "wordpress"); err == nil {
+		t.Fatal("SetNginxProfile() with unsupported profile should fail")
+	}
+
+	if _, err := svc.SetNginxProfile(context.Background(), "missing", "laravel"); err == nil {
+		t.Fatal("SetNginxProfile() for missing website should fail")
+	}
+
+	updated, err := svc.SetNginxProfile(context.Background(), created.ID, "laravel")
+	if err != nil {
+		t.Fatalf("SetNginxProfile() error = %v", err)
+	}
+	if updated.NginxProfile != "laravel" {
+		t.Fatalf("NginxProfile = %q, want laravel", updated.NginxProfile)
+	}
+	if got := NginxProfileForWebsite(updated); got != "laravel" {
+		t.Fatalf("effective profile = %q, want laravel", got)
+	}
+
+	if rendered == "" {
+		t.Fatal("regeneration did not write a vhost config")
+	}
+	if !strings.Contains(rendered, "internal;") {
+		t.Fatal("rendered vhost does not use the laravel hardened PHP block")
+	}
+
+	// Clearing the override returns to automatic selection.
+	updated, err = svc.SetNginxProfile(context.Background(), created.ID, "")
+	if err != nil {
+		t.Fatalf("SetNginxProfile(clear) error = %v", err)
+	}
+	if updated.NginxProfile != "" {
+		t.Fatalf("NginxProfile after clear = %q, want empty", updated.NginxProfile)
+	}
+	if got := NginxProfileForWebsite(updated); got != "php" {
+		t.Fatalf("effective profile after clear = %q, want php", got)
+	}
+}
+
 func TestListCompletesWithSingleSQLiteConnection(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

@@ -1,0 +1,1 @@
+ALTER TABLE websites ADD COLUMN nginx_profile TEXT NOT NULL DEFAULT '';

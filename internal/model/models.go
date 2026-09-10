@@ -160,6 +160,7 @@ type Website struct {
 	SetupMode        string    `json:"setup_mode"`
 	ProvisionStage   string    `json:"provision_stage"`
 	ProvisionLog     string    `json:"provision_log"`
+	NginxProfile     string    `json:"nginx_profile"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	Domains          []Domain  `json:"domains,omitempty"`

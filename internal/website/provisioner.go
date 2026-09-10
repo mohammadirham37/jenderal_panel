@@ -258,7 +258,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		LogDir:            logDir,
 		PHPVersion:        w.PHPVersion,
 		AppType:           w.AppType,
-		Profile:           NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType),
+		Profile:           resolveNginxProfile(w.NginxProfile, w.Framework, w.FrameworkVersion, w.AppType),
 		IPv6:              p.ipv6Available(),
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 	}
@@ -651,6 +651,7 @@ type websiteRow struct {
 	SetupMode        string
 	ProvisionStage   string
 	ProvisionLog     string
+	NginxProfile     string
 }
 
 // domainRow holds the fields of a domain for provisioning.
@@ -665,10 +666,12 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	var phpVersion, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	err := p.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
-		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log
+		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
+		        nginx_profile
 		 FROM websites WHERE id = ?`, id,
 	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser,
-		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog)
+		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog,
+		&w.NginxProfile)
 	if err != nil {
 		return w, err
 	}

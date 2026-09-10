@@ -230,6 +230,36 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 	return "php"
 }
 
+// ValidNginxProfiles lists the renderer profiles an operator may force for a
+// website. The empty string means "derive from the app type automatically".
+var ValidNginxProfiles = []string{"", "php", "static", "laravel", "codeigniter3", "codeigniter4"}
+
+// IsValidNginxProfile reports whether profile is an allowed override value.
+func IsValidNginxProfile(profile string) bool {
+	for _, p := range ValidNginxProfiles {
+		if p == profile {
+			return true
+		}
+	}
+	return false
+}
+
+// NginxProfileForWebsite prefers the operator-selected profile override and
+// falls back to deriving one from the framework and app type.
+func NginxProfileForWebsite(w model.Website) string {
+	return resolveNginxProfile(w.NginxProfile, w.Framework, w.FrameworkVersion, w.AppType)
+}
+
+// resolveNginxProfile applies the override when set, otherwise derives the
+// profile. Shared by the service (model.Website) and the provisioner
+// (websiteRow), which load different row shapes.
+func resolveNginxProfile(override, framework, frameworkVersion, appType string) string {
+	if override != "" {
+		return override
+	}
+	return NginxProfileFor(framework, frameworkVersion, appType)
+}
+
 func valueOr(value, fallback string) string {
 	if strings.TrimSpace(value) == "" {
 		return fallback

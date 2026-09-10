@@ -50,6 +50,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		setup_mode TEXT NOT NULL DEFAULT 'config-only',
 		provision_stage TEXT NOT NULL DEFAULT '',
 		provision_log TEXT NOT NULL DEFAULT '',
+		nginx_profile TEXT NOT NULL DEFAULT '',
 		created_at    TEXT NOT NULL,
 		updated_at    TEXT NOT NULL
 	);

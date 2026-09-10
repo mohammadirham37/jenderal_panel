@@ -44,7 +44,10 @@ test('file manager client matches the backend route contract', async () => {
 
 test('file uploads send the CSRF token required by the API middleware', async () => {
 	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
-	assert.match(page, /import \{ api, getCSRFToken \} from '\$lib\/api'/);
+	const section = await readFile(new URL('../../src/lib/components/WebsiteFilesSection.svelte', import.meta.url), 'utf8');
+	assert.match(section, /import \{ api, getCSRFToken \} from '\$lib\/api'/);
+	assert.match(section, /'X-CSRF-Token': getCSRFToken\(\)/);
+	// The deployment upload card on the page still posts multipart forms too.
 	assert.match(page, /'X-CSRF-Token': getCSRFToken\(\)/);
 });
 
@@ -55,6 +58,6 @@ test('file manager opens at the website document root', async () => {
 	assert.equal(fileManagerStartPath('/home/web_laravel_example', 'web_laravel_example'), '/');
 	assert.equal(fileManagerStartPath('/srv/custom/public', 'web_custom_example'), '/');
 
-	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
-	assert.match(page, /fileManagerStartPath\(website\.document_root, website\.web_user\)/);
+	const section = await readFile(new URL('../../src/lib/components/WebsiteFilesSection.svelte', import.meta.url), 'utf8');
+	assert.match(section, /fileManagerStartPath\(website\.document_root, website\.web_user\)/);
 });

@@ -189,6 +189,31 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// SetNginxProfile handles PUT /api/websites/{id}/nginx-profile.
+func (h *Handler) SetNginxProfile(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Profile string `json:"profile"`
+	}
+	if err := httputil.DecodeJSON(r, &body); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	site, err := h.svc.SetNginxProfile(r.Context(), id, body.Profile)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "set_website_nginx_profile", id, "set nginx template profile to "+site.NginxProfile)
+	httputil.JSON(w, http.StatusOK, map[string]string{
+		"status":    "ok",
+		"profile":   site.NginxProfile,
+		"effective": NginxProfileForWebsite(site),
+	})
+}
+
 // AddDomain handles POST /api/websites/{id}/domains.
 func (h *Handler) AddDomain(w http.ResponseWriter, r *http.Request) {
 	websiteID := chi.URLParam(r, "id")
