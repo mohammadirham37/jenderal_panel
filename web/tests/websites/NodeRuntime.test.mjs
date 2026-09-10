@@ -26,8 +26,8 @@ function harness(overrides = {}) {
 	});
 	vm.runInContext(javascript + `
 	globalThis.handlers = {
-		load, installRuntime, removeGlobal, createApp, appAction,
-		select: (runtime, version) => { selectedRuntime = runtime; createWebsiteId = runtime.website_id; choices[runtime.website_id] = version; },
+		load, removeGlobal, createApp, appAction,
+		select: (runtime, version) => { selectedRuntime = runtime; createWebsiteId = runtime.website_id; },
 		confirm: (value) => { confirmGlobal = value; },
 		lock: (value) => { busy = value; },
 		state: () => ({currentTaskId, loading, error, actionError, acting})
@@ -35,15 +35,6 @@ function harness(overrides = {}) {
 	`, context);
 	return {handlers: context.handlers, calls, runtime};
 }
-
-test('runtime install sends selected per-website version and preserves task ID', async () => {
-	const {handlers, calls, runtime} = harness();
-	handlers.select(runtime, '24');
-	await handlers.installRuntime(runtime);
-	assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{method: 'POST', path: '/api/v1/nodejs/runtimes/site-1', payload: {version: '24'}}]);
-	assert.equal(handlers.state().currentTaskId, 'task-1');
-	assert.equal(handlers.state().acting, false);
-});
 
 test('global removal requires explicit confirmation and does not run during another task', async () => {
 	const {handlers, calls} = harness();
@@ -74,13 +65,9 @@ test('missing runtime and busy state block application creation', async () => {
 	assert.equal(calls.length, 0);
 });
 
-test('load failure exits loading state and runtime failure reports actionable output', async () => {
-	const {handlers, runtime} = harness({get: async () => {throw new Error('Runtime unavailable');}, post: async () => {throw new Error('Install runtime first');}});
+test('load failure exits loading state and reports actionable output', async () => {
+	const {handlers, runtime} = harness({get: async () => {throw new Error('Runtime unavailable');}});
 	await handlers.load();
 	assert.equal(handlers.state().loading, false);
 	assert.equal(handlers.state().error, 'Runtime unavailable');
-	await handlers.installRuntime(runtime);
-	assert.equal(handlers.state().actionError, 'Install runtime first');
-	assert.equal(handlers.state().acting, false);
-	assert.equal(handlers.state().currentTaskId, '');
 });

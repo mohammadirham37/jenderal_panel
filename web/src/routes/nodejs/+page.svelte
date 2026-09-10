@@ -15,7 +15,6 @@
 	let runtimes = $state<Runtime[]>([]);
 	let apps = $state<NodeApp[]>([]);
 	let globalNode = $state({installed: false, version: '', package: ''});
-	let choices = $state<Record<string, string>>({});
 	let loading = $state(true);
 	let error = $state('');
 	let actionError = $state('');
@@ -43,19 +42,8 @@
 				api.get<typeof globalNode>('/api/v1/nodejs/global')
 			]);
 			runtimes = runtimeData || []; apps = appData || []; globalNode = globalData;
-			choices = Object.fromEntries(runtimes.map((runtime) => [runtime.website_id, runtime.selected_version || '24']));
 		} catch (err) { error = err instanceof Error ? err.message : 'Failed to load Node.js'; }
 		finally { loading = false; }
-	}
-
-	async function installRuntime(runtime: Runtime) {
-		if (busy) return;
-		acting = true; actionError = ''; actionMsg = '';
-		try {
-			const result = await api.post<{task_id: string}>('/api/v1/nodejs/runtimes/' + runtime.website_id, {version: choices[runtime.website_id]});
-			currentTaskId = result.task_id;
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Runtime installation failed'; }
-		finally { acting = false; }
 	}
 
 	async function removeGlobal() {
@@ -97,35 +85,11 @@
 
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Node.js</h2>
-	<p class="text-sm text-gray-400">Manage Node.js with NVM under each website user. Applications inherit their website runtime.</p>
+	<p class="text-sm text-gray-400">Manage Node.js with NVM under each website user. Applications inherit their website runtime. Per-website runtime installation lives on each website's detail page.</p>
 	{#if error}<div role="alert" class="rounded border border-red-800 p-4 text-red-400">{error} <button onclick={load} disabled={busy} class="underline">Retry</button></div>{/if}
 	{#if actionError}<p role="alert" class="text-red-400">{actionError}</p>{/if}
 	{#if actionMsg}<p role="status" class="text-green-400">{actionMsg}</p>{/if}
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; void load(); }} />
-
-	<section class="rounded-lg border border-gray-700 bg-gray-800 p-5 space-y-4">
-		<h3 class="text-lg font-semibold text-white">Website runtimes</h3>
-		{#if loading}<p class="text-gray-400">Loading runtimes...</p>
-		{:else if runtimes.length === 0}<p class="text-gray-400">Create a website first to configure its Node.js runtime.</p>
-		{:else}
-			{#each runtimes as runtime (runtime.website_id)}
-				<div class="flex flex-wrap items-center justify-between gap-4 border-t border-gray-700 pt-4">
-					<div>
-						<p class="font-medium text-white">{runtime.domain}</p>
-						<p class="text-xs text-gray-400">{runtime.web_user} · Selected: {runtime.selected_version || 'None'}</p>
-						<p class="text-sm text-gray-300">{runtime.installed ? 'Node ' + runtime.installed_version + ' · npm ' + runtime.npm_version : 'Runtime not installed'} · NVM {runtime.nvm_version || runtime.nvm_state}</p>
-						{#if runtime.error_message}<p class="text-sm text-red-400">{runtime.error_message}</p>{/if}
-					</div>
-					<div class="flex gap-2">
-						<select aria-label={'Node.js version for ' + runtime.domain} bind:value={choices[runtime.website_id]} disabled={busy} class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200">
-							{#each ['20', '22', '24'] as version}<option value={version}>Node.js {version}</option>{/each}
-						</select>
-						<button onclick={() => installRuntime(runtime)} disabled={busy} class="rounded bg-blue-600 px-4 py-2 text-white disabled:opacity-50">{runtime.installed ? 'Install / update' : 'Install'}</button>
-					</div>
-				</div>
-			{/each}
-		{/if}
-	</section>
 
 	{#if globalNode.installed}
 		<section class="rounded-lg border border-yellow-800 p-5 space-y-3">

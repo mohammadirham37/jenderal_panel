@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { page } from '$app/state';
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
 	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
 	import { decodeTerminalMessage } from '$lib/terminal-message.js';
@@ -59,11 +59,36 @@
 		log?: string;
 	}
 
+	interface NodeRuntime {
+		website_id: string;
+		web_user: string;
+		selected_version: string;
+		installed: boolean;
+		installed_version: string;
+		npm_version: string;
+		nvm_version: string;
+		nvm_state: string;
+		error_message?: string;
+	}
+
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
 	const tabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains'] as const;
 	type Tab = typeof tabs[number];
-	let activeTab = $state<Tab>('Overview');
+	function tabFromURL(): Tab {
+		const tab = new URLSearchParams(page.url.search).get('tab');
+		return (tabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'Overview';
+	}
+
+	let activeTab = $state<Tab>(tabFromURL());
+
+	function setActiveTab(tab: Tab) {
+		activeTab = tab;
+		// Keep the tab in the URL so a refresh reopens the same tab.
+		const url = new URL(page.url);
+		url.searchParams.set('tab', tab);
+		replaceState(url, page.state);
+	}
 
 	// ─── Core State ───────────────────────────────────────────────────
 
@@ -77,6 +102,14 @@
 
 	let deleteConfirm = $state(false);
 	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
+
+	// Node.js runtime (moved from the Node.js page)
+	let nodeRuntime = $state<NodeRuntime | null>(null);
+	let nodeRuntimeChoice = $state('24');
+	let nodeRuntimeLoading = $state(false);
+	let nodeRuntimeError = $state('');
+	let nodeRuntimeTaskId = $state('');
+	let nodeRuntimeInitialized = $state(false);
 
 	// ─── Deployment ───────────────────────────────────────────────────
 
@@ -255,6 +288,35 @@
 			error = err instanceof Error ? err.message : 'Failed to load website';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function loadNodeRuntime() {
+		if (!website) return;
+		nodeRuntimeLoading = true;
+		try {
+			const runtimes = await api.get<NodeRuntime[]>('/api/v1/nodejs/runtimes') || [];
+			nodeRuntime = runtimes.find((r) => r.website_id === website?.id) || null;
+			if (nodeRuntime) nodeRuntimeChoice = nodeRuntime.selected_version || '24';
+			nodeRuntimeError = '';
+		} catch (err) {
+			nodeRuntime = null;
+			nodeRuntimeError = err instanceof Error ? err.message : 'Failed to load Node.js runtime';
+		} finally {
+			nodeRuntimeLoading = false;
+		}
+	}
+
+	async function installNodeRuntime() {
+		if (!website || nodeRuntimeTaskId) return;
+		actionMsg = ''; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/nodejs/runtimes/${website.id}`, {
+				version: nodeRuntimeChoice
+			});
+			nodeRuntimeTaskId = result.task_id || '';
+		} catch (err) {
+			nodeRuntimeError = err instanceof Error ? err.message : 'Runtime installation failed';
 		}
 	}
 
@@ -904,6 +966,13 @@
 	});
 
 	$effect(() => {
+		if (activeTab === 'Overview' && website && !nodeRuntimeInitialized) {
+			nodeRuntimeInitialized = true;
+			loadNodeRuntime();
+		}
+	});
+
+	$effect(() => {
 		if (activeTab === 'Terminal' && website) {
 			if (!terminalConnected && !terminalConnecting) {
 				connectTerminal();
@@ -994,7 +1063,7 @@
 		<div class="flex flex-wrap gap-1 border-b border-gray-700 pb-0">
 			{#each tabs as tab}
 				<button
-					onclick={() => { activeTab = tab; }}
+					onclick={() => setActiveTab(tab)}
 					class="px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors cursor-pointer
 						{activeTab === tab
 							? 'bg-gray-800 text-white border border-gray-700 border-b-gray-800 -mb-px'
@@ -1039,6 +1108,53 @@
 							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Created</div>
 							<div class="text-sm text-gray-200">{formatDate(website.created_at)}</div>
 						</div>
+					</div>
+
+					<!-- Node.js Runtime (moved from the Node.js page) -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<h3 class="text-lg font-semibold text-white mb-3">Node.js Runtime</h3>
+						{#if nodeRuntimeError}
+							<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+								{nodeRuntimeError}
+								<button onclick={() => (nodeRuntimeError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+							</div>
+						{/if}
+						{#if nodeRuntimeLoading}
+							<div class="text-gray-400 text-sm">Loading runtime...</div>
+						{:else}
+							<div class="flex flex-wrap items-center justify-between gap-4">
+								<div>
+									{#if nodeRuntime}
+										<p class="text-sm text-gray-300">
+											{nodeRuntime.installed ? 'Node ' + nodeRuntime.installed_version + ' · npm ' + nodeRuntime.npm_version : 'Runtime not installed'}
+											· NVM {nodeRuntime.nvm_version || nodeRuntime.nvm_state}
+										</p>
+										<p class="text-xs text-gray-400">Selected: {nodeRuntime.selected_version || 'None'}</p>
+										{#if nodeRuntime.error_message}<p class="text-sm text-red-400">{nodeRuntime.error_message}</p>{/if}
+									{:else}
+										<p class="text-sm text-gray-400">No Node.js runtime is configured for this website yet.</p>
+									{/if}
+								</div>
+								<div class="flex gap-2">
+									<select
+										bind:value={nodeRuntimeChoice}
+										aria-label="Node.js version"
+										disabled={!!nodeRuntimeTaskId}
+										class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200"
+									>
+										{#each ['20', '22', '24'] as version}<option value={version}>Node.js {version}</option>{/each}
+									</select>
+									<button
+										onclick={installNodeRuntime}
+										disabled={!!nodeRuntimeTaskId}
+										class="rounded bg-blue-600 px-4 py-2 text-white text-sm disabled:opacity-50"
+									>
+										{nodeRuntime?.installed ? 'Install / update' : 'Install'}
+									</button>
+								</div>
+							</div>
+							<TaskProgress bind:taskId={nodeRuntimeTaskId} storageKey="nodejs-task-{website.id}" onComplete={() => { nodeRuntimeTaskId = ''; void loadNodeRuntime(); }} />
+						{/if}
 					</div>
 
 					<!-- Actions -->
@@ -1273,7 +1389,7 @@
 								</button>
 							</div>
 							<button
-								onclick={() => { activeTab = 'Terminal'; }}
+								onclick={() => setActiveTab('Terminal')}
 								class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors cursor-pointer"
 							>
 								Open Terminal
@@ -1364,118 +1480,120 @@
 							<p class="text-gray-400 text-sm">No command presets available for this website.</p>
 						</div>
 					{:else}
-						{#each Object.entries(groupedCommands()) as [category, presets]}
-							<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-								<h3 class="text-lg font-semibold text-white mb-3 capitalize">{category}</h3>
-								<div class="flex flex-wrap gap-2">
-									{#each presets as preset}
-										<button
-											onclick={() => runCommand(preset)}
-											class="px-3 py-2 text-sm rounded transition-colors cursor-pointer
-												{preset.danger
-													? 'bg-red-600 hover:bg-red-700 text-white'
-													: 'bg-gray-700 hover:bg-gray-600 text-gray-200'}"
-										>
-											{preset.label}
-										</button>
-									{/each}
-								</div>
-							</div>
-						{/each}
-					{/if}
-
-					{#if website.framework === 'laravel'}
-						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-							<div class="flex items-center justify-between mb-4">
-								<h3 class="text-lg font-semibold text-white">Laravel .env</h3>
-								{#if envExists}
-									<div class="inline-flex rounded-lg border border-gray-600 p-1 bg-gray-900" role="group" aria-label="Edit mode">
-										<button
-											type="button"
-											onclick={() => switchEnvMode('values')}
-											aria-pressed={envMode === 'values'}
-											class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'values' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-										>Edit Values</button>
-										<button
-											type="button"
-											onclick={() => switchEnvMode('raw')}
-											aria-pressed={envMode === 'raw'}
-											class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'raw' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-										>Manual</button>
+						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+							{#each Object.entries(groupedCommands()) as [category, presets]}
+								<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+									<h3 class="text-lg font-semibold text-white mb-3 capitalize">{category}</h3>
+									<div class="flex flex-wrap gap-2">
+										{#each presets as preset}
+											<button
+												onclick={() => runCommand(preset)}
+												class="px-3 py-2 text-sm rounded transition-colors cursor-pointer
+													{preset.danger
+														? 'bg-red-600 hover:bg-red-700 text-white'
+														: 'bg-gray-700 hover:bg-gray-600 text-gray-200'}"
+											>
+												{preset.label}
+											</button>
+										{/each}
 									</div>
-								{/if}
+								</div>
+							{/each}
+
+							{#if website.framework === 'laravel'}
+								<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+									<div class="flex items-center justify-between mb-4">
+										<h3 class="text-lg font-semibold text-white">Laravel .env</h3>
+										{#if envExists}
+											<div class="inline-flex rounded-lg border border-gray-600 p-1 bg-gray-900" role="group" aria-label="Edit mode">
+												<button
+													type="button"
+													onclick={() => switchEnvMode('values')}
+													aria-pressed={envMode === 'values'}
+													class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'values' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+												>Edit Values</button>
+												<button
+													type="button"
+													onclick={() => switchEnvMode('raw')}
+													aria-pressed={envMode === 'raw'}
+													class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'raw' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+												>Manual</button>
+											</div>
+										{/if}
+									</div>
+
+									{#if envError}
+										<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+											{envError}
+											<button onclick={() => (envError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+										</div>
+									{/if}
+
+									{#if envMsg}
+										<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
+											{envMsg}
+											<button onclick={() => (envMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+										</div>
+									{/if}
+
+									{#if envLoading}
+										<div class="text-gray-400 text-sm">Loading .env...</div>
+									{:else if !envExists}
+										<p class="text-sm text-gray-400 mb-3">No <code class="text-gray-300 font-mono">.env</code> file found in the project. Create it from <code class="text-gray-300 font-mono">.env.example</code> first.</p>
+										<button
+											onclick={createEnvFile}
+											class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+										>cp .env.example .env</button>
+									{:else if envMode === 'values'}
+										<div class="max-h-96 overflow-y-auto border border-gray-700 rounded">
+											<table class="w-full">
+												<thead>
+													<tr class="border-b border-gray-700">
+														<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Key</th>
+														<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Value</th>
+													</tr>
+												</thead>
+												<tbody class="divide-y divide-gray-700">
+													{#each envValues as row}
+														<tr>
+															<td class="px-3 py-1.5 text-xs text-gray-300 font-mono align-middle">{row.key}</td>
+															<td class="px-3 py-1.5">
+																<input
+																	bind:value={row.value}
+																	aria-label={row.key}
+																	class="w-full px-2 py-1 bg-gray-950 border border-gray-700 rounded text-xs font-mono text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+																/>
+															</td>
+														</tr>
+													{/each}
+												</tbody>
+											</table>
+										</div>
+										<button
+											onclick={saveEnv}
+											disabled={envSaving}
+											class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+										>
+											{envSaving ? 'Saving...' : 'Save .env'}
+										</button>
+									{:else}
+										<textarea
+											bind:value={envRaw}
+											rows={16}
+											spellcheck="false"
+											aria-label=".env contents"
+											class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-xs font-mono text-gray-200 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+										></textarea>
+										<button
+											onclick={saveEnv}
+											disabled={envSaving}
+											class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+										>
+										{envSaving ? 'Saving...' : 'Save .env'}
+									</button>
+										{/if}
 							</div>
-
-							{#if envError}
-								<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-									{envError}
-									<button onclick={() => (envError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-								</div>
-							{/if}
-
-							{#if envMsg}
-								<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-									{envMsg}
-									<button onclick={() => (envMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-								</div>
-							{/if}
-
-							{#if envLoading}
-								<div class="text-gray-400 text-sm">Loading .env...</div>
-							{:else if !envExists}
-								<p class="text-sm text-gray-400 mb-3">No <code class="text-gray-300 font-mono">.env</code> file found in the project. Create it from <code class="text-gray-300 font-mono">.env.example</code> first.</p>
-								<button
-									onclick={createEnvFile}
-									class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-								>cp .env.example .env</button>
-							{:else if envMode === 'values'}
-								<div class="max-h-96 overflow-y-auto border border-gray-700 rounded">
-									<table class="w-full">
-										<thead>
-											<tr class="border-b border-gray-700">
-												<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Key</th>
-												<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Value</th>
-											</tr>
-										</thead>
-										<tbody class="divide-y divide-gray-700">
-											{#each envValues as row}
-												<tr>
-													<td class="px-3 py-1.5 text-xs text-gray-300 font-mono align-middle">{row.key}</td>
-													<td class="px-3 py-1.5">
-														<input
-															bind:value={row.value}
-															aria-label={row.key}
-															class="w-full px-2 py-1 bg-gray-950 border border-gray-700 rounded text-xs font-mono text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-														/>
-													</td>
-												</tr>
-											{/each}
-										</tbody>
-									</table>
-								</div>
-								<button
-									onclick={saveEnv}
-									disabled={envSaving}
-									class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-								>
-									{envSaving ? 'Saving...' : 'Save .env'}
-								</button>
-							{:else}
-								<textarea
-									bind:value={envRaw}
-									rows={16}
-									spellcheck="false"
-									aria-label=".env contents"
-									class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-xs font-mono text-gray-200 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-								></textarea>
-								<button
-									onclick={saveEnv}
-									disabled={envSaving}
-									class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-								>
-									{envSaving ? 'Saving...' : 'Save .env'}
-								</button>
-							{/if}
+						{/if}
 						</div>
 					{/if}
 
