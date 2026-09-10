@@ -338,10 +338,14 @@
 		actionMsg = '';
 		actionError = '';
 		try {
+			// Handler reads user_id and database_id from the body; the URL param
+			// is ignored. database_id is the managed_databases row ID.
 			await api.post(`/api/v1/databases/users/${userId}/grant`, {
-				database: grantDatabase
+				user_id: userId,
+				database_id: grantDatabase
 			});
-			flash(`Privileges on "${grantDatabase}" granted successfully.`);
+			const dbName = databases.find((d) => d.id === grantDatabase)?.name || grantDatabase;
+			flash(`Privileges on "${dbName}" granted successfully.`);
 			grantUserId = null;
 			grantDatabase = '';
 		} catch (err) {
@@ -978,7 +982,7 @@
 									>
 										<option value="">Select database…</option>
 										{#each databases.filter((d) => d.engine === u.engine) as db (db.id)}
-											<option value={db.name}>{db.name}</option>
+											<option value={db.id}>{db.name}</option>
 										{/each}
 									</select>
 									<button
