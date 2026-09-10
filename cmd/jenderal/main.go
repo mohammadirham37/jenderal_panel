@@ -250,6 +250,7 @@ func cmdServe() {
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
+	websiteSvc.SetTaskRunner(tasks)
 	securitySetup := security.NewSetupService(db, security.SetupActions{
 		InstallFail2ban: fail2banSvc.InstallWithProgress,
 		ConfigureFail2ban: func(ctx context.Context, cidrs []string, log func(string)) error {

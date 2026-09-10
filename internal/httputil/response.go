@@ -58,7 +58,7 @@ func HandleError(w http.ResponseWriter, err error) {
 		JSONError(w, status, domainErr.Code, domainErr.Message)
 		return
 	}
-	JSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "an internal error occurred")
+	JSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 }
 
 func domainErrorToStatus(code string) int {
