@@ -48,10 +48,10 @@
 
 	interface DeploymentEntry {
 		id: string;
-		commit: string;
+		commit_hash: string;
 		branch: string;
 		status: string;
-		duration: number;
+		duration_ms: number;
 		created_at: string;
 		log?: string;
 	}
@@ -87,7 +87,6 @@
 	let deployKeyError = $state('');
 	let deployKeyCopied = $state(false);
 
-	let deployTaskId = $state('');
 	let deploying = $state(false);
 
 	let uploadDeployFile: HTMLInputElement;
@@ -96,6 +95,9 @@
 
 	let deployments = $state<DeploymentEntry[]>([]);
 	let deploymentsLoading = $state(false);
+	let deploymentsError = $state('');
+	let deploymentsPollTimer: ReturnType<typeof setInterval> | null = null;
+	let autoExpandedDeployment = $state('');
 	let expandedDeploymentId = $state<string | null>(null);
 
 	let deploymentTabInitialized = $state(false);
@@ -340,11 +342,13 @@
 		deploying = true;
 		actionMsg = ''; actionError = '';
 		try {
-			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/deploy`, {
+			// The API returns the created Deployment (202 Accepted), not a task.
+			const d = await api.post<DeploymentEntry>(`/api/v1/websites/${website.id}/deploy`, {
 				repo: repoUrl,
 				branch: repoBranch
 			});
-			deployTaskId = data.task_id || '';
+			actionMsg = d?.id ? `Deployment started (${d.id.slice(-6).toLowerCase()}).` : 'Deployment started.';
+			await loadDeployments();
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to start deployment';
 		} finally {
@@ -380,13 +384,47 @@
 		}
 	}
 
+	function hasActiveDeployments(deps: DeploymentEntry[]): boolean {
+		return deps.some((d) => d.status === 'pending' || d.status === 'running');
+	}
+
+	function startDeploymentsPolling() {
+		if (deploymentsPollTimer) return;
+		deploymentsPollTimer = setInterval(() => {
+			if (!website) {
+				stopDeploymentsPolling();
+				return;
+			}
+			void loadDeployments();
+		}, 5000);
+	}
+
+	function stopDeploymentsPolling() {
+		if (deploymentsPollTimer) {
+			clearInterval(deploymentsPollTimer);
+			deploymentsPollTimer = null;
+		}
+	}
+
 	async function loadDeployments() {
 		if (!website) return;
 		deploymentsLoading = true;
 		try {
 			deployments = await api.get<DeploymentEntry[]>(`/api/v1/websites/${website.id}/deployments`) || [];
-		} catch {
-			deployments = [];
+			deploymentsError = '';
+			if (hasActiveDeployments(deployments)) {
+				startDeploymentsPolling();
+			} else {
+				stopDeploymentsPolling();
+			}
+			// Surface the error log of the newest failed deployment automatically.
+			const failed = deployments.find((d) => d.status === 'failed');
+			if (failed && failed.id !== autoExpandedDeployment) {
+				autoExpandedDeployment = failed.id;
+				expandedDeploymentId = failed.id;
+			}
+		} catch (err) {
+			deploymentsError = err instanceof Error ? err.message : 'Failed to load deployments';
 		} finally {
 			deploymentsLoading = false;
 		}
@@ -794,6 +832,7 @@
 
 	onDestroy(() => {
 		disconnectTerminal();
+		stopDeploymentsPolling();
 	});
 </script>
 
@@ -1071,9 +1110,10 @@
 								>
 									{deploying ? 'Deploying...' : 'Deploy Now'}
 								</button>
+								{#if deploying}
+									<span class="text-sm text-gray-400">Deployment is queued and running in the background.</span>
+								{/if}
 							</div>
-
-							<TaskProgress bind:taskId={deployTaskId} storageKey="deploy-task-{website.id}" onComplete={() => loadDeployments()} />
 						</div>
 					</div>
 
@@ -1106,9 +1146,9 @@
 						<div class="space-y-3">
 							<div class="flex items-center gap-2">
 								<span class="text-sm text-gray-400">SSH:</span>
-								<code class="text-sm text-gray-200 font-mono bg-gray-900 px-2 py-1 rounded">ssh {website.web_user}@{typeof window !== 'undefined' ? window.location.hostname : 'localhost'}</code>
+								<code class="text-sm text-gray-200 font-mono bg-gray-900 px-2 py-1 rounded">ssh {website?.web_user}@{typeof window !== 'undefined' ? window.location.hostname : 'localhost'}</code>
 								<button
-									onclick={() => copyText(`ssh ${website.web_user}@${window.location.hostname}`, 'ssh')}
+									onclick={() => copyText(`ssh ${website?.web_user}@${window.location.hostname}`, 'ssh')}
 									class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors cursor-pointer"
 								>
 									{copiedField === 'ssh' ? 'Copied!' : 'Copy'}
@@ -1148,6 +1188,8 @@
 
 						{#if deploymentsLoading && deployments.length === 0}
 							<div class="text-gray-400 text-sm">Loading deployments...</div>
+						{:else if deploymentsError}
+							<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{deploymentsError}</div>
 						{:else if deployments.length === 0}
 							<div class="text-gray-400 text-sm">No deployments yet.</div>
 						{:else}
@@ -1168,18 +1210,21 @@
 												class="hover:bg-gray-750 cursor-pointer"
 												onclick={() => { expandedDeploymentId = expandedDeploymentId === dep.id ? null : dep.id; }}
 											>
-												<td class="px-4 py-2 text-sm text-gray-200 font-mono">{dep.commit ? dep.commit.slice(0, 8) : '-'}</td>
+												<td class="px-4 py-2 text-sm text-gray-200 font-mono">{dep.commit_hash ? dep.commit_hash.slice(0, 8) : '-'}</td>
 												<td class="px-4 py-2 text-sm text-gray-200">{dep.branch || '-'}</td>
 												<td class="px-4 py-2">
 													<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {deployStatusBadgeClass(dep.status)}">{dep.status}</span>
+													{#if dep.status === 'failed'}
+														<span class="ml-2 text-xs text-red-400">view error</span>
+													{/if}
 												</td>
-												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration ? formatDuration(dep.duration) : '-'}</td>
+												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration_ms ? formatDuration(dep.duration_ms) : '-'}</td>
 												<td class="px-4 py-2 text-sm text-gray-400">{formatDate(dep.created_at)}</td>
 											</tr>
 											{#if expandedDeploymentId === dep.id}
 												<tr>
 													<td colspan="5" class="px-4 py-2">
-														<pre class="text-xs bg-gray-950 rounded p-3 max-h-48 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? 'Deployment failed. Check git repository URL, branch name, and deploy key configuration.' : 'No output captured.')}</pre>
+														<pre class="text-xs bg-gray-950 rounded p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? 'Deployment failed with no output captured. Check git repository URL, branch name, and deploy key configuration.' : 'No output captured.')}</pre>
 													</td>
 												</tr>
 											{/if}

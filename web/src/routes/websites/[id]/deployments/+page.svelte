@@ -11,7 +11,7 @@
 		commit_hash: string;
 		branch: string;
 		status: string;
-		duration: number;
+		duration_ms: number;
 		log: string;
 		created_at: string;
 	}
@@ -215,7 +215,7 @@
 		actionError = '';
 		try {
 			await api.post(scopedAPI.deploy, {
-				repo_url: deployRepoUrl.trim(),
+				repo: deployRepoUrl.trim(),
 				branch: deployBranch.trim() || 'main'
 			});
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
@@ -363,7 +363,7 @@
 										{dep.status}
 									</span>
 								</td>
-								<td class="px-4 py-3 text-sm text-gray-400">{formatDuration(dep.duration)}</td>
+								<td class="px-4 py-3 text-sm text-gray-400">{formatDuration(dep.duration_ms)}</td>
 								<td class="px-4 py-3 text-sm text-gray-400">{formatDate(dep.created_at)}</td>
 								<td class="px-4 py-3 text-right">
 									<svg

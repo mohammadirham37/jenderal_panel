@@ -82,11 +82,17 @@ func (s *Service) Deploy(ctx context.Context, websiteID, repo, branch string) (m
 	return d, nil
 }
 
+// deployTimeout bounds the entire deployment run (clone of large repos can
+// exceed the executor's short default timeout).
+const deployTimeout = 15 * time.Minute
+
 // deploy performs the actual git deployment steps for the given deployment ID.
 func (s *Service) deploy(ctx context.Context, deploymentID string) {
-	// Load the deployment record.
+	// Load the deployment record. On failure mark the deployment failed
+	// directly so it does not stay pending forever with no visible error.
 	d, err := s.GetDeployment(ctx, deploymentID)
 	if err != nil {
+		s.failDeployment(ctx, deploymentID, "load deployment: "+err.Error(), 0)
 		return
 	}
 
@@ -115,6 +121,12 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	)
 
 	start := time.Now()
+
+	// Bound the whole deployment run; the executor's default timeout is too
+	// short for cloning real repositories.
+	ctx, cancel := context.WithTimeout(ctx, deployTimeout)
+	defer cancel()
+
 	var logBuf strings.Builder
 
 	appendLog := func(step string, res *executor.Result, err error) bool {
@@ -152,6 +164,8 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	if err == nil && res.ExitCode == 0 {
 		gitSSHCmd = fmt.Sprintf("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' ", deployKeyPath)
 		appendLog("deploy key found", nil, nil)
+	} else if strings.HasPrefix(repo, "git@") {
+		appendLog(fmt.Sprintf("deploy key not found at %s but repo is SSH (private) — clone may fail; generate a deploy key for this website", deployKeyPath), nil, nil)
 	}
 
 	// Step 1: Check if .git dir exists in document_root.
@@ -181,8 +195,10 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		}
 	}
 
-	// Step 4: Get commit hash.
-	res, err = s.exec.Run(ctx, "git", "-C", docRoot, "rev-parse", "--short", "HEAD")
+	// Step 4: Get commit hash (run as web_user to avoid git "dubious
+	// ownership" errors on the document root).
+	revCmd := fmt.Sprintf("cd %s && git rev-parse --short HEAD", docRoot)
+	res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", revCmd, webUser)
 	commitHash := ""
 	if err == nil && res.ExitCode == 0 {
 		commitHash = strings.TrimSpace(res.Stdout)
