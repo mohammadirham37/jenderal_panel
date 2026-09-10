@@ -6,6 +6,7 @@
 	import { createFileManagerAPI, fileManagerStartPath } from '$lib/file-manager.js';
 	import { decodeTerminalMessage } from '$lib/terminal-message.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const tabs = ['Overview', 'Deployment', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains'] as const;
+	const tabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains'] as const;
 	type Tab = typeof tabs[number];
 	let activeTab = $state<Tab>('Overview');
 
@@ -1235,6 +1236,12 @@
 						{/if}
 					</div>
 				</div>
+
+			<!-- ============================================================ -->
+			<!-- SSL TAB                                                        -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'SSL'}
+				<WebsiteSslSection {website} />
 
 			<!-- ============================================================ -->
 			<!-- COMMANDS TAB                                                   -->
