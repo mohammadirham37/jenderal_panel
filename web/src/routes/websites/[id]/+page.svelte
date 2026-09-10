@@ -137,6 +137,8 @@
 	let commandsError = $state('');
 	let commandTaskId = $state('');
 	let commandsInitialized = $state(false);
+	let pendingCommand = $state<CommandPreset | null>(null);
+	let commandConfirmBusy = $state(false);
 
 	// ─── Laravel .env ──────────────────────────────────────────────────
 
@@ -552,7 +554,6 @@
 
 	async function runCommand(preset: CommandPreset) {
 		if (!website) return;
-		if (preset.danger && !confirm(`Are you sure you want to run "${preset.label}"? This is a destructive command.`)) return;
 		actionMsg = ''; actionError = '';
 		try {
 			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/run-command`, {
@@ -562,6 +563,15 @@
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to run command';
 		}
+	}
+
+	async function confirmRunCommand() {
+		if (!pendingCommand || commandConfirmBusy) return;
+		const preset = pendingCommand;
+		commandConfirmBusy = true;
+		await runCommand(preset);
+		commandConfirmBusy = false;
+		pendingCommand = null;
 	}
 
 	function groupedCommands(): Record<string, CommandPreset[]> {
@@ -879,6 +889,12 @@
 		stopDeploymentsPolling();
 	});
 </script>
+
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key === 'Escape' && pendingCommand && !commandConfirmBusy) pendingCommand = null;
+	}}
+/>
 
 <div class="space-y-6">
 	<!-- Back link -->
@@ -1368,7 +1384,7 @@
 										{#each presets as preset}
 											<button
 												type="button"
-												onclick={() => runCommand(preset)}
+												onclick={() => (pendingCommand = preset)}
 												class="px-3 py-2 text-sm rounded transition-colors cursor-pointer
 													{preset.danger
 														? 'bg-red-600 hover:bg-red-700 text-white'
@@ -1745,3 +1761,67 @@
 		</div>
 	{/if}
 </div>
+
+<!-- Command confirmation modal -->
+{#if pendingCommand}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Confirm command"
+	>
+		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="flex items-start gap-3">
+				<span
+					class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl {pendingCommand.danger
+						? 'bg-red-500/10 text-red-400'
+						: 'bg-blue-500/10 text-blue-400'}"
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+						{#if pendingCommand.danger}
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+						{:else}
+							<path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+						{/if}
+					</svg>
+				</span>
+				<div class="min-w-0">
+					<h4 class="text-base font-semibold text-white">
+						{pendingCommand.danger ? 'Run dangerous command?' : 'Run this command?'}
+					</h4>
+					<p class="mt-1 text-sm text-gray-400">
+						{#if pendingCommand.danger}
+							This command is destructive. Make sure you have a backup before continuing.
+						{:else}
+							The command runs in the background as <span class="font-mono text-gray-300">{website?.web_user}</span>.
+						{/if}
+						The page reloads automatically when it finishes.
+					</p>
+				</div>
+			</div>
+
+			<pre class="mt-3 overflow-x-auto rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-xs text-gray-200">{pendingCommand.command}</pre>
+
+			<div class="mt-4 flex justify-end gap-2">
+				<button
+					type="button"
+					onclick={() => (pendingCommand = null)}
+					disabled={commandConfirmBusy}
+					class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
+				>
+					Cancel
+				</button>
+				<button
+					type="button"
+					onclick={confirmRunCommand}
+					disabled={commandConfirmBusy}
+					class="cursor-pointer rounded-lg px-3.5 py-2 text-sm font-semibold text-white transition disabled:opacity-50 {pendingCommand.danger
+						? 'bg-red-600 hover:bg-red-700'
+						: 'bg-blue-600 hover:bg-blue-700'}"
+				>
+					{commandConfirmBusy ? 'Starting…' : pendingCommand.danger ? 'Yes, run it' : 'Run command'}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
