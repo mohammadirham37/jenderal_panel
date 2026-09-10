@@ -1,13 +1,28 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
-	import { decodeTerminalMessage } from '$lib/terminal-message.js';
+	import { onDestroy, onMount, tick } from 'svelte';
+	import { decodeTerminalEvent } from '$lib/terminal-message.js';
 
 	let output = $state('');
 	let command = $state('');
+	let cwd = $state('');
 	let connected = $state(false);
 	let connecting = $state(true);
 	let ws: WebSocket | null = null;
 	let outputEl: HTMLTextAreaElement;
+
+	// Command history navigation.
+	let history: string[] = $state([]);
+	let historyIndex = $state(-1);
+	let draft = $state('');
+
+	function prompt(): string {
+		return `${cwd || '~'} $ `;
+	}
+
+	function shortenCwd(path: string): string {
+		if (path.length <= 28) return path;
+		return '…' + path.slice(-27);
+	}
 
 	function connect() {
 		connecting = true;
@@ -17,15 +32,32 @@
 		ws.onopen = () => {
 			connected = true;
 			connecting = false;
-			output += '--- Connected to terminal ---\n';
+			output += '--- Connected to persistent shell ---\n';
 			scrollToBottom();
 		};
 
 		ws.onmessage = (event) => {
-			const message = decodeTerminalMessage(event.data);
-			output += message;
-			if (!message.endsWith('\n')) {
-				output += '\n';
+			const ev = decodeTerminalEvent(typeof event.data === 'string' ? event.data : '');
+			if (!ev) {
+				// Legacy plain-text server message.
+				output += `${event.data}\n`;
+				scrollToBottom();
+				return;
+			}
+			if (ev.type === 'error') {
+				if (ev.output) output += ev.output;
+				if (!output.endsWith('\n')) output += '\n';
+				scrollToBottom();
+				return;
+			}
+			// Streaming chunks append verbatim; the final message of a command
+			// reports its exit code and the shell's working directory.
+			if (ev.output) output += ev.output;
+			if (!ev.partial) {
+				if (ev.output && !ev.output.endsWith('\n')) output += '\n';
+				if (ev.exitCode !== null && ev.exitCode !== 0) output += `[exit ${ev.exitCode}]\n`;
+				if (ev.cwd) cwd = ev.cwd;
+				output += prompt();
 			}
 			scrollToBottom();
 		};
@@ -53,9 +85,15 @@
 	}
 
 	function sendCommand() {
-		if (!ws || !connected || !command.trim()) return;
-		output += `$ ${command}\n`;
-		ws.send(command);
+		const cmd = command;
+		if (!ws || !connected || !cmd.trim()) return;
+		output += `${cmd}\n`;
+		if (history.length === 0 || history[history.length - 1] !== cmd) {
+			history = [...history, cmd];
+		}
+		historyIndex = -1;
+		draft = '';
+		ws.send(cmd);
 		command = '';
 		scrollToBottom();
 	}
@@ -64,7 +102,38 @@
 		if (e.key === 'Enter') {
 			e.preventDefault();
 			sendCommand();
+			return;
 		}
+		if (e.key === 'ArrowUp') {
+			e.preventDefault();
+			if (history.length === 0) return;
+			if (historyIndex === -1) draft = command;
+			historyIndex = Math.min(historyIndex + 1, history.length - 1);
+			command = history[history.length - 1 - historyIndex];
+			return;
+		}
+		if (e.key === 'ArrowDown') {
+			e.preventDefault();
+			if (historyIndex === -1) return;
+			historyIndex -= 1;
+			command = historyIndex < 0 ? draft : history[history.length - 1 - historyIndex];
+			return;
+		}
+		if (e.ctrlKey && (e.key === 'l' || e.key === 'L')) {
+			e.preventDefault();
+			output = prompt();
+			scrollToBottom();
+		}
+	}
+
+	function handlePaste(e: ClipboardEvent) {
+		const text = e.clipboardData?.getData('text') ?? '';
+		if (!text.includes('\n')) return;
+		// Multi-line paste: send the whole block as one command instead of
+		// fighting the single-line input.
+		e.preventDefault();
+		command = text.replace(/\n+$/, '');
+		sendCommand();
 	}
 
 	function reconnect() {
@@ -72,6 +141,10 @@
 			ws.close();
 		}
 		output = '';
+		cwd = '';
+		history = [];
+		historyIndex = -1;
+		draft = '';
 		connect();
 	}
 
@@ -114,13 +187,21 @@
 
 		<!-- Command Input -->
 		<div class="flex border-t border-gray-700">
-			<span class="flex items-center px-3 text-green-400 text-sm font-mono bg-gray-900">$</span>
+			<span
+				class="flex items-center px-3 text-green-400 text-sm font-mono bg-gray-900 whitespace-nowrap max-w-56 truncate"
+				title={cwd || '~'}
+			>
+				{shortenCwd(cwd || '~')} $
+			</span>
 			<input
 				type="text"
 				bind:value={command}
 				onkeydown={handleKeydown}
+				onpaste={handlePaste}
 				disabled={!connected}
-				placeholder={connected ? 'Type a command...' : 'Not connected'}
+				placeholder={connected ? 'Type a command…' : 'Not connected'}
+				autocomplete="off"
+				spellcheck="false"
 				class="flex-1 px-3 py-3 bg-gray-900 text-white text-sm font-mono focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
 			/>
 			<button
@@ -130,6 +211,9 @@
 			>
 				Send
 			</button>
+		</div>
+		<div class="px-3 py-1.5 bg-gray-900 border-t border-gray-700/50 text-[10px] text-gray-500">
+			Shell state (cd, export) persists while connected · ↑/↓ history · Ctrl+L clear · paste multi-line to run it as one command
 		</div>
 	</div>
 </div>
