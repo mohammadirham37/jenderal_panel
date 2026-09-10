@@ -52,17 +52,37 @@
 
 	const GAUGE_CIRC = 188.5;
 
+	// Metric fields can momentarily be missing or NaN (e.g. empty ring buffer
+	// right after a panel restart), so every display value passes a guard.
+	function finite(value: unknown): number | null {
+		const n = Number(value);
+		return Number.isFinite(n) ? n : null;
+	}
+
+	function fmtNum(value: number, digits = 2): string {
+		const n = finite(value);
+		return n === null ? '–' : n.toFixed(digits);
+	}
+
 	function formatBytes(bytes: number): string {
-		if (bytes === 0) return '0 B';
+		const n = finite(bytes);
+		if (n === null) return '—';
+		if (n <= 0) return '0 B';
 		const k = 1024;
-		const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(k));
-		return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+		const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+		const i = Math.min(Math.floor(Math.log(n) / Math.log(k)), sizes.length - 1);
+		return `${parseFloat((n / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+	}
+
+	function rate(bytes: number): string {
+		return `${formatBytes(bytes)}/s`;
 	}
 
 	function pct(used: number, total: number): number {
-		if (total === 0) return 0;
-		return Math.round((used / total) * 100);
+		const u = finite(used);
+		const t = finite(total);
+		if (u === null || t === null || t <= 0) return 0;
+		return Math.min(Math.round((u / t) * 100), 100);
 	}
 
 	function gaugeTone(value: number | null, warn: number, crit: number): string {
@@ -217,15 +237,15 @@
 		if (live) pushHistory(live);
 	});
 
-	let cpuValue = $derived(m ? Math.min(Math.round(m.cpu), 100) : null);
+	let cpuValue = $derived(m && finite(m.cpu) !== null ? Math.min(Math.max(Math.round(m.cpu), 0), 100) : null);
 	let ramValue = $derived(m ? pct(m.ram_used, m.ram_total) : null);
 	let diskValue = $derived(m ? pct(m.disk_used, m.disk_total) : null);
 
-	let cpuSeries = $derived(history.map((h) => Math.min(Math.round(h.cpu), 100)));
+	let cpuSeries = $derived(history.map((h) => (finite(h.cpu) === null ? 0 : Math.min(Math.round(h.cpu), 100))));
 	let ramSeries = $derived(history.map((h) => pct(h.ram_used, h.ram_total)));
 	let diskSeries = $derived(history.map((h) => pct(h.disk_used, h.disk_total)));
-	let rxSeries = $derived(history.map((h) => h.net_rx));
-	let txSeries = $derived(history.map((h) => h.net_tx));
+	let rxSeries = $derived(history.map((h) => finite(h.net_rx) ?? 0));
+	let txSeries = $derived(history.map((h) => finite(h.net_tx) ?? 0));
 
 	let runningServices = $derived(services.filter((s) => s.running).length);
 	let stoppedServices = $derived(services.length - runningServices);
@@ -485,9 +505,9 @@
 				50,
 				80,
 				[
-					{ label: `${translate($language, 'dash.load')} 1m`, value: m ? m.load_1.toFixed(2) : '–' },
-					{ label: `${translate($language, 'dash.load')} 5m`, value: m ? m.load_5.toFixed(2) : '–' },
-					{ label: `${translate($language, 'dash.load')} 15m`, value: m ? m.load_15.toFixed(2) : '–' },
+					{ label: `${translate($language, 'dash.load')} 1m`, value: m ? fmtNum(m.load_1) : '–' },
+					{ label: `${translate($language, 'dash.load')} 5m`, value: m ? fmtNum(m.load_5) : '–' },
+					{ label: `${translate($language, 'dash.load')} 15m`, value: m ? fmtNum(m.load_15) : '–' },
 					{
 						label: translate($language, 'dash.cores'),
 						value: serverInfo ? String(serverInfo.cpu_cores) : '–'
@@ -555,7 +575,7 @@
 								{translate($language, 'dash.download')}
 							</span>
 							<span class="font-semibold text-gray-200">
-								{m ? `${formatBytes(m.net_rx)}/s` : '–'}
+								{m ? rate(m.net_rx) : '–'}
 							</span>
 						</div>
 						{#if rxSeries.length >= 2}
@@ -588,7 +608,7 @@
 								{translate($language, 'dash.upload')}
 							</span>
 							<span class="font-semibold text-gray-200">
-								{m ? `${formatBytes(m.net_tx)}/s` : '–'}
+								{m ? rate(m.net_tx) : '–'}
 							</span>
 						</div>
 						{#if txSeries.length >= 2}
