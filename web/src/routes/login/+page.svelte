@@ -76,7 +76,7 @@
 					</div>
 					<div class="rounded-2xl border border-white/8 bg-white/[0.025] p-4">
 						<p class="text-sm font-medium text-gray-200">Lean</p>
-						<p class="mt-1 text-xs text-gray-400">Built with Go</p>
+						<p class="mt-1 text-xs text-gray-400">Single binary</p>
 					</div>
 				</div>
 			</div>
