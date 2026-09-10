@@ -19,7 +19,13 @@ export function connectMetrics(): void {
 
 	ws.onmessage = (event) => {
 		try {
-			const metrics: ServerMetrics = JSON.parse(event.data);
+			const parsed = JSON.parse(event.data);
+			// The server wraps payloads as {type, data, timestamp}; older or
+			// alternative producers may send the metrics object directly.
+			const metrics = (parsed?.data ?? parsed) as ServerMetrics;
+			if (!metrics || typeof metrics !== 'object') return;
+			// Ignore the zero-value sample sent before the collector ran once.
+			if (!metrics.timestamp || metrics.timestamp.startsWith('0001-01-01')) return;
 			currentMetrics.set(metrics);
 			metricsHistory.update((history) => {
 				const updated = [...history, metrics];

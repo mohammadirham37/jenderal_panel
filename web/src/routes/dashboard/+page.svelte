@@ -188,7 +188,11 @@
 		try {
 			const data = await api.get<DashboardData>('/api/v1/dashboard');
 			serverInfo = data.server;
-			metricsSnapshot = data.metrics;
+			// A freshly restarted panel returns the zero-value sample until the
+			// collector has run once; treat it as "no metrics yet".
+			const snapshot = data.metrics;
+			metricsSnapshot =
+				snapshot && !String(snapshot.timestamp || '').startsWith('0001-01-01') ? snapshot : null;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Failed to load dashboard';
 			loading = false;
@@ -238,8 +242,8 @@
 	});
 
 	let cpuValue = $derived(m && finite(m.cpu) !== null ? Math.min(Math.max(Math.round(m.cpu), 0), 100) : null);
-	let ramValue = $derived(m ? pct(m.ram_used, m.ram_total) : null);
-	let diskValue = $derived(m ? pct(m.disk_used, m.disk_total) : null);
+	let ramValue = $derived(m && finite(m.ram_total) ? pct(m.ram_used, m.ram_total) : null);
+	let diskValue = $derived(m && finite(m.disk_total) ? pct(m.disk_used, m.disk_total) : null);
 
 	let cpuSeries = $derived(history.map((h) => (finite(h.cpu) === null ? 0 : Math.min(Math.round(h.cpu), 100))));
 	let ramSeries = $derived(history.map((h) => pct(h.ram_used, h.ram_total)));
