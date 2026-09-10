@@ -337,6 +337,40 @@ func (h *Handler) UploadDeploy(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// GetEnv handles GET /api/websites/{id}/env.
+func (h *Handler) GetEnv(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	content, exists, err := h.svc.GetEnvFile(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	httputil.JSON(w, http.StatusOK, map[string]any{"exists": exists, "content": content})
+}
+
+// UpdateEnv handles PUT /api/websites/{id}/env.
+func (h *Handler) UpdateEnv(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	var body struct {
+		Content string `json:"content"`
+	}
+	if err := httputil.DecodeJSON(r, &body); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if err := h.svc.UpdateEnvFile(r.Context(), id, body.Content); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "website.env.update", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]bool{"updated": true})
+}
+
 // parseLines extracts the "lines" query parameter, defaulting to 100.
 func parseLines(r *http.Request) int {
 	if s := r.URL.Query().Get("lines"); s != "" {

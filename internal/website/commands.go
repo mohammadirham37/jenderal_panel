@@ -23,6 +23,7 @@ type CommandPreset struct {
 // allowedCommands maps human-readable command labels to the actual argument
 // slices that will be executed. Only commands present in this map may be run.
 var allowedCommands = map[string][]string{
+	"cp .env.example .env":         {"cp", ".env.example", ".env"},
 	"composer install":             {"composer", "install", "--no-interaction"},
 	"composer update":              {"composer", "update", "--no-interaction"},
 	"composer dump-autoload":       {"composer", "dump-autoload"},
@@ -95,6 +96,7 @@ func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]Co
 	// Laravel artisan commands.
 	if framework == "laravel" {
 		presets = append(presets,
+			CommandPreset{Label: "cp .env.example .env", Command: "cp .env.example .env", Category: "laravel", Danger: false},
 			CommandPreset{Label: "php artisan key:generate", Command: "php artisan key:generate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate", Command: "php artisan migrate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate:fresh", Command: "php artisan migrate:fresh", Category: "artisan", Danger: true},
@@ -144,9 +146,37 @@ func projectMarkerFor(command string) string {
 		return "artisan"
 	case strings.HasPrefix(command, "npm"), strings.HasPrefix(command, "yarn"), strings.HasPrefix(command, "pnpm"):
 		return "package.json"
+	case strings.HasPrefix(command, "cp .env.example"):
+		return ".env.example"
 	default:
 		return ""
 	}
+}
+
+// projectDirCandidates returns the directories that may hold a website's
+// project files, most specific first: <home>/app for Laravel automatic
+// installs (document root is app/public), the document root, then the home
+// directory.
+func (s *Service) projectDirCandidates(w model.Website) []string {
+	homeDir := "/home/" + w.WebUser
+	candidates := []string{w.DocumentRoot}
+	if filepath.Clean(w.DocumentRoot) == filepath.Join(homeDir, "app", "public") {
+		candidates = append([]string{filepath.Join(homeDir, "app")}, candidates...)
+	}
+	candidates = append(candidates, homeDir)
+	return candidates
+}
+
+// findDirWithFile returns the first project candidate directory containing
+// the given file, or "" when no candidate has it.
+func (s *Service) findDirWithFile(ctx context.Context, w model.Website, name string) string {
+	for _, dir := range s.projectDirCandidates(w) {
+		res, err := s.exec.RunSudo(ctx, "test", "-f", filepath.Join(dir, name))
+		if err == nil && res.ExitCode == 0 {
+			return dir
+		}
+	}
+	return ""
 }
 
 // RunCommand executes a predefined command against a website in the
@@ -168,25 +198,11 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 		return "", fmt.Errorf("task runner not available")
 	}
 
-	// Find the directory that actually holds the project files. Laravel
-	// automatic installs live in <home>/app (document root is app/public),
-	// git/manual setups keep everything in the document root, and some
-	// setups keep the project in the home directory itself.
-	homeDir := "/home/" + w.WebUser
-	candidates := []string{w.DocumentRoot}
-	if filepath.Clean(w.DocumentRoot) == filepath.Join(homeDir, "app", "public") {
-		candidates = append([]string{filepath.Join(homeDir, "app")}, candidates...)
-	}
-	candidates = append(candidates, homeDir)
-
+	// Run in the directory that actually holds the project files.
 	workDir := w.DocumentRoot
 	if marker := projectMarkerFor(command); marker != "" {
-		for _, dir := range candidates {
-			res, err := s.exec.RunSudo(ctx, "test", "-f", filepath.Join(dir, marker))
-			if err == nil && res.ExitCode == 0 {
-				workDir = dir
-				break
-			}
+		if dir := s.findDirWithFile(ctx, w, marker); dir != "" {
+			workDir = dir
 		}
 	}
 

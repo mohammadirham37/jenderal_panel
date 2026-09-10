@@ -7,6 +7,7 @@
 	import { decodeTerminalMessage } from '$lib/terminal-message.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
+	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@
 		web_user: string;
 		status: string;
 		ssl_enabled: boolean;
+		framework: string;
 		error_message?: string;
 		domains?: WebsiteDomain[];
 		created_at: string;
@@ -110,6 +112,18 @@
 	let commandsError = $state('');
 	let commandTaskId = $state('');
 	let commandsInitialized = $state(false);
+
+	// ─── Laravel .env ──────────────────────────────────────────────────
+
+	let envLoading = $state(false);
+	let envExists = $state(false);
+	let envRaw = $state('');
+	let envMode = $state<'values' | 'raw'>('values');
+	let envValues = $state<{ key: string; value: string }[]>([]);
+	let envSaving = $state(false);
+	let envError = $state('');
+	let envMsg = $state('');
+	let envInitialized = $state(false);
 
 	// ─── Terminal ─────────────────────────────────────────────────────
 
@@ -469,6 +483,95 @@
 		return groups;
 	}
 
+	// ─── Laravel .env ──────────────────────────────────────────────────
+
+	async function loadEnv() {
+		if (!website) return;
+		envLoading = true;
+		envError = '';
+		try {
+			const data = await api.get<{ exists: boolean; content: string }>(`/api/v1/websites/${website.id}/env`);
+			envExists = data.exists;
+			envRaw = data.content || '';
+			if (envExists) syncEnvValues();
+		} catch (err) {
+			envError = err instanceof Error ? err.message : 'Failed to load .env';
+		} finally {
+			envLoading = false;
+		}
+	}
+
+	function syncEnvValues() {
+		envValues = parseEnvFile(envRaw).map((entry) => ({ key: entry.key, value: entry.value }));
+	}
+
+	function switchEnvMode(mode: 'values' | 'raw') {
+		if (mode === envMode) return;
+		if (mode === 'raw') {
+			// Fold edited values back into the raw content before switching.
+			envRaw = applyEnvValues(envRaw, Object.fromEntries(envValues.map((row) => [row.key, row.value])));
+		} else {
+			syncEnvValues();
+		}
+		envMode = mode;
+	}
+
+	async function createEnvFile() {
+		if (!website) return;
+		envError = ''; envMsg = '';
+		try {
+			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/run-command`, {
+				command: 'cp .env.example .env'
+			});
+			commandTaskId = data.task_id || '';
+			envMsg = 'Copying .env.example to .env...';
+			await pollEnvAfterCreate();
+		} catch (err) {
+			envError = err instanceof Error ? err.message : 'Failed to copy .env.example';
+		}
+	}
+
+	async function pollEnvAfterCreate() {
+		// The copy runs in the background and is quick; poll until the file
+		// appears so the editor can open right away.
+		for (let i = 0; i < 15; i++) {
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			if (!website) return;
+			try {
+				const data = await api.get<{ exists: boolean; content: string }>(`/api/v1/websites/${website.id}/env`);
+				if (data.exists) {
+					envExists = true;
+					envRaw = data.content || '';
+					syncEnvValues();
+					envMsg = '.env created from .env.example.';
+					return;
+				}
+			} catch {
+				// Keep polling; the task may still be running.
+			}
+		}
+		envError = '.env was not created — check the command task output below.';
+	}
+
+	async function saveEnv() {
+		if (!website) return;
+		envSaving = true;
+		envError = ''; envMsg = '';
+		try {
+			const content = envMode === 'values'
+				? applyEnvValues(envRaw, Object.fromEntries(envValues.map((row) => [row.key, row.value])))
+				: envRaw;
+			await api.put(`/api/v1/websites/${website.id}/env`, { content });
+			envRaw = content;
+			syncEnvValues();
+			envMsg = '.env saved.';
+		} catch (err) {
+			envError = err instanceof Error ? err.message : 'Failed to save .env';
+		} finally {
+			envSaving = false;
+		}
+	}
+
 	// Terminal
 	function connectTerminal() {
 		if (!website) return;
@@ -793,6 +896,10 @@
 		if (activeTab === 'Commands' && !commandsInitialized && website) {
 			commandsInitialized = true;
 			loadCommandPresets();
+			if (website.framework === 'laravel' && !envInitialized) {
+				envInitialized = true;
+				loadEnv();
+			}
 		}
 	});
 
@@ -1275,6 +1382,101 @@
 								</div>
 							</div>
 						{/each}
+					{/if}
+
+					{#if website.framework === 'laravel'}
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+							<div class="flex items-center justify-between mb-4">
+								<h3 class="text-lg font-semibold text-white">Laravel .env</h3>
+								{#if envExists}
+									<div class="inline-flex rounded-lg border border-gray-600 p-1 bg-gray-900" role="group" aria-label="Edit mode">
+										<button
+											type="button"
+											onclick={() => switchEnvMode('values')}
+											aria-pressed={envMode === 'values'}
+											class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'values' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+										>Edit Values</button>
+										<button
+											type="button"
+											onclick={() => switchEnvMode('raw')}
+											aria-pressed={envMode === 'raw'}
+											class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'raw' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+										>Manual</button>
+									</div>
+								{/if}
+							</div>
+
+							{#if envError}
+								<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+									{envError}
+									<button onclick={() => (envError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+								</div>
+							{/if}
+
+							{#if envMsg}
+								<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
+									{envMsg}
+									<button onclick={() => (envMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+								</div>
+							{/if}
+
+							{#if envLoading}
+								<div class="text-gray-400 text-sm">Loading .env...</div>
+							{:else if !envExists}
+								<p class="text-sm text-gray-400 mb-3">No <code class="text-gray-300 font-mono">.env</code> file found in the project. Create it from <code class="text-gray-300 font-mono">.env.example</code> first.</p>
+								<button
+									onclick={createEnvFile}
+									class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>cp .env.example .env</button>
+							{:else if envMode === 'values'}
+								<div class="max-h-96 overflow-y-auto border border-gray-700 rounded">
+									<table class="w-full">
+										<thead>
+											<tr class="border-b border-gray-700">
+												<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Key</th>
+												<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Value</th>
+											</tr>
+										</thead>
+										<tbody class="divide-y divide-gray-700">
+											{#each envValues as row}
+												<tr>
+													<td class="px-3 py-1.5 text-xs text-gray-300 font-mono align-middle">{row.key}</td>
+													<td class="px-3 py-1.5">
+														<input
+															bind:value={row.value}
+															aria-label={row.key}
+															class="w-full px-2 py-1 bg-gray-950 border border-gray-700 rounded text-xs font-mono text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+														/>
+													</td>
+												</tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+								<button
+									onclick={saveEnv}
+									disabled={envSaving}
+									class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>
+									{envSaving ? 'Saving...' : 'Save .env'}
+								</button>
+							{:else}
+								<textarea
+									bind:value={envRaw}
+									rows={16}
+									spellcheck="false"
+									aria-label=".env contents"
+									class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-xs font-mono text-gray-200 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+								></textarea>
+								<button
+									onclick={saveEnv}
+									disabled={envSaving}
+									class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>
+									{envSaving ? 'Saving...' : 'Save .env'}
+								</button>
+							{/if}
+						</div>
 					{/if}
 
 					<TaskProgress bind:taskId={commandTaskId} storageKey="cmd-task-{website.id}" />

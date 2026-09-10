@@ -291,6 +291,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Delete("/websites/{id}/deploy-key", websiteHandler.DeleteDeployKey)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/command-presets", websiteHandler.GetCommandPresets)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/env", websiteHandler.GetEnv)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/env", websiteHandler.UpdateEnv)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/run-command", websiteHandler.RunCommand)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
