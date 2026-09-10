@@ -104,3 +104,8 @@ SvelteKit 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwind CSS v4, adap
 - The maintainer tests the running panel manually on Ubuntu 24.04 — do NOT launch the app,
   mock its API, or do browser-based testing. Stop at static validation:
   `npm run check`, `npm run build`, `npm test` (frontend) and `go test ./...` (backend).
+
+## Git
+
+- After completing a task, commit the changed files and push directly to `main` without asking.
+- Only stage files related to the task; leave `.commandcode/` changes alone.
