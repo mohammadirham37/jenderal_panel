@@ -193,18 +193,41 @@ func usesNvmRuntime(binary string) bool {
 // buildCommandScript assembles the shell command the task runner executes as
 // the website user. Node.js package managers live inside the website's NVM
 // runtime (~/.nvm), which a non-interactive shell does not load, so they run
-// through nvm-exec with an actionable error when the runtime is missing.
-func buildCommandScript(w model.Website, workDir string, args []string) string {
+// through nvm-exec with an explicit NODE_VERSION (the site's default alias).
+// When the project pins a version via .nvmrc it is left to nvm-exec. Missing
+// runtimes produce an actionable error instead of nvm's terse output.
+func buildCommandScript(w model.Website, workDir string, args []string, nodeVersion string) string {
 	joined := strings.Join(args, " ")
 	home := "/home/" + w.WebUser
 	if !usesNvmRuntime(args[0]) {
 		return "cd " + workDir + " && " + joined
 	}
 	nvmDir := home + "/.nvm"
+	var env string
+	if nodeVersion != "" {
+		env = " NODE_VERSION=" + nodeVersion
+	}
 	return fmt.Sprintf(
-		"cd %[1]s && if [ -x %[2]s/nvm-exec ]; then NVM_DIR=%[2]s %[2]s/nvm-exec %[3]s; else echo \"Node.js runtime is not installed for this website — install it from the website detail page first\"; exit 127; fi",
-		workDir, nvmDir, joined,
+		"cd %[1]s && if [ -x %[2]s/nvm-exec ]; then NVM_DIR=%[2]s%[4]s %[2]s/nvm-exec %[3]s; else echo \"Node.js runtime is not installed for this website — install it from the website detail page first\"; exit 127; fi",
+		workDir, nvmDir, joined, env,
 	)
+}
+
+// nvmDefaultVersion reads the website's NVM default alias (e.g. "22" or
+// "v22.11.0"). Returns "" when no alias is set.
+func (s *Service) nvmDefaultVersion(ctx context.Context, w model.Website) string {
+	alias := "/home/" + w.WebUser + "/.nvm/alias/default"
+	res, err := s.exec.RunSudo(ctx, "cat", alias)
+	if err != nil || res == nil || res.ExitCode != 0 {
+		return ""
+	}
+	return strings.TrimSpace(res.Stdout)
+}
+
+// hasProjectFile reports whether name exists in workDir.
+func (s *Service) hasProjectFile(ctx context.Context, workDir, name string) bool {
+	res, err := s.exec.RunSudo(ctx, "test", "-f", workDir+"/"+name)
+	return err == nil && res != nil && res.ExitCode == 0
 }
 
 // RunCommand executes a predefined command against a website in the
@@ -234,7 +257,14 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 		}
 	}
 
-	shellCmd := buildCommandScript(w, workDir, args)
+	// Node commands need the website's NVM runtime; pin the default alias
+	// unless the project pins its own version via .nvmrc.
+	nodeVersion := ""
+	if usesNvmRuntime(args[0]) && !s.hasProjectFile(ctx, workDir, ".nvmrc") {
+		nodeVersion = s.nvmDefaultVersion(ctx, w)
+	}
+
+	shellCmd := buildCommandScript(w, workDir, args, nodeVersion)
 
 	taskID := tr.Run(
 		command+" ("+w.Domain+")",
