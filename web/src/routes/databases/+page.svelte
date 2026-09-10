@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
@@ -321,7 +322,8 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.put(`/api/v1/databases/users/${userId}/password`, {
+			// Backend registers this route as POST only.
+			await api.post(`/api/v1/databases/users/${userId}/password`, {
 				password: resetPasswordValue.trim()
 			});
 			flash('Password reset successfully.');
@@ -367,6 +369,10 @@
 	}
 
 	// ── Lifecycle ─────────────────────────────────────────────────
+	function manageUser(userId: string) {
+		goto(`/databases/manage/${userId}`);
+	}
+
 	onMount(() => {
 		loadEngines();
 		loadDatabases();
@@ -860,6 +866,13 @@
 										No
 									</button>
 								{:else}
+									<button
+										type="button"
+										onclick={() => manageUser(u.id)}
+										class="cursor-pointer rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-700"
+									>
+										Manage
+									</button>
 									<button
 										type="button"
 										onclick={() => {

@@ -445,6 +445,24 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/databases/users/{id}/password", dbHandler.ResetPassword)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/users/{id}/grant", dbHandler.GrantPrivileges)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/users/{id}/manage/unlock", dbHandler.UnlockManage)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Post("/databases/manage/{token}/lock", dbHandler.LockManage)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/databases", dbHandler.ManageDatabases)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/tables", dbHandler.ManageTables)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/structure", dbHandler.ManageStructure)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/rows", dbHandler.ManageRows)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/query", dbHandler.ManageQuery)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/drop-table", dbHandler.ManageDropTable)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/empty-table", dbHandler.ManageEmptyTable)
 
 			// Docker
 			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).

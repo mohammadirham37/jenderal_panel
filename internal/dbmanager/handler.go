@@ -3,6 +3,7 @@ package dbmanager
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -329,5 +330,182 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 		IP:     r.RemoteAddr,
 	})
 
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ─── Database management (phpMyAdmin-like) ────────────────────────
+
+// manageTokenFromRequest extracts the management session token header.
+func manageTokenFromRequest(r *http.Request) string {
+	return r.Header.Get("X-DB-Manage-Token")
+}
+
+// UnlockManage handles POST /databases/users/{id}/manage/unlock.
+func (h *Handler) UnlockManage(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	panelUser, _ := auth.UserFromContext(r.Context())
+	panelUserID := ""
+	if panelUser.ID != "" {
+		panelUserID = panelUser.ID
+	}
+
+	token, engine, username, err := h.svc.UnlockManage(r.Context(), id, req.Password, panelUserID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: panelUserID,
+		Action: "db_manage_unlock",
+		Module: "dbmanager",
+		Target: username,
+		Detail: "unlocked database management session",
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusOK, map[string]string{
+		"token":    token,
+		"engine":   engine,
+		"username": username,
+	})
+}
+
+// LockManage handles POST /databases/manage/{token}/lock.
+func (h *Handler) LockManage(w http.ResponseWriter, r *http.Request) {
+	h.svc.CloseManage(manageTokenFromRequest(r))
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ManageDatabases handles GET /databases/manage/{token}/databases.
+func (h *Handler) ManageDatabases(w http.ResponseWriter, r *http.Request) {
+	names, err := h.svc.ManageDatabases(r.Context(), manageTokenFromRequest(r))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, names)
+}
+
+// ManageTables handles GET /databases/manage/{token}/tables?database=.
+func (h *Handler) ManageTables(w http.ResponseWriter, r *http.Request) {
+	tables, err := h.svc.ManageTables(r.Context(), manageTokenFromRequest(r), r.URL.Query().Get("database"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, tables)
+}
+
+// ManageStructure handles GET /databases/manage/{token}/structure?database=&table=.
+func (h *Handler) ManageStructure(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	columns, err := h.svc.ManageStructure(r.Context(), manageTokenFromRequest(r), query.Get("database"), query.Get("table"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, columns)
+}
+
+// ManageRows handles GET /databases/manage/{token}/rows.
+func (h *Handler) ManageRows(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	page, _ := strconv.Atoi(query.Get("page"))
+	perPage, _ := strconv.Atoi(query.Get("per_page"))
+	rows, err := h.svc.ManageRows(r.Context(), manageTokenFromRequest(r), query.Get("database"), query.Get("table"), RowsQuery{
+		Page:    page,
+		PerPage: perPage,
+		Sort:    query.Get("sort"),
+		Desc:    query.Get("dir") == "desc",
+		Search:  query.Get("search"),
+	})
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, rows)
+}
+
+// ManageQuery handles POST /databases/manage/{token}/query.
+func (h *Handler) ManageQuery(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		SQL      string `json:"sql"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	result, err := h.svc.ManageQuery(r.Context(), manageTokenFromRequest(r), req.Database, req.SQL)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
+// ManageDropTable handles POST /databases/manage/{token}/drop-table.
+func (h *Handler) ManageDropTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		Table    string `json:"table"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if err := h.svc.ManageDropTable(r.Context(), manageTokenFromRequest(r), req.Database, req.Table); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	panelUser, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: panelUser.ID,
+		Action: "db_manage_drop_table",
+		Module: "dbmanager",
+		Target: fmt.Sprintf("%s.%s", req.Database, req.Table),
+		Detail: "dropped table via database manager",
+		IP:     r.RemoteAddr,
+	})
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ManageEmptyTable handles POST /databases/manage/{token}/empty-table.
+func (h *Handler) ManageEmptyTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		Table    string `json:"table"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if err := h.svc.ManageEmptyTable(r.Context(), manageTokenFromRequest(r), req.Database, req.Table); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	panelUser, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: panelUser.ID,
+		Action: "db_manage_empty_table",
+		Module: "dbmanager",
+		Target: fmt.Sprintf("%s.%s", req.Database, req.Table),
+		Detail: "emptied table via database manager",
+		IP:     r.RemoteAddr,
+	})
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
