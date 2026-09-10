@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -133,6 +134,21 @@ func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]Co
 	return presets, nil
 }
 
+// projectMarkerFor returns the file that identifies the directory a command
+// should run in, or "" to fall back to the document root.
+func projectMarkerFor(command string) string {
+	switch {
+	case strings.HasPrefix(command, "composer"):
+		return "composer.json"
+	case strings.HasPrefix(command, "php artisan"):
+		return "artisan"
+	case strings.HasPrefix(command, "npm"), strings.HasPrefix(command, "yarn"), strings.HasPrefix(command, "pnpm"):
+		return "package.json"
+	default:
+		return ""
+	}
+}
+
 // RunCommand executes a predefined command against a website in the
 // background. The command must be present in the allowedCommands map. Returns
 // the background task ID.
@@ -152,10 +168,29 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 		return "", fmt.Errorf("task runner not available")
 	}
 
-	// Run from home directory (not document_root) so artisan/composer/npm
-	// work from project root, not the public/ subdirectory.
+	// Find the directory that actually holds the project files. Laravel
+	// automatic installs live in <home>/app (document root is app/public),
+	// git/manual setups keep everything in the document root, and some
+	// setups keep the project in the home directory itself.
 	homeDir := "/home/" + w.WebUser
-	shellCmd := "cd " + homeDir + " && " + strings.Join(args, " ")
+	candidates := []string{w.DocumentRoot}
+	if filepath.Clean(w.DocumentRoot) == filepath.Join(homeDir, "app", "public") {
+		candidates = append([]string{filepath.Join(homeDir, "app")}, candidates...)
+	}
+	candidates = append(candidates, homeDir)
+
+	workDir := w.DocumentRoot
+	if marker := projectMarkerFor(command); marker != "" {
+		for _, dir := range candidates {
+			res, err := s.exec.RunSudo(ctx, "test", "-f", filepath.Join(dir, marker))
+			if err == nil && res.ExitCode == 0 {
+				workDir = dir
+				break
+			}
+		}
+	}
+
+	shellCmd := "cd " + workDir + " && " + strings.Join(args, " ")
 
 	taskID := tr.Run(
 		command+" ("+w.Domain+")",
