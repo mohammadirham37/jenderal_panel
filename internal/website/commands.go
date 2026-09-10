@@ -93,10 +93,10 @@ func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]Co
 		)
 	}
 
-	// Laravel artisan commands.
+	// Laravel artisan commands. The .env creation is offered by the dedicated
+	// Laravel .env card on the same tab, so it is not listed as a preset here.
 	if framework == "laravel" {
 		presets = append(presets,
-			CommandPreset{Label: "cp .env.example .env", Command: "cp .env.example .env", Category: "laravel", Danger: false},
 			CommandPreset{Label: "php artisan key:generate", Command: "php artisan key:generate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate", Command: "php artisan migrate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate:fresh", Command: "php artisan migrate:fresh", Category: "artisan", Danger: true},

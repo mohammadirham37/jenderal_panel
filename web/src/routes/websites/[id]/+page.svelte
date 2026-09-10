@@ -1367,6 +1367,7 @@
 									<div class="flex flex-wrap gap-2">
 										{#each presets as preset}
 											<button
+												type="button"
 												onclick={() => runCommand(preset)}
 												class="px-3 py-2 text-sm rounded transition-colors cursor-pointer
 													{preset.danger
@@ -1421,6 +1422,7 @@
 									{:else if !envExists}
 										<p class="text-sm text-gray-400 mb-3">No <code class="text-gray-300 font-mono">.env</code> file found in the project. Create it from <code class="text-gray-300 font-mono">.env.example</code> first.</p>
 										<button
+											type="button"
 											onclick={createEnvFile}
 											class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 										>cp .env.example .env</button>
@@ -1477,7 +1479,15 @@
 						</div>
 					{/if}
 
-					<TaskProgress bind:taskId={commandTaskId} storageKey="cmd-task-{website.id}" />
+					<TaskProgress
+						bind:taskId={commandTaskId}
+						storageKey="cmd-task-{website.id}"
+						onComplete={() => {
+							// Give the Completed badge a moment, then reload so every
+							// section reflects the post-command state.
+							setTimeout(() => window.location.reload(), 800);
+						}}
+					/>
 				</div>
 
 			<!-- ============================================================ -->
