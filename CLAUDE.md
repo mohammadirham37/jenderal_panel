@@ -98,3 +98,9 @@ SvelteKit 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwind CSS v4, adap
 - Svelte pages use `bind:taskId` with `storageKey` prop on TaskProgress for refresh persistence
 - PHP install requires ondrej PPA via `internal/php/service.go` phpRepositorySetupScript
 - Node.js managed via NVM per-website in `/var/lib/jenderal/.nvm/`
+
+## Testing
+
+- The maintainer tests the running panel manually on Ubuntu 24.04 — do NOT launch the app,
+  mock its API, or do browser-based testing. Stop at static validation:
+  `npm run check`, `npm run build`, `npm test` (frontend) and `go test ./...` (backend).
