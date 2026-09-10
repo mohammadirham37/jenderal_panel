@@ -109,7 +109,11 @@
 	async function mapi<T>(path: string, opts?: { method?: string; body?: unknown }): Promise<T> {
 		const res = await fetch(`/api/v1/databases/manage/${token}${path}`, {
 			method: opts?.method || 'GET',
-			headers: { 'Content-Type': 'application/json', 'X-DB-Manage-Token': token },
+			headers: {
+				'Content-Type': 'application/json',
+				'X-DB-Manage-Token': token,
+				'X-CSRF-Token': getCSRFToken()
+			},
 			credentials: 'include',
 			body: opts?.body !== undefined ? JSON.stringify(opts.body) : undefined
 		});

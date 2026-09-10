@@ -1,9 +1,12 @@
 package dbmanager
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
 
 func TestUnescapeMySQLField(t *testing.T) {
@@ -106,6 +109,139 @@ func TestQuoteHelpers(t *testing.T) {
 func TestEscapeLike(t *testing.T) {
 	if got := escapeLike(`100% _done\`); got != `100\% \_done\\` {
 		t.Errorf("escapeLike = %q", got)
+	}
+}
+
+// stubManageExec answers mysql/psql invocations by matching the statement
+// passed after --execute/--command against the given markers.
+func stubManageExec(statements map[string]string) *executor.MockExecutor {
+	return &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			stmt := ""
+			for i, arg := range args {
+				if (arg == "--execute" || arg == "--command") && i+1 < len(args) {
+					stmt = args[i+1]
+					break
+				}
+			}
+			for marker, out := range statements {
+				if strings.Contains(stmt, marker) {
+					return okResult(out), nil
+				}
+			}
+			return okResult(""), nil
+		},
+	}
+}
+
+func newManageSession(engine string) string {
+	return manageSessions.put(&manageSession{
+		PanelUserID: "tester",
+		Engine:      engine,
+		Username:    "app_user",
+		Password:    "pw",
+	})
+}
+
+func TestManageRowsReturnsParsedRows(t *testing.T) {
+	mock := stubManageExec(map[string]string{
+		"SHOW FULL COLUMNS": "Field\tType\tCollation\tNull\tKey\tDefault\tExtra\tPrivileges\tComment\n" +
+			"id\tbigint\tNULL\tNO\tPRI\tNULL\t\tselect,insert,update\t\n",
+		"COUNT(*)": "COUNT(*)\n2\n",
+		"SELECT *": "id\tname\n1\talice\n2\tbob\n",
+	})
+	svc := &Service{exec: mock}
+
+	token := newManageSession("mysql")
+	defer manageSessions.drop(token)
+
+	got, err := svc.ManageRows(context.Background(), token, "app_db", "items", RowsQuery{Page: 1, PerPage: 25})
+	if err != nil {
+		t.Fatalf("ManageRows: %v", err)
+	}
+	if len(got.Columns) != 2 || got.Columns[0] != "id" || got.Columns[1] != "name" {
+		t.Fatalf("columns = %v, want [id name]", got.Columns)
+	}
+	if got.Total != 2 {
+		t.Errorf("total = %d, want 2", got.Total)
+	}
+	if len(got.Rows) != 2 {
+		t.Fatalf("rows: got %d rows, want 2 — parsed rows must be returned to the client", len(got.Rows))
+	}
+	if got.Rows[0][0] == nil || *got.Rows[0][0] != "1" || got.Rows[1][1] == nil || *got.Rows[1][1] != "bob" {
+		t.Fatalf("row data = %#v, want [[1 alice] [2 bob]]", got.Rows)
+	}
+}
+
+func TestManageStructureMapsEngineColumnOrder(t *testing.T) {
+	t.Run("mysql", func(t *testing.T) {
+		// SHOW FULL COLUMNS order: Field, Type, Collation, Null, Key, Default, ...
+		mock := stubManageExec(map[string]string{
+			"SHOW FULL COLUMNS": "Field\tType\tCollation\tNull\tKey\tDefault\tExtra\tPrivileges\tComment\n" +
+				"email\tvarchar(190)\tutf8mb4_0900_ai_ci\tYES\tUNI\tteam@example.com\t\tselect,insert\t\n",
+		})
+		svc := &Service{exec: mock}
+		token := newManageSession("mysql")
+		defer manageSessions.drop(token)
+
+		cols, err := svc.ManageStructure(context.Background(), token, "app_db", "users")
+		if err != nil {
+			t.Fatalf("ManageStructure: %v", err)
+		}
+		if len(cols) != 1 {
+			t.Fatalf("columns = %d, want 1", len(cols))
+		}
+		c := cols[0]
+		if !c.Nullable {
+			t.Errorf("nullable = false, want true (Null=YES)")
+		}
+		if c.Key != "UNI" {
+			t.Errorf("key = %q, want UNI", c.Key)
+		}
+		if c.Default != "team@example.com" {
+			t.Errorf("default = %q, want team@example.com", c.Default)
+		}
+	})
+
+	t.Run("postgresql", func(t *testing.T) {
+		// Custom query order: column_name, data_type, is_nullable, column_default, <PK flag>.
+		mock := stubManageExec(map[string]string{
+			"information_schema.columns": "column_name,data_type,is_nullable,column_default,\n" +
+				"email,character varying(190),YES,team@example.com,\n",
+		})
+		svc := &Service{exec: mock}
+		token := newManageSession("postgresql")
+		defer manageSessions.drop(token)
+
+		cols, err := svc.ManageStructure(context.Background(), token, "app_db", "users")
+		if err != nil {
+			t.Fatalf("ManageStructure: %v", err)
+		}
+		if len(cols) != 1 {
+			t.Fatalf("columns = %d, want 1", len(cols))
+		}
+		c := cols[0]
+		if !c.Nullable {
+			t.Errorf("nullable = false, want true (is_nullable=YES)")
+		}
+		if c.Default != "team@example.com" {
+			t.Errorf("default = %q, want team@example.com", c.Default)
+		}
+		if c.Key != "" {
+			t.Errorf("key = %q, want empty (no primary key)", c.Key)
+		}
+	})
+}
+
+func TestQuoteTable(t *testing.T) {
+	svc := &Service{}
+	if got := svc.quoteTable("mysql", "app_db", "orders"); got != "`app_db`.`orders`" {
+		t.Errorf("mysql quoteTable = %q, want `app_db`.`orders`", got)
+	}
+	// PostgreSQL rejects cross-database references, so the table may only be
+	// schema-qualified.
+	if got := svc.quoteTable("postgresql", "app_db", "orders"); got != `public."orders"` {
+		t.Errorf("postgresql quoteTable = %q, want public.\"orders\"", got)
 	}
 }
 

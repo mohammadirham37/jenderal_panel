@@ -342,12 +342,26 @@ func (s *Service) ManageStructure(ctx context.Context, token, database, table st
 		if len(fields) < 2 {
 			continue
 		}
-		col := ManagedColumn{Name: fields[0], Type: fields[1], Nullable: len(fields) > 2 && strings.EqualFold(fields[2], "YES")}
-		if len(fields) > 3 {
-			col.Key = fields[3]
-		}
-		if len(fields) > 4 {
-			col.Default = fields[4]
+		col := ManagedColumn{Name: fields[0], Type: fields[1]}
+		// Field order differs per engine: SHOW FULL COLUMNS returns
+		// Field, Type, Collation, Null, Key, Default; the PostgreSQL query
+		// returns name, type, is_nullable, column_default, <PK flag>.
+		if session.Engine == "postgresql" {
+			col.Nullable = len(fields) > 2 && strings.EqualFold(fields[2], "YES")
+			if len(fields) > 3 {
+				col.Default = fields[3]
+			}
+			if len(fields) > 4 {
+				col.Key = fields[4]
+			}
+		} else {
+			col.Nullable = len(fields) > 3 && strings.EqualFold(fields[3], "YES")
+			if len(fields) > 4 {
+				col.Key = fields[4]
+			}
+			if len(fields) > 5 {
+				col.Default = fields[5]
+			}
 		}
 		columns = append(columns, col)
 	}
@@ -466,7 +480,13 @@ func (s *Service) ManageRows(ctx context.Context, token, database, table string,
 	}
 
 	out := parseResultSets(session.Engine, result.Stdout)
-	rows := ManagedRows{Columns: out.Columns, Total: total, Page: q.Page, PerPage: q.PerPage}
+	rows := ManagedRows{
+		Columns: out.Columns,
+		Rows:    out.Rows,
+		Total:   total,
+		Page:    q.Page,
+		PerPage: q.PerPage,
+	}
 	if total > 0 {
 		rows.TotalPages = (total + int64(q.PerPage) - 1) / int64(q.PerPage)
 	}
@@ -690,7 +710,10 @@ func (s *Service) quoteIdent(engine, name string) string {
 
 func (s *Service) quoteTable(engine, database, table string) string {
 	if engine == "postgresql" {
-		return quotePG(database) + ".public." + quotePG(table)
+		// PostgreSQL rejects cross-database references, so the table can
+		// only be schema-qualified; the connection already targets the
+		// right database.
+		return "public." + quotePG(table)
 	}
 	return quoteMySQL(database) + "." + quoteMySQL(table)
 }
