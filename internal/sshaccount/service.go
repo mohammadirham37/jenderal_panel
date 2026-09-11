@@ -141,6 +141,16 @@ func (s *Service) Lock(ctx context.Context, userID string) error {
 	if !ValidateUsername(u.Username) {
 		return ErrInvalidUsername
 	}
+	exists, err := s.accountExists(ctx, u.Username)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// Nothing to lock: the panel user has no Linux account (legacy
+		// users, or provisioning never completed). Already as good as
+		// locked.
+		return nil
+	}
 	if err := s.runSudoOK(ctx, "usermod", "-L", "-s", "/usr/sbin/nologin", u.Username); err != nil {
 		return fmt.Errorf("lock account: %w", err)
 	}
@@ -156,6 +166,15 @@ func (s *Service) Resume(ctx context.Context, userID string) error {
 	}
 	if !ValidateUsername(u.Username) {
 		return ErrInvalidUsername
+	}
+	exists, err := s.accountExists(ctx, u.Username)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// The account was never provisioned (or was removed); create it so
+		// the resumed state converges to a working SSH setup.
+		return s.Provision(ctx, userID)
 	}
 	if err := s.runSudoOK(ctx, "usermod", "-U", "-s", "/bin/bash", u.Username); err != nil {
 		return fmt.Errorf("unlock account: %w", err)
@@ -202,6 +221,14 @@ func (s *Service) SyncOwnedWebsites(ctx context.Context, userID string) error {
 	if !u.SSHEnabled {
 		return nil
 	}
+	if exists, err := s.accountExists(ctx, u.Username); err != nil {
+		return err
+	} else if !exists {
+		// Without a Linux account there are no ACLs to converge; the caller
+		// provisions first when SSH is actually wanted.
+		return nil
+	}
+
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT web_user FROM websites WHERE created_by = ?`, userID)
 	if err != nil {
