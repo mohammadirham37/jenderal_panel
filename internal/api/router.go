@@ -354,10 +354,20 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/deployments/{id}", deployHandler.Get)
 
 			// Cron Jobs
-			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
+			// Cron jobs (website-scoped; ownership handled by the scope
+			// middleware, so website-level permissions are enough here)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/cron-jobs", cronHandler.ListForWebsite)
-			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/cron-jobs", cronHandler.CreateForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/cron-jobs/{jobId}", cronHandler.UpdateForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Delete("/websites/{id}/cron-jobs/{jobId}", cronHandler.DeleteForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/cron-jobs/{jobId}/enable", cronHandler.EnableForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/cron-jobs/{jobId}/disable", cronHandler.DisableForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
 				Get("/cron-jobs", cronHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).

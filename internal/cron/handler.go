@@ -8,6 +8,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // Handler handles cron job management HTTP requests.
@@ -161,5 +162,86 @@ func (h *Handler) Disable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logAction(r, "disable_cron_job", id, "disabled cron job")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- Website-scoped job actions ---
+
+// scopedJob resolves a job from the URL and verifies it belongs to the
+// website in the same path; mismatches return NotFound so other sites' jobs
+// are not discoverable.
+func (h *Handler) scopedJob(r *http.Request) (model.CronJob, error) {
+	job, err := h.svc.Get(r.Context(), chi.URLParam(r, "jobId"))
+	if err != nil {
+		return model.CronJob{}, err
+	}
+	if job.WebsiteID != chi.URLParam(r, "id") {
+		return model.CronJob{}, model.ErrNotFound
+	}
+	return job, nil
+}
+
+// UpdateForWebsite handles PUT /api/websites/{id}/cron-jobs/{jobId}.
+func (h *Handler) UpdateForWebsite(w http.ResponseWriter, r *http.Request) {
+	job, err := h.scopedJob(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	var req CronJobRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Update(r.Context(), job.ID, req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "update_cron_job", job.ID, "updated cron job for website "+job.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeleteForWebsite handles DELETE /api/websites/{id}/cron-jobs/{jobId}.
+func (h *Handler) DeleteForWebsite(w http.ResponseWriter, r *http.Request) {
+	job, err := h.scopedJob(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Delete(r.Context(), job.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "delete_cron_job", job.ID, "deleted cron job for website "+job.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// EnableForWebsite handles POST /api/websites/{id}/cron-jobs/{jobId}/enable.
+func (h *Handler) EnableForWebsite(w http.ResponseWriter, r *http.Request) {
+	job, err := h.scopedJob(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Enable(r.Context(), job.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "enable_cron_job", job.ID, "enabled cron job for website "+job.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DisableForWebsite handles POST /api/websites/{id}/cron-jobs/{jobId}/disable.
+func (h *Handler) DisableForWebsite(w http.ResponseWriter, r *http.Request) {
+	job, err := h.scopedJob(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Disable(r.Context(), job.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "disable_cron_job", job.ID, "disabled cron job for website "+job.WebsiteID)
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

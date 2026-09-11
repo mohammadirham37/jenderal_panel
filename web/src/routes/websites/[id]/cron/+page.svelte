@@ -178,11 +178,12 @@
 	async function toggleEnabled(job: CronJob) {
 		const requestedWebsiteID = websiteID;
 		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post(`/api/v1/cron-jobs/${job.id}/${job.enabled ? 'disable' : 'enable'}`);
+			await api.post(`${scopedAPI.cronJobs}/${job.id}/${job.enabled ? 'disable' : 'enable'}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			job.enabled = !job.enabled;
 		} catch (err) {
@@ -213,7 +214,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.put(`/api/v1/cron-jobs/${job.id}`, { command: editCommand.trim(), schedule: editSchedule.trim() });
+			await api.put(`${scopedAPI.cronJobs}/${job.id}`, { command: editCommand.trim(), schedule: editSchedule.trim() });
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = 'Cron job updated.';
 			editingId = null;
@@ -236,7 +237,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.del(`/api/v1/cron-jobs/${id}`);
+			await api.del(`${scopedAPI.cronJobs}/${id}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = 'Cron job deleted.';
 			await loadCronJobs(scopedAPI, requestedWebsiteID, generation);

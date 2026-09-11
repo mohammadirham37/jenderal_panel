@@ -8,6 +8,7 @@
 	import WebsiteFilesSection from '$lib/components/WebsiteFilesSection.svelte';
 	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
 	import WebsiteQueueSection from '$lib/components/WebsiteQueueSection.svelte';
+	import WebsiteCronSection from '$lib/components/WebsiteCronSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
@@ -69,7 +70,7 @@
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
@@ -1529,6 +1530,9 @@
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Queue'}
 				<WebsiteQueueSection websiteID={website.id} domain={website.domain} />
+
+			{:else if activeTab === 'Cron Jobs'}
+				<WebsiteCronSection websiteID={website.id} domain={website.domain} />
 
 			{:else if activeTab === 'Terminal'}
 				<TerminalConsole
