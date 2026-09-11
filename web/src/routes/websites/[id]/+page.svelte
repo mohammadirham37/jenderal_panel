@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { onMount, onDestroy, tick } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
 	import { goto, replaceState } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
-	import { decodeTerminalMessage } from '$lib/terminal-message.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
 	import WebsiteFilesSection from '$lib/components/WebsiteFilesSection.svelte';
+	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
@@ -153,13 +153,14 @@
 	let envInitialized = $state(false);
 
 	// ─── Terminal ─────────────────────────────────────────────────────
-
-	let terminalOutput = $state('');
-	let terminalCommand = $state('');
-	let terminalConnected = $state(false);
-	let terminalConnecting = $state(false);
-	let terminalWs: WebSocket | null = null;
-	let terminalOutputEl: HTMLTextAreaElement;
+	// Rendered by the shared TerminalConsole component; the console
+	// connects while its tab is active and disconnects on leave.
+	let terminalEndpoint = $derived.by(() => {
+		if (!website) return '';
+		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+		const homeDir = `/home/${website.web_user}`;
+		return `${protocol}//${location.host}/ws/terminal?web_user=${encodeURIComponent(website.web_user)}&workdir=${encodeURIComponent(homeDir)}`;
+	});
 
 	// ─── Files ────────────────────────────────────────────────────────
 	// The Files tab renders WebsiteFilesSection, which owns its own state.
@@ -673,76 +674,6 @@
 		}
 	}
 
-	// Terminal
-	function connectTerminal() {
-		if (!website) return;
-		terminalConnecting = true;
-		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-		const homeDir = `/home/${website.web_user}`;
-		const wsUrl = `${protocol}//${location.host}/ws/terminal?web_user=${encodeURIComponent(website.web_user)}&workdir=${encodeURIComponent(homeDir)}`;
-		terminalWs = new WebSocket(wsUrl);
-
-		terminalWs.onopen = () => {
-			terminalConnected = true;
-			terminalConnecting = false;
-			terminalOutput += '--- Connected ---\n';
-			scrollTerminal();
-		};
-
-		terminalWs.onmessage = (event) => {
-			const message = decodeTerminalMessage(event.data);
-			terminalOutput += message;
-			if (!message.endsWith('\n')) terminalOutput += '\n';
-			scrollTerminal();
-		};
-
-		terminalWs.onclose = () => {
-			terminalConnected = false;
-			terminalConnecting = false;
-			terminalOutput += '--- Disconnected ---\n';
-			scrollTerminal();
-		};
-
-		terminalWs.onerror = () => {
-			terminalConnected = false;
-			terminalConnecting = false;
-			terminalOutput += '--- Connection error ---\n';
-			scrollTerminal();
-		};
-	}
-
-	function disconnectTerminal() {
-		if (terminalWs) {
-			terminalWs.close();
-			terminalWs = null;
-		}
-		terminalConnected = false;
-		terminalConnecting = false;
-	}
-
-	async function scrollTerminal() {
-		await tick();
-		if (terminalOutputEl) terminalOutputEl.scrollTop = terminalOutputEl.scrollHeight;
-	}
-
-	function sendTerminalCommand() {
-		if (!terminalWs || !terminalConnected || !terminalCommand.trim()) return;
-		terminalOutput += `$ ${terminalCommand}\n`;
-		terminalWs.send(terminalCommand);
-		terminalCommand = '';
-		scrollTerminal();
-	}
-
-	function handleTerminalKeydown(e: KeyboardEvent) {
-		if (e.key === 'Enter') { e.preventDefault(); sendTerminalCommand(); }
-	}
-
-	function reconnectTerminal() {
-		disconnectTerminal();
-		terminalOutput = '';
-		connectTerminal();
-	}
-
 	// Files: handled by WebsiteFilesSection.
 
 	// Logs
@@ -856,16 +787,6 @@
 	});
 
 	$effect(() => {
-		if (activeTab === 'Terminal' && website) {
-			if (!terminalConnected && !terminalConnecting) {
-				connectTerminal();
-			}
-		} else if (activeTab !== 'Terminal') {
-			disconnectTerminal();
-		}
-	});
-
-	$effect(() => {
 		if (activeTab === 'Logs' && !logsInitialized && website) {
 			logsInitialized = true;
 			loadLogs(logTab);
@@ -885,7 +806,6 @@
 	onMount(loadWebsite);
 
 	onDestroy(() => {
-		disconnectTerminal();
 		stopDeploymentsPolling();
 	});
 </script>
@@ -1516,51 +1436,12 @@
 			<!-- TERMINAL TAB                                                  -->
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Terminal'}
-				<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-					<div class="flex items-center justify-between px-4 py-3 border-b border-gray-700">
-						<div class="flex items-center gap-3">
-							<h3 class="text-sm font-semibold text-white">Terminal</h3>
-							<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium {terminalConnected ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}">
-								<span class="w-1.5 h-1.5 rounded-full {terminalConnected ? 'bg-green-400' : 'bg-red-400'}"></span>
-								{terminalConnecting ? 'Connecting...' : terminalConnected ? 'Connected' : 'Disconnected'}
-							</span>
-						</div>
-						{#if !terminalConnected && !terminalConnecting}
-							<button
-								onclick={reconnectTerminal}
-								class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer"
-							>
-								Reconnect
-							</button>
-						{/if}
-					</div>
-
-					<textarea
-						bind:this={terminalOutputEl}
-						readonly
-						value={terminalOutput}
-						class="w-full h-96 bg-gray-950 p-4 text-green-400 text-sm font-mono resize-y focus:outline-none border-none"
-					></textarea>
-
-					<div class="flex border-t border-gray-700">
-						<span class="flex items-center px-3 text-green-400 text-sm font-mono bg-gray-900">$</span>
-						<input
-							type="text"
-							bind:value={terminalCommand}
-							onkeydown={handleTerminalKeydown}
-							disabled={!terminalConnected}
-							placeholder={terminalConnected ? 'Type a command...' : 'Not connected'}
-							class="flex-1 px-3 py-3 bg-gray-900 text-white text-sm font-mono focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-						/>
-						<button
-							onclick={sendTerminalCommand}
-							disabled={!terminalConnected || !terminalCommand.trim()}
-							class="px-4 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors cursor-pointer"
-						>
-							Send
-						</button>
-					</div>
-				</div>
+				<TerminalConsole
+					endpoint={terminalEndpoint}
+					active={activeTab === 'Terminal'}
+					title={website.web_user}
+					heightClass="h-[26rem]"
+				/>
 
 			<!-- ============================================================ -->
 			<!-- LOGS TAB                                                      -->

@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { readFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 
 let decodeTerminalMessage;
@@ -73,4 +74,34 @@ test('decodeTerminalEvent returns null for plain text and garbage', async () => 
 	assert.equal(decodeTerminalEvent('legacy output'), null);
 	assert.equal(decodeTerminalEvent('not json {'), null);
 	assert.equal(decodeTerminalEvent(JSON.stringify({ type: 'other' })), null);
+});
+
+test('TerminalConsole implements the persistent shell protocol', async () => {
+	const consoleComponent = await readFile(
+		new URL('../../src/lib/components/TerminalConsole.svelte', import.meta.url),
+		'utf8'
+	);
+	assert.match(consoleComponent, /decodeTerminalEvent/);
+	assert.match(consoleComponent, /ev\.partial/);
+	assert.match(consoleComponent, /ev\.exitCode/);
+	assert.match(consoleComponent, /ev\.cwd/);
+});
+
+test('the standalone page and website tab both render TerminalConsole', async () => {
+	const page = await readFile(
+		new URL('../../src/routes/terminal/+page.svelte', import.meta.url),
+		'utf8'
+	);
+	const websitePage = await readFile(
+		new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url),
+		'utf8'
+	);
+
+	assert.match(page, /<TerminalConsole \{endpoint\}/);
+	// The website console points at the website-scoped endpoint and only
+	// holds a session while its tab is active.
+	assert.match(websitePage, /<TerminalConsole/);
+	assert.match(websitePage, /ws\/terminal\?web_user=/);
+	assert.match(websitePage, /active=\{activeTab === 'Terminal'\}/);
+	assert.doesNotMatch(websitePage, /decodeTerminalMessage/);
 });
