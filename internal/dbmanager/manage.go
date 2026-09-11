@@ -150,13 +150,13 @@ func (s *Service) UnlockManage(ctx context.Context, userID, password, panelUserI
 		result, execErr := s.exec.RunSudo(ctx, "mysql",
 			"--user="+username, "--password="+password, "--execute", "SELECT 1")
 		if execErr != nil || result.ExitCode != 0 {
-			return "", "", "", model.NewValidationError("invalid password for "+username)
+			return "", "", "", model.NewValidationError("invalid password for " + username)
 		}
 	case "postgresql":
 		result, execErr := s.exec.RunSudo(ctx, "psql", pgConnInfo(username, password, "postgres"),
 			"--tuples-only", "--no-align", "--command", "SELECT 1")
 		if execErr != nil || result.ExitCode != 0 {
-			return "", "", "", model.NewValidationError("invalid password for "+username)
+			return "", "", "", model.NewValidationError("invalid password for " + username)
 		}
 	default:
 		return "", "", "", model.NewValidationError("management is available for mysql and postgresql only")
@@ -323,7 +323,7 @@ func (s *Service) ManageStructure(ctx context.Context, token, database, table st
 			              AND tc.table_name = c.table_name AND k.column_name = c.column_name)
 			           THEN 'PRI' ELSE '' END
 			FROM information_schema.columns c
-			WHERE c.table_schema = 'public' AND c.table_name = ` + sqlString(table) + `
+			WHERE c.table_schema = 'public' AND c.table_name = `+sqlString(table)+`
 			ORDER BY c.ordinal_position`)
 	default:
 		return nil, model.NewValidationError("unsupported engine")
@@ -740,7 +740,7 @@ func validateIdentifier(name string) error {
 		return model.NewValidationError("identifier contains unsupported characters")
 	}
 	if !identifierRe.MatchString(name) {
-		return model.NewValidationError("invalid identifier: "+name)
+		return model.NewValidationError("invalid identifier: " + name)
 	}
 	return nil
 }
