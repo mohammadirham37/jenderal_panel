@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import { toast } from '$lib/stores/toast';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface Backup {
@@ -56,8 +57,6 @@
 	let backups = $state<Backup[]>([]);
 	let loadingBackups = $state(true);
 	let backupError = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let stats = $state<BackupStats | null>(null);
 
@@ -185,8 +184,7 @@
 	}
 
 	function flash(msg: string, error = false) {
-		if (error) { actionError = msg; actionMsg = ''; } else { actionMsg = msg; actionError = ''; }
-		setTimeout(() => { actionMsg = ''; actionError = ''; }, 5000);
+		if (error) { toast.error(msg); } else { toast.success(msg); }
 	}
 
 	let filteredBackups = $derived(
@@ -249,7 +247,6 @@
 	async function createBackup() {
 		if (creatingBackup) return;
 		creatingBackup = true;
-		actionError = '';
 		try {
 			const b = await api.post<{ task_id?: string }>('/api/v1/backups', {
 				type: createType,
@@ -408,11 +405,6 @@
 		</div>
 	</div>
 
-	{#if actionMsg || actionError}
-		<div class="rounded-lg px-4 py-2.5 text-sm {actionError ? 'bg-red-900/50 border border-red-700 text-red-300' : 'bg-green-900/40 border border-green-700 text-green-300'}">
-			{actionError || actionMsg}
-		</div>
-	{/if}
 
 	<!-- Summary cards -->
 	<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">

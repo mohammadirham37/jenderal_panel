@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import { parseSimplePHPConfig, switchPHPConfigMode, updateSimplePHPConfig } from '$lib/php-config.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import { toast } from '$lib/stores/toast';
 
 	interface PhpVersion {
 		version: string;
@@ -13,8 +14,6 @@
 	let phpVersions = $state<PhpVersion[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
 	let configSaving = $state(false);
@@ -52,16 +51,14 @@
 	}
 
 	async function installPhp(version: string) {
-		actionMsg = '';
-		actionError = '';
 		currentTaskId = '';
 		actionInProgress = `install-${version}`;
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/php/${version}/install`);
 			currentTaskId = result.task_id;
-			actionMsg = `PHP ${version} installation started. See progress below.`;
+			toast.success(`PHP ${version} installation started. See progress below.`);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to install PHP ${version}`;
+			toast.error(err instanceof Error ? err.message : `Failed to install PHP ${version}`);
 			actionInProgress = null;
 		}
 	}
@@ -72,31 +69,27 @@
 	}
 
 	async function uninstallPhp(version: string) {
-		actionMsg = '';
-		actionError = '';
 		uninstallConfirmVersion = null;
 		actionInProgress = `uninstall-${version}`;
 		try {
 			await api.post(`/api/v1/php/${version}/uninstall`);
-			actionMsg = `PHP ${version} uninstalled.`;
+			toast.success(`PHP ${version} uninstalled.`);
 			await loadPhp();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to uninstall PHP ${version}`;
+			toast.error(err instanceof Error ? err.message : `Failed to uninstall PHP ${version}`);
 		} finally {
 			actionInProgress = null;
 		}
 	}
 
 	async function restartPhp(version: string) {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `restart-${version}`;
 		try {
 			await api.post(`/api/v1/php/${version}/restart`);
-			actionMsg = `PHP ${version} restarted.`;
+			toast.success(`PHP ${version} restarted.`);
 			await loadPhp();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to restart PHP ${version}`;
+			toast.error(err instanceof Error ? err.message : `Failed to restart PHP ${version}`);
 		} finally {
 			actionInProgress = null;
 		}
@@ -159,19 +152,7 @@
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">PHP Management</h2>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading PHP versions...</div>

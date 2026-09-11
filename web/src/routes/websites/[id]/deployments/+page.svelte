@@ -4,6 +4,7 @@
 	import { api } from '$lib/api';
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
+import { toast } from '$lib/stores/toast';
 
 	interface Deployment {
 		id: string;
@@ -33,8 +34,6 @@
 	let loadingWebsite = $state(true);
 	let websiteError = $state('');
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	// Deploy form
 	let showDeployForm = $state(false);
@@ -139,8 +138,6 @@
 		deployments = [];
 		loading = false;
 		error = '';
-		actionMsg = '';
-		actionError = '';
 		showDeployForm = false;
 		deployRepoUrl = '';
 		deployBranch = 'main';
@@ -211,22 +208,20 @@
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation) || !deployRepoUrl.trim()) return;
 		deploying = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(scopedAPI.deploy, {
 				repo: deployRepoUrl.trim(),
 				branch: deployBranch.trim() || 'main'
 			});
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = 'Deployment started.';
+			toast.success('Deployment started.');
 			showDeployForm = false;
 			deployRepoUrl = '';
 			deployBranch = 'main';
 			await loadDeployments(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to start deployment';
+				toast.error(err instanceof Error ? err.message : 'Failed to start deployment');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) {
@@ -273,19 +268,7 @@
 
 	<WebsiteSectionNav websiteId={currentWebsite.id} currentPath={page.url.pathname} />
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	<!-- Deploy Form -->
 	{#if showDeployForm}

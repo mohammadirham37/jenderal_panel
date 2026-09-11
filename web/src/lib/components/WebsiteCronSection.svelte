@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+import { toast } from '$lib/stores/toast';
 
 	interface CronJob {
 		id: string;
@@ -23,8 +24,6 @@
 	let cronJobs = $state<CronJob[]>([]);
 	let loading = $state(false);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let showCreateForm = $state(false);
 	let createCommand = $state('');
@@ -96,31 +95,27 @@
 		const schedule = createSchedulePreset === 'custom' ? createScheduleCustom.trim() : createSchedulePreset;
 		if (creating || !createCommand.trim() || !schedule) return;
 		creating = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(jobsBase(), { command: createCommand.trim(), schedule });
-			actionMsg = 'Cron job created.';
+			toast.success('Cron job created.');
 			showCreateForm = false;
 			createCommand = '';
 			createSchedulePreset = '* * * * *';
 			createScheduleCustom = '';
 			await loadCronJobs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create cron job';
+			toast.error(err instanceof Error ? err.message : 'Failed to create cron job');
 		} finally {
 			creating = false;
 		}
 	}
 
 	async function toggleEnabled(job: CronJob) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`${jobsBase()}/${job.id}/${job.enabled ? 'disable' : 'enable'}`, {});
 			job.enabled = !job.enabled;
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to toggle cron job';
+			toast.error(err instanceof Error ? err.message : 'Failed to toggle cron job');
 		}
 	}
 
@@ -143,15 +138,13 @@
 		const schedule = editSchedulePreset === 'custom' ? editScheduleCustom.trim() : editSchedulePreset;
 		if (saving || !editCommand.trim() || !schedule) return;
 		saving = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`${jobsBase()}/${job.id}`, { command: editCommand.trim(), schedule });
-			actionMsg = 'Cron job updated.';
+			toast.success('Cron job updated.');
 			editingId = null;
 			await loadCronJobs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update cron job';
+			toast.error(err instanceof Error ? err.message : 'Failed to update cron job');
 		} finally {
 			saving = false;
 		}
@@ -159,15 +152,13 @@
 
 	async function deleteCronJob(job: CronJob) {
 		if (deleteConfirmId !== job.id) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`${jobsBase()}/${job.id}`);
-			actionMsg = 'Cron job deleted.';
+			toast.success('Cron job deleted.');
 			deleteConfirmId = null;
 			await loadCronJobs();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete cron job';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete cron job');
 		}
 	}
 
@@ -199,11 +190,6 @@
 		</div>
 	</div>
 
-	{#if actionMsg || actionError}
-		<div class="rounded-lg px-4 py-2.5 text-sm {actionError ? 'bg-red-900/50 border border-red-700 text-red-300' : 'bg-green-900/40 border border-green-700 text-green-300'}">
-			{actionError || actionMsg}
-		</div>
-	{/if}
 
 	{#if showCreateForm}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">

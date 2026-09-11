@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
+import { toast } from '$lib/stores/toast';
 
 	interface CronJob {
 		id: string;
@@ -32,8 +33,6 @@
 	let loadingWebsite = $state(true);
 	let websiteError = $state('');
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let showCreateForm = $state(false);
 	let createCommand = $state('');
@@ -87,8 +86,6 @@
 		cronJobs = [];
 		loading = false;
 		error = '';
-		actionMsg = '';
-		actionError = '';
 		showCreateForm = false;
 		createCommand = '';
 		createSchedule = '';
@@ -156,19 +153,17 @@
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation) || !createCommand.trim() || !createSchedule.trim()) return;
 		creating = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(scopedAPI.cronJobs, { command: createCommand.trim(), schedule: createSchedule.trim() });
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = 'Cron job created successfully.';
+			toast.success('Cron job created successfully.');
 			showCreateForm = false;
 			createCommand = '';
 			createSchedule = '';
 			await loadCronJobs(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to create cron job';
+				toast.error(err instanceof Error ? err.message : 'Failed to create cron job');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) creating = false;
@@ -180,15 +175,13 @@
 		const generation = websiteLoadGeneration;
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`${scopedAPI.cronJobs}/${job.id}/${job.enabled ? 'disable' : 'enable'}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			job.enabled = !job.enabled;
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to toggle cron job';
+				toast.error(err instanceof Error ? err.message : 'Failed to toggle cron job');
 			}
 		}
 	}
@@ -211,17 +204,15 @@
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		saving = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`${scopedAPI.cronJobs}/${job.id}`, { command: editCommand.trim(), schedule: editSchedule.trim() });
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = 'Cron job updated.';
+			toast.success('Cron job updated.');
 			editingId = null;
 			await loadCronJobs(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to update cron job';
+				toast.error(err instanceof Error ? err.message : 'Failed to update cron job');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) saving = false;
@@ -234,16 +225,14 @@
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		deleteConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`${scopedAPI.cronJobs}/${id}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = 'Cron job deleted.';
+			toast.success('Cron job deleted.');
 			await loadCronJobs(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to delete cron job';
+				toast.error(err instanceof Error ? err.message : 'Failed to delete cron job');
 			}
 		}
 	}
@@ -274,16 +263,6 @@
 
 		<WebsiteSectionNav websiteId={currentWebsite.id} currentPath={page.url.pathname} />
 
-		{#if actionMsg}
-			<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-				{actionMsg} <button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-			</div>
-		{/if}
-		{#if actionError}
-			<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-				{actionError} <button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-			</div>
-		{/if}
 
 		{#if showCreateForm}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">

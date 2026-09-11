@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, apiRaw } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import { toast } from '$lib/stores/toast';
 
 	interface Runtime {
 		error_message?: string;
@@ -17,8 +18,6 @@
 	let globalNode = $state({installed: false, version: '', package: ''});
 	let loading = $state(true);
 	let error = $state('');
-	let actionError = $state('');
-	let actionMsg = $state('');
 	let currentTaskId = $state('');
 	let acting = $state(false);
 	let busy = $derived(acting || !!currentTaskId);
@@ -48,36 +47,36 @@
 
 	async function removeGlobal() {
 		if (busy || !confirmGlobal) return;
-		acting = true; actionError = ''; actionMsg = ''; confirmGlobal = false;
+		acting = true; confirmGlobal = false;
 		try {
 			const result = await apiRaw<{task_id: string}>('DELETE', '/api/v1/nodejs/global', {confirm: true});
 			currentTaskId = result.data.task_id;
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Global Node.js removal failed'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Global Node.js removal failed'); }
 		finally { acting = false; }
 	}
 
 	async function createApp() {
 		if (busy || !selectedRuntime?.installed || !createStartCmd.trim()) return;
-		acting = true; actionError = ''; actionMsg = '';
+		acting = true; 
 		try {
 			await api.post('/api/v1/nodejs/apps', {
 				website_id: createWebsiteId, package_mgr: createPackageMgr,
 				build_cmd: createBuildCmd.trim(), start_cmd: createStartCmd.trim(), port: createPort
 			});
-			showCreateForm = false; createWebsiteId = ''; actionMsg = 'Node.js app created.';
+			showCreateForm = false; createWebsiteId = ''; toast.success('Node.js app created.');
 			await load();
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to create app'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to create app'); }
 		finally { acting = false; }
 	}
 
 	async function appAction(id: string, action: string) {
 		if (busy) return;
-		acting = true; actionError = ''; actionMsg = ''; deleteConfirmId = '';
+		acting = true; deleteConfirmId = '';
 		try {
 			if (action === 'delete') await api.del('/api/v1/nodejs/apps/' + id);
 			else await api.post('/api/v1/nodejs/apps/' + id + '/' + action);
-			actionMsg = 'Application updated.'; await load();
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Application action failed'; }
+			toast.success('Application updated.'); await load();
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Application action failed'); }
 		finally { acting = false; }
 	}
 	onMount(() => { void load(); });
@@ -87,8 +86,6 @@
 	<h2 class="text-2xl font-bold text-white">Node.js</h2>
 	<p class="text-sm text-gray-400">Manage Node.js with NVM under each website user. Applications inherit their website runtime. Per-website runtime installation lives on each website's detail page.</p>
 	{#if error}<div role="alert" class="rounded border border-red-800 p-4 text-red-400">{error} <button onclick={load} disabled={busy} class="underline">Retry</button></div>{/if}
-	{#if actionError}<p role="alert" class="text-red-400">{actionError}</p>{/if}
-	{#if actionMsg}<p role="status" class="text-green-400">{actionMsg}</p>{/if}
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; void load(); }} />
 
 	{#if globalNode.installed}

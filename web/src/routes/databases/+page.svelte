@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import { toast } from '$lib/stores/toast';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface EngineStatus {
@@ -36,8 +37,6 @@
 	let loadingUsers = $state(true);
 
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
 	let engineOperationInProgress = $derived(actionInProgress !== null || !!currentTaskId);
@@ -259,13 +258,11 @@
 	});
 
 	function flash(msg: string) {
-		actionMsg = msg;
-		actionError = '';
+		toast.success(msg);
 	}
 
 	function fail(err: unknown, fallback: string) {
-		actionError = err instanceof Error ? err.message : fallback;
-		actionMsg = '';
+		toast.error(err instanceof Error ? err.message : fallback);
 	}
 
 	// ── Loaders ───────────────────────────────────────────────────
@@ -309,8 +306,6 @@
 
 	// ── Engine actions ────────────────────────────────────────────
 	async function installEngine(engineName: string) {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `install-${engineName}`;
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/databases/engines/${engineName}/install`);
@@ -324,8 +319,6 @@
 	}
 
 	async function engineAction(engineName: string, action: 'start' | 'stop' | 'restart') {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `${action}-${engineName}`;
 		try {
 			await api.post(`/api/v1/databases/engines/${engineName}/${action}`);
@@ -342,8 +335,6 @@
 	async function createDatabase() {
 		if (!newDbName.trim() || !newDbEngine) return;
 		creatingDb = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/databases', {
 				name: newDbName.trim(),
@@ -364,8 +355,6 @@
 
 	async function deleteDatabase(id: string, name: string) {
 		deleteDbConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/databases/${id}`);
 			flash(`Database "${name}" deleted.`);
@@ -379,8 +368,6 @@
 	async function createUser() {
 		if (!newUsername.trim() || !newPassword.trim() || !newUserEngine) return;
 		creatingUser = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/databases/users', {
 				username: newUsername.trim(),
@@ -402,8 +389,6 @@
 
 	async function resetPassword(userId: string) {
 		if (!resetPasswordValue.trim()) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			// Backend registers this route as POST only.
 			await api.post(`/api/v1/databases/users/${userId}/password`, {
@@ -420,8 +405,6 @@
 
 	async function grantPrivileges(userId: string) {
 		if (!grantDatabase) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			// Handler reads user_id and database_id from the body; the URL param
 			// is ignored. database_id is the managed_databases row ID.
@@ -440,8 +423,6 @@
 
 	async function deleteUser(id: string, username: string) {
 		deleteUserConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/databases/users/${id}`);
 			flash(`User "${username}" deleted.`);
@@ -515,19 +496,7 @@
 		</div>
 	{/if}
 
-	{#if actionMsg}
-		<div class="flex items-center justify-between gap-2 rounded-xl border border-green-700 bg-green-900/40 px-3.5 py-2.5 text-sm text-green-300">
-			<span>{actionMsg}</span>
-			<button type="button" onclick={() => (actionMsg = '')} class="cursor-pointer text-green-400 hover:text-green-200">✕</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="flex items-center justify-between gap-2 rounded-xl border border-red-700 bg-red-900/40 px-3.5 py-2.5 text-sm text-red-300">
-			<span>{actionError}</span>
-			<button type="button" onclick={() => (actionError = '')} class="cursor-pointer text-red-400 hover:text-red-200">✕</button>
-		</div>
-	{/if}
 
 	<!-- ═══════════════════════════ ENGINES ═══════════════════════════ -->
 	<section aria-label="Database engines">

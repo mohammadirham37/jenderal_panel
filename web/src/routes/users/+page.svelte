@@ -2,12 +2,11 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { User, SSHKey } from '$lib/types';
+import { toast } from '$lib/stores/toast';
 
 	let users = $state<User[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	// Toolbar search
 	let search = $state('');
@@ -60,8 +59,6 @@
 	}
 
 	async function createUser() {
-		actionMsg = '';
-		actionError = '';
 		creating = true;
 
 		try {
@@ -72,7 +69,7 @@
 				role: newRole,
 				ssh_enabled: newSSHEnabled
 			});
-			actionMsg = `User "${newUsername}" created successfully.`;
+			toast.success(`User "${newUsername}" created successfully.`);
 			showCreate = false;
 			newUsername = '';
 			newEmail = '';
@@ -81,7 +78,7 @@
 			newSSHEnabled = true;
 			await loadUsers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create user';
+			toast.error(err instanceof Error ? err.message : 'Failed to create user');
 		} finally {
 			creating = false;
 		}
@@ -97,8 +94,6 @@
 
 	async function saveEdit() {
 		if (!editingUser) return;
-		actionMsg = '';
-		actionError = '';
 		saving = true;
 
 		try {
@@ -108,11 +103,11 @@
 				is_active: editIsActive,
 				ssh_enabled: editSSHEnabled
 			});
-			actionMsg = `User "${editUsername}" updated successfully.`;
+			toast.success(`User "${editUsername}" updated successfully.`);
 			editingUser = null;
 			await loadUsers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update user';
+			toast.error(err instanceof Error ? err.message : 'Failed to update user');
 		} finally {
 			saving = false;
 		}
@@ -124,15 +119,13 @@
 			: `Are you sure you want to delete user "${u.username}"?`;
 		if (!confirm(message)) return;
 
-		actionMsg = '';
-		actionError = '';
 
 		try {
 			await api.del(`/api/v1/users/${u.id}`);
-			actionMsg = `User "${u.username}" deleted.`;
+			toast.success(`User "${u.username}" deleted.`);
 			await loadUsers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete user';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete user');
 		}
 	}
 
@@ -221,19 +214,7 @@
 		</button>
 	</div>
 
-	{#if actionMsg}
-		<div class="flex items-start justify-between gap-3 rounded-lg border border-green-700 bg-green-900/30 px-4 py-2.5 text-sm text-green-300">
-			<span>{actionMsg}</span>
-			<button onclick={() => (actionMsg = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="flex items-start justify-between gap-3 rounded-lg border border-red-700 bg-red-900/30 px-4 py-2.5 text-sm text-red-300">
-			<span>{actionError}</span>
-			<button onclick={() => (actionError = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
-		</div>
-	{/if}
 
 	<!-- Create User Form -->
 	{#if showCreate}

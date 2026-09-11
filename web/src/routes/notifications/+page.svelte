@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+import { toast } from '$lib/stores/toast';
 
 	interface NotificationChannel {
 		id: string;
@@ -14,8 +15,6 @@
 	let channels = $state<NotificationChannel[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	// Create form
 	let newType = $state('email');
@@ -64,8 +63,6 @@
 	}
 
 	async function addChannel() {
-		actionMsg = '';
-		actionError = '';
 		creating = true;
 		try {
 			const config = { ...newConfig, ...(newType === 'email' ? { smtp_port: Number(newConfig.smtp_port) } : {}) };
@@ -73,37 +70,33 @@
 				type: newType,
 				config
 			});
-			actionMsg = 'Channel created.';
+			toast.success('Channel created.');
 			newType = 'email';
 			newConfig = defaultConfig('email');
 			await loadChannels();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create channel';
+			toast.error(err instanceof Error ? err.message : 'Failed to create channel');
 		} finally {
 			creating = false;
 		}
 	}
 
 	async function toggleChannel(ch: NotificationChannel) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/notification-channels/${ch.id}`, { enabled: !ch.enabled });
-			actionMsg = `Channel ${ch.enabled ? 'disabled' : 'enabled'}.`;
+			toast.success(`Channel ${ch.enabled ? 'disabled' : 'enabled'}.`);
 			await loadChannels();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to toggle channel';
+			toast.error(err instanceof Error ? err.message : 'Failed to toggle channel');
 		}
 	}
 
 	async function testChannel(ch: NotificationChannel) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`/api/v1/notification-channels/${ch.id}/test`);
-			actionMsg = 'Test notification sent.';
+			toast.success('Test notification sent.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to send test notification';
+			toast.error(err instanceof Error ? err.message : 'Failed to send test notification');
 		}
 	}
 
@@ -114,30 +107,26 @@
 
 	async function saveEdit() {
 		if (!editingChannel) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/notification-channels/${editingChannel.id}`, {
 				config: { ...editConfig, ...(editingChannel.type === 'email' ? { smtp_port: Number(editConfig.smtp_port) } : {}) },
 				enabled: editingChannel.enabled
 			});
-			actionMsg = 'Channel updated.';
+			toast.success('Channel updated.');
 			editingChannel = null;
 			await loadChannels();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update channel';
+			toast.error(err instanceof Error ? err.message : 'Failed to update channel');
 		}
 	}
 
 	async function deleteChannel(id: string) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/notification-channels/${id}`);
-			actionMsg = 'Channel deleted.';
+			toast.success('Channel deleted.');
 			await loadChannels();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete channel';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete channel');
 		}
 	}
 
@@ -154,19 +143,7 @@
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Notifications</h2>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading notification channels...</div>

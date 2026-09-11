@@ -4,6 +4,7 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { composerActionPath } from '$lib/developer-dependencies.js';
 	import type { ServiceStatus } from '$lib/types';
+import { toast } from '$lib/stores/toast';
 
 	interface DependencyStatus {
 		name: string;
@@ -14,8 +15,6 @@
 	let services = $state<ServiceStatus[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let dependencies = $state<DependencyStatus[]>([]);
 	let dependenciesLoading = $state(true);
@@ -48,16 +47,16 @@
 
 	async function manageComposer() {
 		if (!composer || composerInProgress) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			const result = await api.post<{ task_id: string }>(composerActionPath(composer));
 			currentTaskId = result.task_id;
-			actionMsg = composer.installed
+			toast.success(
+				composer.installed
 				? 'Composer update started. See progress below.'
-				: 'Composer installation started. See progress below.';
+				: 'Composer installation started. See progress below.'
+			);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to start Composer operation';
+			toast.error(err instanceof Error ? err.message : 'Failed to start Composer operation');
 		}
 	}
 
@@ -65,23 +64,21 @@
 		if (task?.status === 'completed') {
 			window.location.reload();
 		} else {
-			actionError = task?.error || 'Composer operation failed.';
+			toast.error(task?.error || 'Composer operation failed.');
 		}
 	}
 
 	async function serviceAction(name: string, action: 'start' | 'stop' | 'restart') {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `${name}-${action}`;
 
 		try {
 			await api.post(`/api/v1/services/${encodeURIComponent(name)}/${action}`);
-			actionMsg = `Service "${name}" ${action}ed successfully.`;
+			toast.success(`Service "${name}" ${action}ed successfully.`);
 			// Reload services list
 			loading = true;
 			await loadServices();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to ${action} ${name}`;
+			toast.error(err instanceof Error ? err.message : `Failed to ${action} ${name}`);
 		} finally {
 			actionInProgress = null;
 		}
@@ -95,23 +92,7 @@
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Services</h2>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">
-				Dismiss
-			</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">
-				Dismiss
-			</button>
-		</div>
-	{/if}
 
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_composer_task" onComplete={onComposerComplete} />
 

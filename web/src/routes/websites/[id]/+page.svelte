@@ -14,6 +14,7 @@
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
+import { toast } from '$lib/stores/toast';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
 
@@ -114,8 +115,6 @@
 	let website = $state<Website | null>(null);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	// ─── Overview ─────────────────────────────────────────────────────
 
@@ -164,13 +163,13 @@
 	async function enableOctane() {
 		if (!website || octaneBusy) return;
 		octaneBusy = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/enable`);
 			octaneTaskId = result.task_id || '';
-			actionMsg = 'Octane installation started — this installs laravel/octane, then starts the server.';
+			toast.success('Octane installation started — this installs laravel/octane, then starts the server.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to enable Octane';
+			toast.error(err instanceof Error ? err.message : 'Failed to enable Octane');
 		} finally {
 			octaneBusy = false;
 		}
@@ -180,14 +179,14 @@
 		if (!website || octaneBusy) return;
 		if (!confirm('Disable Octane and switch this website back to PHP-FPM serving? The allocated port is kept.')) return;
 		octaneBusy = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/octane/disable`);
-			actionMsg = 'Octane disabled; the PHP-FPM vhost is active again.';
+			toast.success('Octane disabled; the PHP-FPM vhost is active again.');
 			await loadOctaneStatus();
 			await loadWebsite();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to disable Octane';
+			toast.error(err instanceof Error ? err.message : 'Failed to disable Octane');
 		} finally {
 			octaneBusy = false;
 		}
@@ -196,12 +195,12 @@
 	async function octaneAction(action: 'start' | 'stop' | 'restart') {
 		if (!website || octaneBusy) return;
 		octaneBusy = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/octane/${action}`);
 			await loadOctaneStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to ${action} Octane`;
+			toast.error(err instanceof Error ? err.message : `Failed to ${action} Octane`);
 		} finally {
 			octaneBusy = false;
 		}
@@ -210,12 +209,12 @@
 	async function reloadOctane() {
 		if (!website || octaneBusy) return;
 		octaneBusy = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/reload`);
 			octaneTaskId = result.task_id || '';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to reload Octane';
+			toast.error(err instanceof Error ? err.message : 'Failed to reload Octane');
 		} finally {
 			octaneBusy = false;
 		}
@@ -224,13 +223,13 @@
 	async function saveOctaneWorkers() {
 		if (!website || octaneBusy) return;
 		octaneBusy = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.put(`/api/v1/websites/${website.id}/octane/workers`, { workers: Number(octaneWorkersChoice) });
-			actionMsg = 'Worker count saved; the server restarts to apply it.';
+			toast.success('Worker count saved; the server restarts to apply it.');
 			await loadOctaneStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to save worker count';
+			toast.error(err instanceof Error ? err.message : 'Failed to save worker count');
 		} finally {
 			octaneBusy = false;
 		}
@@ -240,12 +239,12 @@
 
 	async function installFrankenphp() {
 		if (octaneTaskId) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/frankenphp/install');
 			octaneTaskId = result.task_id || '';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to start FrankenPHP install';
+			toast.error(err instanceof Error ? err.message : 'Failed to start FrankenPHP install');
 		}
 	}
 
@@ -375,9 +374,9 @@
 				expected_status: healthExpected,
 				enabled: healthEnabled
 			});
-			actionMsg = 'Health check saved.';
+			toast.success('Health check saved.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to save health check';
+			toast.error(err instanceof Error ? err.message : 'Failed to save health check');
 		} finally {
 			healthBusy = false;
 		}
@@ -389,7 +388,7 @@
 		try {
 			health = await api.post<HealthCheck>(`/api/v1/websites/${website.id}/health/check`, {});
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Health check failed';
+			toast.error(err instanceof Error ? err.message : 'Health check failed');
 		} finally {
 			healthBusy = false;
 		}
@@ -567,7 +566,7 @@
 
 	async function installNodeRuntime() {
 		if (!website || nodeRuntimeTaskId) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/nodejs/runtimes/${website.id}`, {
 				version: nodeRuntimeChoice
@@ -581,42 +580,42 @@
 	// Overview actions
 	async function suspendWebsite() {
 		if (!website) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/suspend`);
-			actionMsg = 'Website suspended.';
+			toast.success('Website suspended.');
 			await loadWebsite();
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to suspend website'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to suspend website'); }
 	}
 
 	async function enableWebsite() {
 		if (!website) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/enable`);
-			actionMsg = 'Website enabled.';
+			toast.success('Website enabled.');
 			await loadWebsite();
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to enable website'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to enable website'); }
 	}
 
 	async function retryWebsite() {
 		if (!website) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/retry`);
-			actionMsg = 'Retry initiated.';
+			toast.success('Retry initiated.');
 			await loadWebsite();
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Failed to retry'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to retry'); }
 	}
 
 	async function deleteWebsite() {
 		if (!website) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.del(`/api/v1/websites/${website.id}`);
 			goto('/websites');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete website';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete website');
 			deleteConfirm = false;
 		}
 	}
@@ -675,17 +674,17 @@
 	async function deployNow() {
 		if (!website || !repoUrl.trim()) return;
 		deploying = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			// The API returns the created Deployment (202 Accepted), not a task.
 			const d = await api.post<DeploymentEntry>(`/api/v1/websites/${website.id}/deploy`, {
 				repo: repoUrl,
 				branch: repoBranch
 			});
-			actionMsg = d?.id ? `Deployment started (${d.id.slice(-6).toLowerCase()}).` : 'Deployment started.';
+			toast.success(d?.id ? `Deployment started (${d.id.slice(-6).toLowerCase()}).` : 'Deployment started.');
 			await loadDeployments();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to start deployment';
+			toast.error(err instanceof Error ? err.message : 'Failed to start deployment');
 		} finally {
 			deploying = false;
 		}
@@ -695,12 +694,12 @@
 		if (!website) return;
 		if (!confirm('Move the git repository from app/public up to app/ so nginx serves the correct index.php? The site may briefly error during the move.')) return;
 		repairingLayout = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const data = await api.post<{ output: string }>(`/api/v1/websites/${website.id}/repair-layout`, {});
-			actionMsg = data.output || 'Directory layout fixed.';
+			toast.success(data.output || 'Directory layout fixed.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to repair directory layout';
+			toast.error(err instanceof Error ? err.message : 'Failed to repair directory layout');
 		} finally {
 			repairingLayout = false;
 		}
@@ -712,7 +711,7 @@
 		const file = input.files?.[0];
 		if (!file) return;
 		uploadingDeploy = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const formData = new FormData();
 			formData.append('file', file);
@@ -725,10 +724,10 @@
 			if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
 			const json = await res.json();
 			uploadDeployTaskId = json.data?.task_id || '';
-			actionMsg = 'Upload started.';
+			toast.success('Upload started.');
 			input.value = '';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to upload';
+			toast.error(err instanceof Error ? err.message : 'Failed to upload');
 		} finally {
 			uploadingDeploy = false;
 		}
@@ -796,14 +795,14 @@
 
 	async function runCommand(preset: CommandPreset) {
 		if (!website) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/run-command`, {
 				command: preset.label
 			});
 			commandTaskId = data.task_id || '';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to run command';
+			toast.error(err instanceof Error ? err.message : 'Failed to run command');
 		}
 	}
 
@@ -964,15 +963,15 @@
 	async function addDomain() {
 		if (!website || !addDomainName.trim()) return;
 		addingDomain = true;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/domains`, { name: addDomainName, type: addDomainType });
-			actionMsg = `Domain "${addDomainName}" added.`;
+			toast.success(`Domain "${addDomainName}" added.`);
 			addDomainName = '';
 			addDomainType = 'alias';
 			await loadWebsite();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to add domain';
+			toast.error(err instanceof Error ? err.message : 'Failed to add domain');
 		} finally {
 			addingDomain = false;
 		}
@@ -980,13 +979,13 @@
 
 	async function removeDomain(domainId: string) {
 		if (!website) return;
-		actionMsg = ''; actionError = '';
+		
 		try {
 			await api.del(`/api/v1/websites/${website.id}/domains/${domainId}`);
-			actionMsg = 'Domain removed.';
+			toast.success('Domain removed.');
 			await loadWebsite();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to remove domain';
+			toast.error(err instanceof Error ? err.message : 'Failed to remove domain');
 		}
 	}
 
@@ -1081,19 +1080,7 @@
 		Back to Websites
 	</a>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading website details...</div>

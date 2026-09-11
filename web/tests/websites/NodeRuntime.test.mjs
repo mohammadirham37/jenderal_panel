@@ -22,6 +22,7 @@ function harness(overrides = {}) {
 	const context = vm.createContext({
 		Error,
 		api, apiRaw: async (method, path, payload) => { calls.push({method, path, payload}); return {data: {task_id: 'remove-1'}}; },
+		toast: {success: () => {}, error: () => {}, info: () => {}},
 		$state: (value) => value, $derived: (value) => value, onMount: () => {}
 	});
 	vm.runInContext(javascript + `
@@ -30,7 +31,7 @@ function harness(overrides = {}) {
 		select: (runtime, version) => { selectedRuntime = runtime; createWebsiteId = runtime.website_id; },
 		confirm: (value) => { confirmGlobal = value; },
 		lock: (value) => { busy = value; },
-		state: () => ({currentTaskId, loading, error, actionError, acting})
+		state: () => ({currentTaskId, loading, error, acting})
 	};
 	`, context);
 	return {handlers: context.handlers, calls, runtime};

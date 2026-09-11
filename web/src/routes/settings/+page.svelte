@@ -4,13 +4,12 @@
 	import type { Setting, SSHKey } from '$lib/types';
 	import { user as authUser } from '$lib/stores/auth';
 	import { language } from '$lib/stores/language';
+import { toast } from '$lib/stores/toast';
 
 	let settings = $state<Setting[]>([]);
 	let loading = $state(true);
 	let error = $state('');
 	let saving = $state(false);
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	// Track edited values
 	let editedValues = $state<Record<string, string>>({});
@@ -112,8 +111,6 @@
 
 	async function saveSettings() {
 		saving = true;
-		actionMsg = '';
-		actionError = '';
 
 		try {
 			// Build diff: only send changed values
@@ -125,16 +122,16 @@
 			}
 
 			if (Object.keys(payload).length === 0) {
-				actionMsg = 'No changes to save.';
+				toast.success('No changes to save.');
 				saving = false;
 				return;
 			}
 
 			await api.put('/api/v1/settings', payload);
-			actionMsg = 'Settings saved successfully.';
+			toast.success('Settings saved successfully.');
 			await loadSettings();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to save settings';
+			toast.error(err instanceof Error ? err.message : 'Failed to save settings');
 		} finally {
 			saving = false;
 		}
@@ -172,16 +169,14 @@
 	async function saveRemote() {
 		if (savingRemote) return;
 		savingRemote = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			const payload: Record<string, string> = {};
 			for (const key of remoteKeys) payload[key] = remote[key] ?? '';
 			await api.put('/api/v1/settings', payload);
-			actionMsg = 'Remote storage configuration saved.';
+			toast.success('Remote storage configuration saved.');
 			await loadSettings();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to save remote storage';
+			toast.error(err instanceof Error ? err.message : 'Failed to save remote storage');
 		} finally {
 			savingRemote = false;
 		}
@@ -393,23 +388,7 @@
 		</select>
 	</div>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">
-				Dismiss
-			</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">
-				Dismiss
-			</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading settings...</div>

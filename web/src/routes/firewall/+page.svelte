@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { firewallActionTone, normalizeFirewallStatus, parseFirewallPort } from '$lib/firewall.js';
+import { toast } from '$lib/stores/toast';
 
 	interface FirewallStatus {
 		active: boolean;
@@ -20,8 +21,6 @@
 	let rules = $state<FirewallRule[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state(false);
 
 	// Disable confirm dialog
@@ -54,15 +53,13 @@
 	}
 
 	async function enableFirewall() {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.post('/api/v1/firewall/enable');
-			actionMsg = 'Firewall enabled successfully.';
+			toast.success('Firewall enabled successfully.');
 			await loadStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to enable firewall';
+			toast.error(err instanceof Error ? err.message : 'Failed to enable firewall');
 		} finally {
 			actionInProgress = false;
 		}
@@ -70,15 +67,13 @@
 
 	async function disableFirewall() {
 		showDisableConfirm = false;
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.post('/api/v1/firewall/disable');
-			actionMsg = 'Firewall disabled.';
+			toast.success('Firewall disabled.');
 			await loadStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to disable firewall';
+			toast.error(err instanceof Error ? err.message : 'Failed to disable firewall');
 		} finally {
 			actionInProgress = false;
 		}
@@ -86,16 +81,14 @@
 
 	async function deleteRule(rule: FirewallRule, force: boolean = false) {
 		deleteConfirm = null;
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = true;
 		try {
 			const forceParam = force ? '?force=true' : '';
 			await api.del(`/api/v1/firewall/rules/${rule.number}${forceParam}`);
-			actionMsg = `Rule #${rule.number} deleted.`;
+			toast.success(`Rule #${rule.number} deleted.`);
 			await loadStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete rule';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete rule');
 		} finally {
 			actionInProgress = false;
 		}
@@ -108,8 +101,6 @@
 
 	async function addRule() {
 		addError = '';
-		actionMsg = '';
-		actionError = '';
 		if (!newPort.trim()) {
 			addError = 'Port is required.';
 			return;
@@ -124,7 +115,7 @@
 				from: newFrom.trim() || undefined,
 				comment: newComment.trim() || undefined
 			});
-			actionMsg = `Rule added for port ${newPort}.`;
+			toast.success(`Rule added for port ${newPort}.`);
 			newPort = '';
 			newProtocol = 'tcp';
 			newAction = 'allow';
@@ -152,19 +143,7 @@
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Firewall</h2>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading firewall status...</div>

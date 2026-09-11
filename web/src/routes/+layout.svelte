@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
+	import Toaster from '$lib/components/Toaster.svelte';
 	import { isAuthenticated, user, roles, permissions, logout, checkAuth } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import '../app.css';
@@ -358,5 +359,6 @@
 				{@render children()}
 			</main>
 		</div>
+		<Toaster />
 	</div>
 {/if}

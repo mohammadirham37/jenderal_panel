@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
+import { toast } from '$lib/stores/toast';
 	import {
 		buildWebsiteSSLInstallRequest,
 		certificateInstallError,
@@ -32,8 +33,6 @@
 	let certificates = $state<SSLCertificate[]>([]);
 	let loading = $state(false);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state(false);
 
 	// Install form
@@ -168,8 +167,6 @@
 		const requestedWebsiteID = websiteID;
 		if (!website || !formIsValid()) return;
 		issuing = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			const request = buildWebsiteSSLInstallRequest(installMode, requestedWebsiteID, {
 				domain: issueDomain,
@@ -182,14 +179,16 @@
 			if (!isCurrent(requestedWebsiteID, loadGeneration)) return;
 			const installError = certificateInstallError(installed);
 			if (installError) throw new Error(installError);
-			actionMsg = installMode === 'custom'
+			toast.success(
+			installMode === 'custom'
 				? `Custom SSL certificate installed for "${issueDomain}".`
-				: `Let's Encrypt certificate installed for "${issueDomain}".`;
+				: `Let's Encrypt certificate installed for "${issueDomain}".`
+			);
 			closeIssueForm();
 			await loadCertificates(requestedWebsiteID);
 		} catch (err) {
 			if (isCurrent(requestedWebsiteID, loadGeneration)) {
-				actionError = err instanceof Error ? err.message : 'Failed to install certificate';
+				toast.error(err instanceof Error ? err.message : 'Failed to install certificate');
 			}
 		} finally {
 			issuing = false;
@@ -204,15 +203,13 @@
 
 	async function renewCertificate(cert: SSLCertificate) {
 		if (!website) return;
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.post(`/api/v1/websites/${website.id}/ssl/${cert.id}/renew`);
-			actionMsg = `Renewal started for "${cert.domain}".`;
+			toast.success(`Renewal started for "${cert.domain}".`);
 			await loadCertificates(website.id);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to renew certificate';
+			toast.error(err instanceof Error ? err.message : 'Failed to renew certificate');
 		} finally {
 			actionInProgress = false;
 		}
@@ -221,15 +218,13 @@
 	async function revokeCertificate(id: string) {
 		if (!website) return;
 		revokeConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.post(`/api/v1/websites/${website.id}/ssl/${id}/revoke`);
-			actionMsg = 'Certificate revoked.';
+			toast.success('Certificate revoked.');
 			await loadCertificates(website.id);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to revoke certificate';
+			toast.error(err instanceof Error ? err.message : 'Failed to revoke certificate');
 		} finally {
 			actionInProgress = false;
 		}
@@ -238,15 +233,13 @@
 	async function deleteCertificate(id: string) {
 		if (!website) return;
 		deleteConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = true;
 		try {
 			await api.del(`/api/v1/websites/${website.id}/ssl/${id}`);
-			actionMsg = 'Certificate deleted.';
+			toast.success('Certificate deleted.');
 			await loadCertificates(website.id);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete certificate';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete certificate');
 		} finally {
 			actionInProgress = false;
 		}
@@ -254,13 +247,11 @@
 
 	async function toggleAutoRenew(cert: SSLCertificate) {
 		if (!website) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/websites/${website.id}/ssl/${cert.id}`, { auto_renew: !cert.auto_renew });
 			cert.auto_renew = !cert.auto_renew;
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update auto-renew';
+			toast.error(err instanceof Error ? err.message : 'Failed to update auto-renew');
 		}
 	}
 
@@ -301,19 +292,7 @@
 </script>
 
 <div class="space-y-6">
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	<div class="flex items-center justify-between">
 		<h3 class="text-lg font-semibold text-white">SSL Certificates</h3>

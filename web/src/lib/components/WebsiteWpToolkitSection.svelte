@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import { toast } from '$lib/stores/toast';
 
 	interface WpStatus {
 		installed: boolean;
@@ -21,8 +22,6 @@
 	let status = $state<WpStatus | null>(null);
 	let loading = $state(false);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let activeAction = $state<string | null>(null);
 	let actionTaskId = $state('');
@@ -48,14 +47,12 @@
 	async function runAction(action: string, label: string) {
 		if (activeAction) return;
 		activeAction = action;
-		actionMsg = '';
-		actionError = '';
 		try {
 			const res = await api.post<{ task_id: string }>(actionAPI(action), {});
 			actionTaskId = res.task_id;
-			actionMsg = label + ' started.';
+			toast.success(label + ' started.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to run ${label}`;
+			toast.error(err instanceof Error ? err.message : `Failed to run ${label}`);
 		} finally {
 			activeAction = null;
 		}
@@ -94,12 +91,6 @@
 		</button>
 	</div>
 
-	{#if actionError}
-		<div class="rounded-lg border border-red-700 bg-red-900/30 px-4 py-2.5 text-sm text-red-300">{actionError}</div>
-	{/if}
-	{#if actionMsg}
-		<div class="rounded-lg border border-green-700 bg-green-900/30 px-4 py-2.5 text-sm text-green-300">{actionMsg}</div>
-	{/if}
 
 	{#if loading}
 		<div class="space-y-2 rounded-xl border border-gray-700 bg-gray-800 p-5">

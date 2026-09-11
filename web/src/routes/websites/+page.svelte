@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
+import { toast } from '$lib/stores/toast';
 
 	interface Website {
 		id: string;
@@ -42,8 +43,6 @@
 	let websites = $state<Website[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let options = $state<WebsiteOptions | null>(null);
 	let optionsError = $state('');
 	let repairTaskId = $state('');
@@ -85,11 +84,11 @@
 
 	async function repairLaravel(id: string) {
 		if (repairBusy) return;
-		repairing = true; actionError = ''; repairConfirmId = null;
+		repairing = true; repairConfirmId = null;
 		try {
 			const result = await api.post<{task_id: string}>(`/api/v1/websites/${id}/repair-laravel`, {confirm: true});
 			repairTaskId = result.task_id;
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Laravel repair failed'; repairing = false; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Laravel repair failed'); repairing = false; }
 	}
 
 	// Create form
@@ -205,69 +204,59 @@
 
 	async function createWebsite() {
 		creating = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			const body: Record<string, string> = { domain: createDomain, ...selection };
 			await api.post('/api/v1/websites', body);
-			actionMsg = `Website "${createDomain}" creation started.`;
+			toast.success(`Website "${createDomain}" creation started.`);
 			showCreateForm = false;
 			createDomain = '';
 			if (options) selection = normalizeWebsiteSelection(options.defaults || {}, options) as WebsiteSelection;
 			await loadWebsites();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create website';
+			toast.error(err instanceof Error ? err.message : 'Failed to create website');
 		} finally {
 			creating = false;
 		}
 	}
 
 	async function suspendWebsite(id: string) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`/api/v1/websites/${id}/suspend`);
-			actionMsg = 'Website suspended.';
+			toast.success('Website suspended.');
 			await loadWebsites();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to suspend website';
+			toast.error(err instanceof Error ? err.message : 'Failed to suspend website');
 		}
 	}
 
 	async function enableWebsite(id: string) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`/api/v1/websites/${id}/enable`);
-			actionMsg = 'Website enabled.';
+			toast.success('Website enabled.');
 			await loadWebsites();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to enable website';
+			toast.error(err instanceof Error ? err.message : 'Failed to enable website');
 		}
 	}
 
 	async function deleteWebsite(id: string) {
-		actionMsg = '';
-		actionError = '';
 		deleteConfirmId = null;
 		try {
 			await api.del(`/api/v1/websites/${id}`);
-			actionMsg = 'Website deleted.';
+			toast.success('Website deleted.');
 			await loadWebsites();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete website';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete website');
 		}
 	}
 
 	async function retryWebsite(id: string) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`/api/v1/websites/${id}/retry`);
-			actionMsg = 'Website retry initiated.';
+			toast.success('Website retry initiated.');
 			await loadWebsites();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to retry website';
+			toast.error(err instanceof Error ? err.message : 'Failed to retry website');
 		}
 	}
 
@@ -299,20 +288,8 @@
 		</button>
 	</div>
 
-	{#if actionMsg}
-		<div class="flex items-start justify-between gap-3 rounded-lg border border-green-700 bg-green-900/30 px-4 py-2.5 text-sm text-green-300">
-			<span>{actionMsg}</span>
-			<button onclick={() => (actionMsg = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="flex items-start justify-between gap-3 rounded-lg border border-red-700 bg-red-900/30 px-4 py-2.5 text-sm text-red-300">
-			<span>{actionError}</span>
-			<button onclick={() => (actionError = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
-		</div>
-	{/if}
-	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') actionMsg = 'Laravel repair completed.'; }} onMissing={() => { repairing = false; }} />
+	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') toast.success('Laravel repair completed.'); }} onMissing={() => { repairing = false; }} />
 
 	<!-- Create Form -->
 	{#if showCreateForm}

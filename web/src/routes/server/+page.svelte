@@ -3,11 +3,11 @@
 	import { api } from '$lib/api';
 	import type { ServerInfo } from '$lib/types';
 	import { hasPermission, permissions } from '$lib/stores/auth';
+import { toast } from '$lib/stores/toast';
 
 	let info = $state<ServerInfo | null>(null);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
 
 	let newHostname = $state('');
 	let newTimezone = $state('');
@@ -156,9 +156,9 @@
 		}
 		try {
 			await api.post('/api/v1/server/reboot');
-			actionMsg = 'Reboot initiated. Server will restart shortly.';
+			toast.success('Reboot initiated. Server will restart shortly.');
 		} catch (err) {
-			actionMsg = err instanceof Error ? err.message : 'Failed to initiate reboot';
+			toast.error(err instanceof Error ? err.message : 'Failed to initiate reboot');
 		}
 	}
 
@@ -166,10 +166,10 @@
 		try {
 			await api.post('/api/v1/server/hostname', { hostname: newHostname });
 			editingHostname = false;
-			actionMsg = 'Hostname updated successfully.';
+			toast.success('Hostname updated successfully.');
 			await loadInfo();
 		} catch (err) {
-			actionMsg = err instanceof Error ? err.message : 'Failed to update hostname';
+			toast.error(err instanceof Error ? err.message : 'Failed to update hostname');
 		}
 	}
 
@@ -178,10 +178,10 @@
 		try {
 			await api.post('/api/v1/server/timezone', { timezone: newTimezone });
 			editingTimezone = false;
-			actionMsg = 'Timezone updated successfully.';
+			toast.success('Timezone updated successfully.');
 			await loadInfo();
 		} catch (err) {
-			actionMsg = err instanceof Error ? err.message : 'Failed to update timezone';
+			toast.error(err instanceof Error ? err.message : 'Failed to update timezone');
 		}
 	}
 
@@ -246,14 +246,6 @@
 		</button>
 	</div>
 
-	{#if actionMsg}
-		<div class="p-3 bg-blue-900/50 border border-blue-700 rounded-lg text-blue-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-blue-400 hover:text-blue-200 cursor-pointer">
-				Dismiss
-			</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading server info...</div>

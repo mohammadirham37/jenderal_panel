@@ -22,6 +22,7 @@
 		summarizeTraffic
 	} from '$lib/traffic-guard.js';
 	import { buildSafeSetupRequest, normalizeSetupReview } from '$lib/security-setup.js';
+import { toast } from '$lib/stores/toast';
 
 	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'events';
 	interface ComponentStatus {
@@ -127,7 +128,6 @@
 	let loading = $state(true);
 	let error = $state('');
 	let actionMessage = $state('');
-	let actionError = $state('');
 	let busy = $state('');
 	let currentTaskId = $state('');
 	let overview = $state<Overview>(normalizeOverview({}) as Overview);
@@ -262,27 +262,27 @@
 	}
 
 	async function reviewSecuritySetup() {
-		busy = 'setup-review'; actionError = ''; setupConfirmed = false;
+		busy = 'setup-review'; setupConfirmed = false;
 		try { setupReview = normalizeSetupReview(await api.post<SetupReview>('/api/v1/security/setup/review', setupRequest())); actionMessage = 'Review generated. Confirm every mutation before applying.'; }
-		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to review Safe Setup.'; }
+		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to review Safe Setup.'); }
 		finally { busy = ''; }
 	}
 
 	async function applySecuritySetup() {
-		if (!setupReview || !setupConfirmed) { actionError = 'Review and confirm the Safe Setup first.'; return; }
-		busy = 'setup-apply'; actionError = '';
+		if (!setupReview || !setupConfirmed) { toast.error('Review and confirm the Safe Setup first.'); return; }
+		busy = 'setup-apply'; 
 		try {
 			const result = await api.post<{ run_id: string; task_id: string }>('/api/v1/security/setup/apply', { request: setupRequest(), review: setupReview, confirm: true });
 			currentTaskId = result.task_id; actionMessage = 'Safe Setup started. Its checkpoints and task output survive a page refresh.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to apply Safe Setup.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to apply Safe Setup.'); }
 		finally { busy = ''; }
 	}
 
 	async function resumeSecuritySetup() {
 		if (!setupAssessment.latest) return;
-		busy = 'setup-resume'; actionError = '';
+		busy = 'setup-resume'; 
 		try { const result = await api.post<{ task_id: string }>('/api/v1/security/setup/resume', { run_id: setupAssessment.latest.id }); currentTaskId = result.task_id; actionMessage = 'Safe Setup resumed from its last completed checkpoint.'; }
-		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to resume Safe Setup.'; }
+		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to resume Safe Setup.'); }
 		finally { busy = ''; }
 	}
 
@@ -302,7 +302,7 @@
 	async function loadTrafficBuckets() {
 		if (!selectedTrafficWebsite) { trafficBuckets = []; return; }
 		try { trafficBuckets = await api.get<TrafficBucket[]>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/buckets`) || []; }
-		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to load Traffic Guard evidence.'; trafficBuckets = []; }
+		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to load Traffic Guard evidence.'); trafficBuckets = []; }
 	}
 
 	async function chooseTrafficWebsite(id: string) {
@@ -312,8 +312,8 @@
 	}
 
 	async function applyTrafficGuard() {
-		if (!selectedTrafficWebsite) { actionError = 'Select a website first.'; return; }
-		busy = 'traffic-apply'; actionError = ''; actionMessage = '';
+		if (!selectedTrafficWebsite) { toast.error('Select a website first.'); return; }
+		busy = 'traffic-apply'; actionMessage = '';
 		try {
 			const payload = buildTrafficProfile({
 				mode: trafficMode, proxy_mode: trafficProxyMode, proxy_header: trafficProxyHeader,
@@ -323,62 +323,62 @@
 			if (trafficMode !== 'observe' && !trafficConfirmed) throw new Error('Confirm HTTP enforcement before applying this profile.');
 			const result = await api.put<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}`, { ...payload, confirm: trafficMode !== 'observe' && trafficConfirmed });
 			currentTaskId = result.task_id; actionMessage = 'Traffic Guard configuration is being validated and applied.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to apply Traffic Guard.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to apply Traffic Guard.'); }
 		finally { busy = ''; }
 	}
 
 	async function resetTrafficObserve() {
 		if (!selectedTrafficWebsite) return;
-		busy = 'traffic-observe'; actionError = '';
+		busy = 'traffic-observe'; 
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/observe`, {});
 			currentTaskId = result.task_id; actionMessage = 'Traffic Guard is returning to Observe Mode.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to restore Observe Mode.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to restore Observe Mode.'); }
 		finally { busy = ''; }
 	}
 
 	async function refreshCloudflareCIDRs() {
-		busy = 'traffic-cloudflare'; actionError = '';
+		busy = 'traffic-cloudflare'; 
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/traffic/cloudflare/refresh', {});
 			currentTaskId = result.task_id; actionMessage = 'Official Cloudflare CIDR refresh started.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to refresh Cloudflare CIDRs.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to refresh Cloudflare CIDRs.'); }
 		finally { busy = ''; }
 	}
 
 	async function installMalware(mode: 'low_memory' | 'daemon') {
-		busy = `malware-install:${mode}`; actionError = ''; actionMessage = '';
+		busy = `malware-install:${mode}`; actionMessage = '';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/install', { mode });
 			currentTaskId = result.task_id;
 			actionMessage = 'ClamAV installation started. Progress remains available after refresh.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to install ClamAV.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to install ClamAV.'); }
 		finally { busy = ''; }
 	}
 
 	async function updateSignatures() {
-		busy = 'malware-signatures'; actionError = ''; actionMessage = '';
+		busy = 'malware-signatures'; actionMessage = '';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/signatures/update', {});
 			currentTaskId = result.task_id; actionMessage = 'ClamAV signature update started.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to update signatures.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to update signatures.'); }
 		finally { busy = ''; }
 	}
 
 	async function startMalwareScan(mode: 'quick' | 'website' | 'full_websites') {
-		if (mode === 'website' && !selectedWebsite) { actionError = 'Select a website first.'; return; }
-		busy = `malware-scan:${mode}`; actionError = ''; actionMessage = '';
+		if (mode === 'website' && !selectedWebsite) { toast.error('Select a website first.'); return; }
+		busy = `malware-scan:${mode}`; actionMessage = '';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/scans', {
 				mode, website_ids: mode === 'website' ? [selectedWebsite] : []
 			});
 			currentTaskId = result.task_id; actionMessage = 'Malware scan started with safe resource limits.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to start malware scan.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to start malware scan.'); }
 		finally { busy = ''; }
 	}
 
 	async function saveMalwareSchedule() {
-		busy = 'malware-schedule'; actionError = '';
+		busy = 'malware-schedule'; 
 		try {
 			const safe = buildSafeSchedule({ time: scheduleTime });
 			await api.put('/api/v1/security/malware/schedules', {
@@ -386,56 +386,55 @@
 			});
 			actionMessage = scheduleEnabled ? `Daily Quick Scan saved for ${scheduleTime}.` : 'Daily malware scan disabled.';
 			await loadData();
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to save scan schedule.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to save scan schedule.'); }
 		finally { busy = ''; }
 	}
 
 	async function configureOnAccess() {
-		busy = 'malware-on-access'; actionError = '';
+		busy = 'malware-on-access'; 
 		try {
 			const request = buildOnAccessRequest({ enabled: onAccessEnabled, prevention: preventionEnabled, confirmed: preventionConfirmed });
 			const result = await api.put<{ task_id: string }>('/api/v1/security/malware/on-access', request);
 			currentTaskId = result.task_id; actionMessage = 'On-access configuration is being validated and applied.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to configure on-access scanning.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to configure on-access scanning.'); }
 		finally { busy = ''; }
 	}
 
 	async function restoreQuarantine(item: QuarantineItem) {
 		if (!confirm(`Restore ${item.original_path}? The destination must still be empty and the sample must scan clean.`)) return;
-		busy = `restore:${item.id}`; actionError = '';
+		busy = `restore:${item.id}`; 
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/security/malware/quarantine/${item.id}/restore`, {});
 			currentTaskId = result.task_id; actionMessage = 'Restore validation started.';
-		} catch (err) { actionError = err instanceof Error ? err.message : 'Unable to restore sample.'; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to restore sample.'); }
 		finally { busy = ''; }
 	}
 
 	async function markFalsePositive(item: QuarantineItem) {
 		if (!confirm('Allowlist only this exact website, path, and SHA-256 hash?')) return;
-		busy = `false-positive:${item.id}`; actionError = '';
+		busy = `false-positive:${item.id}`; 
 		try { await api.post(`/api/v1/security/malware/quarantine/${item.id}/false-positive`, {}); actionMessage = 'Exact sample marked as false positive.'; await loadData(); }
-		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to mark false positive.'; }
+		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to mark false positive.'); }
 		finally { busy = ''; }
 	}
 
 	async function deleteQuarantine(item: QuarantineItem) {
 		if (!confirm(`Permanently delete quarantined sample ${item.id}? This cannot be undone.`)) return;
-		busy = `delete:${item.id}`; actionError = '';
+		busy = `delete:${item.id}`; 
 		try { await api.del(`/api/v1/security/malware/quarantine/${item.id}`); actionMessage = 'Quarantined sample permanently deleted.'; await loadData(); }
-		catch (err) { actionError = err instanceof Error ? err.message : 'Unable to delete quarantined sample.'; }
+		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to delete quarantined sample.'); }
 		finally { busy = ''; }
 	}
 
 	async function installFail2ban() {
 		busy = 'install';
-		actionError = '';
 		actionMessage = '';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/fail2ban/install', {});
 			currentTaskId = result.task_id;
 			actionMessage = 'Fail2ban installation started. Progress is saved if this page is refreshed.';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Unable to start installation.';
+			toast.error(err instanceof Error ? err.message : 'Unable to start installation.');
 		} finally {
 			busy = '';
 		}
@@ -443,7 +442,6 @@
 
 	async function applySettings() {
 		busy = 'apply';
-		actionError = '';
 		actionMessage = '';
 		try {
 			const networks = managementNetworks.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
@@ -457,7 +455,7 @@
 			currentTaskId = result.task_id;
 			actionMessage = 'Fail2ban settings are being validated and applied.';
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Unable to apply Fail2ban settings.';
+			toast.error(err instanceof Error ? err.message : 'Unable to apply Fail2ban settings.');
 		} finally {
 			busy = '';
 		}
@@ -465,13 +463,12 @@
 
 	async function serviceAction(action: 'start' | 'stop' | 'restart') {
 		busy = action;
-		actionError = '';
 		try {
 			await api.post(`/api/v1/security/fail2ban/${action}`, {});
 			actionMessage = `Fail2ban ${action} request completed.`;
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Unable to ${action} Fail2ban.`;
+			toast.error(err instanceof Error ? err.message : `Unable to ${action} Fail2ban.`);
 		} finally {
 			busy = '';
 		}
@@ -479,7 +476,6 @@
 
 	async function createBan() {
 		busy = 'ban';
-		actionError = '';
 		try {
 			const request = validateBan({ jail: banJail, ip: banIP, duration_seconds: Number(banDuration) });
 			await api.post('/api/v1/security/fail2ban/bans', request);
@@ -487,7 +483,7 @@
 			banIP = '';
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Unable to create temporary ban.';
+			toast.error(err instanceof Error ? err.message : 'Unable to create temporary ban.');
 		} finally {
 			busy = '';
 		}
@@ -496,13 +492,12 @@
 	async function removeBan(ban: Ban) {
 		if (!confirm(`Unban ${ban.ip} from ${ban.jail}?`)) return;
 		busy = `unban:${ban.jail}:${ban.ip}`;
-		actionError = '';
 		try {
 			await api.del(`/api/v1/security/fail2ban/bans/${encodeURIComponent(ban.ip)}?jail=${encodeURIComponent(ban.jail)}`);
 			actionMessage = `${ban.ip} was unbanned.`;
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Unable to remove ban.';
+			toast.error(err instanceof Error ? err.message : 'Unable to remove ban.');
 		} finally {
 			busy = '';
 		}
@@ -510,13 +505,12 @@
 
 	async function transitionEvent(event: SecurityEvent, status: 'acknowledged' | 'resolved' | 'false_positive') {
 		busy = `event:${event.id}`;
-		actionError = '';
 		try {
 			await api.post(`/api/v1/security/events/${event.id}/transition`, { status });
 			actionMessage = `Security event marked ${status.replace('_', ' ')}.`;
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Unable to update event.';
+			toast.error(err instanceof Error ? err.message : 'Unable to update event.');
 		} finally {
 			busy = '';
 		}
@@ -527,7 +521,7 @@
 			actionMessage = 'Security operation completed successfully.';
 			void loadData();
 		} else {
-			actionError = task.error || 'Security operation failed. Review the task output and retry.';
+			toast.error(task.error || 'Security operation failed. Review the task output and retry.');
 			void loadData();
 		}
 	}
@@ -554,7 +548,6 @@
 	</div>
 
 	{#if actionMessage}<div class="rounded-lg border border-green-700 bg-green-900/50 p-3 text-sm text-green-300">{actionMessage}</div>{/if}
-	{#if actionError}<div class="rounded-lg border border-red-700 bg-red-900/50 p-3 text-sm text-red-300">{actionError}</div>{/if}
 
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_security_fail2ban_task" onComplete={taskComplete} />
 

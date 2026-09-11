@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import LogViewer from '$lib/components/LogViewer.svelte';
 	import { parseSimpleNginxConfig, switchNginxConfigMode, updateSimpleNginxConfig } from '$lib/nginx-config.js';
+import { toast } from '$lib/stores/toast';
 
 	interface NginxStatus {
 		installed: boolean;
@@ -20,8 +21,6 @@
 	let status = $state<NginxStatus | null>(null);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 
 	// Config editor
@@ -127,15 +126,13 @@
 	}
 
 	async function nginxAction(action: string) {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = action;
 		try {
 			await api.post(`/api/v1/nginx/${action}`);
-			actionMsg = `Nginx ${action} completed successfully.`;
+			toast.success(`Nginx ${action} completed successfully.`);
 			await loadStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to ${action} Nginx`;
+			toast.error(err instanceof Error ? err.message : `Failed to ${action} Nginx`);
 		} finally {
 			actionInProgress = null;
 		}
@@ -216,19 +213,7 @@
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Nginx</h2>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	<!-- Status Card -->
 	{#if loading}

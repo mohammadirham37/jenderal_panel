@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+import { toast } from '$lib/stores/toast';
 
 	interface Props {
 		websiteID: string;
@@ -29,8 +30,6 @@
 	let values = $state<Record<string, string>>({});
 	let loading = $state(false);
 	let saving = $state(false);
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let error = $state('');
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -55,14 +54,11 @@
 	async function saveSettings() {
 		if (saving) return;
 		saving = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/websites/${encodeURIComponent(websiteID)}/php-settings`, { ...values });
-			actionMsg = 'PHP settings saved and applied.';
-			setTimeout(() => (actionMsg = ''), 4000);
+			toast.success('PHP settings saved and applied.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to save PHP settings';
+			toast.error(err instanceof Error ? err.message : 'Failed to save PHP settings');
 		} finally {
 			saving = false;
 		}
@@ -92,12 +88,6 @@
 		</button>
 	</div>
 
-	{#if actionMsg}
-		<div class="rounded-lg border border-green-700 bg-green-900/30 px-4 py-2.5 text-sm text-green-300">{actionMsg}</div>
-	{/if}
-	{#if actionError}
-		<div class="rounded-lg border border-red-700 bg-red-900/30 px-4 py-2.5 text-sm text-red-300">{actionError}</div>
-	{/if}
 
 	{#if loading}
 		<div class="space-y-2 rounded-xl border border-gray-700 bg-gray-800 p-5">

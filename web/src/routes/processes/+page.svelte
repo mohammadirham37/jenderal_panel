@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+import { toast } from '$lib/stores/toast';
 
 	interface Process {
 		pid: number;
@@ -13,8 +14,6 @@
 	let processes = $state<Process[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let sortBy = $state<'cpu' | 'ram'>('cpu');
 	let autoRefresh = $state(false);
@@ -61,14 +60,12 @@
 		if (!killConfirm) return;
 		const { process: proc, signal } = killConfirm;
 		killConfirm = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`/api/v1/processes/${proc.pid}/kill`, { signal });
-			actionMsg = `Signal ${signal} sent to PID ${proc.pid}.`;
+			toast.success(`Signal ${signal} sent to PID ${proc.pid}.`);
 			await loadProcesses();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to kill process ${proc.pid}`;
+			toast.error(err instanceof Error ? err.message : `Failed to kill process ${proc.pid}`);
 		}
 	}
 
@@ -126,19 +123,7 @@
 		</div>
 	</div>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading processes...</div>

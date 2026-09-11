@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+import { toast } from '$lib/stores/toast';
 
 	interface QueueWorker {
 		id: string;
@@ -23,8 +24,6 @@
 	let workers = $state<QueueWorker[]>([]);
 	let loading = $state(false);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let showCreateForm = $state(false);
 	let createCommand = $state('php artisan queue:work --sleep=3 --tries=3');
@@ -76,20 +75,18 @@
 	async function createWorker() {
 		if (creating || !createCommand.trim() || createNumWorkers < 1) return;
 		creating = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(
 				`/api/v1/websites/${encodeURIComponent(websiteID)}/queue-workers`,
 				{ command: createCommand.trim(), num_workers: createNumWorkers }
 			);
-			actionMsg = 'Queue worker created and started.';
+			toast.success('Queue worker created and started.');
 			showCreateForm = false;
 			createCommand = 'php artisan queue:work --sleep=3 --tries=3';
 			createNumWorkers = 1;
 			await loadWorkers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create queue worker';
+			toast.error(err instanceof Error ? err.message : 'Failed to create queue worker');
 		} finally {
 			creating = false;
 		}
@@ -98,14 +95,12 @@
 	async function runWorkerAction(worker: QueueWorker, action: 'start' | 'stop' | 'restart', success: string) {
 		if (busyWorkerId) return;
 		busyWorkerId = worker.id;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`${workerAPI(worker.id)}/${action}`, {});
-			actionMsg = success;
+			toast.success(success);
 			await loadWorkers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to ${action} worker`;
+			toast.error(err instanceof Error ? err.message : `Failed to ${action} worker`);
 		} finally {
 			busyWorkerId = null;
 		}
@@ -115,15 +110,13 @@
 		if (busyWorkerId) return;
 		busyWorkerId = worker.id;
 		deleteConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(workerAPI(worker.id));
-			actionMsg = 'Queue worker deleted.';
+			toast.success('Queue worker deleted.');
 			if (panelWorkerId === worker.id) closePanel();
 			await loadWorkers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete queue worker';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete queue worker');
 		} finally {
 			busyWorkerId = null;
 		}
@@ -202,11 +195,6 @@
 		</div>
 	</div>
 
-	{#if actionMsg || actionError}
-		<div class="rounded-lg px-4 py-2.5 text-sm {actionError ? 'bg-red-900/50 border border-red-700 text-red-300' : 'bg-green-900/40 border border-green-700 text-green-300'}">
-			{actionError || actionMsg}
-		</div>
-	{/if}
 
 	{#if showCreateForm}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">

@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
+import { toast } from '$lib/stores/toast';
 
 	interface QueueWorker {
 		id: string;
@@ -30,8 +31,6 @@
 	let loadingWebsite = $state(true);
 	let websiteError = $state('');
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let showCreateForm = $state(false);
 	let createCommand = $state('php artisan queue:work');
@@ -65,8 +64,6 @@
 		workers = [];
 		loading = false;
 		error = '';
-		actionMsg = '';
-		actionError = '';
 		showCreateForm = false;
 		createCommand = 'php artisan queue:work';
 		createNumWorkers = 1;
@@ -130,19 +127,17 @@
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation) || !createCommand.trim() || createNumWorkers < 1) return;
 		creating = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(scopedAPI.queueWorkers, { command: createCommand.trim(), num_workers: createNumWorkers });
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = 'Queue worker created successfully.';
+			toast.success('Queue worker created successfully.');
 			showCreateForm = false;
 			createCommand = 'php artisan queue:work';
 			createNumWorkers = 1;
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to create queue worker';
+				toast.error(err instanceof Error ? err.message : 'Failed to create queue worker');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) creating = false;
@@ -154,16 +149,14 @@
 		const generation = websiteLoadGeneration;
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post(`${scopedAPI.queueWorkers}/${id}/${action}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = success;
+			toast.success(success);
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : failure;
+				toast.error(err instanceof Error ? err.message : failure);
 			}
 		}
 	}
@@ -174,16 +167,14 @@
 		const scopedAPI = operationAPI;
 		if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 		deleteConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`${scopedAPI.queueWorkers}/${id}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			actionMsg = 'Queue worker deleted.';
+			toast.success('Queue worker deleted.');
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				actionError = err instanceof Error ? err.message : 'Failed to delete queue worker';
+				toast.error(err instanceof Error ? err.message : 'Failed to delete queue worker');
 			}
 		}
 	}
@@ -212,12 +203,6 @@
 
 		<WebsiteSectionNav websiteId={currentWebsite.id} currentPath={page.url.pathname} />
 
-		{#if actionMsg}
-			<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">{actionMsg} <button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button></div>
-		{/if}
-		{#if actionError}
-			<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{actionError} <button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button></div>
-		{/if}
 
 		{#if showCreateForm}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">

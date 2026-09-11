@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import { toast } from '$lib/stores/toast';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface DockerStatus {
@@ -63,8 +64,6 @@
 	let loadingNetworks = $state(true);
 
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
 	let installInProgress = $derived(actionInProgress !== null || !!currentTaskId);
@@ -197,15 +196,13 @@
 
 	// ── Docker daemon actions ─────────────────────────────────────
 	async function installDocker() {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = 'install';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/docker/install');
 			currentTaskId = result.task_id;
-			actionMsg = 'Docker installation started.';
+			toast.success('Docker installation started.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to install Docker';
+			toast.error(err instanceof Error ? err.message : 'Failed to install Docker');
 			actionInProgress = null;
 		}
 	}
@@ -217,15 +214,13 @@
 	}
 
 	async function dockerDaemonAction(action: 'start' | 'stop' | 'restart') {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `daemon-${action}`;
 		try {
 			await api.post(`/api/v1/docker/${action}`);
-			actionMsg = `Docker ${action}ed successfully.`;
+			toast.success(`Docker ${action}ed successfully.`);
 			await loadDockerStatus();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to ${action} Docker`;
+			toast.error(err instanceof Error ? err.message : `Failed to ${action} Docker`);
 		} finally {
 			actionInProgress = null;
 		}
@@ -233,15 +228,13 @@
 
 	// ── Container actions ─────────────────────────────────────────
 	async function containerAction(id: string, action: 'start' | 'stop' | 'restart') {
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `container-${action}-${id}`;
 		try {
 			await api.post(`/api/v1/docker/containers/${id}/${action}`);
-			actionMsg = `Container ${shortId(id)} ${action}ed successfully.`;
+			toast.success(`Container ${shortId(id)} ${action}ed successfully.`);
 			await loadContainers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : `Failed to ${action} container`;
+			toast.error(err instanceof Error ? err.message : `Failed to ${action} container`);
 		} finally {
 			actionInProgress = null;
 		}
@@ -249,15 +242,13 @@
 
 	async function removeContainer(id: string) {
 		deleteContainerConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		actionInProgress = `container-remove-${id}`;
 		try {
 			await api.del(`/api/v1/docker/containers/${id}`);
-			actionMsg = `Container ${shortId(id)} removed.`;
+			toast.success(`Container ${shortId(id)} removed.`);
 			await loadContainers();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to remove container';
+			toast.error(err instanceof Error ? err.message : 'Failed to remove container');
 		} finally {
 			actionInProgress = null;
 		}
@@ -284,15 +275,13 @@
 	async function pullImage() {
 		if (!pullImageName.trim()) return;
 		pullingImage = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/docker/images/pull', { image: pullImageName.trim() });
-			actionMsg = `Image "${pullImageName.trim()}" pull started.`;
+			toast.success(`Image "${pullImageName.trim()}" pull started.`);
 			pullImageName = '';
 			await loadImages();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to pull image';
+			toast.error(err instanceof Error ? err.message : 'Failed to pull image');
 		} finally {
 			pullingImage = false;
 		}
@@ -300,14 +289,12 @@
 
 	async function deleteImage(id: string) {
 		deleteImageConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/docker/images/${id}`);
-			actionMsg = 'Image deleted.';
+			toast.success('Image deleted.');
 			await loadImages();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete image';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete image');
 		}
 	}
 
@@ -315,15 +302,13 @@
 	async function createVolume() {
 		if (!newVolumeName.trim()) return;
 		creatingVolume = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/docker/volumes', { name: newVolumeName.trim() });
-			actionMsg = `Volume "${newVolumeName.trim()}" created.`;
+			toast.success(`Volume "${newVolumeName.trim()}" created.`);
 			newVolumeName = '';
 			await loadVolumes();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create volume';
+			toast.error(err instanceof Error ? err.message : 'Failed to create volume');
 		} finally {
 			creatingVolume = false;
 		}
@@ -331,14 +316,12 @@
 
 	async function deleteVolume(name: string) {
 		deleteVolumeConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/docker/volumes/${encodeURIComponent(name)}`);
-			actionMsg = `Volume "${name}" deleted.`;
+			toast.success(`Volume "${name}" deleted.`);
 			await loadVolumes();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete volume';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete volume');
 		}
 	}
 
@@ -346,15 +329,13 @@
 	async function createNetwork() {
 		if (!newNetworkName.trim()) return;
 		creatingNetwork = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/docker/networks', { name: newNetworkName.trim() });
-			actionMsg = `Network "${newNetworkName.trim()}" created.`;
+			toast.success(`Network "${newNetworkName.trim()}" created.`);
 			newNetworkName = '';
 			await loadNetworks();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create network';
+			toast.error(err instanceof Error ? err.message : 'Failed to create network');
 		} finally {
 			creatingNetwork = false;
 		}
@@ -362,14 +343,12 @@
 
 	async function deleteNetwork(id: string, name: string) {
 		deleteNetworkConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/docker/networks/${id}`);
-			actionMsg = `Network "${name}" deleted.`;
+			toast.success(`Network "${name}" deleted.`);
 			await loadNetworks();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete network';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete network');
 		}
 	}
 
@@ -377,13 +356,11 @@
 	async function composeUp() {
 		if (!composePath.trim()) return;
 		composeActionInProgress = 'up';
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/docker/compose/up', { path: composePath.trim() });
-			actionMsg = 'Docker Compose services started.';
+			toast.success('Docker Compose services started.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to run docker compose up';
+			toast.error(err instanceof Error ? err.message : 'Failed to run docker compose up');
 		} finally {
 			composeActionInProgress = null;
 		}
@@ -392,13 +369,11 @@
 	async function composeDown() {
 		if (!composePath.trim()) return;
 		composeActionInProgress = 'down';
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/docker/compose/down', { path: composePath.trim() });
-			actionMsg = 'Docker Compose services stopped.';
+			toast.success('Docker Compose services stopped.');
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to run docker compose down';
+			toast.error(err instanceof Error ? err.message : 'Failed to run docker compose down');
 		} finally {
 			composeActionInProgress = null;
 		}
@@ -424,19 +399,7 @@
 	<h2 class="text-2xl font-bold text-white">Docker</h2>
 
 	<!-- Feedback messages -->
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	<!-- ═══════════════════════════ STATUS CARD ═══════════════════════════ -->
 	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">

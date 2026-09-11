@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
+import { toast } from '$lib/stores/toast';
 
 	interface AlertRule {
 		id: string;
@@ -31,8 +32,6 @@
 	let certificates = $state<SSLCertificate[]>([]);
 	let loading = $state(true);
 	let error = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	// Create form
 	let newMetric = $state('cpu');
@@ -83,8 +82,6 @@
 	}
 
 	async function addRule() {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/alert-rules', {
 				metric: newMetric,
@@ -93,7 +90,7 @@
 				threshold: Number(newThreshold),
 				duration_s: Number(newDuration)
 			});
-			actionMsg = 'Alert rule created.';
+			toast.success('Alert rule created.');
 			newMetric = 'cpu';
 			newOperator = 'gt';
 			newThreshold = 80;
@@ -101,19 +98,17 @@
 			newDuration = 0;
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create rule';
+			toast.error(err instanceof Error ? err.message : 'Failed to create rule');
 		}
 	}
 
 	async function toggleRule(rule: AlertRule) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/alert-rules/${rule.id}`, { enabled: !rule.enabled });
-			actionMsg = `Rule ${rule.enabled ? 'disabled' : 'enabled'}.`;
+			toast.success(`Rule ${rule.enabled ? 'disabled' : 'enabled'}.`);
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to toggle rule';
+			toast.error(err instanceof Error ? err.message : 'Failed to toggle rule');
 		}
 	}
 
@@ -128,8 +123,6 @@
 
 	async function saveEdit() {
 		if (!editingRule) return;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/alert-rules/${editingRule.id}`, {
 				metric: editMetric,
@@ -139,23 +132,21 @@
 				duration_s: Number(editDuration),
 				enabled: editingRule.enabled
 			});
-			actionMsg = 'Rule updated.';
+			toast.success('Rule updated.');
 			editingRule = null;
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update rule';
+			toast.error(err instanceof Error ? err.message : 'Failed to update rule');
 		}
 	}
 
 	async function deleteRule(ruleId: string) {
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/alert-rules/${ruleId}`);
-			actionMsg = 'Rule deleted.';
+			toast.success('Rule deleted.');
 			await loadData();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete rule';
+			toast.error(err instanceof Error ? err.message : 'Failed to delete rule');
 		}
 	}
 
@@ -165,19 +156,7 @@
 <div class="space-y-6">
 	<h2 class="text-2xl font-bold text-white">Alerts</h2>
 
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
 
 	{#if loading}
 		<div class="text-gray-400">Loading alerts...</div>

@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, getCSRFToken } from '$lib/api';
 	import { createFileManagerAPI } from '$lib/file-manager.js';
+import { toast } from '$lib/stores/toast';
 
 	interface FileEntry {
 		name: string;
@@ -27,8 +28,6 @@
 	let currentPath = $state('/');
 	let filesLoading = $state(true);
 	let filesError = $state('');
-	let actionMsg = $state('');
-	let actionError = $state('');
 
 	let search = $state('');
 	let sortKey = $state<'name' | 'size' | 'time'>('name');
@@ -144,13 +143,11 @@
 	}
 
 	function flash(msg: string) {
-		actionMsg = msg;
-		actionError = '';
+		toast.success(msg);
 	}
 
 	function fail(err: unknown, fallback: string) {
-		actionError = err instanceof Error ? err.message : fallback;
-		actionMsg = '';
+		toast.error(err instanceof Error ? err.message : fallback);
 	}
 
 	function toggleSort(key: 'name' | 'size' | 'time') {
@@ -262,8 +259,6 @@
 		if (arr.length === 0) return;
 		uploadTotal = arr.length;
 		uploadQueue = arr.map((f) => f.name);
-		actionError = '';
-		actionMsg = '';
 		for (const file of arr) {
 			try {
 				const formData = new FormData();
@@ -334,18 +329,6 @@
 />
 
 <div class="space-y-4">
-	{#if actionMsg}
-		<div class="flex items-center justify-between gap-2 rounded-xl border border-green-700 bg-green-900/40 px-3.5 py-2.5 text-sm text-green-300">
-			<span>{actionMsg}</span>
-			<button onclick={() => (actionMsg = '')} class="cursor-pointer text-green-400 hover:text-green-200">✕</button>
-		</div>
-	{/if}
-	{#if actionError}
-		<div class="flex items-center justify-between gap-2 rounded-xl border border-red-700 bg-red-900/40 px-3.5 py-2.5 text-sm text-red-300">
-			<span>{actionError}</span>
-			<button onclick={() => (actionError = '')} class="cursor-pointer text-red-400 hover:text-red-200">✕</button>
-		</div>
-	{/if}
 
 	{#if editingFile}
 		<!-- ─── Editor ─────────────────────────────────────────────── -->
