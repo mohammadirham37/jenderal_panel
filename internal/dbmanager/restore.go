@@ -1,53 +1,29 @@
 package dbmanager
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"database/sql"
 	"fmt"
-	"io"
 	"strings"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/dbdump"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
-// isGzip sniffs the gzip magic bytes (1f 8b) so the restore accepts both
-// plain and compressed dumps regardless of file extension.
+// isGzip sniffs the gzip magic bytes via the shared dbdump package.
 func isGzip(data []byte) bool {
-	return len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b
+	return dbdump.IsGzip(data)
 }
 
 // gunzipIfNeeded decompresses gzipped dumps and passes plain SQL through.
 func gunzipIfNeeded(data []byte) ([]byte, error) {
-	if !isGzip(data) {
-		return data, nil
-	}
-	zr, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		return nil, model.NewValidationError("dump file is not valid gzip: " + err.Error())
-	}
-	sql, err := io.ReadAll(zr)
-	if err != nil {
-		return nil, model.NewValidationError("dump file is not valid gzip: " + err.Error())
-	}
-	return sql, nil
+	return dbdump.DecompressIfNeeded(data)
 }
 
-// restoreCommand builds the engine-specific restore command. The dump is fed
-// on stdin by RunSudoWithInput. psql stops at the first error so a failed
-// restore is visible instead of silently half-applied.
+// restoreCommand builds the engine-specific restore command via the shared
+// dbdump package. The dump is fed on stdin by RunSudoWithInput.
 func restoreCommand(engineName, database string) (string, []string, error) {
-	switch engineName {
-	case "mysql":
-		return "mysql", []string{"--database", database}, nil
-	case "postgresql":
-		return "sudo", []string{
-			"-u", "postgres", "psql", "--set", "ON_ERROR_STOP=on", "--dbname", database,
-		}, nil
-	default:
-		return "", nil, model.NewValidationError("restore is available for mysql and postgresql only")
-	}
+	return dbdump.RestoreCommand(engineName, database)
 }
 
 // RestoreDatabase replaces the contents of a managed database with the given

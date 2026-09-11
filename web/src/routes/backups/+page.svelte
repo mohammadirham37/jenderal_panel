@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface Backup {
@@ -8,8 +9,14 @@
 		type: string;
 		target: string;
 		storage: string;
-		size: number;
+		size_bytes: number;
 		status: string;
+		error_msg?: string;
+		kind: string;
+		created_by: string;
+		task_id?: string;
+		started_at?: string;
+		finished_at?: string;
 		created_at: string;
 	}
 
@@ -19,8 +26,26 @@
 		target: string;
 		schedule: string;
 		retention_days: number;
+		retention_keep: number;
 		enabled: boolean;
 		last_run: string;
+		last_run_status: string;
+	}
+
+	interface BackupStats {
+		count: number;
+		total_bytes: number;
+		disk_free: number;
+	}
+
+	interface WebsiteLite {
+		id: string;
+		domain: string;
+	}
+	interface DatabaseLite {
+		id: string;
+		name: string;
+		engine: string;
 	}
 
 	// ── State ──────────────────────────────────────────────────────
@@ -33,14 +58,24 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 
+	let stats = $state<BackupStats | null>(null);
+
+	let filterType = $state('all');
+	let filterStatus = $state('all');
+
 	let createType = $state('website');
 	let createTarget = $state('');
 	let creatingBackup = $state(false);
+	let createTaskId = $state('');
+
+	let websites = $state<WebsiteLite[]>([]);
+	let databases = $state<DatabaseLite[]>([]);
 
 	let deleteConfirmId = $state<string | null>(null);
 	let restoreConfirmId = $state<string | null>(null);
-
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
+	let restoreComponent = $state('');
+	let restoreTaskId = $state('');
+	let restoring = $state(false);
 
 	// Schedules
 	let schedules = $state<BackupSchedule[]>([]);
@@ -52,6 +87,7 @@
 	let scheduleTarget = $state('');
 	let scheduleCron = $state('0 0 * * *');
 	let scheduleRetention = $state(30);
+	let scheduleKeep = $state(0);
 	let creatingSchedule = $state(false);
 
 	let editingScheduleId = $state<string | null>(null);
@@ -59,13 +95,15 @@
 	let editScheduleTarget = $state('');
 	let editScheduleCron = $state('');
 	let editScheduleRetention = $state(30);
+	let editScheduleKeep = $state(0);
 	let savingSchedule = $state(false);
 
 	let deleteScheduleConfirmId = $state<string | null>(null);
+	let pruneBusy = $state(false);
 
 	const backupTypes = ['website', 'database', 'config', 'full'];
-
 	const schedulePresets = [
+		{ label: 'Hourly', value: '0 * * * *' },
 		{ label: 'Daily', value: '0 0 * * *' },
 		{ label: 'Weekly', value: '0 0 * * 0' },
 		{ label: 'Monthly', value: '0 0 1 * *' }
@@ -74,90 +112,103 @@
 	// ── Helpers ────────────────────────────────────────────────────
 	function typeBadgeClass(type: string): string {
 		switch (type) {
-			case 'website':
-				return 'bg-blue-900/50 text-blue-400';
-			case 'database':
-				return 'bg-green-900/50 text-green-400';
-			case 'config':
-				return 'bg-purple-900/50 text-purple-400';
-			case 'full':
-				return 'bg-orange-900/50 text-orange-400';
-			default:
-				return 'bg-gray-700 text-gray-400';
+			case 'website': return 'bg-blue-900/50 text-blue-300';
+			case 'database': return 'bg-green-900/50 text-green-300';
+			case 'config': return 'bg-yellow-900/50 text-yellow-300';
+			case 'full': return 'bg-purple-900/50 text-purple-300';
+			default: return 'bg-gray-700 text-gray-300';
 		}
 	}
 
 	function statusBadgeClass(status: string): string {
 		switch (status) {
-			case 'completed':
-				return 'bg-green-900/50 text-green-400';
-			case 'running':
-				return 'bg-yellow-900/50 text-yellow-400 animate-pulse';
-			case 'failed':
-				return 'bg-red-900/50 text-red-400';
-			case 'pending':
-				return 'bg-gray-700 text-gray-400';
-			default:
-				return 'bg-gray-700 text-gray-400';
+			case 'completed': return 'bg-green-900/50 text-green-400';
+			case 'running': return 'bg-blue-900/50 text-blue-300';
+			case 'pending': return 'bg-yellow-900/50 text-yellow-300';
+			case 'failed': return 'bg-red-900/50 text-red-400';
+			default: return 'bg-gray-700 text-gray-300';
 		}
 	}
 
+	function kindBadge(kind: string): string {
+		if (kind === 'safety') return 'bg-teal-900/50 text-teal-300';
+		if (kind === 'scheduled') return 'bg-indigo-900/50 text-indigo-300';
+		return '';
+	}
+
 	function formatSize(bytes: number): string {
-		if (!bytes || bytes === 0) return '0 B';
+		if (!bytes || bytes <= 0) return '—';
 		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.floor(Math.log(bytes) / Math.log(1024));
-		return (bytes / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + units[i];
+		let i = 0;
+		let size = bytes;
+		while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 	}
 
 	function formatDate(dateStr: string): string {
-		if (!dateStr) return '-';
-		const d = new Date(dateStr);
-		return d.toLocaleString('en-US', {
-			month: 'short',
-			day: 'numeric',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
+		if (!dateStr) return '—';
+		return new Date(dateStr).toLocaleString();
 	}
 
 	function needsTarget(type: string): boolean {
 		return type === 'website' || type === 'database';
 	}
 
-	function hasActiveJobs(): boolean {
-		return backups.some((b) => b.status === 'pending' || b.status === 'running');
-	}
-
-	// ── Polling ───────────────────────────────────────────────────
-	function startPolling() {
-		stopPolling();
-		pollTimer = setInterval(async () => {
-			if (hasActiveJobs()) {
-				try {
-					backups = (await api.get<Backup[]>('/api/v1/backups')) || [];
-				} catch {
-					// silent
-				}
-			} else {
-				stopPolling();
-			}
-		}, 5000);
-	}
-
-	function stopPolling() {
-		if (pollTimer) {
-			clearInterval(pollTimer);
-			pollTimer = null;
+	function safetyNote(b: Backup): string {
+		if (b.type === 'website' || b.type === 'database' || b.type === 'full') {
+			return ' (a safety backup of the current state is created first)';
 		}
+		return '';
 	}
 
-	// ── Loaders ───────────────────────────────────────────────────
+	function duration(b: Backup): string {
+		if (!b.started_at || !b.finished_at) return '—';
+		const ms = new Date(b.finished_at).getTime() - new Date(b.started_at).getTime();
+		if (ms < 0) return '—';
+		if (ms < 1000) return `${ms}ms`;
+		const s = Math.round(ms / 1000);
+		if (s < 60) return `${s}s`;
+		return `${Math.floor(s / 60)}m ${s % 60}s`;
+	}
+
+	function nextRunEstimate(schedule: string, lastRun: string): string {
+		const intervals: Record<string, number> = {
+			'0 * * * *': 3600,
+			'0 0 * * *': 86400,
+			'0 0 * * 0': 604800,
+			'0 0 1 * *': 2592000
+		};
+		const seconds = intervals[schedule.trim().toLowerCase()] ?? 86400;
+		const base = lastRun ? new Date(lastRun).getTime() : Date.now();
+		return new Date(base + seconds * 1000).toLocaleString();
+	}
+
+	function flash(msg: string, error = false) {
+		if (error) { actionError = msg; actionMsg = ''; } else { actionMsg = msg; actionError = ''; }
+		setTimeout(() => { actionMsg = ''; actionError = ''; }, 5000);
+	}
+
+	let filteredBackups = $derived(
+		backups.filter((b) =>
+			(filterType === 'all' || b.type === filterType) &&
+			(filterStatus === 'all' || b.status === filterStatus)
+		)
+	);
+
+	let lastSuccessful = $derived.by(() => {
+		const done = backups.filter((b) => b.status === 'completed');
+		return done.length > 0 ? done[0].created_at : '';
+	});
+
+	// ── Data loading ───────────────────────────────────────────────
+	async function loadAll() {
+		await Promise.all([loadBackups(), loadSchedules(), loadStats(), loadPickers()]);
+	}
+
 	async function loadBackups() {
-		loadingBackups = true;
-		backupError = '';
 		try {
+			backupError = '';
 			backups = (await api.get<Backup[]>('/api/v1/backups')) || [];
-			if (hasActiveJobs()) startPolling();
 		} catch (err) {
 			backupError = err instanceof Error ? err.message : 'Failed to load backups';
 		} finally {
@@ -165,87 +216,116 @@
 		}
 	}
 
-	async function loadSchedules() {
-		loadingSchedules = true;
-		scheduleError = '';
+	async function loadStats() {
 		try {
+			stats = await api.get<BackupStats>('/api/v1/backups/stats');
+		} catch {
+			stats = null;
+		}
+	}
+
+	async function loadSchedules() {
+		try {
+			scheduleError = '';
 			schedules = (await api.get<BackupSchedule[]>('/api/v1/backup-schedules')) || [];
 		} catch (err) {
-			scheduleError = err instanceof Error ? err.message : 'Failed to load backup schedules';
+			scheduleError = err instanceof Error ? err.message : 'Failed to load schedules';
 		} finally {
 			loadingSchedules = false;
 		}
 	}
 
-	// ── Backup Actions ────────────────────────────────────────────
+	async function loadPickers() {
+		try {
+			websites = ((await api.get<WebsiteLite[]>('/websites')) || []).map((w) => ({ id: w.id, domain: w.domain }));
+		} catch { websites = []; }
+		try {
+			databases = ((await api.get<DatabaseLite[]>('/databases')) || []).filter((d) => d.engine !== 'redis');
+		} catch { databases = []; }
+	}
+
+	// ── Actions ────────────────────────────────────────────────────
 	async function createBackup() {
-		if (needsTarget(createType) && !createTarget.trim()) return;
+		if (creatingBackup) return;
 		creatingBackup = true;
-		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post('/api/v1/backups', {
+			const b = await api.post<{ task_id?: string }>('/api/v1/backups', {
 				type: createType,
-				target: needsTarget(createType) ? createTarget.trim() : undefined
+				target: needsTarget(createType) ? createTarget : ''
 			});
-			actionMsg = 'Backup created successfully.';
-			createTarget = '';
+			flash('Backup queued.');
+			if (b?.task_id) createTaskId = b.task_id;
 			await loadBackups();
+			await loadStats();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create backup';
+			flash(err instanceof Error ? err.message : 'Failed to create backup', true);
 		} finally {
 			creatingBackup = false;
 		}
 	}
 
 	async function deleteBackup(id: string) {
-		deleteConfirmId = null;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.del(`/api/v1/backups/${id}`);
-			actionMsg = 'Backup deleted.';
-			await loadBackups();
+			flash('Backup deleted.');
+			await Promise.all([loadBackups(), loadStats()]);
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete backup';
+			flash(err instanceof Error ? err.message : 'Failed to delete backup', true);
 		}
 	}
 
 	async function restoreBackup(id: string) {
-		restoreConfirmId = null;
-		actionMsg = '';
-		actionError = '';
+		if (restoring) return;
+		restoring = true;
 		try {
-			await api.post(`/api/v1/backups/${id}/restore`);
-			actionMsg = 'Restore initiated. Check status for progress.';
+			const res = await api.post<{ task_id?: string }>(`/api/v1/backups/${id}/restore`, {
+				component: restoreComponent
+			});
+			flash('Restore started. A safety backup of the current state was created first.');
+			if (res?.task_id) restoreTaskId = res.task_id;
+			restoreConfirmId = null;
+			restoreComponent = '';
+			// The restore task updates the safety + target state; refresh now
+			// (safety backup row) and again when the task completes.
 			await loadBackups();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to restore backup';
+			flash(err instanceof Error ? err.message : 'Failed to start restore', true);
+		} finally {
+			restoring = false;
 		}
 	}
 
-	// ── Schedule Actions ──────────────────────────────────────────
+	async function pruneNow() {
+		if (pruneBusy) return;
+		pruneBusy = true;
+		try {
+			const res = await api.post<{ pruned: number }>('/api/v1/backups/prune', {});
+			flash(`Pruned ${res?.pruned ?? 0} expired backups.`);
+			await Promise.all([loadBackups(), loadStats()]);
+		} catch (err) {
+			flash(err instanceof Error ? err.message : 'Prune failed', true);
+		} finally {
+			pruneBusy = false;
+		}
+	}
+
 	async function createScheduleEntry() {
-		if (needsTarget(scheduleType) && !scheduleTarget.trim()) return;
-		if (!scheduleCron.trim()) return;
+		if (creatingSchedule) return;
 		creatingSchedule = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.post('/api/v1/backup-schedules', {
 				type: scheduleType,
-				target: needsTarget(scheduleType) ? scheduleTarget.trim() : undefined,
-				schedule: scheduleCron.trim(),
-				retention_days: scheduleRetention
+				target: needsTarget(scheduleType) ? scheduleTarget : '',
+				schedule: scheduleCron,
+				retention_days: scheduleRetention,
+				retention_keep: scheduleKeep
 			});
-			actionMsg = 'Backup schedule created.';
+			flash('Schedule created.');
 			showScheduleForm = false;
-			scheduleTarget = '';
-			scheduleCron = '0 0 * * *';
-			scheduleRetention = 30;
 			await loadSchedules();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to create backup schedule';
+			flash(err instanceof Error ? err.message : 'Failed to create schedule', true);
 		} finally {
 			creatingSchedule = false;
 		}
@@ -257,6 +337,7 @@
 		editScheduleTarget = s.target;
 		editScheduleCron = s.schedule;
 		editScheduleRetention = s.retention_days;
+		editScheduleKeep = s.retention_keep;
 	}
 
 	function cancelEditSchedule() {
@@ -264,484 +345,416 @@
 	}
 
 	async function saveScheduleEdit(id: string) {
+		if (savingSchedule) return;
 		savingSchedule = true;
-		actionMsg = '';
-		actionError = '';
 		try {
 			await api.put(`/api/v1/backup-schedules/${id}`, {
 				type: editScheduleType,
-				target: needsTarget(editScheduleType) ? editScheduleTarget.trim() : undefined,
-				schedule: editScheduleCron.trim(),
-				retention_days: editScheduleRetention
+				target: needsTarget(editScheduleType) ? editScheduleTarget : '',
+				schedule: editScheduleCron,
+				retention_days: editScheduleRetention,
+				retention_keep: editScheduleKeep
 			});
-			actionMsg = 'Schedule updated.';
 			editingScheduleId = null;
 			await loadSchedules();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to update schedule';
+			flash(err instanceof Error ? err.message : 'Failed to update schedule', true);
 		} finally {
 			savingSchedule = false;
 		}
 	}
 
-	async function deleteSchedule(id: string) {
-		deleteScheduleConfirmId = null;
-		actionMsg = '';
-		actionError = '';
+	async function toggleSchedule(id: string, enabled: boolean) {
 		try {
-			await api.del(`/api/v1/backup-schedules/${id}`);
-			actionMsg = 'Schedule deleted.';
+			await api.post(`/api/v1/backup-schedules/${id}/${enabled ? 'enable' : 'disable'}`, {});
 			await loadSchedules();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to delete schedule';
+			flash(err instanceof Error ? err.message : 'Failed to toggle schedule', true);
 		}
 	}
 
-	async function toggleScheduleEnabled(s: BackupSchedule) {
-		actionMsg = '';
-		actionError = '';
+	async function deleteSchedule(id: string) {
 		try {
-			if (s.enabled) {
-				await api.post(`/api/v1/backup-schedules/${s.id}/disable`);
-			} else {
-				await api.post(`/api/v1/backup-schedules/${s.id}/enable`);
-			}
-			s.enabled = !s.enabled;
+			await api.del(`/api/v1/backup-schedules/${id}`);
+			await loadSchedules();
 		} catch (err) {
-			actionError = err instanceof Error ? err.message : 'Failed to toggle schedule';
+			flash(err instanceof Error ? err.message : 'Failed to delete schedule', true);
 		}
 	}
 
-	// ── Lifecycle ─────────────────────────────────────────────────
-	onMount(() => {
-		loadBackups();
-		loadSchedules();
-	});
-
-	onDestroy(() => {
-		stopPolling();
-	});
+	onMount(loadAll);
 </script>
 
 <div class="space-y-6">
-	<h2 class="text-2xl font-bold text-white">Backups</h2>
-
-	<!-- Feedback messages -->
-	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
-
-	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
-		</div>
-	{/if}
-
-	<!-- ═══════════════════════════ TABS ═══════════════════════════ -->
-	<div class="border-b border-gray-700">
-		<nav class="flex gap-0 -mb-px">
-			{#each [
-				{ key: 'backups', label: 'Backups' },
-				{ key: 'schedules', label: 'Schedules' }
-			] as tab}
-				<button
-					onclick={() => (activeTab = tab.key as typeof activeTab)}
-					class="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors cursor-pointer
-					{activeTab === tab.key
-						? 'border-blue-500 text-blue-400'
-						: 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-600'}"
-				>
-					{tab.label}
-				</button>
-			{/each}
-		</nav>
-	</div>
-
-	<!-- ═══════════════════════════ BACKUPS TAB ═══════════════════════════ -->
-	{#if activeTab === 'backups'}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<h3 class="text-lg font-semibold text-white mb-4">Create Backup</h3>
-			<div class="flex flex-wrap items-end gap-3">
-				<div>
-					<label for="backup-type" class="block text-sm text-gray-400 mb-1">Type</label>
-					<select
-						id="backup-type"
-						bind:value={createType}
-						class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-40"
-					>
-						{#each backupTypes as t}
-							<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-						{/each}
-					</select>
-				</div>
-				{#if needsTarget(createType)}
-					<div>
-						<label for="backup-target" class="block text-sm text-gray-400 mb-1">
-							{createType === 'website' ? 'Domain' : 'Database Name'}
-						</label>
-						<input
-							id="backup-target"
-							type="text"
-							bind:value={createTarget}
-							placeholder={createType === 'website' ? 'example.com' : 'my_database'}
-							class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-56"
-						/>
-					</div>
-				{/if}
-				<button
-					onclick={createBackup}
-					disabled={creatingBackup || (needsTarget(createType) && !createTarget.trim())}
-					class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-				>
-					{creatingBackup ? 'Creating...' : 'Create Backup'}
-				</button>
-			</div>
-		</div>
-
-		<!-- Backups table -->
-		{#if loadingBackups}
-			<div class="text-gray-400 text-sm">Loading backups...</div>
-		{:else if backupError}
-			<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{backupError}</div>
-		{:else if backups.length === 0}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-				<p class="text-gray-400">No backups found.</p>
-			</div>
-		{:else}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-				<div class="overflow-x-auto">
-					<table class="w-full">
-						<thead>
-							<tr class="border-b border-gray-700">
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Target</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Storage</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Created</th>
-								<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-gray-700">
-							{#each backups as backup}
-								<tr class="hover:bg-gray-750">
-									<td class="px-4 py-3">
-										<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {typeBadgeClass(backup.type)}">
-											{backup.type}
-										</span>
-									</td>
-									<td class="px-4 py-3 text-sm text-gray-300">{backup.target || '-'}</td>
-									<td class="px-4 py-3 text-sm text-gray-400">{backup.storage || '-'}</td>
-									<td class="px-4 py-3 text-sm text-gray-400">{formatSize(backup.size)}</td>
-									<td class="px-4 py-3">
-										<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {statusBadgeClass(backup.status)}">
-											{backup.status}
-										</span>
-									</td>
-									<td class="px-4 py-3 text-sm text-gray-400">{formatDate(backup.created_at)}</td>
-									<td class="px-4 py-3 text-right">
-										{#if deleteConfirmId === backup.id}
-											<span class="text-xs text-red-400 mr-1">Delete?</span>
-											<button
-												onclick={() => deleteBackup(backup.id)}
-												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Yes
-											</button>
-											<button
-												onclick={() => (deleteConfirmId = null)}
-												class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer ml-1"
-											>
-												Cancel
-											</button>
-										{:else if restoreConfirmId === backup.id}
-											<div class="inline-flex flex-col items-end gap-1">
-												<span class="text-xs text-red-400 font-medium">Restore will overwrite current data!</span>
-												<div class="flex gap-1">
-													<button
-														onclick={() => restoreBackup(backup.id)}
-														class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														Confirm Restore
-													</button>
-													<button
-														onclick={() => (restoreConfirmId = null)}
-														class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														Cancel
-													</button>
-												</div>
-											</div>
-										{:else}
-											<div class="flex items-center justify-end gap-1.5">
-												{#if backup.status === 'completed'}
-													<button
-														onclick={() => (restoreConfirmId = backup.id)}
-														class="px-2.5 py-1 bg-orange-600 hover:bg-orange-700 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														Restore
-													</button>
-												{/if}
-												<button
-													onclick={() => (deleteConfirmId = backup.id)}
-													class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-												>
-													Delete
-												</button>
-											</div>
-										{/if}
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
-				</div>
-			</div>
-		{/if}
-	{/if}
-
-	<!-- ═══════════════════════════ SCHEDULES TAB ═══════════════════════════ -->
-	{#if activeTab === 'schedules'}
-		<div class="flex items-center justify-between">
-			<div></div>
+	<div class="flex flex-wrap items-center justify-between gap-3">
+		<h2 class="text-2xl font-bold text-white">Backups</h2>
+		<div class="flex items-center gap-2">
 			<button
-				onclick={() => (showScheduleForm = !showScheduleForm)}
-				class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+				type="button"
+				onclick={pruneNow}
+				disabled={pruneBusy}
+				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 			>
-				{showScheduleForm ? 'Cancel' : 'Add Schedule'}
+				{pruneBusy ? 'Pruning…' : 'Prune now'}
+			</button>
+			<button
+				type="button"
+				onclick={() => (showScheduleForm = !showScheduleForm)}
+				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
+			>
+				{showScheduleForm ? 'Close schedule form' : 'New schedule'}
 			</button>
 		</div>
+	</div>
 
-		<!-- Create schedule form -->
-		{#if showScheduleForm}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-				<h3 class="text-lg font-semibold text-white mb-4">New Backup Schedule</h3>
-				<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-					<div>
-						<label for="sched-type" class="block text-sm text-gray-400 mb-1">Type</label>
-						<select
-							id="sched-type"
-							bind:value={scheduleType}
-							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-						>
-							{#each backupTypes as t}
-								<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-							{/each}
-						</select>
-					</div>
-					{#if needsTarget(scheduleType)}
-						<div>
-							<label for="sched-target" class="block text-sm text-gray-400 mb-1">
-								{scheduleType === 'website' ? 'Domain' : 'Database Name'}
-							</label>
-							<input
-								id="sched-target"
-								type="text"
-								bind:value={scheduleTarget}
-								placeholder={scheduleType === 'website' ? 'example.com' : 'my_database'}
-								class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-							/>
-						</div>
-					{/if}
-					<div>
-						<label for="sched-cron" class="block text-sm text-gray-400 mb-1">Schedule</label>
-						<input
-							id="sched-cron"
-							type="text"
-							bind:value={scheduleCron}
-							placeholder="0 0 * * *"
-							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-						/>
-					</div>
-					<div>
-						<label for="sched-retention" class="block text-sm text-gray-400 mb-1">Retention (days)</label>
-						<input
-							id="sched-retention"
-							type="number"
-							bind:value={scheduleRetention}
-							min="1"
-							max="365"
-							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-						/>
-					</div>
+	{#if actionMsg || actionError}
+		<div class="rounded-lg px-4 py-2.5 text-sm {actionError ? 'bg-red-900/50 border border-red-700 text-red-300' : 'bg-green-900/40 border border-green-700 text-green-300'}">
+			{actionError || actionMsg}
+		</div>
+	{/if}
+
+	<!-- Summary cards -->
+	<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Completed backups</p>
+			<p class="mt-1 text-xl font-bold text-white">{stats?.count ?? '—'}</p>
+		</div>
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Total size</p>
+			<p class="mt-1 text-xl font-bold text-white">{formatSize(stats?.total_bytes ?? 0)}</p>
+		</div>
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Disk free</p>
+			<p class="mt-1 text-xl font-bold text-white">{formatSize(stats?.disk_free ?? 0)}</p>
+		</div>
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">Last backup</p>
+			<p class="mt-1 truncate text-sm font-semibold text-white">{lastSuccessful ? formatDate(lastSuccessful) : '—'}</p>
+		</div>
+	</div>
+
+	{#if createTaskId}
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Backup progress</p>
+			<TaskProgress bind:taskId={createTaskId} storageKey="backup-task" onComplete={loadBackups} />
+		</div>
+	{/if}
+
+	{#if restoreTaskId}
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Restore progress</p>
+			<TaskProgress bind:taskId={restoreTaskId} storageKey="backup-restore-task" onComplete={loadBackups} />
+		</div>
+	{/if}
+
+	{#if showScheduleForm}
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+			<h3 class="mb-4 text-lg font-semibold text-white">New backup schedule</h3>
+			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+				<div>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-type">Type</label>
+					<select id="sched-type" bind:value={scheduleType} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+						{#each backupTypes as t}<option value={t}>{t}</option>{/each}
+					</select>
 				</div>
-				<div class="mt-3 flex flex-wrap gap-2">
-					<span class="text-xs text-gray-500 self-center">Presets:</span>
-					{#each schedulePresets as preset}
-						<button
-							onclick={() => (scheduleCron = preset.value)}
-							class="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors cursor-pointer"
-						>
-							{preset.label}
-						</button>
+				<div>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-target">Target</label>
+					{#if needsTarget(scheduleType)}
+						<select id="sched-target" bind:value={scheduleTarget} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+							<option value="">Select…</option>
+							{#if scheduleType === 'website'}
+								{#each websites as w (w.id)}<option value={w.domain}>{w.domain}</option>{/each}
+							{:else}
+								{#each databases as d (d.id)}<option value={d.name}>{d.name}</option>{/each}
+							{/if}
+						</select>
+					{:else}
+						<input disabled value="everything" class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-500" />
+					{/if}
+				</div>
+				<div>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-cron">Schedule</label>
+					<select id="sched-cron" bind:value={scheduleCron} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+						{#each schedulePresets as p}<option value={p.value}>{p.label}</option>{/each}
+					</select>
+				</div>
+				<div>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-days">Keep days</label>
+					<input id="sched-days" type="number" min="1" bind:value={scheduleRetention} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none" />
+				</div>
+				<div>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-keep">Or keep last</label>
+					<input id="sched-keep" type="number" min="0" bind:value={scheduleKeep} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none" />
+					<p class="mt-1 text-[10px] text-gray-500">0 = off</p>
+				</div>
+			</div>
+			<button
+				type="button"
+				onclick={createScheduleEntry}
+				disabled={creatingSchedule || (needsTarget(scheduleType) && !scheduleTarget)}
+				class="mt-4 cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+			>
+				{creatingSchedule ? 'Creating…' : 'Create schedule'}
+			</button>
+		</div>
+	{/if}
+
+	<div class="flex gap-1">
+		<button
+			type="button"
+			onclick={() => (activeTab = 'backups')}
+			class="cursor-pointer rounded-t-lg px-4 py-2 text-sm font-semibold transition {activeTab === 'backups' ? 'bg-blue-500/15 text-blue-200' : 'text-gray-400 hover:bg-white/5'}"
+		>Backups</button>
+		<button
+			type="button"
+			onclick={() => { activeTab = 'schedules'; loadSchedules(); }}
+			class="cursor-pointer rounded-t-lg px-4 py-2 text-sm font-semibold transition {activeTab === 'schedules' ? 'bg-blue-500/15 text-blue-200' : 'text-gray-400 hover:bg-white/5'}"
+		>Schedules</button>
+	</div>
+
+	{#if activeTab === 'backups'}
+		<div class="rounded-xl border border-gray-700 bg-gray-800">
+			<!-- Filters -->
+			<div class="flex flex-wrap items-center gap-2 border-b border-gray-700 px-4 py-3">
+				<span class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Type:</span>
+				{#each ['all', ...backupTypes] as t}
+					<button
+						type="button"
+						onclick={() => (filterType = t)}
+						class="rounded-full px-2.5 py-0.5 text-[11px] font-medium transition {filterType === t ? 'bg-blue-500/20 text-blue-200' : 'text-gray-400 hover:bg-gray-700'}"
+					>{t}</button>
+				{/each}
+				<span class="ml-3 text-[11px] font-semibold uppercase tracking-wider text-gray-500">Status:</span>
+				{#each ['all', 'completed', 'running', 'pending', 'failed'] as s}
+					<button
+						type="button"
+						onclick={() => (filterStatus = s)}
+						class="rounded-full px-2.5 py-0.5 text-[11px] font-medium transition {filterStatus === s ? 'bg-blue-500/20 text-blue-200' : 'text-gray-400 hover:bg-gray-700'}"
+					>{s}</button>
+				{/each}
+			</div>
+
+			{#if loadingBackups}
+				<div class="space-y-2 p-5">
+					{#each Array(4) as _}
+						<div class="h-5 animate-pulse rounded bg-gray-700/50"></div>
 					{/each}
 				</div>
-				<div class="mt-4">
-					<button
-						onclick={createScheduleEntry}
-						disabled={creatingSchedule || !scheduleCron.trim() || (needsTarget(scheduleType) && !scheduleTarget.trim())}
-						class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-					>
-						{creatingSchedule ? 'Adding...' : 'Add'}
-					</button>
+			{:else if backupError}
+				<div class="m-5 rounded-lg border border-red-700 bg-red-900/30 p-3.5 text-sm text-red-300">{backupError}</div>
+			{:else if filteredBackups.length === 0}
+				<div class="p-10 text-center">
+					<p class="text-sm text-gray-400">No backups{filterType !== 'all' || filterStatus !== 'all' ? ' matching the filters' : ' yet'}.</p>
+					<p class="mt-1 text-xs text-gray-500">Create one from the form, or wait for a schedule to run.</p>
 				</div>
-			</div>
-		{/if}
-
-		<!-- Schedules table -->
-		{#if loadingSchedules}
-			<div class="text-gray-400 text-sm">Loading schedules...</div>
-		{:else if scheduleError}
-			<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{scheduleError}</div>
-		{:else if schedules.length === 0}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-				<p class="text-gray-400">No backup schedules configured yet.</p>
-			</div>
-		{:else}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-				<div class="overflow-x-auto">
-					<table class="w-full">
-						<thead>
-							<tr class="border-b border-gray-700">
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Target</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Schedule</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Retention</th>
-								<th class="text-center px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Enabled</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Last Run</th>
-								<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-gray-700">
-							{#each schedules as sched}
-								<tr class="hover:bg-gray-750">
-									<td class="px-4 py-3">
-										{#if editingScheduleId === sched.id}
-											<select
-												bind:value={editScheduleType}
-												class="px-2 py-1 bg-gray-900 border border-gray-600 rounded text-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 w-24"
-											>
-												{#each backupTypes as t}
-													<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-												{/each}
-											</select>
-										{:else}
-											<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {typeBadgeClass(sched.type)}">
-												{sched.type}
-											</span>
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-sm">
-										{#if editingScheduleId === sched.id}
-											{#if needsTarget(editScheduleType)}
-												<input
-													type="text"
-													bind:value={editScheduleTarget}
-													class="w-full px-2 py-1 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-												/>
-											{:else}
-												<span class="text-gray-500 text-xs">N/A</span>
-											{/if}
-										{:else}
-											<span class="text-gray-300">{sched.target || '-'}</span>
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-sm">
-										{#if editingScheduleId === sched.id}
-											<input
-												type="text"
-												bind:value={editScheduleCron}
-												class="w-full px-2 py-1 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-											/>
-										{:else}
-											<code class="text-gray-400 text-xs">{sched.schedule}</code>
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-sm">
-										{#if editingScheduleId === sched.id}
-											<input
-												type="number"
-												bind:value={editScheduleRetention}
-												min="1"
-												max="365"
-												class="w-20 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-											/>
-										{:else}
-											<span class="text-gray-400">{sched.retention_days} days</span>
-										{/if}
-									</td>
-									<td class="px-4 py-3 text-center">
-										<button
-											onclick={() => toggleScheduleEnabled(sched)}
-											class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none {sched.enabled ? 'bg-blue-600' : 'bg-gray-600'}"
-											role="switch"
-											aria-checked={sched.enabled}
-											aria-label="Toggle schedule"
+			{:else}
+				<div class="divide-y divide-gray-700/40">
+					{#each filteredBackups as b (b.id)}
+						<div class="flex flex-wrap items-center gap-3 px-5 py-3 transition hover:bg-gray-750">
+							<span class="rounded-md px-2 py-0.5 text-[11px] font-semibold {typeBadgeClass(b.type)}">{b.type}</span>
+							{#if b.kind && b.kind !== 'manual'}
+								<span class="rounded-md px-1.5 py-0.5 text-[10px] font-semibold {kindBadge(b.kind)}">{b.kind}</span>
+							{/if}
+							<div class="min-w-0 flex-1">
+								<p class="truncate font-mono text-sm text-gray-100">{b.target || 'everything'}</p>
+								<p class="text-[11px] text-gray-500">
+									{formatDate(b.created_at)}
+									· {formatSize(b.size_bytes)}
+									· took {duration(b)}
+								</p>
+								{#if b.error_msg}
+									<p class="truncate text-[11px] text-red-400" title={b.error_msg}>{b.error_msg}</p>
+								{/if}
+							</div>
+							<span class="rounded-full px-2.5 py-0.5 text-[11px] font-medium {statusBadgeClass(b.status)}">{b.status}</span>
+							<div class="flex shrink-0 items-center gap-1">
+								{#if restoreConfirmId === b.id}
+									<span class="mr-1 text-[11px] text-yellow-400">
+										Overwrite current data{safetyNote(b)}?
+									</span>
+									<button
+										type="button"
+										onclick={() => restoreBackup(b.id)}
+										disabled={restoring}
+										class="cursor-pointer rounded-lg bg-yellow-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50"
+									>
+										{restoring ? '…' : 'Yes, restore'}
+									</button>
+									<button
+										type="button"
+										onclick={() => { restoreConfirmId = null; restoreComponent = ''; }}
+										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600"
+									>
+										No
+									</button>
+								{:else}
+									{#if b.type === 'full'}
+										<select
+											bind:value={restoreComponent}
+											class="rounded-lg border border-gray-600 bg-gray-900 px-1.5 py-1 text-[10px] text-gray-300"
+											aria-label="Restore component"
 										>
-											<span
-												class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 {sched.enabled ? 'translate-x-4' : 'translate-x-0'}"
-											></span>
+											<option value="">all</option>
+											<option value="websites">websites</option>
+											<option value="databases">databases</option>
+											<option value="config">config</option>
+										</select>
+									{/if}
+									<button
+										type="button"
+										onclick={() => { restoreConfirmId = b.id; }}
+										disabled={b.status !== 'completed'}
+										title={b.status !== 'completed' ? 'Only completed backups can be restored' : 'Restore'}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-yellow-600 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3" /></svg>
+									</button>
+									<a
+										href={"/api/v1/backups/" + b.id + "/download"}
+										download
+										title="Download"
+										class="rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M12 4v12m0 0l-4-4m4 4l4-4" /></svg>
+									</a>
+									{#if deleteConfirmId === b.id}
+										<span class="text-[11px] text-red-400">Delete?</span>
+										<button
+											type="button"
+											onclick={() => deleteBackup(b.id)}
+											class="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-red-700"
+										>
+											Yes
 										</button>
-									</td>
-									<td class="px-4 py-3 text-sm text-gray-400">{formatDate(sched.last_run)}</td>
-									<td class="px-4 py-3 text-right">
-										<div class="flex items-center justify-end gap-2">
-											{#if editingScheduleId === sched.id}
-												<button
-													onclick={() => saveScheduleEdit(sched.id)}
-													disabled={savingSchedule}
-													class="px-2.5 py-1 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
-												>
-													{savingSchedule ? 'Saving...' : 'Save'}
-												</button>
-												<button
-													onclick={cancelEditSchedule}
-													class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
-												>
-													Cancel
-												</button>
-											{:else}
-												<button
-													onclick={() => startEditSchedule(sched)}
-													class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer"
-												>
-													Edit
-												</button>
-												{#if deleteScheduleConfirmId === sched.id}
-													<span class="text-xs text-red-400">Delete?</span>
-													<button
-														onclick={() => deleteSchedule(sched.id)}
-														class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														Yes
-													</button>
-													<button
-														onclick={() => (deleteScheduleConfirmId = null)}
-														class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														Cancel
-													</button>
-												{:else}
-													<button
-														onclick={() => (deleteScheduleConfirmId = sched.id)}
-														class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														Delete
-													</button>
-												{/if}
-											{/if}
-										</div>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+										<button
+											type="button"
+											onclick={() => (deleteConfirmId = null)}
+											class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600"
+										>
+											No
+										</button>
+									{:else}
+										<button
+											type="button"
+											onclick={() => (deleteConfirmId = b.id)}
+											title="Delete backup"
+											class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white"
+										>
+											<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+										</button>
+									{/if}
+								{/if}
+								</div>
+						</div>
+					{/each}
 				</div>
-			</div>
-		{/if}
+			{/if}
+		</div>
+	{:else}
+		<div class="rounded-xl border border-gray-700 bg-gray-800">
+			{#if loadingSchedules}
+				<div class="space-y-2 p-5">
+					{#each Array(3) as _}
+						<div class="h-5 animate-pulse rounded bg-gray-700/50"></div>
+					{/each}
+				</div>
+			{:else if scheduleError}
+				<div class="m-5 rounded-lg border border-red-700 bg-red-900/30 p-3.5 text-sm text-red-300">{scheduleError}</div>
+			{:else if schedules.length === 0}
+				<div class="p-10 text-center">
+					<p class="text-sm text-gray-400">No schedules yet.</p>
+					<p class="mt-1 text-xs text-gray-500">Use “New schedule” to back up automatically.</p>
+				</div>
+			{:else}
+				<div class="divide-y divide-gray-700/40">
+					{#each schedules as s (s.id)}
+						<div class="flex flex-wrap items-center gap-3 px-5 py-3">
+							{#if editingScheduleId === s.id}
+								<div class="grid w-full gap-2 sm:grid-cols-6">
+									<select bind:value={editScheduleType} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
+										{#each backupTypes as t}<option value={t}>{t}</option>{/each}
+									</select>
+									<select bind:value={editScheduleTarget} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
+										<option value="">— target —</option>
+										{#if editScheduleType === 'website'}
+											{#each websites as w (w.id)}<option value={w.domain}>{w.domain}</option>{/each}
+										{:else}
+											{#each databases as d (d.id)}<option value={d.name}>{d.name}</option>{/each}
+										{/if}
+									</select>
+									<select bind:value={editScheduleCron} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
+										{#each schedulePresets as p}<option value={p.value}>{p.label}</option>{/each}
+									</select>
+									<input type="number" min="1" bind:value={editScheduleRetention} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200" title="Keep days" />
+									<input type="number" min="0" bind:value={editScheduleKeep} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200" title="Keep last N" />
+									<div class="flex gap-1">
+										<button type="button" onclick={() => saveScheduleEdit(s.id)} disabled={savingSchedule} class="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">Save</button>
+										<button type="button" onclick={cancelEditSchedule} class="cursor-pointer rounded-md bg-gray-700 px-2.5 py-1.5 text-[11px] text-gray-200 hover:bg-gray-600">Cancel</button>
+									</div>
+								</div>
+							{:else}
+								<span class="rounded-md px-2 py-0.5 text-[11px] font-semibold {typeBadgeClass(s.type)}">{s.type}</span>
+								<div class="min-w-0 flex-1">
+									<p class="truncate font-mono text-sm text-gray-100">{s.target || 'everything'}</p>
+									<p class="text-[11px] text-gray-500">
+										{s.schedule} · keep {s.retention_days}d{s.retention_keep > 0 ? ` / last ${s.retention_keep}` : ''}
+										· next ~ {nextRunEstimate(s.schedule, s.last_run)}
+									</p>
+								</div>
+								{#if s.last_run_status}
+									<span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {s.last_run_status === 'success' ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}">
+										last run: {s.last_run_status}
+									</span>
+								{/if}
+								<span class="rounded-full px-2 py-0.5 text-[10px] font-medium {s.enabled ? 'bg-green-900/50 text-green-400' : 'bg-gray-700 text-gray-400'}">
+									{s.enabled ? 'enabled' : 'disabled'}
+								</span>
+								<div class="flex shrink-0 items-center gap-1">
+									<button
+										type="button"
+										onclick={() => toggleSchedule(s.id, !s.enabled)}
+										class="cursor-pointer rounded-lg px-2 py-1 text-[11px] text-gray-300 transition hover:bg-gray-700"
+									>
+										{s.enabled ? 'Disable' : 'Enable'}
+									</button>
+									<button
+										type="button"
+										onclick={() => startEditSchedule(s)}
+										class="cursor-pointer rounded-lg px-2 py-1 text-[11px] text-gray-300 transition hover:bg-gray-700"
+									>
+										Edit
+									</button>
+									{#if deleteScheduleConfirmId === s.id}
+										<button
+											type="button"
+											onclick={() => deleteSchedule(s.id)}
+											class="cursor-pointer rounded-lg bg-red-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-red-700"
+										>
+											Delete?
+										</button>
+										<button
+											type="button"
+											onclick={() => (deleteScheduleConfirmId = null)}
+											class="cursor-pointer rounded-lg bg-gray-700 px-2 py-1 text-[11px] text-gray-200 hover:bg-gray-600"
+										>
+											No
+										</button>
+									{:else}
+										<button
+											type="button"
+											onclick={() => (deleteScheduleConfirmId = s.id)}
+											class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white"
+											title="Delete schedule"
+										>
+											<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+										</button>
+									{/if}
+								</div>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</div>
 	{/if}
 </div>

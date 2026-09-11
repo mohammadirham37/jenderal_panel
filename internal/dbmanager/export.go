@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/dbdump"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
@@ -40,20 +41,10 @@ func exportOptionsFor(format string) (exportOptions, error) {
 	}
 }
 
-// dumpCommand builds the engine-specific consistent dump command. MySQL dumps
-// run as root against the local server; PostgreSQL runs as the postgres
-// superuser, matching the engine modules' conventions.
+// dumpCommand builds the engine-specific consistent dump command via the
+// shared dbdump package.
 func dumpCommand(engineName, database string) (string, []string, error) {
-	switch engineName {
-	case "mysql":
-		return "mysqldump", []string{
-			"--single-transaction", "--routines", "--triggers", "--events", database,
-		}, nil
-	case "postgresql":
-		return "sudo", []string{"-u", "postgres", "pg_dump", "--dbname", database}, nil
-	default:
-		return "", nil, model.NewValidationError("export is available for mysql and postgresql only")
-	}
+	return dbdump.DumpCommand(engineName, database)
 }
 
 // ExportDatabase dumps a managed database in the requested format and returns

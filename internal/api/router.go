@@ -527,7 +527,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
 				Get("/backups", backupHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
+				Get("/backups/stats", backupHandler.Stats)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.delete")).
+				Post("/backups/prune", backupHandler.Prune)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
 				Get("/backups/{id}", backupHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
+				Get("/backups/{id}/download", backupHandler.Download)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.delete")).
 				Delete("/backups/{id}", backupHandler.Delete)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.restore")).

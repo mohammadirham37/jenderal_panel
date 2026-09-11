@@ -311,15 +311,20 @@ type EngineStatus struct {
 }
 
 type Backup struct {
-	ID        string    `json:"id"`
-	Type      string    `json:"type"`
-	Target    string    `json:"target"`
-	Storage   string    `json:"storage"`
-	Path      string    `json:"path"`
-	SizeBytes int64     `json:"size_bytes"`
-	Status    string    `json:"status"`
-	ErrorMsg  string    `json:"error_msg"`
-	CreatedAt time.Time `json:"created_at"`
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Target     string    `json:"target"`
+	Storage    string    `json:"storage"`
+	Path       string    `json:"path"`
+	SizeBytes  int64     `json:"size_bytes"`
+	Status     string    `json:"status"`
+	ErrorMsg   string    `json:"error_msg"`
+	Kind       string    `json:"kind"` // manual | scheduled | safety
+	CreatedBy  string    `json:"created_by"`
+	TaskID     string    `json:"task_id,omitempty"`
+	StartedAt  time.Time `json:"started_at,omitempty"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type BackupSchedule struct {
@@ -329,8 +334,11 @@ type BackupSchedule struct {
 	Storage       string    `json:"storage"`
 	Schedule      string    `json:"schedule"`
 	RetentionDays int       `json:"retention_days"`
+	RetentionKeep int       `json:"retention_keep"`
 	Enabled       bool      `json:"enabled"`
 	LastRun       time.Time `json:"last_run"`
+	LastRunStatus string    `json:"last_run_status"`
+	CreatedBy     string    `json:"created_by"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

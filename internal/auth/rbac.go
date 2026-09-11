@@ -168,6 +168,7 @@ var userRolePermissions = []string{
 	"websites.view", "websites.create", "websites.update", "websites.delete", "websites.suspend",
 	"deployments.view", "deployments.deploy",
 	"databases.view", "databases.create", "databases.delete",
+	"backups.view", "backups.create", "backups.restore", "backups.delete",
 	"files.view", "files.manage",
 	"terminal.access",
 }

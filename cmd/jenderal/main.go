@@ -209,6 +209,7 @@ func cmdServe() {
 	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
 	dockerSvc := docker.NewService(exec, auditSvc)
 	backupSvc := backup.NewService(db, exec, auditSvc, "/var/lib/jenderal/backups")
+	backupSvc.SetTaskRunner(tasks)
 	backupScheduler := backup.NewScheduler(backupSvc)
 	alertSvc := alert.NewService(db, auditSvc)
 	alertSvc.SetTargetProviders(serviceMgr, sslSvc)

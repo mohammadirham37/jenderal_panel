@@ -40,7 +40,7 @@ func TestCreateBackup(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
-	b, err := svc.CreateBackup(context.Background(), "config", "")
+	b, err := svc.CreateBackup(context.Background(), SystemCaller, "config", "")
 	if err != nil {
 		t.Fatalf("CreateBackup: %v", err)
 	}
@@ -76,13 +76,13 @@ func TestCreateBackupValidation(t *testing.T) {
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	// Missing type.
-	_, err := svc.CreateBackup(context.Background(), "", "")
+	_, err := svc.CreateBackup(context.Background(), SystemCaller, "", "")
 	if err == nil {
 		t.Error("expected error for empty type")
 	}
 
 	// Invalid type.
-	_, err = svc.CreateBackup(context.Background(), "invalid", "")
+	_, err = svc.CreateBackup(context.Background(), SystemCaller, "invalid", "")
 	if err == nil {
 		t.Error("expected error for invalid type")
 	}
@@ -137,7 +137,7 @@ func TestCreateSchedule(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
-	sched, err := svc.CreateSchedule(context.Background(), ScheduleRequest{
+	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type:          "database",
 		Target:        "mydb",
 		Storage:       "local",
@@ -182,7 +182,7 @@ func TestCreateScheduleValidation(t *testing.T) {
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	// Missing type.
-	_, err := svc.CreateSchedule(context.Background(), ScheduleRequest{
+	_, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Schedule: "daily",
 	})
 	if err == nil {
@@ -190,7 +190,7 @@ func TestCreateScheduleValidation(t *testing.T) {
 	}
 
 	// Missing schedule.
-	_, err = svc.CreateSchedule(context.Background(), ScheduleRequest{
+	_, err = svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type: "config",
 	})
 	if err == nil {
@@ -202,7 +202,7 @@ func TestEnableDisableSchedule(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
-	sched, err := svc.CreateSchedule(context.Background(), ScheduleRequest{
+	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type:     "config",
 		Schedule: "daily",
 	})
@@ -211,7 +211,7 @@ func TestEnableDisableSchedule(t *testing.T) {
 	}
 
 	// Disable.
-	if err := svc.DisableSchedule(context.Background(), sched.ID); err != nil {
+	if err := svc.DisableSchedule(context.Background(), SystemCaller, sched.ID); err != nil {
 		t.Fatalf("DisableSchedule: %v", err)
 	}
 
@@ -224,7 +224,7 @@ func TestEnableDisableSchedule(t *testing.T) {
 	}
 
 	// Re-enable.
-	if err := svc.EnableSchedule(context.Background(), sched.ID); err != nil {
+	if err := svc.EnableSchedule(context.Background(), SystemCaller, sched.ID); err != nil {
 		t.Fatalf("EnableSchedule: %v", err)
 	}
 
@@ -265,7 +265,7 @@ func TestDeleteSchedule(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
-	sched, err := svc.CreateSchedule(context.Background(), ScheduleRequest{
+	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type:     "config",
 		Schedule: "daily",
 	})
@@ -273,7 +273,7 @@ func TestDeleteSchedule(t *testing.T) {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
 
-	if err := svc.DeleteSchedule(context.Background(), sched.ID); err != nil {
+	if err := svc.DeleteSchedule(context.Background(), SystemCaller, sched.ID); err != nil {
 		t.Fatalf("DeleteSchedule: %v", err)
 	}
 
@@ -287,7 +287,7 @@ func TestUpdateSchedule(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
-	sched, err := svc.CreateSchedule(context.Background(), ScheduleRequest{
+	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type:          "config",
 		Schedule:      "daily",
 		RetentionDays: 7,
@@ -296,7 +296,7 @@ func TestUpdateSchedule(t *testing.T) {
 		t.Fatalf("CreateSchedule: %v", err)
 	}
 
-	err = svc.UpdateSchedule(context.Background(), sched.ID, ScheduleRequest{
+	err = svc.UpdateSchedule(context.Background(), SystemCaller, sched.ID, ScheduleRequest{
 		Type:          "website",
 		Target:        "example.com",
 		Schedule:      "weekly",
@@ -328,7 +328,7 @@ func TestListSchedules(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
-	_, err := svc.CreateSchedule(context.Background(), ScheduleRequest{
+	_, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type:     "config",
 		Schedule: "daily",
 	})
@@ -336,7 +336,7 @@ func TestListSchedules(t *testing.T) {
 		t.Fatalf("CreateSchedule 1: %v", err)
 	}
 
-	_, err = svc.CreateSchedule(context.Background(), ScheduleRequest{
+	_, err = svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
 		Type:     "database",
 		Target:   "mydb",
 		Schedule: "weekly",
@@ -345,7 +345,7 @@ func TestListSchedules(t *testing.T) {
 		t.Fatalf("CreateSchedule 2: %v", err)
 	}
 
-	schedules, err := svc.ListSchedules(context.Background())
+	schedules, err := svc.ListSchedules(context.Background(), SystemCaller)
 	if err != nil {
 		t.Fatalf("ListSchedules: %v", err)
 	}

@@ -43,7 +43,7 @@ func (s *Scheduler) loop(ctx context.Context) {
 }
 
 func (s *Scheduler) tick(ctx context.Context) {
-	schedules, err := s.svc.ListSchedules(ctx)
+	schedules, err := s.svc.ListSchedules(ctx, SystemCaller)
 	if err != nil {
 		log.Printf("backup scheduler: list schedules: %v", err)
 		return
@@ -60,63 +60,89 @@ func (s *Scheduler) tick(ctx context.Context) {
 			continue
 		}
 
-		// Create the backup.
-		_, err := s.svc.CreateBackup(ctx, sched.Type, sched.Target)
-		if err != nil {
+		// Create the backup. The backup record carries kind=scheduled and the
+		// service updates last_run_status when the task finishes.
+		if _, err := s.svc.CreateScheduledBackup(ctx, sched.Type, sched.Target); err != nil {
 			log.Printf("backup scheduler: create backup for schedule %s: %v", sched.ID, err)
 			continue
 		}
-
-		// Update last_run.
-		nowStr := now.Format(time.RFC3339)
-		_, _ = s.svc.db.ExecContext(ctx,
-			`UPDATE backup_schedules SET last_run = ?, updated_at = ? WHERE id = ?`,
-			nowStr, nowStr, sched.ID,
-		)
 	}
 
 	// Cleanup old backups based on retention.
 	s.cleanup(ctx, schedules, now)
 }
 
-// cleanup deletes completed backups older than the retention period.
+// cleanup deletes completed backups that exceeded their schedule's retention,
+// expressed as a maximum age in days and/or a maximum number to keep.
 func (s *Scheduler) cleanup(ctx context.Context, schedules []model.BackupSchedule, now time.Time) {
-	// Find the minimum retention across all schedules per type/target.
+	pruned := pruneExpired(ctx, s.svc, schedules, now)
+	if pruned > 0 {
+		log.Printf("backup scheduler: pruned %d expired backups", pruned)
+	}
+}
+
+// pruneExpired deletes completed backups past their retention window and
+// returns how many were removed. Both limits apply per type/target: a backup
+// is deleted when it is older than retention_days (when set) or no longer
+// among the newest retention_keep (when set).
+func pruneExpired(ctx context.Context, svc *Service, schedules []model.BackupSchedule, now time.Time) int {
 	type key struct{ typ, target string }
-	retention := make(map[key]int)
+	type limits struct {
+		days int
+		keep int
+	}
+	retention := make(map[key]limits)
 
 	for _, sched := range schedules {
 		k := key{sched.Type, sched.Target}
-		if existing, ok := retention[k]; !ok || sched.RetentionDays < existing {
-			retention[k] = sched.RetentionDays
-		}
+		retention[k] = limits{days: sched.RetentionDays, keep: sched.RetentionKeep}
 	}
 
-	// Query completed backups and check age.
-	backups, err := s.svc.List(ctx)
+	backups, err := svc.List(ctx)
 	if err != nil {
 		log.Printf("backup scheduler: list backups for cleanup: %v", err)
-		return
+		return 0
 	}
 
+	// Newest-first per key so keep-N keeps the newest entries.
+	seen := make(map[key]int)
+	pruned := 0
 	for _, b := range backups {
-		if b.Status != "completed" {
+		if b.Status != "completed" || b.Kind == KindSafety {
 			continue
 		}
 
 		k := key{b.Type, b.Target}
-		days, ok := retention[k]
+		lim, ok := retention[k]
 		if !ok {
 			continue
 		}
 
-		age := now.Sub(b.CreatedAt)
-		if age > time.Duration(days)*24*time.Hour {
-			if err := s.svc.DeleteBackup(ctx, b.ID); err != nil {
+		seen[k]++
+		if retentionExpired(lim.days, lim.keep, seen[k], b.CreatedAt, now) {
+			if err := svc.DeleteBackup(ctx, b.ID); err != nil {
 				log.Printf("backup scheduler: delete expired backup %s: %v", b.ID, err)
+				continue
 			}
+			pruned++
 		}
 	}
+	return pruned
+}
+
+// retentionExpired reports whether a completed backup should be pruned:
+// rank is its 1-based position among the newest backups of the same
+// type/target. A backup is expired when it is older than days (when set) or
+// pushed out of the newest keep (when set). Safety backups are never pruned
+// here.
+func retentionExpired(days, keep, rank int, createdAt, now time.Time) bool {
+	if days > 0 && now.Sub(createdAt) > time.Duration(days)*24*time.Hour {
+		return true
+	}
+	if keep > 0 && rank > keep {
+		return true
+	}
+	return false
 }
 
 // shouldRun determines whether a schedule should run based on the schedule
