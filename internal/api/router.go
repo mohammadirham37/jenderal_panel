@@ -223,6 +223,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Audit logs
 			r.With(auth.RequirePermission(deps.RBAC, "audit.view")).
 				Get("/audit-logs", auditHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "audit.view")).
+				Get("/audit-logs/modules", auditHandler.Modules)
 
 			// Settings
 			r.With(auth.RequirePermission(deps.RBAC, "settings.view")).

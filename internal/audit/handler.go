@@ -37,6 +37,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		Page:    page,
 		PerPage: perPage,
 		Module:  module,
+		From:    q.Get("from"),
+		To:      q.Get("to"),
+		Search:  q.Get("search"),
 	})
 	if err != nil {
 		httputil.HandleError(w, err)
@@ -44,4 +47,18 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	httputil.JSONList(w, entries, page, perPage, total)
+}
+
+// Modules handles GET /api/audit-logs/modules — distinct modules present in
+// the log, for filter dropdowns.
+func (h *Handler) Modules(w http.ResponseWriter, r *http.Request) {
+	modules, err := h.svc.Modules(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if modules == nil {
+		modules = []string{}
+	}
+	httputil.JSON(w, http.StatusOK, modules)
 }

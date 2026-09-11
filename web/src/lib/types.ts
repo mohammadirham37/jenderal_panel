@@ -106,6 +106,7 @@ export interface ServiceStatus {
 export interface AuditEntry {
 	id: string;
 	user_id: string;
+	username?: string;
 	action: string;
 	module: string;
 	target: string;

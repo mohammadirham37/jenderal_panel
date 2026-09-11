@@ -52,6 +52,7 @@ type Session struct {
 type AuditEntry struct {
 	ID        string    `json:"id"`
 	UserID    string    `json:"user_id"`
+	Username  string    `json:"username,omitempty"`
 	Action    string    `json:"action"`
 	Module    string    `json:"module"`
 	Target    string    `json:"target"`
