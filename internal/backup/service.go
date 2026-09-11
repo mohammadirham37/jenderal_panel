@@ -828,7 +828,7 @@ func (s *Service) CreateSchedule(ctx context.Context, caller Caller, req Schedul
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sched.ID, sched.Type, nullableString(sched.Target), sched.Storage,
 		sched.Schedule, sched.RetentionDays, sched.RetentionKeep, boolToInt(sched.Enabled),
-		nullableString(""), nullableString(""), sched.CreatedBy, nowStr, nowStr,
+		nullableString(""), "", sched.CreatedBy, nowStr, nowStr,
 	)
 	if err != nil {
 		return model.BackupSchedule{}, fmt.Errorf("insert backup schedule: %w", err)

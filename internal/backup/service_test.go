@@ -25,6 +25,21 @@ func setupTestDB(t *testing.T) *sql.DB {
 	return db
 }
 
+// seedBackupTargets inserts the managed database and website rows that the
+// ownership-scoped target validation looks up.
+func seedBackupTargets(t *testing.T, db *sql.DB) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO managed_databases (id, name, engine, created_at, updated_at, created_by)
+		VALUES ('db-001', 'mydb', 'mysql', ?, ?, '')`, now, now); err != nil {
+		t.Fatalf("seed managed database: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO websites (id, domain, document_root, web_user, created_at, updated_at, created_by)
+		VALUES ('web-001', 'example.com', '/home/web_example_com/public', 'web_example_com', ?, ?, '')`, now, now); err != nil {
+		t.Fatalf("seed website: %v", err)
+	}
+}
+
 func mockExecutor() *executor.MockExecutor {
 	return &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -135,6 +150,7 @@ func TestList(t *testing.T) {
 
 func TestCreateSchedule(t *testing.T) {
 	db := setupTestDB(t)
+	seedBackupTargets(t, db)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
@@ -200,6 +216,7 @@ func TestCreateScheduleValidation(t *testing.T) {
 
 func TestEnableDisableSchedule(t *testing.T) {
 	db := setupTestDB(t)
+	seedBackupTargets(t, db)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
@@ -263,6 +280,7 @@ func TestDeleteBackup(t *testing.T) {
 
 func TestDeleteSchedule(t *testing.T) {
 	db := setupTestDB(t)
+	seedBackupTargets(t, db)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
@@ -285,6 +303,7 @@ func TestDeleteSchedule(t *testing.T) {
 
 func TestUpdateSchedule(t *testing.T) {
 	db := setupTestDB(t)
+	seedBackupTargets(t, db)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	sched, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{
@@ -326,6 +345,7 @@ func TestUpdateSchedule(t *testing.T) {
 
 func TestListSchedules(t *testing.T) {
 	db := setupTestDB(t)
+	seedBackupTargets(t, db)
 	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
 
 	_, err := svc.CreateSchedule(context.Background(), SystemCaller, ScheduleRequest{

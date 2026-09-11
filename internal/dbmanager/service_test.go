@@ -54,7 +54,7 @@ func TestCreateDatabase(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	mdb, err := svc.CreateDatabase(ctx, "admin-user", "testdb", "mysql", "utf8mb4")
+	mdb, err := svc.CreateDatabase(ctx, "testdb", "mysql", "utf8mb4", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestCreateDatabase_Validation(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	_, err := svc.CreateDatabase(ctx, "admin-user", "", "mysql", "utf8mb4")
+	_, err := svc.CreateDatabase(ctx, "", "mysql", "utf8mb4", "admin-user")
 	if err == nil {
 		t.Fatal("expected validation error for empty name")
 	}
@@ -105,7 +105,7 @@ func TestCreateDatabase_Validation(t *testing.T) {
 		t.Errorf("expected VALIDATION_ERROR, got %s", domainErr.Code)
 	}
 
-	_, err = svc.CreateDatabase(ctx, "admin-user", "testdb", "badengine", "utf8mb4")
+	_, err = svc.CreateDatabase(ctx, "testdb", "badengine", "utf8mb4", "admin-user")
 	if err == nil {
 		t.Fatal("expected validation error for bad engine")
 	}
@@ -116,11 +116,11 @@ func TestListDatabases(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	_, err := svc.CreateDatabase(ctx, "admin-user", "db1", "mysql", "utf8mb4")
+	_, err := svc.CreateDatabase(ctx, "db1", "mysql", "utf8mb4", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDatabase db1: %v", err)
 	}
-	_, err = svc.CreateDatabase(ctx, "admin-user", "db2", "postgresql", "utf8")
+	_, err = svc.CreateDatabase(ctx, "db2", "postgresql", "utf8", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDatabase db2: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestDropDatabase(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	mdb, err := svc.CreateDatabase(ctx, "admin-user", "dropme", "mysql", "utf8mb4")
+	mdb, err := svc.CreateDatabase(ctx, "dropme", "mysql", "utf8mb4", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestGrantPrivileges(t *testing.T) {
 		t.Fatalf("CreateDBUser: %v", err)
 	}
 
-	mdb, err := svc.CreateDatabase(ctx, "admin-user", "grantdb", "mysql", "utf8mb4")
+	mdb, err := svc.CreateDatabase(ctx, "grantdb", "mysql", "utf8mb4", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestGrantPrivileges_EngineMismatch(t *testing.T) {
 		t.Fatalf("CreateDBUser: %v", err)
 	}
 
-	mdb, err := svc.CreateDatabase(ctx, "admin-user", "pgdb", "postgresql", "utf8")
+	mdb, err := svc.CreateDatabase(ctx, "pgdb", "postgresql", "utf8", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDatabase: %v", err)
 	}
