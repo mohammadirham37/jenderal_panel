@@ -22,6 +22,10 @@ cd web && npm run build         # frontend production build
 cd web && npm test              # frontend node --test suites
 ```
 
+## Deployment
+
+After work is pushed to `main`, deploy by clicking **Update** on the panel's Update page (`/update`) — it pulls the latest code, rebuilds, backs up, swaps the binary, and restarts the systemd service. Do NOT `git pull` or build manually on the server.
+
 ## Architecture rules
 
 - Dependency flow: Handler → Service → Executor/Database. Never the reverse.

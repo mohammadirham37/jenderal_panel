@@ -78,6 +78,8 @@ SvelteKit 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwind CSS v4, adap
 
 `/update` page triggers `internal/update/service.go` which runs a bash script: git pull → npm build → go build → backup → replace → systemd restart. All via TaskRunner with live output.
 
+**Deployment workflow:** after work is pushed to `main`, the maintainer deploys by clicking Update on the `/update` page in the running panel — never `git pull` or build manually on the server.
+
 ## Adding a New Module
 
 1. Create `internal/{name}/service.go` with business logic
