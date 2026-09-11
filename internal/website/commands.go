@@ -24,6 +24,7 @@ type CommandPreset struct {
 // slices that will be executed. Only commands present in this map may be run.
 var allowedCommands = map[string][]string{
 	"cp .env.example .env":         {"cp", ".env.example", ".env"},
+	"git pull":                     {"git", "pull"},
 	"composer install":             {"composer", "install", "--no-interaction"},
 	"composer update":              {"composer", "update", "--no-interaction"},
 	"composer dump-autoload":       {"composer", "dump-autoload"},
@@ -79,8 +80,17 @@ func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]Co
 	if err != nil {
 		return nil, err
 	}
+	return commandPresetsFor(w), nil
+}
 
+// commandPresetsFor builds the preset list offered for a website.
+func commandPresetsFor(w model.Website) []CommandPreset {
 	var presets []CommandPreset
+
+	// git pull applies to any website that is a git checkout.
+	presets = append(presets,
+		CommandPreset{Label: "git pull", Command: "git pull", Category: "git", Danger: false},
+	)
 
 	framework := strings.ToLower(w.Framework)
 
@@ -133,7 +143,7 @@ func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]Co
 		CommandPreset{Label: "pnpm build", Command: "pnpm build", Category: "pnpm", Danger: false},
 	)
 
-	return presets, nil
+	return presets
 }
 
 // projectMarkerFor returns the file that identifies the directory a command
@@ -148,6 +158,9 @@ func projectMarkerFor(command string) string {
 		return "package.json"
 	case strings.HasPrefix(command, "cp .env.example"):
 		return ".env.example"
+	case strings.HasPrefix(command, "git"):
+		// .git is a directory, so findDirWithFile probes with test -e.
+		return ".git"
 	default:
 		return ""
 	}
@@ -168,10 +181,11 @@ func (s *Service) projectDirCandidates(w model.Website) []string {
 }
 
 // findDirWithFile returns the first project candidate directory containing
-// the given file, or "" when no candidate has it.
+// the given entry (file or directory — .git is a directory), or "" when no
+// candidate has it.
 func (s *Service) findDirWithFile(ctx context.Context, w model.Website, name string) string {
 	for _, dir := range s.projectDirCandidates(w) {
-		res, err := s.exec.RunSudo(ctx, "test", "-f", filepath.Join(dir, name))
+		res, err := s.exec.RunSudo(ctx, "test", "-e", filepath.Join(dir, name))
 		if err == nil && res.ExitCode == 0 {
 			return dir
 		}
