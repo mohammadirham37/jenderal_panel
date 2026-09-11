@@ -209,7 +209,6 @@ func cmdServe() {
 	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
 	dockerSvc := docker.NewService(exec, auditSvc)
 	backupSvc := backup.NewService(db, exec, auditSvc, "/var/lib/jenderal/backups")
-	backupSvc.SetTaskRunner(tasks)
 	backupScheduler := backup.NewScheduler(backupSvc)
 	alertSvc := alert.NewService(db, auditSvc)
 	alertSvc.SetTargetProviders(serviceMgr, sslSvc)
@@ -223,6 +222,7 @@ func cmdServe() {
 		logger.Error("initialize task runner failed", "error", err)
 		os.Exit(1)
 	}
+	backupSvc.SetTaskRunner(tasks)
 	securityEvents := security.NewEventService(db, notifSvc)
 	fail2banSvc := fail2ban.NewService(exec, nil, db, securityEvents)
 	malwareRepo := malware.NewRepository(db)
