@@ -3,13 +3,27 @@ package model
 import "time"
 
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Password  string    `json:"-"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         string    `json:"id"`
+	Username   string    `json:"username"`
+	Email      string    `json:"email"`
+	Password   string    `json:"-"`
+	IsActive   bool      `json:"is_active"`
+	SSHEnabled bool      `json:"ssh_enabled"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// SSHKey is a panel user's public SSH key. Fingerprints are produced by
+// ssh-keygen on the server; private keys are never accepted.
+type SSHKey struct {
+	ID          string    `json:"id"`
+	UserID      string    `json:"user_id"`
+	Name        string    `json:"name"`
+	PublicKey   string    `json:"public_key"`
+	Fingerprint string    `json:"fingerprint"`
+	Algo        string    `json:"algo"`
+	Bits        int       `json:"bits"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type Role struct {
@@ -161,6 +175,9 @@ type Website struct {
 	ProvisionStage   string    `json:"provision_stage"`
 	ProvisionLog     string    `json:"provision_log"`
 	NginxProfile     string    `json:"nginx_profile"`
+	OctaneEnabled    bool      `json:"octane_enabled"`
+	OctanePort       int       `json:"octane_port"`
+	OctaneWorkers    int       `json:"octane_workers"`
 	CreatedBy        string    `json:"created_by"`
 	OwnerEmail       string    `json:"owner_email,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`

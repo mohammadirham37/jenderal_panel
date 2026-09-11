@@ -120,6 +120,8 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"security.view", "security"},
 		{"security.manage", "security"},
 		{"security.quarantine", "security"},
+		{"ssh.view", "ssh"},
+		{"ssh.manage", "ssh"},
 	}
 
 	permIDs := make(map[string]string)

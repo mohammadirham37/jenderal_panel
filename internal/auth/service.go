@@ -106,10 +106,10 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password stri
 	}
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO users (id, username, email, password, is_active, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO users (id, username, email, password, is_active, ssh_enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		user.ID, user.Username, user.Email, user.Password,
-		boolToInt(user.IsActive),
+		boolToInt(user.IsActive), boolToInt(user.SSHEnabled),
 		user.CreatedAt.Format(time.RFC3339),
 		user.UpdatedAt.Format(time.RFC3339),
 	)
@@ -126,13 +126,13 @@ func (s *Service) CreateUser(ctx context.Context, username, email, password stri
 // Authenticate checks credentials and returns the user.
 func (s *Service) Authenticate(ctx context.Context, username, password string) (model.User, error) {
 	var user model.User
-	var isActiveInt int
+	var isActiveInt, sshEnabled int
 	var createdStr, updatedStr string
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, password, is_active, created_at, updated_at
+		`SELECT id, username, email, password, is_active, ssh_enabled, created_at, updated_at
 		 FROM users WHERE username = ?`, username,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &isActiveInt, &createdStr, &updatedStr)
+	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &isActiveInt, &sshEnabled, &createdStr, &updatedStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return model.User{}, model.ErrInvalidCredentials
@@ -141,6 +141,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 	}
 
 	user.IsActive = isActiveInt == 1
+	user.SSHEnabled = sshEnabled == 1
 	user.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	user.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 
@@ -158,13 +159,13 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 // GetUserByID returns a user by their ID.
 func (s *Service) GetUserByID(ctx context.Context, id string) (model.User, error) {
 	var user model.User
-	var isActiveInt int
+	var isActiveInt, sshEnabled int
 	var createdStr, updatedStr string
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, username, email, password, is_active, created_at, updated_at
+		`SELECT id, username, email, password, is_active, ssh_enabled, created_at, updated_at
 		 FROM users WHERE id = ?`, id,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &isActiveInt, &createdStr, &updatedStr)
+	).Scan(&user.ID, &user.Username, &user.Email, &user.Password, &isActiveInt, &sshEnabled, &createdStr, &updatedStr)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return model.User{}, model.ErrNotFound
@@ -173,6 +174,7 @@ func (s *Service) GetUserByID(ctx context.Context, id string) (model.User, error
 	}
 
 	user.IsActive = isActiveInt == 1
+	user.SSHEnabled = sshEnabled == 1
 	user.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	user.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 
@@ -182,7 +184,7 @@ func (s *Service) GetUserByID(ctx context.Context, id string) (model.User, error
 // ListUsers returns all users ordered by created_at DESC.
 func (s *Service) ListUsers(ctx context.Context) ([]model.User, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, email, password, is_active, created_at, updated_at
+		`SELECT id, username, email, password, is_active, ssh_enabled, created_at, updated_at
 		 FROM users ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query users: %w", err)
@@ -192,12 +194,13 @@ func (s *Service) ListUsers(ctx context.Context) ([]model.User, error) {
 	var users []model.User
 	for rows.Next() {
 		var u model.User
-		var isActiveInt int
+		var isActiveInt, sshEnabled int
 		var createdStr, updatedStr string
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &isActiveInt, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &isActiveInt, &sshEnabled, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan user: %w", err)
 		}
 		u.IsActive = isActiveInt == 1
+		u.SSHEnabled = sshEnabled == 1
 		u.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 		u.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 		users = append(users, u)
@@ -219,6 +222,20 @@ func (s *Service) UpdateUser(ctx context.Context, id, username, email string, is
 	}
 
 	return s.GetUserByID(ctx, id)
+}
+
+// SetSSHEnabled records whether the panel user also owns a Linux SSH
+// account. The account itself is provisioned by the sshaccount module.
+func (s *Service) SetSSHEnabled(ctx context.Context, id string, enabled bool) error {
+	now := time.Now().UTC()
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE users SET ssh_enabled = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(enabled), now.Format(time.RFC3339), id,
+	)
+	if err != nil {
+		return fmt.Errorf("update ssh enabled: %w", err)
+	}
+	return nil
 }
 
 // UpdatePassword updates a user's password.

@@ -5,10 +5,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
 )
 
 // Handler handles user management HTTP requests.
@@ -16,14 +17,17 @@ type Handler struct {
 	auth  *auth.Service
 	rbac  *auth.RBAC
 	audit *audit.Service
+	ssh   *sshaccount.Service
 }
 
-// NewHandler creates a new user Handler.
-func NewHandler(authSvc *auth.Service, rbac *auth.RBAC, auditSvc *audit.Service) *Handler {
+// NewHandler creates a new user Handler. The SSH account service is optional;
+// when it is nil, SSH access flags are persisted without provisioning.
+func NewHandler(authSvc *auth.Service, rbac *auth.RBAC, auditSvc *audit.Service, sshSvc *sshaccount.Service) *Handler {
 	return &Handler{
 		auth:  authSvc,
 		rbac:  rbac,
 		audit: auditSvc,
+		ssh:   sshSvc,
 	}
 }
 
@@ -51,10 +55,11 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 // Create creates a new user and assigns a role.
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		Password   string `json:"password"`
+		Role       string `json:"role"`
+		SSHEnabled bool   `json:"ssh_enabled"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
@@ -63,6 +68,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if req.Username == "" || req.Email == "" || req.Password == "" {
 		httputil.HandleError(w, model.NewValidationError("username, email, and password are required"))
+		return
+	}
+	if req.SSHEnabled && !sshaccount.ValidateUsername(req.Username) {
+		httputil.HandleError(w, sshaccount.ErrInvalidUsername)
 		return
 	}
 
@@ -79,6 +88,13 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = h.rbac.AssignRole(r.Context(), user.ID, role)
 
+	if req.SSHEnabled {
+		if err := h.provisionSSH(r, user.ID); err != nil {
+			httputil.HandleError(w, err)
+			return
+		}
+	}
+
 	caller, _ := auth.UserFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
 		UserID: caller.ID,
@@ -92,14 +108,29 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusCreated, user)
 }
 
+// provisionSSH flips the panel flag first — the site ACL sync reads it —
+// then creates the Linux account with access to the user's websites.
+func (h *Handler) provisionSSH(r *http.Request, userID string) error {
+	if err := h.auth.SetSSHEnabled(r.Context(), userID, true); err != nil {
+		return err
+	}
+	if h.ssh != nil {
+		if err := h.ssh.Provision(r.Context(), userID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Update updates a user's profile fields.
 func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var req struct {
-		Username string `json:"username"`
-		Email    string `json:"email"`
-		IsActive *bool  `json:"is_active"`
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		IsActive   *bool  `json:"is_active"`
+		SSHEnabled *bool  `json:"ssh_enabled"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
@@ -110,6 +141,12 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	existing, err := h.auth.GetUserByID(r.Context(), id)
 	if err != nil {
 		httputil.HandleError(w, err)
+		return
+	}
+
+	// A Linux account cannot be renamed: keep panel and system names in lockstep.
+	if existing.SSHEnabled && req.Username != "" && req.Username != existing.Username {
+		httputil.HandleError(w, model.NewValidationError("username cannot be changed while SSH access is enabled"))
 		return
 	}
 
@@ -132,6 +169,49 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// SSH access lifecycle follows the panel flag and activation state.
+	if req.SSHEnabled != nil && *req.SSHEnabled != existing.SSHEnabled {
+		if *req.SSHEnabled {
+			if err := h.provisionSSH(r, id); err != nil {
+				httputil.HandleError(w, err)
+				return
+			}
+		} else {
+			if h.ssh != nil {
+				if err := h.ssh.Lock(r.Context(), id); err != nil {
+					httputil.HandleError(w, err)
+					return
+				}
+			}
+			if err := h.auth.SetSSHEnabled(r.Context(), id, false); err != nil {
+				httputil.HandleError(w, err)
+				return
+			}
+		}
+	}
+	if existing.SSHEnabled && h.ssh != nil {
+		if req.IsActive != nil {
+			if !*req.IsActive {
+				if err := h.ssh.Lock(r.Context(), id); err != nil {
+					httputil.HandleError(w, err)
+					return
+				}
+			} else if !existing.IsActive {
+				if err := h.ssh.Resume(r.Context(), id); err != nil {
+					httputil.HandleError(w, err)
+					return
+				}
+			}
+		}
+		if user.SSHEnabled {
+			// Ownership may have changed elsewhere; converge the site ACLs.
+			if err := h.ssh.SyncOwnedWebsites(r.Context(), id); err != nil {
+				httputil.HandleError(w, err)
+				return
+			}
+		}
+	}
+
 	caller, _ := auth.UserFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
 		UserID: caller.ID,
@@ -145,7 +225,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, user)
 }
 
-// Delete deletes a user. Prevents self-deletion.
+// Delete deletes a user. Prevents self-deletion. The Linux SSH account is
+// removed together with its home directory.
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -170,6 +251,15 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	if err := h.auth.DeleteUser(r.Context(), id); err != nil {
 		httputil.HandleError(w, err)
 		return
+	}
+
+	// The panel row is gone; remove the system account best effort.
+	if h.ssh != nil {
+		if err := h.ssh.Delete(r.Context(), id); err != nil {
+			httputil.HandleError(w, model.NewDomainError("SSH_ACCOUNT_DELETE_FAILED",
+				"panel user deleted but the Linux account could not be removed: "+err.Error(), err))
+			return
+		}
 	}
 
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
