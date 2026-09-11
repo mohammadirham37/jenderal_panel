@@ -91,6 +91,19 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 	switch template {
 	case "static":
 		return simpleProfile(req, template, "static", "none", "", "public", setupMode, false)
+	case "wordpress":
+		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
+			return Profile{}, model.NewValidationError("unsupported PHP version for wordpress")
+		}
+		if req.FrontendStack != "" || req.InertiaAdapter != "" || req.FrameworkVersion != "" || (req.ProjectVariant != "" && req.ProjectVariant != "empty") {
+			return Profile{}, model.NewValidationError("wordpress does not support framework selections")
+		}
+		return Profile{
+			Template: template, AppType: "wordpress", NginxProfile: "wordpress",
+			Framework: "wordpress", FrameworkVersion: "", ProjectVariant: "empty", SetupMode: setupMode,
+			RelativeProjectRoot: "", RelativeDocumentRoot: "public",
+			NodeVersion: req.NodeVersion,
+		}, nil
 	case "php":
 		return simpleProfile(req, template, "php", "none", "", "public", setupMode, false)
 	case "codeigniter3":
@@ -237,6 +250,9 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 		}
 		return "codeigniter4"
 	}
+	if appType == "wordpress" {
+		return "wordpress"
+	}
 	if appType == "static" {
 		return "static"
 	}
@@ -248,7 +264,7 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 
 // ValidNginxProfiles lists the renderer profiles an operator may force for a
 // website. The empty string means "derive from the app type automatically".
-var ValidNginxProfiles = []string{"", "php", "static", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
+var ValidNginxProfiles = []string{"", "php", "static", "wordpress", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
 
 // IsValidNginxProfile reports whether profile is an allowed override value.
 func IsValidNginxProfile(profile string) bool {
@@ -308,6 +324,13 @@ func websiteProfileOptions() []ProfileOption {
 			}
 		}
 	}
+	// WordPress installs through wp-cli; automatic installs use the official
+	// SQLite integration so no database server is required.
+	requests = append(requests,
+		CreateRequest{Template: "wordpress", PHPVersion: "8.2", SetupMode: SetupConfigOnly},
+		CreateRequest{Template: "wordpress", PHPVersion: "8.2", SetupMode: SetupAutomatic},
+	)
+
 	// Laravel Octane runs on FrankenPHP (PHP 8.1+ embedded); Octane itself
 	// supports Laravel 10+.
 	for _, version := range []string{"10", "11", "12", "13"} {

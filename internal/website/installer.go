@@ -113,6 +113,42 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 			}
 			steps = append(steps, installDependencies, buildAssets)
 		}
+	case "wordpress":
+		wpCLIDir := filepath.Join(homeDir, ".wp-cli")
+		wpCLI := filepath.Join(wpCLIDir, "wp-cli.phar")
+		wp := func(label string, timeout time.Duration, args ...string) installStep {
+			// wp-cli.phar runs through the site's PHP binary inside the
+			// staged project.
+			return userStep(label, "installing wordpress", timeout,
+				phpBinary, append([]string{wpCLI, "--path=" + staging}, args...)...)
+		}
+		steps = append(steps,
+			userStep("prepare wp-cli directory", "installing wordpress", time.Minute, "mkdir", "-p", wpCLIDir),
+			userStep("download wp-cli", "installing wordpress", 5*time.Minute, "/usr/bin/curl", "-fsSL", "-o", wpCLI,
+				"https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar"),
+			wp("download WordPress core", 15*time.Minute, "core", "download"),
+			userStep("download SQLite integration plugin", "installing wordpress", 5*time.Minute, "/usr/bin/curl", "-fsSL",
+				"-o", filepath.Join(staging, "sqlite.zip"),
+				"https://downloads.wordpress.org/plugin/sqlite-database-integration.latest-stable.zip"),
+			userStep("extract SQLite integration plugin", "installing wordpress", 5*time.Minute, phpBinary, "-r",
+				`if (!class_exists('ZipArchive')) { fwrite(STDERR, "Missing php-zip: run sudo apt-get install "+$argv[1]+"-zip in Terminal, then retry this operation.\n"); exit(1); } $z = new ZipArchive(); if ($z->open($argv[1]) !== true) { fwrite(STDERR, "Invalid plugin archive\n"); exit(1); } $z->extractTo($argv[2]); $z->close();`,
+				"--", filepath.Join(staging, "sqlite.zip"), filepath.Join(staging, "wp-content", "plugins")),
+			// The plugin ships db.copy as the wp-config.php replacement: it
+			// points WordPress at SQLite and auto-locates the engine folder
+			// relative to wp-content, so the staged project stays
+			// relocation-safe when promoted to the document root.
+			userStep("configure SQLite config", "installing wordpress", time.Minute, "/usr/bin/cp",
+				filepath.Join(staging, "wp-content", "plugins", "sqlite-database-integration", "db.copy"),
+				filepath.Join(staging, "wp-config.php")),
+			wp("activate SQLite integration", 5*time.Minute, "plugin", "activate", "sqlite-database-integration"),
+			wp("install WordPress", 10*time.Minute, "core", "install",
+				"--url=http://"+w.Domain, "--title="+w.Domain,
+				"--admin_user=admin", "--admin_email=webmaster@"+w.Domain, "--skip-email"),
+			// wp core install prints the generated admin password once; make
+			// sure it is impossible to miss in the provisioning log.
+			userStep("note admin password", "installing wordpress", time.Minute, "/bin/sh", "-c",
+				"echo '=== WordPress admin user: admin (password printed above) — change it after first login ==='"),
+		)
 	default:
 		return nil, fmt.Errorf("automatic installation is not implemented for profile %q", profile.NginxProfile)
 	}

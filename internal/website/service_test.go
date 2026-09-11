@@ -243,8 +243,8 @@ func TestSetNginxProfileValidatesAndPersistsOverride(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	if _, err := svc.SetNginxProfile(context.Background(), created.ID, "wordpress"); err == nil {
-		t.Fatal("SetNginxProfile() with unsupported profile should fail")
+	if _, err := svc.SetNginxProfile(context.Background(), created.ID, "wordpress"); err != nil {
+		t.Fatalf("SetNginxProfile() with wordpress profile should succeed: %v", err)
 	}
 
 	if _, err := svc.SetNginxProfile(context.Background(), "missing", "laravel"); err == nil {

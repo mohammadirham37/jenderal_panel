@@ -136,6 +136,30 @@ func (h *Handler) TransferOwnership(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, website)
 }
 
+// WpStatus handles GET /api/websites/{id}/wp.
+func (h *Handler) WpStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.svc.WpStatus(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, status)
+}
+
+// WpAction handles POST /api/websites/{id}/wp/{action} and runs the wp-cli
+// maintenance action as a background task (202 with the task ID).
+func (h *Handler) WpAction(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	action := chi.URLParam(r, "action")
+	taskID, err := h.svc.WpRunTask(r.Context(), id, action)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "wp_"+action, id, "ran wp-cli "+action)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // OctaneStatus handles GET /api/websites/{id}/octane.
 func (h *Handler) OctaneStatus(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

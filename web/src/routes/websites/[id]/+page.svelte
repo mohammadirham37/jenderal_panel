@@ -9,6 +9,7 @@
 	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
 	import WebsiteQueueSection from '$lib/components/WebsiteQueueSection.svelte';
 	import WebsiteCronSection from '$lib/components/WebsiteCronSection.svelte';
+	import WebsiteWpToolkitSection from '$lib/components/WebsiteWpToolkitSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
@@ -73,16 +74,22 @@
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
 		return (allTabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'Overview';
 	}
 	// The queue tab only applies to Laravel sites (Octane/artisan workers).
-	let tabs = $derived(allTabs.filter((t) => t !== 'Queue' || website?.framework === 'laravel'));
+	let tabs = $derived(allTabs.filter((t) =>
+		(t !== 'Queue' || website?.framework === 'laravel') &&
+		(t !== 'WP Toolkit' || website?.app_type === 'wordpress')
+	));
 	$effect(() => {
 		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
+			activeTab = 'Overview';
+		}
+		if (website && activeTab === 'WP Toolkit' && website.app_type !== 'wordpress') {
 			activeTab = 'Overview';
 		}
 	});
@@ -1758,6 +1765,9 @@
 
 			{:else if activeTab === 'Cron Jobs'}
 				<WebsiteCronSection websiteID={website.id} domain={website.domain} />
+
+			{:else if activeTab === 'WP Toolkit'}
+				<WebsiteWpToolkitSection websiteID={website.id} domain={website.domain} />
 
 			{:else if activeTab === 'Terminal'}
 				<TerminalConsole

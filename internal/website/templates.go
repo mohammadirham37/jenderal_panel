@@ -326,6 +326,27 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
 		return nginxProfileDirectives{Index: "index.html index.htm", Location: `    location / {
         try_files $uri $uri/ =404;
     }`, Hidden: standardHidden}
+	case "wordpress":
+		// WordPress: permalink-friendly front controller plus hardening for
+		// the SQLite database directory (the auto-install keeps the database
+		// file under wp-content/database, which nginx must never serve) and
+		// for xmlrpc.php, which is almost exclusively abuse traffic.
+		return nginxProfileDirectives{Index: "index.php", Server: `    # Block direct access to the SQLite database directory (auto-install).
+    location ^~ /wp-content/database/ {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }
+
+    # xmlrpc.php is almost exclusively brute-force traffic; delete this
+    # block if a plugin or client genuinely needs it.
+    location = /xmlrpc.php {
+        deny all;
+        access_log off;
+    }
+`, Location: `    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }`, PHP: standardPHP, Hidden: standardHidden}
 	case "codeigniter3":
 		return nginxProfileDirectives{Index: "index.php index.html index.htm", Server: "    error_page 404 /index.php;\n", Location: `    location / {
         try_files $uri $uri/ /index.php?$query_string;

@@ -367,6 +367,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/octane", websiteHandler.OctaneLog)
 
+			// WordPress toolkit (website-scoped; ownership handled by the
+			// scope middleware)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/wp", websiteHandler.WpStatus)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/wp/{action}", websiteHandler.WpAction)
+
 			// PHP
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
 				Get("/php", phpHandler.List)
