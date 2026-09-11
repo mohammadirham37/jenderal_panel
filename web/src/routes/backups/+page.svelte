@@ -14,6 +14,7 @@
 		error_msg?: string;
 		kind: string;
 		created_by: string;
+		remote_path?: string;
 		task_id?: string;
 		started_at?: string;
 		finished_at?: string;
@@ -554,6 +555,9 @@
 							<span class="rounded-md px-2 py-0.5 text-[11px] font-semibold {typeBadgeClass(b.type)}">{b.type}</span>
 							{#if b.kind && b.kind !== 'manual'}
 								<span class="rounded-md px-1.5 py-0.5 text-[10px] font-semibold {kindBadge(b.kind)}">{b.kind}</span>
+							{/if}
+							{#if b.remote_path}
+								<span class="rounded-md bg-teal-900/50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-300" title={b.remote_path}>off-site</span>
 							{/if}
 							<div class="min-w-0 flex-1">
 								<p class="truncate font-mono text-sm text-gray-100">{b.target || 'everything'}</p>

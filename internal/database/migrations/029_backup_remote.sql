@@ -1,0 +1,1 @@
+ALTER TABLE backups ADD COLUMN remote_path TEXT NOT NULL DEFAULT '';

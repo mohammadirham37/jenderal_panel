@@ -107,6 +107,7 @@
 		} finally {
 			loading = false;
 		}
+		loadRemote();
 	}
 
 	async function saveSettings() {
@@ -136,6 +137,51 @@
 			actionError = err instanceof Error ? err.message : 'Failed to save settings';
 		} finally {
 			saving = false;
+		}
+	}
+
+	// ─── Remote backup storage (S3) ───────────────────────────────
+	const remoteKeys = [
+		'backup_remote_type', 'backup_remote_s3_endpoint', 'backup_remote_s3_bucket',
+		'backup_remote_s3_region', 'backup_remote_s3_access_key', 'backup_remote_s3_secret_key',
+		'backup_remote_s3_prefix'
+	];
+	let remote = $state<Record<string, string>>({
+		backup_remote_type: '',
+		backup_remote_s3_endpoint: '',
+		backup_remote_s3_bucket: '',
+		backup_remote_s3_region: 'us-east-1',
+		backup_remote_s3_access_key: '',
+		backup_remote_s3_secret_key: '',
+		backup_remote_s3_prefix: ''
+	});
+	let savingRemote = $state(false);
+
+	function loadRemote() {
+		const next = { ...remote };
+		for (const s of settings) {
+			if ((remoteKeys as readonly string[]).includes(s.key)) {
+				next[s.key] = s.value;
+			}
+		}
+		remote = next;
+	}
+
+	async function saveRemote() {
+		if (savingRemote) return;
+		savingRemote = true;
+		actionMsg = '';
+		actionError = '';
+		try {
+			const payload: Record<string, string> = {};
+			for (const key of remoteKeys) payload[key] = remote[key] ?? '';
+			await api.put('/api/v1/settings', payload);
+			actionMsg = 'Remote storage configuration saved.';
+			await loadSettings();
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to save remote storage';
+		} finally {
+			savingRemote = false;
 		}
 	}
 
@@ -258,6 +304,64 @@
 			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
 		>
 			{saving ? 'Saving...' : 'Save Changes'}
+		</button>
+	</div>
+
+	<!-- Remote backup storage (S3) -->
+	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5 mb-6">
+		<h3 class="text-lg font-semibold text-white mb-1">Remote backup storage</h3>
+		<p class="text-xs text-gray-500 mb-4">
+			Off-site copy for backups. Any S3-compatible provider works (AWS S3, Wasabi, Cloudflare R2, MinIO).
+			Set type to “s3” and fill in the fields; leave type empty to keep backups local only.
+			Backups are uploaded automatically after each completed run.
+		</p>
+		<div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-type">Type</label>
+				<select id="remote-type" bind:value={remote.backup_remote_type}
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500">
+					<option value="">Off (local only)</option>
+					<option value="s3">s3</option>
+				</select>
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-endpoint">Endpoint</label>
+				<input id="remote-endpoint" type="text" bind:value={remote.backup_remote_s3_endpoint} placeholder="s3.wasabisys.com"
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-bucket">Bucket</label>
+				<input id="remote-bucket" type="text" bind:value={remote.backup_remote_s3_bucket}
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-region">Region</label>
+				<input id="remote-region" type="text" bind:value={remote.backup_remote_s3_region} placeholder="us-east-1"
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-access">Access key</label>
+				<input id="remote-access" type="text" bind:value={remote.backup_remote_s3_access_key}
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-secret">Secret key</label>
+				<input id="remote-secret" type="password" bind:value={remote.backup_remote_s3_secret_key}
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-prefix">Prefix (optional)</label>
+				<input id="remote-prefix" type="text" bind:value={remote.backup_remote_s3_prefix} placeholder="vps-1/backups"
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+		</div>
+		<button
+			type="button"
+			onclick={saveRemote}
+			disabled={savingRemote}
+			class="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+		>
+			{savingRemote ? 'Saving...' : 'Save remote storage'}
 		</button>
 	</div>
 
