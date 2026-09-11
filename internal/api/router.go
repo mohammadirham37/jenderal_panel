@@ -367,6 +367,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/octane", websiteHandler.OctaneLog)
 
+			// Per-site PHP settings (.user.ini)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/php-settings", websiteHandler.GetPhpSettings)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/php-settings", websiteHandler.SavePhpSettings)
+
 			// WordPress toolkit (website-scoped; ownership handled by the
 			// scope middleware)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
@@ -427,6 +433,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Deployments
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.deploy")).
 				Post("/websites/{id}/deploy", deployHandler.Deploy)
+				r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+					Put("/websites/{id}/deploy-webhook", websiteHandler.ConfigureDeployWebhook)
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).
 				Get("/websites/{id}/deployments", deployHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).

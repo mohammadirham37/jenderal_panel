@@ -136,6 +136,32 @@ func (h *Handler) TransferOwnership(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, website)
 }
 
+// GetPhpSettings handles GET /api/websites/{id}/php-settings.
+func (h *Handler) GetPhpSettings(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.svc.GetPhpSettings(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, settings)
+}
+
+// SavePhpSettings handles PUT /api/websites/{id}/php-settings.
+func (h *Handler) SavePhpSettings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var settings map[string]string
+	if err := httputil.DecodeJSON(r, &settings); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.SavePhpSettings(r.Context(), id, settings); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "update_php_settings", id, "updated per-site PHP settings")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // WpStatus handles GET /api/websites/{id}/wp.
 func (h *Handler) WpStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.svc.WpStatus(r.Context(), chi.URLParam(r, "id"))
@@ -158,6 +184,29 @@ func (h *Handler) WpAction(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logAction(r, "wp_"+action, id, "ran wp-cli "+action)
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// ConfigureDeployWebhook handles PUT /api/websites/{id}/deploy-webhook.
+// Stores the repository/branch the webhook deploys and returns the secret.
+func (h *Handler) ConfigureDeployWebhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Repo   string `json:"repo"`
+		Branch string `json:"branch"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	secret, err := h.svc.ConfigureDeployWebhook(r.Context(), id, req.Repo, req.Branch)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "configure_deploy_webhook", id, "configured deploy webhook for "+req.Repo)
+	httputil.JSON(w, http.StatusOK, map[string]string{"secret": secret})
 }
 
 // OctaneStatus handles GET /api/websites/{id}/octane.

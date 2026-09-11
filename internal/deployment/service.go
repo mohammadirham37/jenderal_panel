@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"crypto/subtle"
 	"context"
 	"database/sql"
 	"fmt"
@@ -45,6 +46,29 @@ func (s *Service) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// WebhookDeploy validates the deploy webhook token and starts a deployment
+// using the website's stored git repository and branch.
+func (s *Service) WebhookDeploy(ctx context.Context, websiteID, token string) (model.Deployment, error) {
+	var repo, branch, secret string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT git_repo, git_branch, deploy_webhook_secret FROM websites WHERE id = ?`,
+		websiteID,
+	).Scan(&repo, &branch, &secret)
+	if err == sql.ErrNoRows {
+		return model.Deployment{}, model.ErrNotFound
+	}
+	if err != nil {
+		return model.Deployment{}, fmt.Errorf("load website git config: %w", err)
+	}
+	if secret == "" || repo == "" {
+		return model.Deployment{}, model.NewValidationError("deploy webhook is not configured for this website")
+	}
+	if subtle.ConstantTimeCompare([]byte(token), []byte(secret)) != 1 {
+		return model.Deployment{}, model.ErrForbidden
+	}
+	return s.Deploy(ctx, websiteID, repo, branch)
 }
 
 // Deploy creates a new deployment record in pending status and enqueues it for

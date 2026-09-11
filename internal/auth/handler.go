@@ -1,24 +1,27 @@
 package auth
 
 import (
+	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
-	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
+	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // Handler handles authentication-related HTTP requests.
 type Handler struct {
-	auth  *Service
-	rbac  *RBAC
-	audit *audit.Service
+	auth     *Service
+	rbac     *RBAC
+	audit    *audit.Service
+	throttle *loginThrottle
 }
 
 // NewHandler creates a new auth Handler.
 func NewHandler(authSvc *Service, rbac *RBAC, auditSvc *audit.Service) *Handler {
-	return &Handler{
+	return &Handler{throttle: newLoginThrottle(),
 		auth:  authSvc,
 		rbac:  rbac,
 		audit: auditSvc,
@@ -43,8 +46,21 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Brute-force protection: too many failures from one source for one
+	// account triggers a cooldown.
+	key := r.RemoteAddr + "|" + req.Username
+	if blocked, remaining := h.throttle.blocked(key, time.Now()); blocked {
+		w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+		httputil.JSONError(w, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS",
+			"too many failed login attempts; try again later")
+		return
+	}
+
 	user, err := h.auth.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
+		if errors.Is(err, model.ErrInvalidCredentials) {
+			h.throttle.recordFailure(key, time.Now())
+		}
 		httputil.HandleError(w, err)
 		return
 	}
@@ -67,10 +83,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 		valid, err := h.auth.TOTPVerify(r.Context(), user.ID, req.TOTPCode)
 		if err != nil || !valid {
+			h.throttle.recordFailure(key, time.Now())
 			httputil.HandleError(w, model.NewValidationError("invalid TOTP code"))
 			return
 		}
 	}
+
+	h.throttle.reset(key)
 
 	session, err := h.auth.CreateSession(r.Context(), user.ID, r.RemoteAddr, r.UserAgent())
 	if err != nil {

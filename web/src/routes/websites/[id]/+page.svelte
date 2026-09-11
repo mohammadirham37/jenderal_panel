@@ -10,6 +10,7 @@
 	import WebsiteQueueSection from '$lib/components/WebsiteQueueSection.svelte';
 	import WebsiteCronSection from '$lib/components/WebsiteCronSection.svelte';
 	import WebsiteWpToolkitSection from '$lib/components/WebsiteWpToolkitSection.svelte';
+	import WebsitePhpSettingsSection from '$lib/components/WebsitePhpSettingsSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
@@ -74,7 +75,7 @@
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
@@ -83,13 +84,17 @@
 	// The queue tab only applies to Laravel sites (Octane/artisan workers).
 	let tabs = $derived(allTabs.filter((t) =>
 		(t !== 'Queue' || website?.framework === 'laravel') &&
-		(t !== 'WP Toolkit' || website?.app_type === 'wordpress')
+		(t !== 'WP Toolkit' || website?.app_type === 'wordpress') &&
+		(t !== 'PHP Settings' || website?.app_type !== 'static')
 	));
 	$effect(() => {
 		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
 			activeTab = 'Overview';
 		}
 		if (website && activeTab === 'WP Toolkit' && website.app_type !== 'wordpress') {
+			activeTab = 'Overview';
+		}
+		if (website && activeTab === 'PHP Settings' && website.app_type === 'static') {
 			activeTab = 'Overview';
 		}
 	});
@@ -1765,6 +1770,9 @@
 
 			{:else if activeTab === 'Cron Jobs'}
 				<WebsiteCronSection websiteID={website.id} domain={website.domain} />
+
+			{:else if activeTab === 'PHP Settings'}
+				<WebsitePhpSettingsSection websiteID={website.id} appType={website.app_type} />
 
 			{:else if activeTab === 'WP Toolkit'}
 				<WebsiteWpToolkitSection websiteID={website.id} domain={website.domain} />

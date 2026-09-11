@@ -1,6 +1,8 @@
 package website
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"context"
 	"database/sql"
 	"errors"
@@ -297,7 +299,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		 nginx_profile, octane_port, octane_workers, created_by, created_at, updated_at)
+		 nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_port, octane_workers, created_by, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
 		w.NodeVersion,
@@ -347,7 +349,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -371,6 +373,49 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	w.Domains = domains
 
 	return w, nil
+}
+
+// ConfigureDeployWebhook stores the repository, branch, and a freshly
+// generated webhook secret; it returns the secret so the owner can configure
+// the git host.
+func (s *Service) ConfigureDeployWebhook(ctx context.Context, id, repo, branch string) (string, error) {
+	repo = strings.TrimSpace(repo)
+	branch = strings.TrimSpace(branch)
+	if repo == "" {
+		return "", model.NewValidationError("repository URL is required")
+	}
+	if branch == "" {
+		return "", model.NewValidationError("branch is required")
+	}
+	if !validGitRef(branch) {
+		return "", model.NewValidationError("branch contains unsupported characters")
+	}
+
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate webhook token: %w", err)
+	}
+	secret := hex.EncodeToString(buf)
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE websites SET git_repo = ?, git_branch = ?, deploy_webhook_secret = ?, updated_at = ? WHERE id = ?`,
+		repo, branch, secret, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return "", fmt.Errorf("configure deploy webhook: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return "", model.ErrNotFound
+	}
+	return secret, nil
+}
+
+// validGitRef accepts ordinary branch names (refs cannot contain spaces,
+// ~, ^, :, \, .., or start with /).
+func validGitRef(branch string) bool {
+	if branch == "" || strings.ContainsAny(branch, " ~^:?*[\\") || strings.Contains(branch, "..") {
+		return false
+	}
+	return !strings.HasPrefix(branch, "/") && !strings.HasSuffix(branch, "/") && !strings.HasSuffix(branch, ".")
 }
 
 // TransferOwnership assigns the website to another panel user. Admin action.
@@ -417,7 +462,7 @@ func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Websi
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE web_user = ?`, webUser)
 
 	w, err := scanWebsite(row)
@@ -445,7 +490,7 @@ func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]mo
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
@@ -1247,7 +1292,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1276,7 +1321,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err

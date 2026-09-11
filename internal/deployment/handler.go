@@ -36,6 +36,27 @@ func (h *Handler) logAction(r *http.Request, action, target, detail string) {
 
 // Deploy handles POST /api/websites/{id}/deployments.
 // It creates a new deployment and returns 202 Accepted.
+// Webhook handles POST /api/v1/websites/{id}/deploy-webhook — a public,
+// token-authenticated endpoint that git hosts call on push. It starts a
+// deployment using the website's stored repository and branch.
+func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	token := r.Header.Get("X-Deploy-Token")
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
+
+	deployment, err := h.svc.WebhookDeploy(r.Context(), id, token)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "deploy_webhook", id, "webhook started deployment "+deployment.ID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"deployment_id": deployment.ID})
+}
+
+// Deploy handles POST /api/websites/{id}/deploy.
 func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	websiteID := chi.URLParam(r, "id")
 
