@@ -373,11 +373,24 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
 				Post("/cron-jobs/{id}/disable", cronHandler.Disable)
 
-			// Queue Workers
-			r.With(auth.RequirePermission(deps.RBAC, "queue.view")).
+			// Queue Workers (website-scoped; ownership handled by the scope
+			// middleware, so website-level permissions are enough here)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/queue-workers", queueHandler.ListForWebsite)
-			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/queue-workers", queueHandler.CreateForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/queue-workers/{workerId}/start", queueHandler.StartForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/queue-workers/{workerId}/stop", queueHandler.StopForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/queue-workers/{workerId}/restart", queueHandler.RestartForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Delete("/websites/{id}/queue-workers/{workerId}", queueHandler.DeleteForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/queue-workers/{workerId}/status", queueHandler.StatusForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/queue-workers/{workerId}/logs", queueHandler.LogsForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "queue.view")).
 				Get("/queue-workers", queueHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "queue.manage")).

@@ -157,7 +157,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.post(`/api/v1/queue-workers/${id}/${action}`);
+			await api.post(`${scopedAPI.queueWorkers}/${id}/${action}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = success;
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
@@ -177,7 +177,7 @@
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.del(`/api/v1/queue-workers/${id}`);
+			await api.del(`${scopedAPI.queueWorkers}/${id}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
 			actionMsg = 'Queue worker deleted.';
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);

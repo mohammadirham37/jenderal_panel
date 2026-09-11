@@ -7,6 +7,7 @@
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
 	import WebsiteFilesSection from '$lib/components/WebsiteFilesSection.svelte';
 	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
+	import WebsiteQueueSection from '$lib/components/WebsiteQueueSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
@@ -68,12 +69,19 @@
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const tabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains'] as const;
-	type Tab = typeof tabs[number];
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	type Tab = typeof allTabs[number];
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
-		return (tabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'Overview';
+		return (allTabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'Overview';
 	}
+	// The queue tab only applies to Laravel sites (Octane/artisan workers).
+	let tabs = $derived(allTabs.filter((t) => t !== 'Queue' || website?.framework === 'laravel'));
+	$effect(() => {
+		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
+			activeTab = 'Overview';
+		}
+	});
 
 	let activeTab = $state<Tab>(tabFromURL());
 
@@ -1519,6 +1527,9 @@
 			<!-- ============================================================ -->
 			<!-- TERMINAL TAB                                                  -->
 			<!-- ============================================================ -->
+			{:else if activeTab === 'Queue'}
+				<WebsiteQueueSection websiteID={website.id} domain={website.domain} />
+
 			{:else if activeTab === 'Terminal'}
 				<TerminalConsole
 					endpoint={terminalEndpoint}

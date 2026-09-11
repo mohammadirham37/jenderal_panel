@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -237,6 +238,20 @@ func (s *Service) Restart(ctx context.Context, id string) error {
 	return s.updateStatus(ctx, id, "running")
 }
 
+// RunAction dispatches a lifecycle action (start/stop/restart) for a worker.
+func (s *Service) RunAction(ctx context.Context, id, action string) error {
+	switch action {
+	case "start":
+		return s.Start(ctx, id)
+	case "stop":
+		return s.Stop(ctx, id)
+	case "restart":
+		return s.Restart(ctx, id)
+	default:
+		return model.NewValidationError("unknown queue worker action: " + action)
+	}
+}
+
 // Delete stops and removes a queue worker's systemd service, then deletes the
 // DB record.
 func (s *Service) Delete(ctx context.Context, id string) error {
@@ -273,6 +288,27 @@ func (s *Service) Status(ctx context.Context, id string) (string, error) {
 		return "", fmt.Errorf("systemctl status: %w", err)
 	}
 
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+// Logs returns recent journalctl output for the worker's systemd unit.
+func (s *Service) Logs(ctx context.Context, id string, lines int) (string, error) {
+	if _, err := s.Get(ctx, id); err != nil {
+		return "", err
+	}
+	if lines <= 0 || lines > 500 {
+		lines = 100
+	}
+
+	unitName := unitFileName(id)
+	result, err := s.exec.RunSudo(ctx, "journalctl", "-u", unitName,
+		"-n", strconv.Itoa(lines), "--no-pager")
+	if err != nil {
+		return "", fmt.Errorf("journalctl: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("journalctl failed (exit %d): %s", result.ExitCode, result.Stderr)
+	}
 	return strings.TrimSpace(result.Stdout), nil
 }
 
