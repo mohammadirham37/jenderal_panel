@@ -1,7 +1,9 @@
 package dbmanager
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -391,6 +393,56 @@ func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
+}
+
+// maxRestoreBytes caps the uploaded dump size for restores.
+const maxRestoreBytes = 512 << 20
+
+// RestoreDatabase handles POST /databases/{id}/restore. Expects a multipart
+// form with a "file" field holding a plain or gzipped SQL dump; the dump
+// replaces the current contents of the database.
+func (h *Handler) RestoreDatabase(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreBytes)
+	if err := r.ParseMultipartForm(maxRestoreBytes); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
+				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 512 MB limit")
+			return
+		}
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "missing dump file")
+		return
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if err := h.svc.RestoreDatabase(r.Context(), id, content); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "restore_database",
+		Module: "dbmanager",
+		Target: id,
+		Detail: "restored from " + header.Filename,
+		IP:     r.RemoteAddr,
+	})
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // manageTokenFromRequest extracts the management session token header.

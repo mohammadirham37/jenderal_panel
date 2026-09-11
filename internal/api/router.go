@@ -441,6 +441,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/{id}/export", dbHandler.ExportDatabase)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Post("/databases/{id}/restore", dbHandler.RestoreDatabase)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/users", dbHandler.ListDBUsers)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/users", dbHandler.CreateDBUser)

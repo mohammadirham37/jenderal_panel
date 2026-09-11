@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
+	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	// ── Types ──────────────────────────────────────────────────────
@@ -107,6 +107,60 @@
 		} catch (err) {
 			exportStatus = { id, message: err instanceof Error ? err.message : 'Export failed', error: true };
 			setTimeout(() => { if (exportStatus?.id === id) exportStatus = null; }, 4000);
+		}
+	}
+
+	// Restore
+	let restoreInput = $state<HTMLInputElement | undefined>();
+	let restoreTargetDb = $state<{ id: string; name: string } | null>(null);
+	let restorePending = $state<{ id: string; name: string; fileName: string; file: File } | null>(null);
+	let restoreBusy = $state(false);
+	let restoreStatus = $state<{ id: string; message: string; error: boolean } | null>(null);
+
+	function pickRestoreFile(id: string, name: string) {
+		restoreTargetDb = { id, name };
+		restoreInput?.click();
+	}
+
+	async function onRestoreFileSelected(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = '';
+		if (!file || !restoreTargetDb) return;
+		restorePending = {
+			id: restoreTargetDb.id,
+			name: restoreTargetDb.name,
+			fileName: file.name,
+			file
+		};
+	}
+
+	async function confirmRestore() {
+		const pending = restorePending;
+		if (!pending || restoreBusy) return;
+		restoreBusy = true;
+		restoreStatus = { id: pending.id, message: 'Restoring… this can take a while', error: false };
+		try {
+			const form = new FormData();
+			form.append('file', pending.file);
+			const res = await fetch(`/api/v1/databases/${pending.id}/restore`, {
+				method: 'POST',
+				headers: { 'X-CSRF-Token': getCSRFToken() },
+				credentials: 'include',
+				body: form
+			});
+			if (!res.ok) {
+				const json = await res.json().catch(() => null);
+				throw new Error(json?.error?.message || `Restore failed (HTTP ${res.status})`);
+			}
+			restoreStatus = { id: pending.id, message: 'Restored from ' + pending.fileName, error: false };
+			setTimeout(() => { if (restoreStatus?.id === pending.id) restoreStatus = null; }, 4000);
+		} catch (err) {
+			restoreStatus = { id: pending.id, message: err instanceof Error ? err.message : 'Restore failed', error: true };
+			setTimeout(() => { if (restoreStatus?.id === pending.id) restoreStatus = null; }, 6000);
+		} finally {
+			restorePending = null;
+			restoreBusy = false;
 		}
 	}
 
@@ -411,6 +465,14 @@
 
 <svelte:window onclick={() => (exportMenuId = null)} />
 
+<input
+	bind:this={restoreInput}
+	type="file"
+	accept=".sql,.sql.gz,.gz"
+	class="hidden"
+	onchange={onRestoreFileSelected}
+/>
+
 <div class="space-y-6">
 	<!-- Header -->
 	<div class="flex flex-wrap items-end justify-between gap-4">
@@ -689,7 +751,33 @@
 										>
 											Gzipped SQL <span class="text-gray-500">(.sql.gz)</span>
 										</button>
+										<div class="border-t border-gray-700"></div>
+										<button
+											type="button"
+											onclick={() => { exportMenuId = null; pickRestoreFile(db.id, db.name); }}
+											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-yellow-300 transition hover:bg-gray-700"
+										>
+											Restore from file…
+										</button>
 									</div>
+								{#if restorePending?.id === db.id}
+									<div class="absolute top-full right-0 z-20 mt-1 w-56 rounded-lg border border-yellow-700/60 bg-gray-800 p-3 shadow-xl">
+										<p class="text-[11px] leading-snug text-gray-300">
+											Overwrite <span class="font-mono font-semibold text-white">{restorePending.name}</span> with
+											<span class="font-mono">{restorePending.fileName}</span>? All current data will be lost.
+										</p>
+										<div class="mt-2 flex justify-end gap-1.5">
+											<button type="button" onclick={() => (restorePending = null)}
+												class="cursor-pointer rounded-md bg-gray-700 px-2 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600">
+												Cancel
+											</button>
+											<button type="button" onclick={confirmRestore} disabled={restoreBusy}
+												class="cursor-pointer rounded-md bg-yellow-600 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50">
+												{restoreBusy ? 'Restoring…' : 'Restore'}
+											</button>
+										</div>
+									</div>
+								{/if}
 								{/if}
 							{/if}
 							{#if exportStatus?.id === db.id}
@@ -699,6 +787,15 @@
 										: 'border-green-700 bg-green-900/40 text-green-300'}"
 								>
 									{exportStatus.message}
+								</span>
+							{/if}
+							{#if restoreStatus?.id === db.id}
+								<span
+									class="absolute top-full right-0 z-20 mt-8 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] {restoreStatus.error
+										? 'border-red-700 bg-red-900/50 text-red-300'
+										: 'border-green-700 bg-green-900/40 text-green-300'}"
+								>
+									{restoreStatus.message}
 								</span>
 							{/if}
 							{#if deleteDbConfirmId === db.id}
