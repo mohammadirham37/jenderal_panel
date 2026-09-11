@@ -68,6 +68,7 @@
 	let installedPHP = $derived(options ? availablePHPVersions(options) as RuntimeOption[] : []);
 	let combination = $derived(options ? selectedCombination(options, selection) : null);
 	let laravelVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel').map((item) => item.framework_version))] : []);
+	let laravelOctaneVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel-octane').map((item) => item.framework_version))] : []);
 
 	// Delete confirm
 	let deleteConfirmId = $state<string | null>(null);
@@ -284,6 +285,7 @@
 						<option value="codeigniter3">CodeIgniter 3</option>
 						<option value="codeigniter4">CodeIgniter 4</option>
 						<option value="laravel">Laravel</option>
+						<option value="laravel-octane">Laravel Octane (FrankenPHP)</option>
 					</select>
 				</div>
 				{#if selection.template !== 'static'}
@@ -305,13 +307,18 @@
 						{/if}
 					</div>
 				{/if}
-				{#if selection.template === 'laravel'}
+				{#if selection.template === 'laravel' || selection.template === 'laravel-octane'}
 					<div>
 						<label for="framework-version" class="block text-sm text-gray-400 mb-1">Laravel Version</label>
 						<select id="framework-version" value={selection.framework_version} onchange={(event) => { selection.framework_version = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
-							{#each laravelVersions as version}<option value={version}>Laravel {version}</option>{/each}
+							{#if selection.template === 'laravel-octane'}
+								{#each laravelOctaneVersions as version}<option value={version}>Laravel {version}</option>{/each}
+							{:else}
+								{#each laravelVersions as version}<option value={version}>Laravel {version}</option>{/each}
+							{/if}
 						</select>
 					</div>
+					{#if selection.template === 'laravel'}
 					<div>
 						<label for="frontend-stack" class="block text-sm text-gray-400 mb-1">Frontend</label>
 						<select id="frontend-stack" value={selection.frontend_stack} onchange={(event) => { selection.frontend_stack = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
@@ -334,9 +341,10 @@
 							</select>
 						</div>
 					{/if}
+					{/if}
 				{/if}
-				<div>
-					<label for="setup-mode" class="block text-sm text-gray-400 mb-1">Setup</label>
+					<div>
+						<label for="setup-mode" class="block text-sm text-gray-400 mb-1">Setup</label>
 					<select id="setup-mode" value={selection.setup_mode} onchange={(event) => { selection.setup_mode = event.currentTarget.value; normalizeSelection(); }} class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm">
 						<option value="config-only">Nginx config only</option><option value="auto-install">Install framework automatically</option>
 					</select>

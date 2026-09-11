@@ -28,6 +28,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
+	"github.com/mohammadirham37/jenderal_panel/internal/frankenphp"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
 	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -41,6 +42,8 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
+	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
+	"github.com/mohammadirham37/jenderal_panel/internal/sshserver"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
@@ -248,10 +251,14 @@ func cmdServe() {
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
+	sshAccountSvc := sshaccount.NewService(db, exec, auditSvc)
+	sshServerSvc := sshserver.NewService(db, exec, auditSvc, cfg.Server.Port)
+	frankenphpSvc := frankenphp.NewService(exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
+	frankenphpSvc.SetTaskRunner(tasks)
 	securitySetup := security.NewSetupService(db, security.SetupActions{
 		InstallFail2ban: fail2banSvc.InstallWithProgress,
 		ConfigureFail2ban: func(ctx context.Context, cidrs []string, log func(string)) error {
@@ -334,6 +341,9 @@ func cmdServe() {
 		MalwareRepo:     malwareRepo,
 		TrafficGuardSvc: trafficSvc,
 		SecuritySetup:   securitySetup,
+		SSHAccountSvc:   sshAccountSvc,
+		SSHServerSvc:    sshServerSvc,
+		FrankenphpSvc:   frankenphpSvc,
 		DB:              db,
 		StaticHandler:   staticHandler(),
 	})

@@ -36,3 +36,5 @@ services:
     - mysql
     - postgresql
     - redis-server
+    - ssh
+    - "jenderal-*"

@@ -39,6 +39,11 @@ var laravelMinimumPHP = map[string]string{
 	"8": "8.1", "9": "8.1", "10": "8.1", "11": "8.2", "12": "8.2", "13": "8.3",
 }
 
+// laravelOctaneVersions lists the Laravel releases Octane supports.
+var laravelOctaneVersions = map[string]bool{
+	"10": true, "11": true, "12": true, "13": true,
+}
+
 type starterSource struct {
 	repository string
 	reference  string
@@ -97,6 +102,17 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 		return simpleProfile(req, template, "php", "codeigniter", "4", "app/public", setupMode, true)
 	case "laravel":
 		return resolveLaravelProfile(req, setupMode)
+	case "laravel-octane":
+		profile, err := resolveLaravelProfile(req, setupMode)
+		if err != nil {
+			return Profile{}, err
+		}
+		if !laravelOctaneVersions[profile.FrameworkVersion] {
+			return Profile{}, model.NewValidationError("Laravel Octane requires Laravel 10 or newer")
+		}
+		profile.Template = "laravel-octane"
+		profile.NginxProfile = "laravel-octane"
+		return profile, nil
 	default:
 		return Profile{}, model.NewValidationError("unsupported website template: " + template)
 	}
@@ -232,7 +248,7 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 
 // ValidNginxProfiles lists the renderer profiles an operator may force for a
 // website. The empty string means "derive from the app type automatically".
-var ValidNginxProfiles = []string{"", "php", "static", "laravel", "codeigniter3", "codeigniter4"}
+var ValidNginxProfiles = []string{"", "php", "static", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
 
 // IsValidNginxProfile reports whether profile is an allowed override value.
 func IsValidNginxProfile(profile string) bool {
@@ -290,6 +306,14 @@ func websiteProfileOptions() []ProfileOption {
 			for _, variant := range []string{"empty", "starter-kit"} {
 				requests = append(requests, CreateRequest{Template: "laravel", FrameworkVersion: version, PHPVersion: phpVersion, FrontendStack: "livewire", ProjectVariant: variant, SetupMode: mode})
 			}
+		}
+	}
+	// Laravel Octane runs on FrankenPHP (PHP 8.1+ embedded); Octane itself
+	// supports Laravel 10+.
+	for _, version := range []string{"10", "11", "12", "13"} {
+		phpVersion := laravelMinimumPHP[version]
+		for _, mode := range []string{SetupConfigOnly, SetupAutomatic} {
+			requests = append(requests, CreateRequest{Template: "laravel-octane", FrameworkVersion: version, PHPVersion: phpVersion, FrontendStack: "blade", ProjectVariant: "empty", SetupMode: mode})
 		}
 	}
 

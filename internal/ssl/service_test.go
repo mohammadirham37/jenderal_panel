@@ -51,6 +51,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 		provision_stage TEXT NOT NULL DEFAULT '',
 		provision_log TEXT NOT NULL DEFAULT '',
 		nginx_profile TEXT NOT NULL DEFAULT '',
+		octane_enabled INTEGER NOT NULL DEFAULT 0,
+		octane_port INTEGER NOT NULL DEFAULT 0,
+		octane_workers INTEGER NOT NULL DEFAULT 4,
+		created_by TEXT NOT NULL DEFAULT '',
 		created_at    TEXT NOT NULL,
 		updated_at    TEXT NOT NULL
 	);

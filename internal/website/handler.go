@@ -10,6 +10,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -18,6 +19,7 @@ type Handler struct {
 	svc   *Service
 	audit *audit.Service
 	tasks *taskrunner.Runner
+	ssh   *sshaccount.Service
 }
 
 // NewHandler creates a new website HTTP handler.
@@ -27,6 +29,12 @@ func NewHandler(svc *Service, auditSvc *audit.Service, tasks ...*taskrunner.Runn
 		h.tasks = tasks[0]
 	}
 	return h
+}
+
+// SetSSHAccounts wires the optional SSH account service used to keep site
+// access in sync when website ownership changes.
+func (h *Handler) SetSSHAccounts(svc *sshaccount.Service) {
+	h.ssh = svc
 }
 
 // logAction writes an audit log entry for a mutating action.
@@ -99,15 +107,126 @@ func (h *Handler) TransferOwnership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the previous owner so the SSH account access can be revoked.
+	previous, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
 	website, err := h.svc.TransferOwnership(r.Context(), id, req.UserID)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
+	// Re-run the ACL/group sync for both owners; SSH access follows
+	// ownership. Failures are best effort and logged for the admin.
+	if h.ssh != nil {
+		if previous.CreatedBy != "" && previous.CreatedBy != req.UserID {
+			if oldOwner, err := h.svc.OwnerUsername(r.Context(), previous.CreatedBy); err == nil && oldOwner != "" {
+				_ = h.ssh.RevokeWebsite(r.Context(), oldOwner, website.WebUser)
+			}
+		}
+		_ = h.ssh.SyncOwnedWebsites(r.Context(), req.UserID)
+	}
+
 	h.logAction(r, "transfer_website_ownership", website.ID,
 		"transferred ownership of "+website.Domain+" to user "+req.UserID)
 	httputil.JSON(w, http.StatusOK, website)
+}
+
+// OctaneStatus handles GET /api/websites/{id}/octane.
+func (h *Handler) OctaneStatus(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	status, err := h.svc.OctaneStatus(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, status)
+}
+
+// OctaneEnable handles POST /api/websites/{id}/octane/enable and returns the
+// background task that installs Octane and starts the server.
+func (h *Handler) OctaneEnable(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	taskID, err := h.svc.EnableOctane(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "octane_enable", id, "enabling Laravel Octane")
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// OctaneDisable handles POST /api/websites/{id}/octane/disable.
+func (h *Handler) OctaneDisable(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.DisableOctane(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "octane_disable", id, "disabled Laravel Octane")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// OctaneAction handles POST /api/websites/{id}/octane/{action} for
+// start/stop/restart.
+func (h *Handler) OctaneAction(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	action := chi.URLParam(r, "action")
+	if err := h.svc.OctaneAction(r.Context(), id, action); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "octane_"+action, id, action+" Octane server")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// OctaneReload handles POST /api/websites/{id}/octane/reload and returns the
+// background task for the zero-downtime reload.
+func (h *Handler) OctaneReload(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	taskID, err := h.svc.ReloadOctane(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "octane_reload", id, "reloaded Octane workers")
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// OctaneWorkers handles PUT /api/websites/{id}/octane/workers.
+func (h *Handler) OctaneWorkers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Workers int `json:"workers"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	site, err := h.svc.SetOctaneWorkers(r.Context(), id, req.Workers)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "octane_workers", id, strconv.Itoa(req.Workers)+" Octane workers")
+	httputil.JSON(w, http.StatusOK, site)
+}
+
+// OctaneLog handles GET /api/websites/{id}/logs/octane.
+func (h *Handler) OctaneLog(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	lines := parseLines(r)
+
+	content, err := h.svc.GetLogs(r.Context(), id, "octane", lines)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
 }
 
 // Options handles GET /api/websites/options.

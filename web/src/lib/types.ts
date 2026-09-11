@@ -3,8 +3,20 @@ export interface User {
 	username: string;
 	email: string;
 	is_active: boolean;
+	ssh_enabled: boolean;
 	created_at: string;
 	updated_at: string;
+}
+
+export interface SSHKey {
+	id: string;
+	user_id: string;
+	name: string;
+	public_key: string;
+	fingerprint: string;
+	algo: string;
+	bits: number;
+	created_at: string;
 }
 
 export interface Role {

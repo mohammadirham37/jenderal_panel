@@ -13,6 +13,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/landing"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
@@ -250,6 +251,11 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	}
 
 	// Render and write nginx vhost config.
+	profile := resolveNginxProfile(w.NginxProfile, w.Framework, w.FrameworkVersion, w.AppType)
+	if profile == "laravel-octane" && w.OctanePort == 0 {
+		p.fail(ctx, websiteID, "website uses the laravel-octane profile but no Octane port was allocated")
+		return
+	}
 	vhostData := VhostData{
 		Domain:            w.Domain,
 		Aliases:           strings.Join(aliases, " "),
@@ -258,9 +264,10 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		LogDir:            logDir,
 		PHPVersion:        w.PHPVersion,
 		AppType:           w.AppType,
-		Profile:           resolveNginxProfile(w.NginxProfile, w.Framework, w.FrameworkVersion, w.AppType),
+		Profile:           profile,
 		IPv6:              p.ipv6Available(),
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
+		OctanePort:        w.OctanePort,
 	}
 	if result, err := p.exec.RunSudo(ctx, "/usr/bin/install", "-d", "-m", "0755", "/etc/nginx/jenderal/security/sites"); err != nil || result.ExitCode != 0 {
 		p.fail(ctx, websiteID, "create security snippet directory failed")
@@ -326,6 +333,19 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		}
 	}
 
+	// Octane sites: install the Caddyfile and systemd unit before nginx
+	// starts proxying to the loopback port. The unit only starts after the
+	// automatic install finished, so config-only sites enable Octane from
+	// the detail page once their code is in place.
+	octaneReady := false
+	if profile == "laravel-octane" && automaticFramework {
+		if err := p.setupOctane(ctx, w); err != nil {
+			p.fail(ctx, websiteID, "configure Octane failed: "+err.Error())
+			return
+		}
+		octaneReady = true
+	}
+
 	// Step 3: validating
 	if err := p.updateStatus(ctx, websiteID, "validating", ""); err != nil {
 		return
@@ -372,10 +392,53 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		}
 	}
 
+	// Start the Octane server last: the project (including the published
+	// frankenphp worker) is complete by now.
+	if octaneReady {
+		if err := p.runSystemctlOK(ctx, "start", octaneUnitName(w.ID)); err != nil {
+			p.fail(ctx, websiteID, "start Octane failed: "+err.Error())
+			return
+		}
+	}
+
 	// Step 4: active
 	_ = p.updateStatus(ctx, websiteID, "active", "")
 	_ = p.updateProgress(ctx, websiteID, "active", "")
 	p.logAudit(ctx, "website_provisioned", websiteID, "provisioned website "+w.Domain)
+}
+
+// setupOctane writes the site's Caddyfile and systemd unit and enables the
+// unit without starting it.
+func (p *Provisioner) setupOctane(ctx context.Context, w websiteRow) error {
+	site := model.Website{
+		ID:            w.ID,
+		Domain:        w.Domain,
+		WebUser:       w.WebUser,
+		DocumentRoot:  w.DocumentRoot,
+		PHPVersion:    w.PHPVersion,
+		OctanePort:    w.OctanePort,
+		OctaneWorkers: w.OctaneWorkers,
+	}
+	if site.OctaneWorkers <= 0 {
+		site.OctaneWorkers = 4
+	}
+	if err := writeOctaneAssets(ctx, p.exec, site); err != nil {
+		return err
+	}
+	p.logAudit(ctx, "octane_provisioned", w.ID, "configured Laravel Octane for "+w.Domain)
+	return nil
+}
+
+// runSystemctlOK runs systemctl with the given action on a unit.
+func (p *Provisioner) runSystemctlOK(ctx context.Context, action, unit string) error {
+	result, err := p.exec.RunSudo(ctx, "systemctl", action, unit)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("systemctl %s %s: %s", action, unit, strings.TrimSpace(result.Stderr))
+	}
+	return nil
 }
 
 // ensureServingPermissions makes the managed public directory reachable by
@@ -561,8 +624,8 @@ func (p *Provisioner) writeSystemFile(ctx context.Context, content, targetPath s
 	return nil
 }
 
-// rollbackConfigs removes the nginx and fpm configs that were written during
-// provisioning.
+// rollbackConfigs removes the nginx, fpm, and octane configs that were
+// written during provisioning.
 func (p *Provisioner) rollbackConfigs(ctx context.Context, w websiteRow) {
 	confPath := "/etc/nginx/sites-available/" + w.Domain
 	enabledPath := "/etc/nginx/sites-enabled/" + w.Domain
@@ -572,6 +635,11 @@ func (p *Provisioner) rollbackConfigs(ctx context.Context, w websiteRow) {
 	if w.AppType != "static" && w.PHPVersion != "" {
 		poolPath := "/etc/php/" + w.PHPVersion + "/fpm/pool.d/" + w.Domain + ".conf"
 		_, _ = p.exec.RunSudo(ctx, "rm", "-f", poolPath)
+	}
+
+	if resolveNginxProfile(w.NginxProfile, w.Framework, w.FrameworkVersion, w.AppType) == "laravel-octane" {
+		_ = removeOctaneAssets(ctx, p.exec, w.ID)
+		_, _ = p.exec.RunSudo(ctx, "rm", "-rf", "/etc/jenderal/octane/"+w.ID)
 	}
 }
 
@@ -652,6 +720,8 @@ type websiteRow struct {
 	ProvisionStage   string
 	ProvisionLog     string
 	NginxProfile     string
+	OctanePort       int
+	OctaneWorkers    int
 }
 
 // domainRow holds the fields of a domain for provisioning.
@@ -667,11 +737,11 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	err := p.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile
+		        nginx_profile, octane_port, octane_workers
 		 FROM websites WHERE id = ?`, id,
 	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser,
 		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile)
+		&w.NginxProfile, &w.OctanePort, &w.OctaneWorkers)
 	if err != nil {
 		return w, err
 	}

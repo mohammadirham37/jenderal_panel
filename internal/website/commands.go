@@ -40,6 +40,7 @@ var allowedCommands = map[string][]string{
 	"php artisan optimize":         {"php", "artisan", "optimize"},
 	"php artisan storage:link":     {"php", "artisan", "storage:link"},
 	"php artisan queue:restart":    {"php", "artisan", "queue:restart"},
+	"php artisan octane:reload":    {"php", "artisan", "octane:reload"},
 	"php spark migrate":            {"php", "spark", "migrate"},
 	"php spark migrate:rollback":   {"php", "spark", "migrate:rollback"},
 	"php spark db:seed":            {"php", "spark", "db:seed"},
@@ -120,6 +121,13 @@ func commandPresetsFor(w model.Website) []CommandPreset {
 			CommandPreset{Label: "php artisan storage:link", Command: "php artisan storage:link", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan queue:restart", Command: "php artisan queue:restart", Category: "artisan", Danger: false},
 		)
+		if w.OctaneEnabled {
+			// Zero-downtime deploy step for Octane sites: the common loop
+			// is git pull followed by octane:reload.
+			presets = append(presets,
+				CommandPreset{Label: "php artisan octane:reload", Command: "php artisan octane:reload", Category: "octane", Danger: false},
+			)
+		}
 	}
 
 	// CodeIgniter spark commands.

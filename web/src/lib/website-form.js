@@ -45,7 +45,8 @@ export function normalizeWebsiteSelection(selection, options) {
 	if (normalized.template === 'static') {
 		normalized.php_version = '';
 	}
-	if (normalized.template !== 'laravel') {
+	const laravelLike = normalized.template === 'laravel' || normalized.template === 'laravel-octane';
+	if (!laravelLike) {
 		normalized.framework_version = '';
 		normalized.frontend_stack = '';
 		normalized.inertia_adapter = '';
@@ -61,6 +62,12 @@ export function normalizeWebsiteSelection(selection, options) {
 		normalized.inertia_adapter ||= options?.inertia_adapters?.[0] || 'react';
 	}
 	if (normalized.frontend_stack === 'blade') {
+		normalized.project_variant = 'empty';
+	}
+	// The laravel-octane catalog only offers blade/empty projects.
+	if (normalized.template === 'laravel-octane') {
+		normalized.frontend_stack = 'blade';
+		normalized.inertia_adapter = '';
 		normalized.project_variant = 'empty';
 	}
 	const profile = (options?.profiles || []).find((item) =>

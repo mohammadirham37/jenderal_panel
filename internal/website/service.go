@@ -18,9 +18,9 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
-	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // domainRegex validates domain names: alphanumeric, hyphens, dots.
@@ -239,10 +239,26 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	if err := s.validateRuntimeRequirements(ctx, req.PHPVersion, profile); err != nil {
 		return model.Website{}, err
 	}
+	if profile.NginxProfile == "laravel-octane" && profile.SetupMode == SetupAutomatic {
+		// The automatic install configures and starts Octane immediately;
+		// without the server-wide binary the site would end up failed.
+		if _, ok := frankenphpInstalled(ctx, s.exec); !ok {
+			return model.Website{}, model.NewValidationError("FrankenPHP is not installed; an administrator must install it from the services page before creating an Octane site")
+		}
+	}
 
 	webUser := DomainToUser(req.Domain)
 	homeDir := "/home/" + webUser
 	docRoot := homeDir + "/" + profile.RelativeDocumentRoot
+
+	octanePort := 0
+	if profile.NginxProfile == "laravel-octane" {
+		port, err := s.allocateOctanePort(ctx)
+		if err != nil {
+			return model.Website{}, err
+		}
+		octanePort = port
+	}
 
 	now := time.Now().UTC()
 	nowStr := now.Format(time.RFC3339)
@@ -265,6 +281,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		InertiaAdapter:   profile.InertiaAdapter,
 		ProjectVariant:   profile.ProjectVariant,
 		SetupMode:        profile.SetupMode,
+		NginxProfile:     profile.NginxProfile,
+		OctanePort:       octanePort,
+		OctaneWorkers:    4,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -278,12 +297,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		 created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?)`,
+		 nginx_profile, octane_port, octane_workers, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
 		w.NodeVersion,
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
 		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,
+		w.NginxProfile, w.OctanePort, w.OctaneWorkers,
 		req.CreatedBy, nowStr, nowStr,
 	)
 	if err != nil {
@@ -327,7 +347,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, created_by, created_at, updated_at
+		        nginx_profile, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -376,6 +396,20 @@ func (s *Service) TransferOwnership(ctx context.Context, websiteID, userID strin
 	return s.Get(ctx, websiteID)
 }
 
+// OwnerUsername resolves a panel user's username for SSH ACL operations.
+// Returns "" when the user does not exist.
+func (s *Service) OwnerUsername(ctx context.Context, userID string) (string, error) {
+	var username string
+	err := s.db.QueryRowContext(ctx, `SELECT username FROM users WHERE id = ?`, userID).Scan(&username)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve owner username: %w", err)
+	}
+	return username, nil
+}
+
 // GetByWebUser returns the website operated by the given web system user,
 // used by the website-scoped terminal guard. Domains are not loaded.
 func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Website, error) {
@@ -383,7 +417,7 @@ func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Websi
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, created_by, created_at, updated_at
+		        nginx_profile, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE web_user = ?`, webUser)
 
 	w, err := scanWebsite(row)
@@ -411,7 +445,7 @@ func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]mo
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, created_by, created_at, updated_at
+		        nginx_profile, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
@@ -534,6 +568,16 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		poolPath := filepath.Join("/etc/php", w.PHPVersion, "fpm/pool.d", w.Domain+".conf")
 		if err := s.runSudoOK(ctx, "rm", "-f", poolPath); err != nil {
 			return fmt.Errorf("delete website PHP-FPM config: %w", err)
+		}
+	}
+
+	// Remove Octane unit and config when the site ran on FrankenPHP.
+	if w.OctaneEnabled || NginxProfileForWebsite(w) == "laravel-octane" {
+		if err := removeOctaneAssets(ctx, s.exec, w.ID); err != nil {
+			return fmt.Errorf("delete website Octane unit: %w", err)
+		}
+		if err := s.runSudoOK(ctx, "rm", "-rf", filepath.Join("/etc/jenderal/octane", w.ID)); err != nil {
+			return fmt.Errorf("delete website Octane config: %w", err)
 		}
 	}
 
@@ -760,7 +804,12 @@ func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
 // automatic selection based on the app type.
 func (s *Service) SetNginxProfile(ctx context.Context, id, profile string) (model.Website, error) {
 	if !IsValidNginxProfile(profile) {
-		return model.Website{}, model.NewValidationError("unsupported nginx profile: "+profile)
+		return model.Website{}, model.NewValidationError("unsupported nginx profile: " + profile)
+	}
+	if profile == "laravel-octane" {
+		// The Octane profile needs a runtime (port, Caddyfile, systemd unit);
+		// it is managed exclusively by EnableOctane.
+		return model.Website{}, model.NewValidationError("enable Laravel Octane from the Octane card instead of switching the template")
 	}
 
 	unlock := s.mutations.Lock(id)
@@ -894,15 +943,21 @@ func (s *Service) Count(ctx context.Context) (int, error) {
 }
 
 // GetLogs returns the last N lines of a website-specific log file.
-// logType can be "access" or "error".
+// logType can be "access", "error", or "octane". The Octane log prefers the
+// app's octane-server log files and falls back to the systemd journal of the
+// site's Octane unit.
 func (s *Service) GetLogs(ctx context.Context, id, logType string, lines int) (string, error) {
 	w, err := s.Get(ctx, id)
 	if err != nil {
 		return "", err
 	}
 
-	if logType != "access" && logType != "error" {
-		return "", model.NewValidationError("log_type must be access or error")
+	if logType != "access" && logType != "error" && logType != "octane" {
+		return "", model.NewValidationError("log_type must be access, error, or octane")
+	}
+
+	if logType == "octane" {
+		return s.getOctaneLogs(ctx, w, lines)
 	}
 
 	logDir := "/home/" + w.WebUser + "/logs"
@@ -916,6 +971,41 @@ func (s *Service) GetLogs(ctx context.Context, id, logType string, lines int) (s
 		return "", fmt.Errorf("read %s log: %s", logType, strings.TrimSpace(result.Stderr))
 	}
 	return result.Stdout, nil
+}
+
+// getOctaneLogs tails the newest octane-server log file, or the unit journal
+// when no file log exists yet.
+func (s *Service) getOctaneLogs(ctx context.Context, w model.Website, lines int) (string, error) {
+	projectRoot, _, _, err := octanePaths(w)
+	if err != nil {
+		return "", err
+	}
+	latest := fmt.Sprintf("ls -1t %s/storage/logs/octane-server-*.log 2>/dev/null | head -n 1", projectRoot)
+	result, err := s.exec.RunSudo(ctx, "bash", "-c", latest)
+	if err != nil {
+		return "", fmt.Errorf("find octane log: %w", err)
+	}
+	if result.ExitCode == 0 {
+		if path := strings.TrimSpace(result.Stdout); path != "" {
+			content, err := s.exec.RunSudo(ctx, "tail", "-n", strconv.Itoa(lines), path)
+			if err != nil {
+				return "", fmt.Errorf("read octane log: %w", err)
+			}
+			if content.ExitCode == 0 {
+				return content.Stdout, nil
+			}
+		}
+	}
+	// Fall back to the journal of the Octane unit.
+	journal, err := s.exec.RunSudo(ctx, "journalctl", "-u", octaneUnitName(w.ID),
+		"-n", strconv.Itoa(lines), "--no-pager")
+	if err != nil {
+		return "", fmt.Errorf("read octane journal: %w", err)
+	}
+	if journal.ExitCode != 0 {
+		return "", fmt.Errorf("read octane journal: %s", strings.TrimSpace(journal.Stderr))
+	}
+	return journal.Stdout, nil
 }
 
 // regenerateConfig rebuilds the nginx vhost config and reloads nginx.
@@ -958,6 +1048,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
+		OctanePort:        w.OctanePort,
 	}
 
 	content, err := RenderVhost(vhostData)
@@ -1148,7 +1239,7 @@ type scanner interface {
 func scanWebsite(row *sql.Row) (model.Website, error) {
 	var w model.Website
 	var phpVersion, errorMessage, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
-	var sslEnabled int
+	var sslEnabled, octaneEnabled int
 	var createdStr, updatedStr string
 
 	err := row.Scan(
@@ -1156,7 +1247,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1166,6 +1257,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 	w.ErrorMessage = errorMessage.String
 	assignProfileFields(&w, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog)
 	w.SSLEnabled = sslEnabled == 1
+	w.OctaneEnabled = octaneEnabled == 1
 	w.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	w.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 
@@ -1176,7 +1268,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 	var w model.Website
 	var phpVersion, errorMessage, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
-	var sslEnabled int
+	var sslEnabled, octaneEnabled int
 	var createdStr, updatedStr string
 
 	err := rows.Scan(
@@ -1184,7 +1276,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1194,6 +1286,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 	w.ErrorMessage = errorMessage.String
 	assignProfileFields(&w, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog)
 	w.SSLEnabled = sslEnabled == 1
+	w.OctaneEnabled = octaneEnabled == 1
 	w.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	w.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 

@@ -21,6 +21,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
+	"github.com/mohammadirham37/jenderal_panel/internal/frankenphp"
 	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
@@ -31,6 +32,8 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
+	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
+	"github.com/mohammadirham37/jenderal_panel/internal/sshserver"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
@@ -79,6 +82,9 @@ type Dependencies struct {
 	MalwareRepo     *malware.Repository
 	TrafficGuardSvc *trafficguard.Service
 	SecuritySetup   *security.SetupService
+	SSHAccountSvc   *sshaccount.Service
+	SSHServerSvc    *sshserver.Service
+	FrankenphpSvc   *frankenphp.Service
 	StaticHandler   http.Handler
 }
 
@@ -96,13 +102,17 @@ func NewRouter(deps Dependencies) http.Handler {
 	systemHandler := system.NewHandler(deps.SystemInfo, deps.Metrics, deps.AuditSvc, deps.LogSvc)
 	serviceHandler := service.NewHandler(deps.ServiceMgr, deps.AuditSvc)
 	dependencyHandler := dependency.NewHandler(deps.DependencySvc, deps.AuditSvc, deps.Tasks)
-	userHandler := user.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)
+	userHandler := user.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc, deps.SSHAccountSvc)
 	auditHandler := audit.NewHandler(deps.AuditSvc)
 	settingsHandler := settings.NewHandler(deps.SettingsSvc)
 	nginxHandler := nginx.NewHandler(deps.NginxSvc, deps.AuditSvc)
 	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
 	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc, deps.Tasks)
+	websiteHandler.SetSSHAccounts(deps.SSHAccountSvc)
+	sshKeyHandler := sshaccount.NewHandler(deps.SSHAccountSvc)
+	sshPortHandler := sshserver.NewHandler(deps.SSHServerSvc)
+	frankenphpHandler := frankenphp.NewHandler(deps.FrankenphpSvc)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc, deps.Tasks)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
 	deployHandler := deployment.NewHandler(deps.DeploymentSvc, deps.AuditSvc)
@@ -180,6 +190,35 @@ func NewRouter(deps Dependencies) http.Handler {
 				Put("/users/{id}/password", userHandler.UpdatePassword)
 			r.With(auth.RequirePermission(deps.RBAC, "users.delete")).
 				Delete("/users/{id}", userHandler.Delete)
+
+			// SSH keys (admin manages any user's keys)
+			r.With(auth.RequirePermission(deps.RBAC, "users.view")).
+				Get("/users/{id}/ssh-keys", sshKeyHandler.ListUserKeys)
+			r.With(auth.RequirePermission(deps.RBAC, "users.update")).
+				Post("/users/{id}/ssh-keys", sshKeyHandler.AddUserKey)
+			r.With(auth.RequirePermission(deps.RBAC, "users.update")).
+				Delete("/users/{id}/ssh-keys/{keyID}", sshKeyHandler.DeleteUserKey)
+
+			// Self-service SSH keys
+			r.Get("/profile/ssh-keys", sshKeyHandler.ListOwnKeys)
+			r.Post("/profile/ssh-keys", sshKeyHandler.AddOwnKey)
+			r.Delete("/profile/ssh-keys/{keyID}", sshKeyHandler.DeleteOwnKey)
+
+			// SSH port management (server-wide, admin only)
+			r.With(auth.RequirePermission(deps.RBAC, "ssh.view")).
+				Get("/ssh/port", sshPortHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "ssh.manage")).
+				Post("/ssh/port/change", sshPortHandler.BeginChange)
+			r.With(auth.RequirePermission(deps.RBAC, "ssh.manage")).
+				Post("/ssh/port/change/finalize", sshPortHandler.Finalize)
+			r.With(auth.RequirePermission(deps.RBAC, "ssh.manage")).
+				Delete("/ssh/port/change", sshPortHandler.Cancel)
+
+			// FrankenPHP (server-wide runtime for Laravel Octane)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/frankenphp", frankenphpHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
+				Post("/frankenphp/install", frankenphpHandler.Install)
 
 			// Audit logs
 			r.With(auth.RequirePermission(deps.RBAC, "audit.view")).
@@ -306,6 +345,27 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/upload-deploy", websiteHandler.UploadDeploy)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/repair-layout", websiteHandler.RepairLayout)
+
+			// Laravel Octane (website-scoped; ownership handled by the scope
+			// middleware)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/octane", websiteHandler.OctaneStatus)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/enable", websiteHandler.OctaneEnable)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/disable", websiteHandler.OctaneDisable)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/reload", websiteHandler.OctaneReload)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/start", websiteHandler.OctaneAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/stop", websiteHandler.OctaneAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/restart", websiteHandler.OctaneAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/octane/workers", websiteHandler.OctaneWorkers)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/logs/octane", websiteHandler.OctaneLog)
 
 			// PHP
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).

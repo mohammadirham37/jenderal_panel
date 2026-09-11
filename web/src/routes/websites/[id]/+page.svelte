@@ -32,6 +32,9 @@
 		ssl_enabled: boolean;
 		framework: string;
 		nginx_profile?: string;
+		octane_enabled?: boolean;
+		octane_port?: number;
+		octane_workers?: number;
 		error_message?: string;
 		domains?: WebsiteDomain[];
 		created_at: string;
@@ -114,6 +117,125 @@
 	let nodeRuntimeError = $state('');
 	let nodeRuntimeTaskId = $state('');
 	let nodeRuntimeInitialized = $state(false);
+
+	// Laravel Octane (FrankenPHP)
+	interface OctaneStatus {
+		enabled: boolean;
+		running: boolean;
+		port: number;
+		admin_port: number;
+		workers: number;
+		unit: string;
+		frankenphp_version: string;
+	}
+	let octane = $state<OctaneStatus | null>(null);
+	let octaneLoading = $state(false);
+	let octaneBusy = $state(false);
+	let octaneTaskId = $state('');
+	let octaneWorkersChoice = $state('4');
+	let octaneInitialized = $state(false);
+	let canManageServices = $derived(hasPermission($permissions, 'services.manage'));
+
+	async function loadOctaneStatus() {
+		if (!website) return;
+		octaneLoading = true;
+		try {
+			octane = await api.get<OctaneStatus>(`/api/v1/websites/${website.id}/octane`);
+			if (octane) octaneWorkersChoice = String(octane.workers || 4);
+		} catch {
+			octane = null;
+		} finally {
+			octaneLoading = false;
+		}
+	}
+
+	async function enableOctane() {
+		if (!website || octaneBusy) return;
+		octaneBusy = true;
+		actionMsg = ''; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/enable`);
+			octaneTaskId = result.task_id || '';
+			actionMsg = 'Octane installation started — this installs laravel/octane, then starts the server.';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to enable Octane';
+		} finally {
+			octaneBusy = false;
+		}
+	}
+
+	async function disableOctane() {
+		if (!website || octaneBusy) return;
+		if (!confirm('Disable Octane and switch this website back to PHP-FPM serving? The allocated port is kept.')) return;
+		octaneBusy = true;
+		actionMsg = ''; actionError = '';
+		try {
+			await api.post(`/api/v1/websites/${website.id}/octane/disable`);
+			actionMsg = 'Octane disabled; the PHP-FPM vhost is active again.';
+			await loadOctaneStatus();
+			await loadWebsite();
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to disable Octane';
+		} finally {
+			octaneBusy = false;
+		}
+	}
+
+	async function octaneAction(action: 'start' | 'stop' | 'restart') {
+		if (!website || octaneBusy) return;
+		octaneBusy = true;
+		actionMsg = ''; actionError = '';
+		try {
+			await api.post(`/api/v1/websites/${website.id}/octane/${action}`);
+			await loadOctaneStatus();
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : `Failed to ${action} Octane`;
+		} finally {
+			octaneBusy = false;
+		}
+	}
+
+	async function reloadOctane() {
+		if (!website || octaneBusy) return;
+		octaneBusy = true;
+		actionMsg = ''; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/reload`);
+			octaneTaskId = result.task_id || '';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to reload Octane';
+		} finally {
+			octaneBusy = false;
+		}
+	}
+
+	async function saveOctaneWorkers() {
+		if (!website || octaneBusy) return;
+		octaneBusy = true;
+		actionMsg = ''; actionError = '';
+		try {
+			await api.put(`/api/v1/websites/${website.id}/octane/workers`, { workers: Number(octaneWorkersChoice) });
+			actionMsg = 'Worker count saved; the server restarts to apply it.';
+			await loadOctaneStatus();
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to save worker count';
+		} finally {
+			octaneBusy = false;
+		}
+	}
+
+	let canInstallFrankenphp = $derived(hasPermission($permissions, 'services.manage'));
+
+	async function installFrankenphp() {
+		if (octaneTaskId) return;
+		actionMsg = ''; actionError = '';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/frankenphp/install');
+			octaneTaskId = result.task_id || '';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to start FrankenPHP install';
+		}
+	}
 
 	// ─── Deployment ───────────────────────────────────────────────────
 
@@ -216,9 +338,10 @@
 
 	// ─── Logs ─────────────────────────────────────────────────────────
 
-	let logTab = $state<'access' | 'error'>('access');
+	let logTab = $state<'access' | 'error' | 'octane'>('access');
 	let accessLogs = $state('');
 	let errorLogs = $state('');
+	let octaneLogs = $state('');
 	let logsLoading = $state(false);
 	let logsError = $state('');
 	let logsInitialized = $state(false);
@@ -726,13 +849,14 @@
 	// Files: handled by WebsiteFilesSection.
 
 	// Logs
-	async function loadLogs(type: 'access' | 'error') {
+	async function loadLogs(type: 'access' | 'error' | 'octane') {
 		if (!website) return;
 		logsLoading = true;
 		logsError = '';
 		try {
 			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/logs/${type}?lines=100`);
 			if (type === 'access') accessLogs = data.content || '';
+			else if (type === 'octane') octaneLogs = data.content || '';
 			else errorLogs = data.content || '';
 		} catch (err) {
 			logsError = err instanceof Error ? err.message : 'Failed to load logs';
@@ -832,6 +956,13 @@
 		if (activeTab === 'Overview' && website && !nodeRuntimeInitialized) {
 			nodeRuntimeInitialized = true;
 			loadNodeRuntime();
+		}
+	});
+
+	$effect(() => {
+		if (activeTab === 'Overview' && website && !octaneInitialized) {
+			octaneInitialized = true;
+			loadOctaneStatus();
 		}
 	});
 
@@ -1052,6 +1183,100 @@
 							<TaskProgress bind:taskId={nodeRuntimeTaskId} storageKey="nodejs-task-{website.id}" onComplete={() => { nodeRuntimeTaskId = ''; void loadNodeRuntime(); }} />
 						{/if}
 					</div>
+
+					<!-- Laravel Octane (FrankenPHP) -->
+					{#if website.framework === 'laravel' || website.app_type === 'laravel'}
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+							<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+								<h3 class="text-lg font-semibold text-white">Laravel Octane (FrankenPHP)</h3>
+								{#if octane?.enabled}
+									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium {octane.running ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'}">
+										{octane.running ? 'Running' : 'Stopped'}
+									</span>
+								{:else}
+									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400">Disabled</span>
+								{/if}
+							</div>
+
+							{#if octaneLoading}
+								<div class="text-gray-400 text-sm">Loading Octane status...</div>
+							{:else if octane?.enabled}
+								<div class="flex flex-wrap gap-4 text-sm text-gray-400 mb-4">
+									<span>Port: <span class="text-gray-200 font-mono">127.0.0.1:{octane.port}</span></span>
+									<span>Unit: <span class="text-gray-200 font-mono">{octane.unit}</span></span>
+									{#if octane.frankenphp_version}
+										<span>FrankenPHP: <span class="text-gray-200">v{octane.frankenphp_version}</span></span>
+									{/if}
+								</div>
+								<div class="flex flex-wrap items-center gap-2">
+									<button
+										onclick={() => octaneAction('start')}
+										disabled={octaneBusy || octane.running}
+										class="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+									>Start</button>
+									<button
+										onclick={() => octaneAction('stop')}
+										disabled={octaneBusy || !octane.running}
+										class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+									>Stop</button>
+									<button
+										onclick={() => octaneAction('restart')}
+										disabled={octaneBusy}
+										class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+									>Restart</button>
+									<button
+										onclick={reloadOctane}
+										disabled={octaneBusy || !octane.running}
+										class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-sm rounded transition-colors cursor-pointer"
+										title="Graceful worker reload for zero-downtime deploys"
+									>octane:reload</button>
+									<button
+										onclick={disableOctane}
+										disabled={octaneBusy}
+										class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+									>Disable Octane</button>
+									<select
+										bind:value={octaneWorkersChoice}
+										aria-label="Octane workers"
+										class="rounded border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
+									>
+										{#each [1, 2, 4, 6, 8, 12, 16] as count}<option value={String(count)}>{count} workers</option>{/each}
+									</select>
+									<button
+										onclick={saveOctaneWorkers}
+										disabled={octaneBusy || octaneWorkersChoice === String(octane.workers || 4)}
+										class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-sm rounded transition-colors cursor-pointer"
+									>Save workers</button>
+								</div>
+							{:else}
+								<p class="text-sm text-gray-400 mb-3">
+									Serve this Laravel site with Octane on FrankenPHP: nginx keeps handling TLS and static assets while the app runs on a loopback Octane worker. Converting an existing site installs <code class="text-gray-300 font-mono">laravel/octane</code>, writes the site Caddyfile and systemd unit, then switches the vhost — disabling restores PHP-FPM instantly.
+								</p>
+								{#if octane && !octane.frankenphp_version}
+									<div class="mb-3 p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
+										FrankenPHP is not installed on this server yet.
+										{#if canInstallFrankenphp}
+											<button onclick={installFrankenphp} class="ml-2 underline cursor-pointer hover:text-yellow-200">Install FrankenPHP {octane ? '' : ''}</button>
+										{:else}
+											Ask an administrator to install it from the services page.
+										{/if}
+									</div>
+								{/if}
+								<button
+									onclick={enableOctane}
+									disabled={octaneBusy || website.status !== 'active' || (!!octane && !octane.frankenphp_version)}
+									class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+								>
+									{octaneBusy ? 'Working…' : 'Enable Octane'}
+								</button>
+							{/if}
+							<TaskProgress
+								bind:taskId={octaneTaskId}
+								storageKey="octane-task-{website.id}"
+								onComplete={() => { octaneTaskId = ''; void loadOctaneStatus(); void loadWebsite(); }}
+							/>
+						</div>
+					{/if}
 
 					<!-- Actions -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
@@ -1566,6 +1791,16 @@
 						>
 							Error Log
 						</button>
+						{#if website.octane_enabled}
+							<button
+								onclick={() => { logTab = 'octane'; loadLogs('octane'); }}
+								class="px-3 py-1.5 text-sm rounded transition-colors cursor-pointer {logTab === 'octane'
+									? 'bg-blue-600 text-white'
+									: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
+							>
+								Octane
+							</button>
+						{/if}
 					</div>
 
 					{#if logsError}
@@ -1584,7 +1819,7 @@
 
 					<textarea
 						readonly
-						value={logTab === 'access' ? accessLogs : errorLogs}
+						value={logTab === 'access' ? accessLogs : logTab === 'octane' ? octaneLogs : errorLogs}
 						class="w-full h-64 bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-xs font-mono resize-y focus:outline-none"
 					></textarea>
 				</div>

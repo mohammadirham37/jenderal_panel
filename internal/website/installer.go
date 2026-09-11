@@ -73,7 +73,7 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 	case "codeigniter4":
 		steps = append(steps, userStep("install CodeIgniter 4", "installing framework", 15*time.Minute,
 			phpBinary, composer, "create-project", "codeigniter4/appstarter", staging, "--no-interaction", "--prefer-dist", "--no-scripts"))
-	case "laravel":
+	case "laravel", "laravel-octane":
 		if profile.ProjectVariant == "starter-kit" && profile.StarterCommit != "" {
 			repositoryURL := "https://github.com/" + profile.StarterRepository + ".git"
 			steps = append(steps,
@@ -96,6 +96,12 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 			userStep("create Laravel environment", "installing framework", time.Minute, "/usr/bin/cp", "-n", staging+"/.env.example", staging+"/.env"),
 			userStep("generate Laravel key", "installing framework", time.Minute, phpBinary, staging+"/artisan", "key:generate", "--force", "--no-interaction"),
 		)
+		if profile.NginxProfile == "laravel-octane" {
+			steps = append(steps,
+				userStep("install Laravel Octane", "installing framework", 15*time.Minute, phpBinary, composer, "require", "laravel/octane", "--working-dir="+staging, "--no-interaction", "--no-scripts"),
+				userStep("configure Octane FrankenPHP server", "installing framework", 5*time.Minute, phpBinary, staging+"/artisan", "octane:install", "--server=frankenphp", "--no-interaction"),
+			)
+		}
 		if profile.RequiresNode {
 			installDependencies, err := nodeStep("install frontend dependencies", "building assets", 10*time.Minute, "npm", "--prefix", staging, "install", "--no-audit", "--no-fund")
 			if err != nil {
@@ -195,7 +201,9 @@ func (i *Installer) Install(ctx context.Context, w websiteRow, progress func(sta
 }
 
 func profileForWebsiteRow(w websiteRow) (Profile, error) {
-	template := NginxProfileFor(w.Framework, w.FrameworkVersion, w.AppType)
+	// Persisted profile overrides (e.g. laravel-octane) select the template
+	// directly; legacy rows derive one from framework and app type.
+	template := resolveNginxProfile(w.NginxProfile, w.Framework, w.FrameworkVersion, w.AppType)
 	frameworkVersion := w.FrameworkVersion
 	if template == "codeigniter3" {
 		frameworkVersion = "3"

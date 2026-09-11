@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Setting } from '$lib/types';
+	import type { Setting, SSHKey } from '$lib/types';
+	import { user as authUser } from '$lib/stores/auth';
 	import { language } from '$lib/stores/language';
 
 	let settings = $state<Setting[]>([]);
@@ -38,6 +39,59 @@
 	let createdToken = $state('');
 	let tokenMsg = $state('');
 	let tokenError = $state('');
+
+	// SSH Keys (self-service; the account is the panel username)
+	let sshKeys = $state<SSHKey[]>([]);
+	let sshKeysLoading = $state(true);
+	let sshKeyLoaded = $state(false);
+	let newSSHKeyName = $state('');
+	let newSSHKeyMaterial = $state('');
+	let sshKeyMsg = $state('');
+	let sshKeyError = $state('');
+
+	async function loadSSHKeys() {
+		sshKeysLoading = true;
+		try {
+			sshKeys = (await api.get<SSHKey[]>('/api/v1/profile/ssh-keys')) || [];
+			sshKeyLoaded = true;
+			sshKeyError = '';
+		} catch (err) {
+			sshKeyError = err instanceof Error ? err.message : 'Failed to load SSH keys';
+		} finally {
+			sshKeysLoading = false;
+		}
+	}
+
+	async function addSSHKey() {
+		if (!newSSHKeyMaterial.trim()) return;
+		sshKeyMsg = '';
+		sshKeyError = '';
+		try {
+			await api.post('/api/v1/profile/ssh-keys', {
+				name: newSSHKeyName,
+				public_key: newSSHKeyMaterial
+			});
+			newSSHKeyName = '';
+			newSSHKeyMaterial = '';
+			sshKeyMsg = 'SSH key added; authorized_keys was updated.';
+			await loadSSHKeys();
+		} catch (err) {
+			sshKeyError = err instanceof Error ? err.message : 'Failed to add SSH key';
+		}
+	}
+
+	async function deleteSSHKey(key: SSHKey) {
+		if (!confirm(`Remove SSH key "${key.name || key.fingerprint}"?`)) return;
+		sshKeyMsg = '';
+		sshKeyError = '';
+		try {
+			await api.del(`/api/v1/profile/ssh-keys/${key.id}`);
+			sshKeyMsg = 'SSH key removed; authorized_keys was updated.';
+			await loadSSHKeys();
+		} catch (err) {
+			sshKeyError = err instanceof Error ? err.message : 'Failed to delete SSH key';
+		}
+	}
 
 	async function loadSettings() {
 		try {
@@ -191,6 +245,7 @@
 		loadSettings();
 		loadTotpStatus();
 		loadTokens();
+		loadSSHKeys();
 	});
 </script>
 
@@ -345,6 +400,94 @@
 			{/if}
 		{/if}
 	</div>
+
+	<!-- SSH Keys -->
+	{#if $authUser?.ssh_enabled}
+	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+		<h3 class="text-lg font-semibold text-white mb-3">SSH Keys</h3>
+		<p class="text-sm text-gray-400 mb-4">
+			Public keys for SSH/SFTP login as <code class="text-gray-300 font-mono">{$authUser.username}</code>.
+			Login is public key only — password authentication is disabled.
+		</p>
+
+		{#if sshKeyMsg}
+			<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
+				{sshKeyMsg}
+				<button onclick={() => (sshKeyMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+			</div>
+		{/if}
+
+		{#if sshKeyError}
+			<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+				{sshKeyError}
+				<button onclick={() => (sshKeyError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+			</div>
+		{/if}
+
+		{#if sshKeysLoading}
+			<div class="text-gray-400 text-sm">Loading SSH keys...</div>
+		{:else}
+			{#if sshKeys.length > 0}
+				<div class="overflow-x-auto mb-4">
+					<table class="w-full">
+						<thead>
+							<tr class="border-b border-gray-700">
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Fingerprint</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Added</th>
+								<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-gray-700">
+							{#each sshKeys as key (key.id)}
+								<tr class="hover:bg-gray-750">
+									<td class="px-4 py-3 text-sm text-white">{key.name}</td>
+									<td class="px-4 py-3 text-sm text-gray-400 font-mono">{key.fingerprint}</td>
+									<td class="px-4 py-3 text-sm text-gray-400">{key.algo} {key.bits}bit</td>
+									<td class="px-4 py-3 text-sm text-gray-400">{new Date(key.created_at).toLocaleDateString()}</td>
+									<td class="px-4 py-3 text-right">
+										<button onclick={() => deleteSSHKey(key)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{:else}
+				<div class="text-gray-400 text-sm mb-4">No SSH keys added yet.</div>
+			{/if}
+
+			<!-- Add Key Form -->
+			<div class="flex flex-wrap items-end gap-3 pt-3 border-t border-gray-700">
+				<div>
+					<label for="ssh-key-name" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Label</label>
+					<input
+						id="ssh-key-name"
+						type="text"
+						bind:value={newSSHKeyName}
+						placeholder="e.g. laptop"
+						class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+					/>
+				</div>
+				<div class="flex-1 min-w-72">
+					<label for="ssh-key-material" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Public key (ssh-ed25519 / ssh-rsa / ecdsa)</label>
+					<input
+						id="ssh-key-material"
+						type="text"
+						bind:value={newSSHKeyMaterial}
+						placeholder="ssh-ed25519 AAAA... you@host"
+						spellcheck="false"
+						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+					/>
+				</div>
+				<button onclick={addSSHKey} disabled={!newSSHKeyMaterial.trim()} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer">
+					Add Key
+				</button>
+			</div>
+		{/if}
+	</div>
+	{/if}
 
 	<!-- API Tokens -->
 	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">

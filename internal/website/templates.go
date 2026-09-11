@@ -2,9 +2,25 @@ package website
 
 import (
 	"bytes"
+	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 )
+
+// nginxVarSanitizer strips characters nginx does not accept in variable names.
+var nginxVarSanitizer = regexp.MustCompile(`[^a-zA-Z0-9_]`)
+
+// websocketMapSuffix builds a per-domain, per-scheme unique map variable
+// suffix so multiple Octane sites (and the HTTP + HTTPS vhost pair of one
+// site) never redefine the same map.
+func websocketMapSuffix(domain string, tls bool) string {
+	suffix := nginxVarSanitizer.ReplaceAllString(domain, "_")
+	if tls {
+		return suffix + "_wss"
+	}
+	return suffix + "_ws"
+}
 
 // VhostData holds variables for rendering an Nginx virtual host configuration.
 type VhostData struct {
@@ -19,6 +35,9 @@ type VhostData struct {
 	IPv6              bool
 	RedirectDomains   []string
 	SecurityInclude   string
+	// OctanePort is the loopback port of the site's Octane worker; it is
+	// required by the laravel-octane proxy profile.
+	OctanePort int
 }
 
 const DefaultACMEChallengeRoot = "/var/lib/jenderal/acme-challenges"
@@ -200,7 +219,7 @@ const tlsVhostStaticTemplate = `server {
 }
 `
 
-const profileHTTPTemplate = `{{ if .ApplicationDomains }}server {
+const profileHTTPTemplate = `{{ .Directives.Header }}{{ if .ApplicationDomains }}server {
     listen 80;
     {{ if .IPv6 }}listen [::]:80;{{ end }}
 
@@ -240,7 +259,7 @@ server {
 }
 {{ end }}`
 
-const profileTLSTemplate = `server {
+const profileTLSTemplate = `{{ .Directives.Header }}server {
     listen 443 ssl;
     {{ if .IPv6 }}listen [::]:443 ssl;{{ end }}
 
@@ -263,6 +282,10 @@ const profileTLSTemplate = `server {
 `
 
 type nginxProfileDirectives struct {
+	// Header is rendered at the top of the vhost file, outside the server
+	// block. The laravel-octane profile uses it for the websocket upgrade
+	// map, which nginx only accepts in the http context.
+	Header   string
 	Index    string
 	Server   string
 	Location string
@@ -271,6 +294,13 @@ type nginxProfileDirectives struct {
 }
 
 func directivesFor(data VhostData) nginxProfileDirectives {
+	return directivesForProfile(data, false)
+}
+
+// directivesForProfile renders the per-profile directives. tls only affects
+// the websocket map variable name: the HTTP and HTTPS vhosts are separate
+// files in the same http context, so their maps must not collide.
+func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
 	profile := data.Profile
 	if profile == "" {
 		if data.AppType == "static" {
@@ -317,6 +347,42 @@ func directivesFor(data VhostData) nginxProfileDirectives {
         fastcgi_param DOCUMENT_ROOT $realpath_root;
         internal;
     }`, Hidden: `    location ~ /\.(?!well-known).* {
+        deny all;
+        access_log off;
+        log_not_found off;
+    }`}
+	case "laravel-octane":
+		if data.OctanePort <= 0 {
+			return nginxProfileDirectives{Index: "index.php", Hidden: standardHidden}
+		}
+		suffix := websocketMapSuffix(data.Domain, tls)
+		mapVar := "$jenderal_ws_" + suffix
+		header := "map $http_upgrade " + mapVar + ` {
+    default upgrade;
+    ''      close;
+}
+`
+		location := `    location = /favicon.ico { access_log off; log_not_found off; }
+    location = /robots.txt  { access_log off; log_not_found off; }
+
+    location / {
+        try_files $uri $uri/ @octane;
+    }
+
+    location @octane {
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Scheme $scheme;
+        proxy_set_header SERVER_PORT $server_port;
+        proxy_set_header REMOTE_ADDR $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection ` + mapVar + `;
+        proxy_pass http://127.0.0.1:` + strconv.Itoa(data.OctanePort) + `;
+    }`
+		return nginxProfileDirectives{Index: "index.php", Header: header, Location: location,
+			Hidden: `    location ~ /\.(?!well-known).* {
         deny all;
         access_log off;
         log_not_found off;
@@ -439,7 +505,7 @@ func RenderTLSVhost(data TLSVhostData) (string, error) {
 	renderData := struct {
 		TLSVhostData
 		Directives nginxProfileDirectives
-	}{data, directivesFor(data.VhostData)}
+	}{data, directivesForProfile(data.VhostData, true)}
 	if err := tmpl.Execute(&buf, renderData); err != nil {
 		return "", err
 	}
