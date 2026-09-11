@@ -81,6 +81,35 @@
 	// Copy feedback
 	let copiedField = $state('');
 
+	// Export
+	let exportMenuId = $state<string | null>(null);
+	let exportStatus = $state<{ id: string; message: string; error: boolean } | null>(null);
+
+	async function exportDatabase(id: string, name: string, format: 'sql' | 'sql.gz') {
+		exportMenuId = null;
+		exportStatus = { id, message: 'Preparing export…', error: false };
+		try {
+			const res = await fetch(`/api/v1/databases/${id}/export?format=${encodeURIComponent(format)}`, {
+				credentials: 'include'
+			});
+			if (!res.ok) {
+				const json = await res.json().catch(() => null);
+				throw new Error(json?.error?.message || `Export failed (HTTP ${res.status})`);
+			}
+			const blob = await res.blob();
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(blob);
+			a.download = `${name}-${new Date().toISOString().slice(0, 10)}.${format}`;
+			a.click();
+			URL.revokeObjectURL(a.href);
+			exportStatus = { id, message: 'Exported ' + format, error: false };
+			setTimeout(() => { if (exportStatus?.id === id) exportStatus = null; }, 3000);
+		} catch (err) {
+			exportStatus = { id, message: err instanceof Error ? err.message : 'Export failed', error: true };
+			setTimeout(() => { if (exportStatus?.id === id) exportStatus = null; }, 4000);
+		}
+	}
+
 	// ── Helpers ────────────────────────────────────────────────────
 	const engineMeta: Record<string, { label: string; badge: string; iconBg: string; initial: string }> = {
 		mysql: { label: 'MySQL', badge: 'bg-blue-900/50 text-blue-300', iconBg: 'bg-blue-500/10 text-blue-400', initial: 'M' },
@@ -380,6 +409,8 @@
 	});
 </script>
 
+<svelte:window onclick={() => (exportMenuId = null)} />
+
 <div class="space-y-6">
 	<!-- Header -->
 	<div class="flex flex-wrap items-end justify-between gap-4">
@@ -629,7 +660,47 @@
 						<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(db.engine)}">
 							{engineLabel(db.engine)}
 						</span>
-						<div class="flex w-20 shrink-0 items-center justify-end gap-1">
+						<div class="flex shrink-0 items-center justify-end gap-1 relative">
+							{#if db.engine !== 'redis'}
+								<button
+									type="button"
+									onclick={(e) => { e.stopPropagation(); exportMenuId = exportMenuId === db.id ? null : db.id; }}
+									title="Export database"
+									class="cursor-pointer rounded-lg px-2 py-1 text-[11px] font-medium text-gray-400 transition hover:bg-gray-600 hover:text-white {exportMenuId === db.id ? 'bg-gray-600 text-white' : ''}"
+								>
+									Export
+								</button>
+								{#if exportMenuId === db.id}
+									<div
+										class="absolute top-full right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-gray-700 bg-gray-800 shadow-xl"
+										role="menu"
+									>
+										<button
+											type="button"
+											onclick={() => exportDatabase(db.id, db.name, 'sql')}
+											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700"
+										>
+											SQL dump <span class="text-gray-500">(.sql)</span>
+										</button>
+										<button
+											type="button"
+											onclick={() => exportDatabase(db.id, db.name, 'sql.gz')}
+											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700"
+										>
+											Gzipped SQL <span class="text-gray-500">(.sql.gz)</span>
+										</button>
+									</div>
+								{/if}
+							{/if}
+							{#if exportStatus?.id === db.id}
+								<span
+									class="absolute top-full right-0 z-20 mt-1 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] {exportStatus.error
+										? 'border-red-700 bg-red-900/50 text-red-300'
+										: 'border-green-700 bg-green-900/40 text-green-300'}"
+								>
+									{exportStatus.message}
+								</span>
+							{/if}
 							{#if deleteDbConfirmId === db.id}
 								<span class="mr-1 text-[11px] text-red-400">Delete?</span>
 								<button

@@ -362,6 +362,37 @@ func (h *Handler) canManageDatabase(r *http.Request, databaseID string) bool {
 	return err == nil && auth.CanManageResource(false, user.ID, db.CreatedBy)
 }
 
+// ExportDatabase handles GET /databases/{id}/export?format=sql|sql.gz and
+// streams the dump as a download attachment.
+func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = string(ExportSQL)
+	}
+
+	filename, contentType, data, err := h.svc.ExportDatabase(r.Context(), id, format)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "export_database",
+		Module: "dbmanager",
+		Target: id,
+		Detail: "exported as " + format + " (" + filename + ")",
+		IP:     r.RemoteAddr,
+	})
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	_, _ = w.Write(data)
+}
+
 // manageTokenFromRequest extracts the management session token header.
 func manageTokenFromRequest(r *http.Request) string {
 	return r.Header.Get("X-DB-Manage-Token")

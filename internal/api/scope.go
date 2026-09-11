@@ -40,7 +40,7 @@ func (d *Dependencies) ScopeMiddleware(next http.Handler) http.Handler {
 				httputil.HandleError(w, model.ErrForbidden)
 				return
 			}
-		case pattern == "/databases/{id}":
+		case pattern == "/databases/{id}" || strings.HasPrefix(pattern, "/databases/{id}/"):
 			if !d.canManageDatabase(ctx, admin, user.ID, chi.URLParam(r, "id")) {
 				httputil.HandleError(w, model.ErrForbidden)
 				return
