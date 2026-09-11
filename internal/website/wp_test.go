@@ -75,3 +75,21 @@ func TestWordPressNginxDirectivesProtectSqliteAndXmlrpc(t *testing.T) {
 		t.Errorf("permalinks require try_files fallback, location = %q", d.Location)
 	}
 }
+
+func TestParseCurlLatency(t *testing.T) {
+	if got := parseCurlLatency("200 0.123"); got != 123 {
+		t.Fatalf("parseCurlLatency = %d, want 123", got)
+	}
+	if got := parseCurlLatency(""); got != 0 {
+		t.Fatalf("parseCurlLatency(empty) = %d, want 0", got)
+	}
+}
+
+func TestHealthCheckURL(t *testing.T) {
+	if got := healthCheckURL("example.com", ""); got != "http://example.com" {
+		t.Errorf("healthCheckURL default = %q", got)
+	}
+	if got := healthCheckURL("example.com", "https://example.com/health"); got != "https://example.com/health" {
+		t.Errorf("healthCheckURL custom = %q", got)
+	}
+}

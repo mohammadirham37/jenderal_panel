@@ -37,8 +37,11 @@ func (h *Handler) logAction(r *http.Request, action, target, detail string) {
 
 // issueRequest is the JSON body for issuing a new certificate.
 type issueRequest struct {
-	WebsiteID string `json:"website_id"`
-	Domain    string `json:"domain"`
+	WebsiteID   string `json:"website_id"`
+	Domain      string `json:"domain"`
+	Wildcard    bool   `json:"wildcard"`
+	DNSProvider string `json:"dns_provider,omitempty"`
+	DNSToken    string `json:"dns_token,omitempty"`
 }
 
 type customRequest struct {
@@ -75,11 +78,27 @@ func (h *Handler) IssueForWebsite(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
-	h.issue(w, r, websiteID, req.Domain)
+
+	cert, err := h.svc.IssueWithChallenge(r.Context(), websiteID, req.Domain, ChallengeOptions{
+		Wildcard:      req.Wildcard,
+		DNSProvider:   req.DNSProvider,
+		DNSCredential: req.DNSToken,
+	})
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if cert.Status == "failed" {
+		h.logAction(r, "issue_ssl_failed", cert.ID, "SSL certificate issuance failed for "+cert.Domain)
+	} else {
+		h.logAction(r, "issue_ssl", cert.ID, "issued SSL certificate for "+cert.Domain)
+	}
+	httputil.JSON(w, http.StatusAccepted, cert)
 }
 
 func (h *Handler) issue(w http.ResponseWriter, r *http.Request, websiteID, domain string) {
-	cert, err := h.svc.Issue(r.Context(), websiteID, domain)
+	cert, err := h.svc.IssueWithChallenge(r.Context(), websiteID, domain, ChallengeOptions{})
 	if err != nil {
 		httputil.HandleError(w, err)
 		return

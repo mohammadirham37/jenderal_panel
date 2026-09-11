@@ -373,6 +373,15 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/php-settings", websiteHandler.SavePhpSettings)
 
+			// Website health check (website-scoped; ownership handled by the
+			// scope middleware)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/health", websiteHandler.GetHealthCheck)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/health", websiteHandler.SaveHealthCheck)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/health/check", websiteHandler.CheckHealthNow)
+
 			// WordPress toolkit (website-scoped; ownership handled by the
 			// scope middleware)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).

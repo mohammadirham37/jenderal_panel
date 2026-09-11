@@ -20,6 +20,7 @@ import (
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/lego"
+	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
 	"github.com/go-acme/lego/v4/providers/http/webroot"
 	"github.com/go-acme/lego/v4/registration"
 )
@@ -28,6 +29,7 @@ import (
 // can substitute a mock without touching any real ACME server.
 type ACMEClient interface {
 	ObtainCertificate(domain string, webroot string) (certPEM, keyPEM []byte, err error)
+	ObtainCertificateWithDNS(domains []string, dnsProvider, dnsCredential string) (certPEM, keyPEM []byte, err error)
 	RevokeCertificate(certPEM []byte) error
 }
 
@@ -159,8 +161,11 @@ func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, [
 		return nil, nil, err
 	}
 
-	client, err := newLegoACMEClient(user, webroot)
+	client, err := newLegoACMEClient(user)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := setHTTP01WebrootChallenge(client, webroot); err != nil {
 		return nil, nil, err
 	}
 
@@ -171,8 +176,11 @@ func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, [
 			// Some syntactically valid addresses still have domains rejected by
 			// the CA. Retry without an optional contact instead of blocking SSL.
 			user.Email = ""
-			client, err = newLegoACMEClient(user, webroot)
+			client, err = newLegoACMEClient(user)
 			if err != nil {
+				return nil, nil, err
+			}
+			if err := setHTTP01WebrootChallenge(client, webroot); err != nil {
 				return nil, nil, err
 			}
 			reg, regErr = client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
@@ -200,7 +208,7 @@ func (c *LegoClient) ObtainCertificate(domain string, webroot string) ([]byte, [
 	return cert.Certificate, cert.PrivateKey, nil
 }
 
-func newLegoACMEClient(user *legoUser, webroot string) (*lego.Client, error) {
+func newLegoACMEClient(user *legoUser) (*lego.Client, error) {
 	config := lego.NewConfig(user)
 	config.Certificate.KeyType = certcrypto.RSA2048
 	config.CADirURL = acmeDirectoryURL()
@@ -209,16 +217,76 @@ func newLegoACMEClient(user *legoUser, webroot string) (*lego.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create lego client: %w", err)
 	}
+	return client, nil
+}
 
-	// Let Nginx keep port 80 and serve the challenge file from the website root.
+// setHTTP01WebrootChallenge configures the HTTP-01 webroot challenge, letting
+// nginx keep port 80 and serve the challenge file from the website root.
+func setHTTP01WebrootChallenge(client *lego.Client, webroot string) error {
 	provider, err := newHTTP01Provider(webroot)
 	if err != nil {
-		return nil, fmt.Errorf("create HTTP-01 webroot provider: %w", err)
+		return fmt.Errorf("create HTTP-01 webroot provider: %w", err)
 	}
 	if err := client.Challenge.SetHTTP01Provider(provider); err != nil {
-		return nil, fmt.Errorf("set http01 provider: %w", err)
+		return fmt.Errorf("set http01 provider: %w", err)
 	}
-	return client, nil
+	return nil
+}
+
+// ObtainCertificateWithDNS requests a certificate for the given domains
+// (e.g. example.com and *.example.com) using the DNS-01 challenge with the
+// Cloudflare DNS provider, enabling wildcard certificates.
+func (c *LegoClient) ObtainCertificateWithDNS(domains []string, dnsProvider, dnsCredential string) ([]byte, []byte, error) {
+	if dnsProvider != "cloudflare" {
+		return nil, nil, fmt.Errorf("unsupported DNS provider: %s (only cloudflare is supported)", dnsProvider)
+	}
+	if dnsCredential == "" {
+		return nil, nil, fmt.Errorf("empty Cloudflare API token")
+	}
+
+	user, err := c.loadOrCreateAccount()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	client, err := newLegoACMEClient(user)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if user.Registration == nil {
+		reg, regErr := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+		if regErr != nil && user.Email != "" && isInvalidContactError(regErr) {
+			user.Email = ""
+			client, err = newLegoACMEClient(user)
+			if err != nil {
+				return nil, nil, err
+			}
+			reg, regErr = client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+		}
+		if regErr != nil {
+			return nil, nil, fmt.Errorf("register ACME account: %w", regErr)
+		}
+		user.Registration = reg
+	}
+
+	dns, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{AuthToken: dnsCredential})
+	if err != nil {
+		return nil, nil, fmt.Errorf("create cloudflare DNS provider: %w", err)
+	}
+	if err := client.Challenge.SetDNS01Provider(dns); err != nil {
+		return nil, nil, fmt.Errorf("set dns01 provider: %w", err)
+	}
+
+	request := certificate.ObtainRequest{
+		Domains: domains,
+		Bundle:  true,
+	}
+	certRes, err := client.Certificate.Obtain(request)
+	if err != nil {
+		return nil, nil, fmt.Errorf("obtain certificate: %w", err)
+	}
+	return certRes.Certificate, certRes.PrivateKey, nil
 }
 
 // RevokeCertificate revokes a previously issued certificate.
@@ -264,13 +332,22 @@ func isAlreadyRevokedError(err error) bool {
 
 // MockACMEClient is a test double for ACMEClient.
 type MockACMEClient struct {
-	ObtainFunc func(domain, webroot string) ([]byte, []byte, error)
-	RevokeFunc func(certPEM []byte) error
+	ObtainFunc  func(domain, webroot string) ([]byte, []byte, error)
+	DNSObtainFunc func(domains []string, dnsProvider, dnsCredential string) ([]byte, []byte, error)
+	RevokeFunc  func(certPEM []byte) error
 }
 
 // ObtainCertificate delegates to ObtainFunc.
 func (m *MockACMEClient) ObtainCertificate(domain string, webroot string) ([]byte, []byte, error) {
 	return m.ObtainFunc(domain, webroot)
+}
+
+// ObtainCertificateWithDNS delegates to DNSObtainFunc when set.
+func (m *MockACMEClient) ObtainCertificateWithDNS(domains []string, dnsProvider, dnsCredential string) ([]byte, []byte, error) {
+	if m.DNSObtainFunc != nil {
+		return m.DNSObtainFunc(domains, dnsProvider, dnsCredential)
+	}
+	return nil, nil, nil
 }
 
 // RevokeCertificate delegates to RevokeFunc.

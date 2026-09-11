@@ -162,6 +162,52 @@ func (h *Handler) SavePhpSettings(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// GetHealthCheck handles GET /api/websites/{id}/health.
+func (h *Handler) GetHealthCheck(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	hc, err := h.svc.GetHealthCheck(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, hc)
+}
+
+// SaveHealthCheck handles PUT /api/websites/{id}/health.
+func (h *Handler) SaveHealthCheck(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var hc HealthCheck
+	if err := httputil.DecodeJSON(r, &hc); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	hc.WebsiteID = id
+	if err := h.svc.SaveHealthCheck(r.Context(), id, hc); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	saved, err := h.svc.GetHealthCheck(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, saved)
+}
+
+// CheckHealthNow handles POST /api/websites/{id}/health/check — runs one
+// probe immediately and returns the result.
+func (h *Handler) CheckHealthNow(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	hc, err := h.svc.ProbeNow(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "health_check_now", id, "manual health check: "+
+		strconv.Itoa(hc.LastStatus)+" ("+strconv.FormatInt(hc.LastLatencyMS, 10)+"ms)")
+	httputil.JSON(w, http.StatusOK, hc)
+}
+
 // WpStatus handles GET /api/websites/{id}/wp.
 func (h *Handler) WpStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.svc.WpStatus(r.Context(), chi.URLParam(r, "id"))

@@ -54,12 +54,35 @@ func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Servi
 //
 // On failure the record is updated to status=failed with an error message.
 func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SSLCertificate, error) {
+	return s.IssueWithChallenge(ctx, websiteID, domain, ChallengeOptions{})
+}
+
+// ChallengeOptions describes an optional DNS-01 issuance: a wildcard
+// certificate for the site's domain issued through the Cloudflare DNS
+// provider using an API token.
+type ChallengeOptions struct {
+	Wildcard    bool   `json:"wildcard"`
+	DNSProvider string `json:"dns_provider,omitempty"`
+	DNSCredential string `json:"dns_credential,omitempty"`
+}
+
+// IssueWithChallenge issues a certificate; with Wildcard it issues
+// example.com + *.example.com through DNS-01 (Cloudflare API token).
+func (s *Service) IssueWithChallenge(ctx context.Context, websiteID, domain string, opts ChallengeOptions) (model.SSLCertificate, error) {
 	domain = strings.TrimSpace(strings.ToLower(domain))
 	if domain == "" {
 		return model.SSLCertificate{}, model.NewValidationError("domain is required")
 	}
 	if websiteID == "" {
 		return model.SSLCertificate{}, model.NewValidationError("website_id is required")
+	}
+	if opts.Wildcard {
+		if opts.DNSProvider != "cloudflare" {
+			return model.SSLCertificate{}, model.NewValidationError("wildcard certificates require the cloudflare DNS provider")
+		}
+		if opts.DNSCredential == "" {
+			return model.SSLCertificate{}, model.NewValidationError("a Cloudflare API token is required for wildcard certificates")
+		}
 	}
 	unlock := s.mutations.Lock(websiteID)
 	defer unlock()
@@ -71,7 +94,16 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 	if site.Status != "active" {
 		return model.SSLCertificate{}, model.NewValidationError("SSL certificates can only be installed on an active website")
 	}
-	existing, existingFound, err := s.findCertificateByDomain(ctx, websiteID, domain)
+	certDomain := domain
+	domains := []string{domain}
+	dnsProvider, dnsCredential := "", ""
+	if opts.Wildcard {
+		certDomain = "*." + domain
+		domains = []string{"*." + domain, domain}
+		dnsProvider, dnsCredential = "cloudflare", opts.DNSCredential
+	}
+
+	existing, existingFound, err := s.findCertificateByDomain(ctx, websiteID, certDomain)
 	if err != nil {
 		return model.SSLCertificate{}, err
 	} else if existingFound && (existing.Status == "active" || existing.Status == "pending" || existing.Status == "issuing") {
@@ -84,7 +116,7 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 	cert := model.SSLCertificate{
 		ID:        certID,
 		WebsiteID: websiteID,
-		Domain:    domain,
+		Domain:    certDomain,
 		Issuer:    "letsencrypt",
 		Status:    "pending",
 		AutoRenew: true,
@@ -96,8 +128,21 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 	if err != nil {
 		return model.SSLCertificate{}, err
 	}
+	if dnsProvider != "" {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE ssl_certificates SET dns_provider = ?, dns_credential = ? WHERE id = ?`,
+			dnsProvider, dnsCredential, cert.ID); err != nil {
+			return model.SSLCertificate{}, fmt.Errorf("persist dns challenge: %w", err)
+		}
+		cert.DNSProvider, cert.DNSCredential = dnsProvider, dnsCredential
+	}
 
-	certPEM, keyPEM, err := s.acme.ObtainCertificate(domain, websiteconfig.DefaultACMEChallengeRoot)
+	var certPEM, keyPEM []byte
+	if opts.Wildcard {
+		certPEM, keyPEM, err = s.acme.ObtainCertificateWithDNS(domains, dnsProvider, dnsCredential)
+	} else {
+		certPEM, keyPEM, err = s.acme.ObtainCertificate(domain, websiteconfig.DefaultACMEChallengeRoot)
+	}
 	if err != nil {
 		msg := fmt.Sprintf("obtain certificate: %v", err)
 		if recoveryErr := s.recoverPendingCertificate(cert.ID, msg, existing, existingFound); recoveryErr != nil {
@@ -108,7 +153,7 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 		return cert, nil
 	}
 
-	metadata, err := validateCertificateMaterial(certPEM, keyPEM, domain, time.Now().UTC())
+	metadata, err := validateCertificateMaterial(certPEM, keyPEM, certDomain, time.Now().UTC())
 	if err != nil {
 		msg := err.Error()
 		if recoveryErr := s.recoverPendingCertificate(cert.ID, msg, existing, existingFound); recoveryErr != nil {
@@ -193,7 +238,14 @@ func (s *Service) Renew(ctx context.Context, certID string) error {
 		return model.NewValidationError("only the current active certificate can be renewed")
 	}
 
-	certPEM, keyPEM, err := s.acme.ObtainCertificate(cert.Domain, websiteconfig.DefaultACMEChallengeRoot)
+	var certPEM, keyPEM []byte
+	if cert.DNSProvider == "cloudflare" && cert.DNSCredential != "" {
+		// DNS-issued certificates (wildcards) renew through DNS-01 as well.
+		certPEM, keyPEM, err = s.acme.ObtainCertificateWithDNS(
+			[]string{cert.Domain, "*." + cert.Domain}, cert.DNSProvider, cert.DNSCredential)
+	} else {
+		certPEM, keyPEM, err = s.acme.ObtainCertificate(cert.Domain, websiteconfig.DefaultACMEChallengeRoot)
+	}
 	if err != nil {
 		return fmt.Errorf("renew certificate: %w", err)
 	}
@@ -397,7 +449,7 @@ func (s *Service) Delete(ctx context.Context, certID string) error {
 // Get returns a single SSL certificate by ID.
 func (s *Service) Get(ctx context.Context, certID string) (model.SSLCertificate, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, created_at, updated_at
+		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, dns_provider, dns_credential, created_at, updated_at
 		 FROM ssl_certificates WHERE id = ?`, certID)
 
 	cert, err := scanCert(row)
@@ -413,7 +465,7 @@ func (s *Service) Get(ctx context.Context, certID string) (model.SSLCertificate,
 // List returns all SSL certificates ordered by creation time descending.
 func (s *Service) List(ctx context.Context) ([]model.SSLCertificate, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, created_at, updated_at
+		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, dns_provider, dns_credential, created_at, updated_at
 		 FROM ssl_certificates ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("list ssl certificates: %w", err)
@@ -438,7 +490,7 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 	}
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, created_at, updated_at
+		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, dns_provider, dns_credential, created_at, updated_at
 		 FROM ssl_certificates WHERE website_id = ? ORDER BY created_at DESC`, websiteID)
 	if err != nil {
 		return nil, fmt.Errorf("list ssl certificates by website: %w", err)
@@ -483,7 +535,7 @@ func (s *Service) GetExpiringCerts(ctx context.Context, days int) ([]model.SSLCe
 	cutoff := time.Now().UTC().Add(time.Duration(days) * 24 * time.Hour).Format(time.RFC3339)
 
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, created_at, updated_at
+		`SELECT id, website_id, domain, issuer, status, expires_at, auto_renew, error_message, dns_provider, dns_credential, created_at, updated_at
 		 FROM ssl_certificates AS current
 		 WHERE issuer = 'letsencrypt' AND auto_renew = 1 AND status = 'active' AND expires_at <= ?
 		   AND id = (
@@ -574,7 +626,7 @@ func scanCert(row *sql.Row) (model.SSLCertificate, error) {
 	err := row.Scan(
 		&cert.ID, &cert.WebsiteID, &cert.Domain, &cert.Issuer,
 		&cert.Status, &expiresAt, &autoRenew, &errorMessage,
-		&createdStr, &updatedStr,
+		&cert.DNSProvider, &cert.DNSCredential, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return cert, err
@@ -601,7 +653,7 @@ func scanCertRows(rows *sql.Rows) (model.SSLCertificate, error) {
 	err := rows.Scan(
 		&cert.ID, &cert.WebsiteID, &cert.Domain, &cert.Issuer,
 		&cert.Status, &expiresAt, &autoRenew, &errorMessage,
-		&createdStr, &updatedStr,
+		&cert.DNSProvider, &cert.DNSCredential, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return cert, err

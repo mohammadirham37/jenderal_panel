@@ -197,16 +197,18 @@ type Domain struct {
 }
 
 type SSLCertificate struct {
-	ID           string    `json:"id"`
-	WebsiteID    string    `json:"website_id"`
-	Domain       string    `json:"domain"`
-	Issuer       string    `json:"issuer"`
-	Status       string    `json:"status"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	AutoRenew    bool      `json:"auto_renew"`
-	ErrorMessage string    `json:"error_message"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	WebsiteID     string    `json:"website_id"`
+	Domain        string    `json:"domain"`
+	Issuer        string    `json:"issuer"`
+	Status        string    `json:"status"`
+	ExpiresAt     time.Time `json:"expires_at"`
+	AutoRenew     bool      `json:"auto_renew"`
+	ErrorMessage  string    `json:"error_message"`
+	DNSProvider   string    `json:"-"`
+	DNSCredential string    `json:"-"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type PHPVersion struct {

@@ -38,6 +38,8 @@
 
 	// Install form
 	let showIssueForm = $state(false);
+	let wildcardIssue = $state(false);
+	let wildcardToken = $state('');
 	let issueDomain = $state('');
 	let installMode = $state<'letsencrypt' | 'custom'>('letsencrypt');
 	let certificatePEM = $state('');
@@ -172,7 +174,9 @@
 			const request = buildWebsiteSSLInstallRequest(installMode, requestedWebsiteID, {
 				domain: issueDomain,
 				certificatePEM,
-				privateKeyPEM
+				privateKeyPEM,
+				wildcard: wildcardIssue,
+				cfToken: wildcardToken
 			});
 			const installed = await api.post<SSLCertificate>(request.path, request.body);
 			if (!isCurrent(requestedWebsiteID, loadGeneration)) return;
@@ -265,6 +269,8 @@
 		issueDomain = issueDomains[0] || '';
 		certificatePEM = '';
 		privateKeyPEM = '';
+		wildcardIssue = false;
+		wildcardToken = '';
 		showIssueForm = true;
 	}
 
@@ -354,6 +360,23 @@
 					{/each}
 				</select>
 			</div>
+			{#if installMode === 'letsencrypt'}
+				<div class="flex items-center gap-2 mt-2">
+					<input id="ssl-wildcard" type="checkbox" bind:checked={wildcardIssue}
+						class="h-4 w-4 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500" />
+					<label for="ssl-wildcard" class="text-xs text-gray-300">
+						Wildcard (issues <code class="font-mono">{issueDomain}</code> + <code class="font-mono">*.{issueDomain}</code> via DNS-01)
+					</label>
+				</div>
+				{#if wildcardIssue}
+					<div class="mt-2">
+						<label for="ssl-cf-token" class="block text-xs text-gray-400 mb-1">Cloudflare API token</label>
+						<input id="ssl-cf-token" type="password" bind:value={wildcardToken}
+							placeholder="Cloudflare API token with DNS edit permission"
+							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+					</div>
+				{/if}
+			{/if}
 			{#if installMode === 'custom'}
 				<div class="mt-4 grid grid-cols-1 gap-4">
 					<div>

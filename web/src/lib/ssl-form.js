@@ -38,7 +38,7 @@ export function buildSSLInstallRequest(mode, values) {
 /**
  * @param {'letsencrypt' | 'custom'} mode
  * @param {string} websiteID
- * @param {{ domain: string, certificatePEM?: string, privateKeyPEM?: string }} values
+ * @param {{ domain: string, certificatePEM?: string, privateKeyPEM?: string, wildcard?: boolean, cfToken?: string }} values
  */
 export function buildWebsiteSSLInstallRequest(mode, websiteID, values) {
 	const operationAPI = websiteOperationAPI(websiteID);
@@ -51,6 +51,18 @@ export function buildWebsiteSSLInstallRequest(mode, websiteID, values) {
 				...body,
 				certificate_pem: values.certificatePEM || '',
 				private_key_pem: values.privateKeyPEM || ''
+			}
+		};
+	}
+
+	if (values.wildcard) {
+		return {
+			path: operationAPI.sslIssue,
+			body: {
+				...body,
+				wildcard: true,
+				dns_provider: 'cloudflare',
+				dns_token: values.cfToken || ''
 			}
 		};
 	}

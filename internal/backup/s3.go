@@ -28,22 +28,33 @@ const (
 	settingRemoteAccessKey = "backup_remote_s3_access_key"
 	settingRemoteSecretKey = "backup_remote_s3_secret_key"
 	settingRemotePrefix    = "backup_remote_s3_prefix"
+	settingRcloneRemote    = "backup_remote_rclone_remote"
+	settingRclonePath      = "backup_remote_rclone_path"
 )
 
 // RemoteConfig is the off-site copy configuration read from settings.
 type RemoteConfig struct {
-	Type      string `json:"type"`
-	Endpoint  string `json:"endpoint"`
-	Bucket    string `json:"bucket"`
-	Region    string `json:"region"`
-	AccessKey string `json:"access_key"`
-	SecretKey string `json:"secret_key"`
-	Prefix    string `json:"prefix"`
-	UseTLS    bool   `json:"use_tls"`
+	Type         string `json:"type"` // "" | "s3" | "rclone"
+	Endpoint     string `json:"endpoint"`
+	Bucket       string `json:"bucket"`
+	Region       string `json:"region"`
+	AccessKey    string `json:"access_key"`
+	SecretKey    string `json:"secret_key"`
+	Prefix       string `json:"prefix"`
+	UseTLS       bool   `json:"use_tls"`
+	RcloneRemote string `json:"rclone_remote"`
+	RclonePath   string `json:"rclone_path"`
 }
 
 func (c RemoteConfig) enabled() bool {
-	return c.Type == "s3" && c.Endpoint != "" && c.Bucket != "" && c.AccessKey != "" && c.SecretKey != ""
+	switch c.Type {
+	case "s3":
+		return c.Endpoint != "" && c.Bucket != "" && c.AccessKey != "" && c.SecretKey != ""
+	case "rclone":
+		return c.RcloneRemote != ""
+	default:
+		return false
+	}
 }
 
 func (c RemoteConfig) host() string {
@@ -79,6 +90,10 @@ func (s *Service) GetRemoteConfig(ctx context.Context) (RemoteConfig, error) {
 			cfg.SecretKey = value
 		case settingRemotePrefix:
 			cfg.Prefix = strings.Trim(value, "/")
+		case settingRcloneRemote:
+			cfg.RcloneRemote = value
+		case settingRclonePath:
+			cfg.RclonePath = strings.Trim(value, "/")
 		case settingRemoteEndpoint:
 			cfg.Endpoint = value
 			if strings.HasPrefix(value, "http://") {
@@ -91,7 +106,7 @@ func (s *Service) GetRemoteConfig(ctx context.Context) (RemoteConfig, error) {
 
 // SaveRemoteConfig upserts the off-site copy configuration.
 func (s *Service) SaveRemoteConfig(ctx context.Context, cfg RemoteConfig) error {
-	if cfg.Type != "" && cfg.Type != "s3" {
+	if cfg.Type != "" && cfg.Type != "s3" && cfg.Type != "rclone" {
 		return fmt.Errorf("unsupported remote type: %s", cfg.Type)
 	}
 	if cfg.Region == "" {
@@ -105,6 +120,8 @@ func (s *Service) SaveRemoteConfig(ctx context.Context, cfg RemoteConfig) error 
 		settingRemoteAccessKey: cfg.AccessKey,
 		settingRemoteSecretKey: cfg.SecretKey,
 		settingRemotePrefix:    cfg.Prefix,
+		settingRcloneRemote:    cfg.RcloneRemote,
+		settingRclonePath:      cfg.RclonePath,
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for key, value := range pairs {
@@ -224,6 +241,9 @@ func signS3PUT(cfg RemoteConfig, host, canonicalURI string, payloadLen int64, no
 // UNSIGNED-PAYLOAD and piped from disk, so even large archives never buffer
 // in panel memory.
 func (s *Service) UploadToRemote(ctx context.Context, b model.Backup, cfg RemoteConfig) (string, error) {
+	if cfg.Type == "rclone" {
+		return s.uploadRclone(ctx, b, cfg)
+	}
 	if !cfg.enabled() {
 		return "", model.NewValidationError("remote storage is not configured")
 	}
@@ -267,4 +287,26 @@ func (s *Service) UploadToRemote(ctx context.Context, b model.Backup, cfg Remote
 
 	remotePath := cfg.host() + "/" + cfg.Bucket + "/" + strings.TrimPrefix(cfg.Prefix, "/") + "/" + objectKey
 	return remotePath, nil
+}
+
+// uploadRclone copies the backup to an rclone remote (configured on the
+// server, e.g. "gdrive:backups" or "s3:panel") with rclone copyto.
+func (s *Service) uploadRclone(ctx context.Context, b model.Backup, cfg RemoteConfig) (string, error) {
+	if cfg.RcloneRemote == "" {
+		return "", model.NewValidationError("rclone remote name is not configured")
+	}
+	objectPath := strings.Trim(cfg.RclonePath, "/") + "/" + filepath.Base(b.Path)
+	if strings.Trim(cfg.RclonePath, "/") == "" {
+		objectPath = filepath.Base(b.Path)
+	}
+	dest := cfg.RcloneRemote + ":" + objectPath
+
+	result, err := s.exec.RunSudo(ctx, "rclone", "copyto", b.Path, dest)
+	if err != nil {
+		return "", fmt.Errorf("rclone copyto: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("rclone copyto failed (exit %d): %s", result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	return dest, nil
 }

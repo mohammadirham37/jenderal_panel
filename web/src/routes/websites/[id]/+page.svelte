@@ -338,6 +338,63 @@
 		}
 	}
 
+	// ─── Health check ─────────────────────────────────────────────
+	interface HealthCheck {
+		website_id: string;
+		url: string;
+		expected_status: number;
+		enabled: boolean;
+		last_status: number;
+		last_latency_ms: number;
+		consecutive_failures: number;
+		last_checked_at: string;
+	}
+	let health = $state<HealthCheck | null>(null);
+	let healthURL = $state('');
+	let healthExpected = $state(200);
+	let healthEnabled = $state(false);
+	let healthBusy = $state(false);
+
+	async function loadHealth() {
+		if (!website) return;
+		try {
+			const h = await api.get<HealthCheck>(`/api/v1/websites/${website.id}/health`);
+			health = h;
+			healthURL = h.url || `http://${website.domain}`;
+			healthExpected = h.expected_status || 200;
+			healthEnabled = h.enabled;
+		} catch { /* optional feature */ }
+	}
+
+	async function saveHealth() {
+		if (!website || healthBusy) return;
+		healthBusy = true;
+		try {
+			health = await api.put<HealthCheck>(`/api/v1/websites/${website.id}/health`, {
+				url: healthURL,
+				expected_status: healthExpected,
+				enabled: healthEnabled
+			});
+			actionMsg = 'Health check saved.';
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Failed to save health check';
+		} finally {
+			healthBusy = false;
+		}
+	}
+
+	async function checkHealthNow() {
+		if (!website || healthBusy) return;
+		healthBusy = true;
+		try {
+			health = await api.post<HealthCheck>(`/api/v1/websites/${website.id}/health/check`, {});
+		} catch (err) {
+			actionError = err instanceof Error ? err.message : 'Health check failed';
+		} finally {
+			healthBusy = false;
+		}
+	}
+
 	let terminalEndpoint = $derived.by(() => {
 		if (!website) return '';
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -968,6 +1025,7 @@
 		if (activeTab === 'Overview' && website && !nodeRuntimeInitialized) {
 			nodeRuntimeInitialized = true;
 			loadNodeRuntime();
+			loadHealth();
 		}
 	});
 
@@ -1118,6 +1176,56 @@
 							</div>
 							{#if transferMsg}<p class="mt-2 text-xs text-green-400">{transferMsg}</p>{/if}
 							{#if transferError}<p class="mt-2 text-xs text-red-400">{transferError}</p>{/if}
+						</div>
+					{/if}
+
+					{#if website.app_type !== 'static'}
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<h3 class="text-sm font-semibold text-white">Health check</h3>
+								{#if health && health.last_checked_at}
+									<span class="text-xs {health.consecutive_failures > 0 ? 'text-red-400' : 'text-green-400'}">
+										{health.last_status || '—'} · {health.last_latency_ms}ms · checked {formatDate(health.last_checked_at)}
+										{#if health.consecutive_failures > 0}· {health.consecutive_failures} consecutive failures{/if}
+									</span>
+								{/if}
+							</div>
+							<div class="mt-3 flex flex-wrap items-center gap-2">
+								<input
+									type="text"
+									bind:value={healthURL}
+									placeholder={`http://${website.domain}`}
+									aria-label="Health check URL"
+									class="flex-1 min-w-48 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+								/>
+								<input
+									type="number"
+									bind:value={healthExpected}
+									min="100"
+									max="599"
+									aria-label="Expected status"
+									class="w-20 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+								/>
+								<button
+									type="button"
+									onclick={saveHealth}
+									disabled={healthBusy}
+									class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+								>
+									Save
+								</button>
+								<button
+									type="button"
+									onclick={checkHealthNow}
+									disabled={healthBusy}
+									class="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
+								>
+									{healthBusy ? 'Checking…' : 'Check now'}
+								</button>
+							</div>
+							<p class="mt-2 text-[11px] text-gray-500">
+								Probes every minute while enabled; alerts fire after 2 consecutive failures through your notification channels.
+							</p>
 						</div>
 					{/if}
 

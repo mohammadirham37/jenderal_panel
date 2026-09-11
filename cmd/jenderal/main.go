@@ -258,6 +258,11 @@ func cmdServe() {
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
+	healthChecker := website.NewHealthChecker(websiteSvc, func(message string) {
+		if err := notifSvc.SendAll(context.Background(), message); err != nil {
+			logger.Error("send health check notification failed", "error", err)
+		}
+	})
 	frankenphpSvc.SetTaskRunner(tasks)
 	securitySetup := security.NewSetupService(db, security.SetupActions{
 		InstallFail2ban: fail2banSvc.InstallWithProgress,
@@ -363,6 +368,7 @@ func cmdServe() {
 	renewalWorker.Start(bgCtx)
 	deploySvc.Start(bgCtx)
 	backupScheduler.Start(bgCtx)
+	healthChecker.Start(bgCtx)
 	alertChecker.Start(bgCtx)
 	fail2banSvc.StartReconciler(bgCtx)
 	malwareScheduler.Start(bgCtx)

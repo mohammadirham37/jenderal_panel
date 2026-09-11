@@ -144,7 +144,7 @@
 	const remoteKeys = [
 		'backup_remote_type', 'backup_remote_s3_endpoint', 'backup_remote_s3_bucket',
 		'backup_remote_s3_region', 'backup_remote_s3_access_key', 'backup_remote_s3_secret_key',
-		'backup_remote_s3_prefix'
+		'backup_remote_s3_prefix', 'backup_remote_rclone_remote', 'backup_remote_rclone_path'
 	];
 	let remote = $state<Record<string, string>>({
 		backup_remote_type: '',
@@ -153,7 +153,9 @@
 		backup_remote_s3_region: 'us-east-1',
 		backup_remote_s3_access_key: '',
 		backup_remote_s3_secret_key: '',
-		backup_remote_s3_prefix: ''
+		backup_remote_s3_prefix: '',
+		backup_remote_rclone_remote: '',
+		backup_remote_rclone_path: ''
 	});
 	let savingRemote = $state(false);
 
@@ -311,7 +313,7 @@
 	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5 mb-6">
 		<h3 class="text-lg font-semibold text-white mb-1">Remote backup storage</h3>
 		<p class="text-xs text-gray-500 mb-4">
-			Off-site copy for backups. Any S3-compatible provider works (AWS S3, Wasabi, Cloudflare R2, MinIO).
+			Off-site copy for backups. Any S3-compatible provider works (AWS S3, Wasabi, Cloudflare R2, MinIO), or an rclone remote configured on this server.
 			Set type to “s3” and fill in the fields; leave type empty to keep backups local only.
 			Backups are uploaded automatically after each completed run.
 		</p>
@@ -322,10 +324,23 @@
 					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500">
 					<option value="">Off (local only)</option>
 					<option value="s3">s3</option>
+					<option value="rclone">rclone</option>
 				</select>
 			</div>
-			<div>
-				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-endpoint">Endpoint</label>
+			{#if remote.backup_remote_type === 'rclone'}
+				<div>
+					<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-rclone-remote">Rclone remote</label>
+					<input id="remote-rclone-remote" type="text" bind:value={remote.backup_remote_rclone_remote} placeholder="gdrive"
+						class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+				</div>
+				<div>
+					<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-rclone-path">Rclone path (optional)</label>
+					<input id="remote-rclone-path" type="text" bind:value={remote.backup_remote_rclone_path} placeholder="backups/vps-1"
+						class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+				</div>
+			{:else}
+				<div>
+					<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-endpoint">Endpoint</label>
 				<input id="remote-endpoint" type="text" bind:value={remote.backup_remote_s3_endpoint} placeholder="s3.wasabisys.com"
 					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
 			</div>
@@ -349,6 +364,7 @@
 				<input id="remote-secret" type="password" bind:value={remote.backup_remote_s3_secret_key}
 					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
 			</div>
+			{/if}
 			<div>
 				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="remote-prefix">Prefix (optional)</label>
 				<input id="remote-prefix" type="text" bind:value={remote.backup_remote_s3_prefix} placeholder="vps-1/backups"
