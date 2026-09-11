@@ -54,6 +54,49 @@ func TestParseStatusOutput(t *testing.T) {
 	}
 }
 
+func TestParseStatusUmbrellaExitedIsRunning(t *testing.T) {
+	// Ubuntu's postgresql.service is an umbrella unit: once clusters are up it
+	// reports ActiveState=active with SubState=exited (no daemon PID). The
+	// services page must show it as running so it matches the databases page.
+	output := strings.Join([]string{
+		"ActiveState=active",
+		"SubState=exited",
+		"MainPID=0",
+		"UnitFileState=enabled",
+	}, "\n")
+
+	mock := newMockExecutor(output, 0, nil)
+	mgr := NewSystemd(mock, []string{"postgresql"})
+
+	status, err := mgr.Status(context.Background(), "postgresql")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !status.Active {
+		t.Error("expected Active to be true for exited umbrella unit")
+	}
+	if !status.Running {
+		t.Error("expected Running to be true for active/exited umbrella unit")
+	}
+
+	// A genuinely failed unit must not report running.
+	failed := strings.Join([]string{
+		"ActiveState=failed",
+		"SubState=failed",
+		"MainPID=0",
+		"UnitFileState=enabled",
+	}, "\n")
+	mock = newMockExecutor(failed, 0, nil)
+	mgr = NewSystemd(mock, []string{"postgresql"})
+	status, err = mgr.Status(context.Background(), "postgresql")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.Running {
+		t.Error("failed unit must not report running")
+	}
+}
+
 func TestNotAllowedRejection(t *testing.T) {
 	mock := newMockExecutor("", 0, nil)
 	mgr := NewSystemd(mock, []string{"nginx", "mysql"})

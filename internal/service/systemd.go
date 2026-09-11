@@ -159,10 +159,12 @@ func parseStatus(name, output string) (*model.ServiceStatus, error) {
 		}
 	}
 
+	active := props["ActiveState"] == "active"
+	subState := props["SubState"]
 	status := &model.ServiceStatus{
 		Name:    name,
-		Active:  props["ActiveState"] == "active",
-		Running: props["SubState"] == "running",
+		Active:  active,
+		Running: active && (subState == "running" || subState == "exited"),
 		Enabled: props["UnitFileState"] == "enabled",
 	}
 
