@@ -7,6 +7,9 @@ Open-source VPS control panel for Ubuntu 22.04/24.04. Go backend + SvelteKit 5 f
 - `cmd/jenderal/main.go` — CLI entry, DI wiring for all services
 - `internal/api/router.go` — Chi router, `Dependencies` struct, 100+ routes with RBAC middleware
 - `internal/{domain}/` — one package per module: `service.go` (logic), `handler.go` (HTTP), `service_test.go`
+- `internal/dbdump/` — shared MySQL/PostgreSQL dump & restore command builders (used by the databases page and the backup module)
+- `internal/sshaccount/` + `internal/sshserver/` — panel-user SSH accounts/keys and two-phase SSH port management
+- `internal/frankenphp/` — pinned FrankenPHP installer (sha256-verified) for Laravel Octane
 - `internal/database/migrations/*.sql` — SQLite migrations (idempotent, tracked in `schema_migrations`)
 - `web/` — SvelteKit 5 + Tailwind v4 frontend (`web/build/` is what gets embedded)
 

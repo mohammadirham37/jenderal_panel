@@ -81,3 +81,36 @@ func TestDecompressIfNeeded(t *testing.T) {
 		t.Error("corrupt gzip must be rejected")
 	}
 }
+
+func TestRestorePipelineCommand(t *testing.T) {
+	bin, args, err := RestorePipelineCommand("mysql", "app_db", "/var/backups/app.sql")
+	if err != nil || bin != "sh" {
+		t.Fatalf("pipeline = %s %v, %v", bin, args, err)
+	}
+	// Layout: sh -c <script> <$0> <$1=database> <$2=dump path>
+	if len(args) != 5 || args[0] != "-c" || args[2] != "dbrestore" {
+		t.Fatalf("pipeline args = %v", args)
+	}
+	script := args[1]
+	if !strings.Contains(script, `exec cat "$2"`) {
+		t.Errorf("script must stream the dump from $2: %q", script)
+	}
+	if !strings.Contains(script, `exec mysql --database="$1"`) {
+		t.Errorf("script must pass the database via $1: %q", script)
+	}
+	if strings.Contains(script, "app_db") || strings.Contains(script, "/var/backups/app.sql") {
+		t.Errorf("user values leaked into the script body: %q", script)
+	}
+	if args[3] != "app_db" || args[4] != "/var/backups/app.sql" {
+		t.Errorf("positional params wrong: %v", args)
+	}
+
+	bin, args, err = RestorePipelineCommand("postgresql", "app_db", "/var/backups/app.sql")
+	if err != nil || bin != "sh" {
+		t.Fatalf("pg pipeline = %s %v, %v", bin, args, err)
+	}
+	script = args[1]
+	if !strings.Contains(script, "psql") || !strings.Contains(script, "ON_ERROR_STOP=on") || !strings.Contains(script, `--dbname="$1"`) {
+		t.Errorf("pg pipeline script wrong: %q", script)
+	}
+}

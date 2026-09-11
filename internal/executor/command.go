@@ -3,6 +3,8 @@ package executor
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os/exec"
 	"time"
 )
@@ -20,6 +22,8 @@ type CommandExecutor interface {
 	Run(ctx context.Context, name string, args ...string) (*Result, error)
 	RunSudo(ctx context.Context, name string, args ...string) (*Result, error)
 	RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error)
+	RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
+	RunSudoWithInputStream(ctx context.Context, stdin io.Reader, stderr io.Writer, name string, args ...string) (int, error)
 }
 
 // Executor implements CommandExecutor with a configurable default timeout.
@@ -100,11 +104,76 @@ func (e *Executor) RunSudoWithInput(ctx context.Context, input, name string, arg
 	return e.run(ctx, &input, "/usr/bin/sudo", sudoArgs...)
 }
 
+// RunStream executes the command and streams merged stdout and stderr to w
+// without buffering the whole output in memory. It returns the exit code.
+func (e *Executor) RunStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
+	return e.stream(ctx, w, nil, nil, name, args...)
+}
+
+// RunSudoStream executes the command as root and streams merged stdout and
+// stderr to w without buffering the whole output in memory. It returns the
+// process exit code.
+func (e *Executor) RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
+	sudoArgs := append([]string{name}, args...)
+	return e.stream(ctx, w, nil, nil, "/usr/bin/sudo", sudoArgs...)
+}
+
+// RunSudoWithInputStream executes the command as root with stdin streamed
+// from reader, avoiding buffering the whole input in memory; stderr streams
+// to stderrW for error reporting. It returns the process exit code.
+func (e *Executor) RunSudoWithInputStream(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+	sudoArgs := append([]string{name}, args...)
+	return e.stream(ctx, nil, stderrW, stdin, "/usr/bin/sudo", sudoArgs...)
+}
+
+// stream executes a command whose stdout streams into out (nil discards),
+// stderr into stderrW (nil discards), and stdin from in (nil for no input).
+//
+// It deliberately skips the graceful-cancellation setup used by Run: a
+// non-nil Cancel makes os/exec close the child's stdin as soon as Wait is
+// entered, which would starve stdin-streaming commands of their input. The
+// command is still killed when ctx is canceled (CommandContext default).
+func (e *Executor) stream(ctx context.Context, out io.Writer, stderrW io.Writer, in io.Reader, name string, args ...string) (int, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.DefaultTimeout)
+		defer cancel()
+	}
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	if out != nil {
+		cmd.Stdout = out
+	}
+	if stderrW != nil {
+		cmd.Stderr = stderrW
+	}
+	if in != nil {
+		cmd.Stdin = in
+	}
+	if err := cmd.Start(); err != nil {
+		return -1, err
+	}
+	waitErr := cmd.Wait()
+
+	exitCode := 0
+	if waitErr != nil {
+		var exitErr *exec.ExitError
+		if errors.As(waitErr, &exitErr) {
+			exitCode = exitErr.ExitCode()
+		} else {
+			return -1, waitErr
+		}
+	}
+	return exitCode, nil
+}
+
 // MockExecutor is a test double for CommandExecutor.
 type MockExecutor struct {
-	RunFunc              func(ctx context.Context, name string, args ...string) (*Result, error)
-	RunSudoFunc          func(ctx context.Context, name string, args ...string) (*Result, error)
-	RunSudoWithInputFunc func(ctx context.Context, input, name string, args ...string) (*Result, error)
+	RunFunc                    func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoFunc                func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoWithInputFunc       func(ctx context.Context, input, name string, args ...string) (*Result, error)
+	RunSudoStreamFunc          func(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
+	RunSudoWithInputStreamFunc func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error)
 }
 
 // Run delegates to RunFunc.
@@ -120,4 +189,20 @@ func (m *MockExecutor) RunSudo(ctx context.Context, name string, args ...string)
 // RunSudoWithInput delegates to RunSudoWithInputFunc.
 func (m *MockExecutor) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error) {
 	return m.RunSudoWithInputFunc(ctx, input, name, args...)
+}
+
+// RunSudoWithInputStream delegates to RunSudoWithInputStreamFunc.
+func (m *MockExecutor) RunSudoWithInputStream(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+	if m.RunSudoWithInputStreamFunc != nil {
+		return m.RunSudoWithInputStreamFunc(ctx, stdin, stderrW, name, args...)
+	}
+	return 0, nil
+}
+
+// RunSudoStream delegates to RunSudoStreamFunc.
+func (m *MockExecutor) RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
+	if m.RunSudoStreamFunc != nil {
+		return m.RunSudoStreamFunc(ctx, w, name, args...)
+	}
+	return 0, nil
 }

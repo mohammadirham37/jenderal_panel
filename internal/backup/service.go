@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -555,22 +556,15 @@ func (s *Service) restoreDatabase(ctx context.Context, b model.Backup, write fun
 		engine = "mysql"
 	}
 
-	// Read the dump and let the shared restore builder target the engine.
-	result, err := s.exec.RunSudo(ctx, "cat", b.Path)
-	if err != nil {
-		return fmt.Errorf("read dump: %w", err)
-	}
-	sqlDump, err := dbdump.DecompressIfNeeded([]byte(result.Stdout))
-	if err != nil {
-		return err
-	}
-
-	bin, args, err := dbdump.RestoreCommand(engine, b.Target)
+	// Stream the dump file into the engine through an OS pipe — the dump
+	// never buffers in memory. Both paths are internally generated; the
+	// database and path travel as positional shell parameters.
+	bin, args, err := dbdump.RestorePipelineCommand(engine, b.Target, b.Path)
 	if err != nil {
 		return err
 	}
 	write("Restoring into " + b.Target + "…")
-	result, err = s.exec.RunSudoWithInput(ctx, string(sqlDump), bin, args...)
+	result, err := s.exec.RunSudo(ctx, bin, args...)
 	if err != nil {
 		return fmt.Errorf("database restore: %w", err)
 	}
@@ -652,28 +646,28 @@ func (s *Service) restoreFull(ctx context.Context, b model.Backup, component str
 	return nil
 }
 
-// DownloadBackup returns the backup archive for download.
-func (s *Service) DownloadBackup(ctx context.Context, caller Caller, id string) (string, []byte, error) {
+// DownloadBackupStream streams the backup archive to w without buffering it
+// whole in memory. Returns the download filename.
+func (s *Service) DownloadBackupStream(ctx context.Context, caller Caller, id string, w io.Writer) (string, error) {
 	b, err := s.Get(ctx, id)
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
 	if !auth.CanManageResource(caller.Admin, caller.UserID, b.CreatedBy) {
-		return "", nil, model.ErrForbidden
+		return "", model.ErrForbidden
 	}
 	if b.Status != "completed" {
-		return "", nil, model.NewValidationError("only completed backups can be downloaded")
+		return "", model.NewValidationError("only completed backups can be downloaded")
 	}
 
-	result, err := s.exec.RunSudo(ctx, "cat", b.Path)
-	if err != nil {
-		return "", nil, fmt.Errorf("read backup: %w", err)
-	}
 	filename := filepath.Base(b.Path)
 	if filename == "" || filename == "." {
 		filename = "backup-" + b.ID
 	}
-	return filename, []byte(result.Stdout), nil
+	if _, err := s.exec.RunSudoStream(ctx, w, "cat", b.Path); err != nil {
+		return "", fmt.Errorf("stream backup: %w", err)
+	}
+	return filename, nil
 }
 
 // --- Pruning ---

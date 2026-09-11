@@ -52,6 +52,12 @@ internal/{domain}/service_test.go  # Tests with MockExecutor and in-memory SQLit
 
 **ServiceManager** (`internal/service/systemd.go`): Manages systemd services with an allow-list. Glob patterns supported (e.g. `php*-fpm`).
 
+**dbdump** (`internal/dbdump`): shared MySQL/PostgreSQL dump and restore command builders. Commands are direct argv; user values travel as positional shell parameters (`sh -c ... "$1" "$2"`), never interpolated into the command string.
+
+**sshaccount / sshserver** (`internal/sshaccount`, `internal/sshserver`): panel-user SSH accounts (useradd + authorized_keys from the DB + ACL grants on owned sites) and two-phase SSH port changes (drop-in + `sshd -t` + ufw allow + restart + finalize).
+
+**frankenphp** (`internal/frankenphp`): installs the sha256-verified pinned FrankenPHP static binary for Laravel Octane sites; `website.Octane*` methods manage per-site units (`jenderal-octane-*`), Caddyfiles, and ports 8100–8199.
+
 **TaskRunner** (`internal/taskrunner/runner.go`): Background task execution with live output streaming and SQLite persistence. Used for all install operations (PHP, databases, Docker, updates). Returns task ID immediately; frontend polls `GET /api/v1/tasks/{id}` for progress.
 
 ### Auth & RBAC

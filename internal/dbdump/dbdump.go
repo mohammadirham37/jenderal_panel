@@ -74,6 +74,26 @@ func DumpToFileCommand(engine, database, path string) (string, []string, error) 
 	return "sh", []string{"-c", script, "dbdump", database, path}, nil
 }
 
+// RestorePipelineCommand returns a command that streams the dump file at
+// dumpPath into the database through an OS pipe — no buffering of the whole
+// dump in memory. The database and path travel as positional parameters $1
+// and $2; psql stops at the first error so failed restores surface.
+func RestorePipelineCommand(engine, database, dumpPath string) (string, []string, error) {
+	engine, err := normalizeEngine(engine)
+	if err != nil {
+		return "", nil, err
+	}
+	var restore string
+	switch engine {
+	case "mysql":
+		restore = `exec mysql --database="$1"`
+	default:
+		restore = `exec sudo -u postgres psql --set ON_ERROR_STOP=on --dbname="$1"`
+	}
+	script := `exec cat "$2" | ` + restore
+	return "sh", []string{"-c", script, "dbrestore", database, dumpPath}, nil
+}
+
 // RestoreCommand returns the argv that restores a plain SQL dump fed on
 // standard input. psql stops at the first error so failed restores surface
 // instead of half-applying.

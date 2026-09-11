@@ -132,19 +132,16 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 // as an attachment.
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="backup-`+id+`"`)
 
-	filename, data, err := h.svc.DownloadBackup(r.Context(), callerFromContext(r), id)
+	filename, err := h.svc.DownloadBackupStream(r.Context(), callerFromContext(r), id, w)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
 	h.logAction(r, "download_backup", id, "downloaded "+filename)
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = w.Write(data)
 }
 
 // Restore handles POST /api/backups/{id}/restore and runs the restore as a

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"testing"
@@ -40,6 +41,26 @@ func TestStartSessionRoundTrip(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out reading from session stdout")
+	}
+}
+
+func TestRunStreamCapturesOutput(t *testing.T) {
+	e := NewExecutor(5 * time.Second)
+	var buf bytes.Buffer
+	if _, err := e.RunStream(context.Background(), &buf, "sh", "-c", "echo hello-stream"); err != nil {
+		t.Fatalf("RunStream: %v", err)
+	}
+	if buf.String() != "hello-stream\n" {
+		t.Fatalf("streamed output = %q", buf.String())
+	}
+
+	// A failing command surfaces its exit code.
+	code, err := e.RunStream(context.Background(), &buf, "sh", "-c", "exit 3")
+	if err != nil {
+		t.Fatalf("RunStream error: %v", err)
+	}
+	if code != 3 {
+		t.Fatalf("exit code = %d, want 3", code)
 	}
 }
 

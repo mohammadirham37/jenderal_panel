@@ -1,11 +1,12 @@
 package dbmanager
 
 import (
-	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -47,12 +48,23 @@ func dumpCommand(engineName, database string) (string, []string, error) {
 	return dbdump.DumpCommand(engineName, database)
 }
 
-// ExportDatabase dumps a managed database in the requested format and returns
-// the download filename, content type, and file contents.
-func (s *Service) ExportDatabase(ctx context.Context, id, format string) (string, string, []byte, error) {
+// ExportStream is a prepared database export: headers can be set from
+// Filename/ContentType before Write streams the dump to the client.
+type ExportStream struct {
+	Filename    string
+	ContentType string
+	Write       func(w io.Writer) error
+}
+
+// PrepareExportDatabase dumps a managed database in the requested format to
+// a temporary file and returns a stream for serving it. The dump happens
+// during preparation so dump failures produce a clean error instead of a
+// truncated download; the file is then streamed (optionally gzip-compressed)
+// without loading it whole into memory.
+func (s *Service) PrepareExportDatabase(ctx context.Context, id, format string) (*ExportStream, error) {
 	opts, err := exportOptionsFor(format)
 	if err != nil {
-		return "", "", nil, err
+		return nil, err
 	}
 
 	var name, engineName string
@@ -60,40 +72,61 @@ func (s *Service) ExportDatabase(ctx context.Context, id, format string) (string
 		`SELECT name, engine FROM managed_databases WHERE id = ?`, id,
 	).Scan(&name, &engineName)
 	if err == sql.ErrNoRows {
-		return "", "", nil, model.ErrNotFound
+		return nil, model.ErrNotFound
 	}
 	if err != nil {
-		return "", "", nil, fmt.Errorf("query managed database: %w", err)
+		return nil, fmt.Errorf("query managed database: %w", err)
 	}
 
-	bin, args, err := dumpCommand(engineName, name)
+	tmp, err := os.CreateTemp("", "jenderal-export-*.sql")
 	if err != nil {
-		return "", "", nil, err
+		return nil, fmt.Errorf("create temp file: %w", err)
 	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
 
+	// Parameterised redirect: the database and path travel as positional
+	// shell parameters.
+	bin, args, err := dbdump.DumpToFileCommand(engineName, name, tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return nil, err
+	}
 	result, err := s.exec.RunSudo(ctx, bin, args...)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("database dump: %w", err)
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("database dump: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return "", "", nil, model.NewDomainError("DB_DUMP_FAILED",
+		os.Remove(tmpPath)
+		return nil, model.NewDomainError("DB_DUMP_FAILED",
 			strings.TrimSpace(result.Stderr), nil)
-	}
-
-	data := []byte(result.Stdout)
-	if opts.Gzip {
-		var buf bytes.Buffer
-		zw := gzip.NewWriter(&buf)
-		if _, werr := zw.Write(data); werr != nil {
-			return "", "", nil, fmt.Errorf("compress dump: %w", werr)
-		}
-		if cerr := zw.Close(); cerr != nil {
-			return "", "", nil, fmt.Errorf("compress dump: %w", cerr)
-		}
-		data = buf.Bytes()
 	}
 
 	filename := fmt.Sprintf("%s-%s%s", name,
 		time.Now().UTC().Format("20060102-150405"), opts.Extension)
-	return filename, opts.ContentType, data, nil
+
+	return &ExportStream{
+		Filename:    filename,
+		ContentType: opts.ContentType,
+		Write: func(w io.Writer) error {
+			defer os.Remove(tmpPath)
+			f, err := os.Open(tmpPath)
+			if err != nil {
+				return fmt.Errorf("open dump: %w", err)
+			}
+			defer f.Close()
+
+			dest := w
+			if opts.Gzip {
+				zw := gzip.NewWriter(w)
+				defer zw.Close()
+				dest = zw
+			}
+			if _, err := io.Copy(dest, f); err != nil {
+				return fmt.Errorf("stream dump: %w", err)
+			}
+			return nil
+		},
+	}, nil
 }

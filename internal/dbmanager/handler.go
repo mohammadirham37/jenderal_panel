@@ -3,7 +3,6 @@ package dbmanager
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 
@@ -373,7 +372,7 @@ func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
 		format = string(ExportSQL)
 	}
 
-	filename, contentType, data, err := h.svc.ExportDatabase(r.Context(), id, format)
+	exp, err := h.svc.PrepareExportDatabase(r.Context(), id, format)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -385,14 +384,14 @@ func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
 		Action: "export_database",
 		Module: "dbmanager",
 		Target: id,
-		Detail: "exported as " + format + " (" + filename + ")",
+		Detail: "exported as " + format + " (" + exp.Filename + ")",
 		IP:     r.RemoteAddr,
 	})
 
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = w.Write(data)
+	w.Header().Set("Content-Type", exp.ContentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+exp.Filename+`"`)
+	// Errors after this point can only abort the connection mid-download.
+	_ = exp.Write(w)
 }
 
 // maxRestoreBytes caps the uploaded dump size for restores.
@@ -422,13 +421,7 @@ func (h *Handler) RestoreDatabase(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	content, err := io.ReadAll(file)
-	if err != nil {
-		httputil.HandleError(w, err)
-		return
-	}
-
-	if err := h.svc.RestoreDatabase(r.Context(), id, content); err != nil {
+	if err := h.svc.RestoreDatabase(r.Context(), id, file); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}

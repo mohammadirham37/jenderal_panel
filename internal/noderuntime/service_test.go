@@ -3,6 +3,7 @@ package noderuntime
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -198,4 +199,12 @@ func (f fakeExecutor) RunSudo(ctx context.Context, name string, args ...string) 
 }
 func (f fakeExecutor) RunSudoWithInput(context.Context, string, string, ...string) (*executor.Result, error) {
 	return nil, errors.New("unexpected RunSudoWithInput")
+}
+
+func (f fakeExecutor) RunSudoStream(context.Context, io.Writer, string, ...string) (int, error) {
+	return 0, errors.New("unexpected RunSudoStream")
+}
+
+func (f fakeExecutor) RunSudoWithInputStream(context.Context, io.Reader, io.Writer, string, ...string) (int, error) {
+	return 0, errors.New("unexpected RunSudoWithInputStream")
 }
