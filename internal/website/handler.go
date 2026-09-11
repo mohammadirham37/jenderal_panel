@@ -9,6 +9,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -50,6 +51,9 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	user, _ := auth.UserFromContext(r.Context())
+	req.CreatedBy = user.ID
+
 	website, err := h.svc.Create(r.Context(), req)
 	if err != nil {
 		httputil.HandleError(w, err)
@@ -62,12 +66,48 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 // List handles GET /api/websites.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
-	websites, err := h.svc.List(r.Context())
+	websites, err := h.listScoped(r)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 	httputil.JSON(w, http.StatusOK, websites)
+}
+
+// listScoped returns all websites for admins and only the caller's own
+// websites for the user role.
+func (h *Handler) listScoped(r *http.Request) ([]model.Website, error) {
+	if auth.AdminFromContext(r.Context()) {
+		return h.svc.List(r.Context())
+	}
+	user, _ := auth.UserFromContext(r.Context())
+	return h.svc.ListByOwner(r.Context(), user.ID)
+}
+
+// TransferOwnership handles POST /websites/{id}/owner (admin only).
+func (h *Handler) TransferOwnership(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		UserID string `json:"user_id"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.UserID == "" {
+		httputil.HandleError(w, model.NewValidationError("user_id is required"))
+		return
+	}
+
+	website, err := h.svc.TransferOwnership(r.Context(), id, req.UserID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "transfer_website_ownership", website.ID,
+		"transferred ownership of "+website.Domain+" to user "+req.UserID)
+	httputil.JSON(w, http.StatusOK, website)
 }
 
 // Options handles GET /api/websites/options.

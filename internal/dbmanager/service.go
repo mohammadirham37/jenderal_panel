@@ -97,7 +97,7 @@ func (s *Service) RestartEngine(ctx context.Context, engineName string) error {
 }
 
 // CreateDatabase creates a database on the engine and records it in the panel DB.
-func (s *Service) CreateDatabase(ctx context.Context, name, engineName, charset string) (model.ManagedDatabase, error) {
+func (s *Service) CreateDatabase(ctx context.Context, name, engineName, charset, createdBy string) (model.ManagedDatabase, error) {
 	if name == "" {
 		return model.ManagedDatabase{}, model.NewValidationError("database name is required")
 	}
@@ -122,9 +122,9 @@ func (s *Service) CreateDatabase(ctx context.Context, name, engineName, charset 
 	id := ulid.Make().String()
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO managed_databases (id, name, engine, charset, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id, name, engineName, charset, now, now,
+		`INSERT INTO managed_databases (id, name, engine, charset, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, name, engineName, charset, createdBy, now, now,
 	)
 	if err != nil {
 		return model.ManagedDatabase{}, fmt.Errorf("insert managed database: %w", err)
@@ -174,9 +174,19 @@ func (s *Service) DropDatabase(ctx context.Context, id string) error {
 
 // ListDatabases returns all managed databases from the panel DB.
 func (s *Service) ListDatabases(ctx context.Context) ([]model.ManagedDatabase, error) {
+	return s.listDatabasesWhere(ctx, "", nil)
+}
+
+// ListDatabasesByOwner returns the databases created by the given panel user.
+func (s *Service) ListDatabasesByOwner(ctx context.Context, userID string) ([]model.ManagedDatabase, error) {
+	return s.listDatabasesWhere(ctx, " WHERE created_by = ?", []any{userID})
+}
+
+func (s *Service) listDatabasesWhere(ctx context.Context, where string, args []any) ([]model.ManagedDatabase, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, name, engine, charset, created_at, updated_at
-		 FROM managed_databases ORDER BY created_at DESC`,
+		`SELECT id, name, engine, charset, created_by, created_at, updated_at
+		 FROM managed_databases`+where+` ORDER BY created_at DESC`,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query managed databases: %w", err)
@@ -187,7 +197,7 @@ func (s *Service) ListDatabases(ctx context.Context) ([]model.ManagedDatabase, e
 	for rows.Next() {
 		var d model.ManagedDatabase
 		var createdStr, updatedStr string
-		if err := rows.Scan(&d.ID, &d.Name, &d.Engine, &d.Charset, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.Engine, &d.Charset, &d.CreatedBy, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan managed database: %w", err)
 		}
 		d.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
@@ -196,6 +206,24 @@ func (s *Service) ListDatabases(ctx context.Context) ([]model.ManagedDatabase, e
 	}
 
 	return dbs, rows.Err()
+}
+
+// GetDatabase loads one managed database record.
+func (s *Service) GetDatabase(ctx context.Context, id string) (model.ManagedDatabase, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, name, engine, charset, created_by, created_at, updated_at
+		 FROM managed_databases WHERE id = ?`, id)
+	var d model.ManagedDatabase
+	var createdStr, updatedStr string
+	if err := row.Scan(&d.ID, &d.Name, &d.Engine, &d.Charset, &d.CreatedBy, &createdStr, &updatedStr); err != nil {
+		if err == sql.ErrNoRows {
+			return model.ManagedDatabase{}, model.ErrNotFound
+		}
+		return model.ManagedDatabase{}, fmt.Errorf("get managed database: %w", err)
+	}
+	d.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+	d.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+	return d, nil
 }
 
 // CreateDBUser creates a user on the engine and records it in the panel DB.

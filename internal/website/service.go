@@ -40,6 +40,9 @@ type CreateRequest struct {
 	InertiaAdapter   string `json:"inertia_adapter"`
 	ProjectVariant   string `json:"project_variant"`
 	SetupMode        string `json:"setup_mode"`
+	// CreatedBy is stamped by the handler from the authenticated user; it is
+	// never accepted from the request body.
+	CreatedBy string `json:"-"`
 }
 
 // UpdateRequest holds the optional fields for updating a website.
@@ -275,13 +278,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		 created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?)`,
+		 created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
 		w.NodeVersion,
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
 		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,
-		nowStr, nowStr,
+		req.CreatedBy, nowStr, nowStr,
 	)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
@@ -324,7 +327,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, created_at, updated_at
+		        nginx_profile, created_by, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -333,6 +336,12 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 			return model.Website{}, model.ErrNotFound
 		}
 		return model.Website{}, fmt.Errorf("get website: %w", err)
+	}
+
+	if w.CreatedBy != "" {
+		// Owner email is display-only; a missing user row is not an error.
+		_ = s.db.QueryRowContext(ctx,
+			`SELECT email FROM users WHERE id = ?`, w.CreatedBy).Scan(&w.OwnerEmail)
 	}
 
 	domains, err := s.getDomains(ctx, id)
@@ -344,14 +353,66 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	return w, nil
 }
 
+// TransferOwnership assigns the website to another panel user. Admin action.
+func (s *Service) TransferOwnership(ctx context.Context, websiteID, userID string) (model.Website, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE id = ?`, userID).Scan(&exists); err != nil {
+		return model.Website{}, fmt.Errorf("check target user: %w", err)
+	}
+	if exists == 0 {
+		return model.Website{}, model.NewValidationError("target user not found")
+	}
+
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE websites SET created_by = ?, updated_at = ? WHERE id = ?`,
+		userID, time.Now().UTC().Format(time.RFC3339), websiteID)
+	if err != nil {
+		return model.Website{}, fmt.Errorf("transfer website ownership: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return model.Website{}, model.ErrNotFound
+	}
+	return s.Get(ctx, websiteID)
+}
+
+// GetByWebUser returns the website operated by the given web system user,
+// used by the website-scoped terminal guard. Domains are not loaded.
+func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Website, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
+		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
+		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
+		        nginx_profile, created_by, created_at, updated_at
+		 FROM websites WHERE web_user = ?`, webUser)
+
+	w, err := scanWebsite(row)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return model.Website{}, model.ErrNotFound
+		}
+		return model.Website{}, fmt.Errorf("get website by web user: %w", err)
+	}
+	return w, nil
+}
+
 // List returns all websites ordered by created_at DESC.
 func (s *Service) List(ctx context.Context) ([]model.Website, error) {
+	return s.listWhere(ctx, "", nil)
+}
+
+// ListByOwner returns the websites created by the given panel user.
+func (s *Service) ListByOwner(ctx context.Context, userID string) ([]model.Website, error) {
+	return s.listWhere(ctx, " WHERE created_by = ?", []any{userID})
+}
+
+func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]model.Website, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, created_at, updated_at
-		 FROM websites ORDER BY created_at DESC`)
+		        nginx_profile, created_by, created_at, updated_at
+		 FROM websites`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
 	}
@@ -1095,7 +1156,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1123,7 +1184,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err

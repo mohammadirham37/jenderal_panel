@@ -10,6 +10,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -143,9 +144,19 @@ type createDatabaseRequest struct {
 	Charset string `json:"charset"`
 }
 
-// ListDatabases returns all managed databases.
+// ListDatabases returns all managed databases (admins) or the caller's own
+// databases (user role).
 func (h *Handler) ListDatabases(w http.ResponseWriter, r *http.Request) {
-	dbs, err := h.svc.ListDatabases(r.Context())
+	var (
+		dbs []model.ManagedDatabase
+		err error
+	)
+	if auth.AdminFromContext(r.Context()) {
+		dbs, err = h.svc.ListDatabases(r.Context())
+	} else {
+		user, _ := auth.UserFromContext(r.Context())
+		dbs, err = h.svc.ListDatabasesByOwner(r.Context(), user.ID)
+	}
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -161,13 +172,13 @@ func (h *Handler) CreateDatabase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mdb, err := h.svc.CreateDatabase(r.Context(), req.Name, req.Engine, req.Charset)
+	user, _ := auth.UserFromContext(r.Context())
+	mdb, err := h.svc.CreateDatabase(r.Context(), req.Name, req.Engine, req.Charset, user.ID)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	user, _ := auth.UserFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
 		UserID: user.ID,
 		Action: "create_database",
@@ -315,6 +326,11 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.canManageDatabase(r, req.DatabaseID) {
+		httputil.HandleError(w, model.ErrForbidden)
+		return
+	}
+
 	if err := h.svc.GrantPrivileges(r.Context(), req.UserID, req.DatabaseID); err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -334,6 +350,17 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 }
 
 // ─── Database management (phpMyAdmin-like) ────────────────────────
+
+// canManageDatabase reports whether the caller may act on the database:
+// admins on any database, users only on databases they created.
+func (h *Handler) canManageDatabase(r *http.Request, databaseID string) bool {
+	if auth.AdminFromContext(r.Context()) {
+		return true
+	}
+	user, _ := auth.UserFromContext(r.Context())
+	db, err := h.svc.GetDatabase(r.Context(), databaseID)
+	return err == nil && auth.CanManageResource(false, user.ID, db.CreatedBy)
+}
 
 // manageTokenFromRequest extracts the management session token header.
 func manageTokenFromRequest(r *http.Request) string {

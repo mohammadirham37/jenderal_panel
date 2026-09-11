@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -150,26 +151,110 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		}
 	}
 
-	// Assign limited permissions to user role
-	userPerms := []string{
-		"dashboard.view", "server.view", "services.view",
-		"nginx.view", "firewall.view", "processes.view", "logs.view",
-		"websites.view", "php.view", "ssl.view",
-		"deployments.view", "cron.view", "queue.view", "nodejs.view",
-		"databases.view", "docker.view", "backups.view",
-		"alerts.view", "notifications.view", "update.view", "files.view",
-		"security.view",
+	// Make the user role's permission set declarative: the sync also revokes
+	// permissions that newer panel versions removed from the role.
+	if err := r.SyncRolePermissions(ctx, "user", userRolePermissions); err != nil {
+		return fmt.Errorf("sync user role permissions: %w", err)
 	}
-	for _, name := range userPerms {
-		_, err := r.db.ExecContext(ctx,
+
+	return nil
+}
+
+// userRolePermissions is the declarative permission set for the "user" role.
+// It only contains modules scoped to resources the user owns (their websites,
+// their databases); server-wide modules stay admin-only.
+var userRolePermissions = []string{
+	"dashboard.view",
+	"websites.view", "websites.create", "websites.update", "websites.delete", "websites.suspend",
+	"deployments.view", "deployments.deploy",
+	"databases.view", "databases.create", "databases.delete",
+	"files.view", "files.manage",
+	"terminal.access",
+}
+
+// RoleHasPermission reports whether the role currently holds the permission.
+func (r *RBAC) RoleHasPermission(ctx context.Context, roleName, permissionName string) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM role_permissions rp
+		 JOIN roles ro ON ro.id = rp.role_id
+		 JOIN permissions p ON p.id = rp.permission_id
+		 WHERE ro.name = ? AND p.name = ?`,
+		roleName, permissionName,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check role permission: %w", err)
+	}
+	return count > 0, nil
+}
+
+// HasRole reports whether the user has the named role.
+func (r *RBAC) HasRole(ctx context.Context, userID, roleName string) (bool, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM user_roles ur JOIN roles ro ON ro.id = ur.role_id
+		 WHERE ur.user_id = ? AND ro.name = ?`,
+		userID, roleName,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check role: %w", err)
+	}
+	return count > 0, nil
+}
+
+// SyncRolePermissions makes roleName's permission set exactly permissions:
+// missing entries are granted, everything else is revoked. The seed itself
+// only ever inserts, so upgrades rely on this to converge the set.
+func (r *RBAC) SyncRolePermissions(ctx context.Context, roleName string, permissions []string) error {
+	var roleID string
+	err := r.db.QueryRowContext(ctx, `SELECT id FROM roles WHERE name = ?`, roleName).Scan(&roleID)
+	if err == sql.ErrNoRows {
+		return model.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("get role: %w", err)
+	}
+
+	permIDs := make([]string, 0, len(permissions))
+	for _, name := range permissions {
+		var pid string
+		err := r.db.QueryRowContext(ctx, `SELECT id FROM permissions WHERE name = ?`, name).Scan(&pid)
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("unknown permission %q", name)
+		}
+		if err != nil {
+			return fmt.Errorf("get permission %s: %w", name, err)
+		}
+		permIDs = append(permIDs, pid)
+	}
+
+	for _, pid := range permIDs {
+		_, err = r.db.ExecContext(ctx,
 			`INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)`,
-			roleIDs["user"], permIDs[name],
+			roleID, pid,
 		)
 		if err != nil {
-			return fmt.Errorf("assign permission %s to user: %w", name, err)
+			return fmt.Errorf("grant permission: %w", err)
 		}
 	}
 
+	if len(permIDs) == 0 {
+		_, err = r.db.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_id = ?`, roleID)
+	} else {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(permIDs)), ",")
+		args := make([]any, 0, len(permIDs)+1)
+		args = append(args, roleID)
+		for _, pid := range permIDs {
+			args = append(args, pid)
+		}
+		_, err = r.db.ExecContext(ctx,
+			`DELETE FROM role_permissions WHERE role_id = ? AND permission_id NOT IN (`+placeholders+`)`,
+			args...,
+		)
+	}
+	if err != nil {
+		return fmt.Errorf("revoke permissions: %w", err)
+	}
 	return nil
 }
 

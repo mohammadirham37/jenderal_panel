@@ -4,7 +4,7 @@
 	import { page } from '$app/state';
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
-	import { isAuthenticated, user, logout, checkAuth } from '$lib/stores/auth';
+	import { isAuthenticated, user, roles, permissions, logout, checkAuth } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import '../app.css';
 
@@ -18,58 +18,74 @@
 	let mobileCloseButton: HTMLButtonElement | undefined = $state();
 	let sidebarExpanded = $derived(sidebarOpen || mobileSidebarOpen);
 
+
+
 	const navGroups = [
 		{
 			key: 'nav.group.overview',
 			items: [
-				{ href: '/dashboard', labelKey: 'nav.dashboard', icon: 'grid' },
+				{ href: '/dashboard', permission: 'dashboard.view', labelKey: 'nav.dashboard', icon: 'grid' },
 			]
 		},
 		{
 			key: 'nav.group.web',
 			items: [
-				{ href: '/websites', labelKey: 'nav.websites', icon: 'globe-alt' },
-				{ href: '/php', labelKey: 'nav.php', icon: 'code' },
-				{ href: '/nodejs', labelKey: 'nav.nodejs', icon: 'terminal' },
+				{ href: '/websites', permission: 'websites.view', labelKey: 'nav.websites', icon: 'globe-alt' },
+				{ href: '/php', permission: 'php.view', labelKey: 'nav.php', icon: 'code' },
+				{ href: '/nodejs', permission: 'nodejs.view', labelKey: 'nav.nodejs', icon: 'terminal' },
 			]
 		},
 		{
 			key: 'nav.group.infrastructure',
 			items: [
-				{ href: '/server', labelKey: 'nav.server', icon: 'server' },
-				{ href: '/services', labelKey: 'nav.services', icon: 'layers' },
-				{ href: '/nginx', labelKey: 'nav.nginx', icon: 'globe' },
-				{ href: '/databases', labelKey: 'nav.databases', icon: 'database' },
-				{ href: '/docker', labelKey: 'nav.docker', icon: 'cube' },
+				{ href: '/server', permission: 'server.view', labelKey: 'nav.server', icon: 'server' },
+				{ href: '/services', permission: 'services.view', labelKey: 'nav.services', icon: 'layers' },
+				{ href: '/nginx', permission: 'nginx.view', labelKey: 'nav.nginx', icon: 'globe' },
+				{ href: '/databases', permission: 'databases.view', labelKey: 'nav.databases', icon: 'database' },
+				{ href: '/docker', permission: 'docker.view', labelKey: 'nav.docker', icon: 'cube' },
 			]
 		},
 		{
 			key: 'nav.group.security',
 			items: [
-				{ href: '/security', labelKey: 'nav.security_center', icon: 'shield' },
-				{ href: '/firewall', labelKey: 'nav.firewall', icon: 'shield' },
-				{ href: '/users', labelKey: 'nav.users', icon: 'users' },
-				{ href: '/alerts', labelKey: 'nav.alerts', icon: 'bell' },
-				{ href: '/notifications', labelKey: 'nav.notifications', icon: 'megaphone' },
+				{ href: '/security', permission: 'security.view', labelKey: 'nav.security_center', icon: 'shield' },
+				{ href: '/firewall', permission: 'firewall.view', labelKey: 'nav.firewall', icon: 'shield' },
+				{ href: '/users', permission: 'users.view', labelKey: 'nav.users', icon: 'users' },
+				{ href: '/alerts', permission: 'alerts.view', labelKey: 'nav.alerts', icon: 'bell' },
+				{ href: '/notifications', permission: 'notifications.view', labelKey: 'nav.notifications', icon: 'megaphone' },
 			]
 		},
 		{
 			key: 'nav.group.operations',
 			items: [
-				{ href: '/backups', labelKey: 'nav.backups', icon: 'archive' },
-				{ href: '/processes', labelKey: 'nav.processes', icon: 'activity' },
-				{ href: '/terminal', labelKey: 'nav.terminal', icon: 'command-line' },
+				{ href: '/backups', permission: 'backups.view', labelKey: 'nav.backups', icon: 'archive' },
+				{ href: '/processes', permission: 'processes.view', labelKey: 'nav.processes', icon: 'activity' },
+				{ href: '/terminal', labelKey: 'nav.terminal', icon: 'command-line', adminOnly: true },
 			]
 		},
 		{
 			key: 'nav.group.system',
 			items: [
-				{ href: '/update', labelKey: 'nav.update', icon: 'arrow-path' },
-				{ href: '/audit-logs', labelKey: 'nav.audit', icon: 'file-text' },
-				{ href: '/settings', labelKey: 'nav.settings', icon: 'settings' },
+				{ href: '/update', permission: 'update.view', labelKey: 'nav.update', icon: 'arrow-path' },
+				{ href: '/audit-logs', permission: 'audit.view', labelKey: 'nav.audit', icon: 'file-text' },
+				{ href: '/settings', permission: 'settings.view', labelKey: 'nav.settings', icon: 'settings' },
 			]
 		}
 	];
+
+	const isAdmin = $derived($roles.some((r) => r.name === 'admin'));
+
+	function navItemVisible(item: (typeof navGroups)[number]['items'][number]): boolean {
+		if (item.adminOnly && !isAdmin) return false;
+		if (!item.permission) return true;
+		return $permissions.some((p) => p.name === item.permission);
+	}
+
+	const visibleNavGroups = $derived(
+		navGroups
+			.map((group) => ({ ...group, items: group.items.filter(navItemVisible) }))
+			.filter((group) => group.items.length > 0)
+	);
 
 	function isActive(href: string): boolean {
 		return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
@@ -209,7 +225,7 @@
 			</div>
 
 			<nav class="flex-1 overflow-y-auto px-2 py-2">
-				{#each navGroups as group}
+				{#each visibleNavGroups as group}
 					{#if sidebarExpanded}
 						<div class="px-3 pt-4 pb-1">
 							<span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">

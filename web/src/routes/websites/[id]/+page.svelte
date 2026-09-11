@@ -7,6 +7,8 @@
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
 	import WebsiteFilesSection from '$lib/components/WebsiteFilesSection.svelte';
 	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
+	import { permissions, user as authUser } from '$lib/stores/auth';
+	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
@@ -31,6 +33,8 @@
 		error_message?: string;
 		domains?: WebsiteDomain[];
 		created_at: string;
+		created_by?: string;
+		owner_email?: string;
 	}
 
 	interface CommandPreset {
@@ -155,6 +159,42 @@
 	// ─── Terminal ─────────────────────────────────────────────────────
 	// Rendered by the shared TerminalConsole component; the console
 	// connects while its tab is active and disconnects on leave.
+	// Ownership (admin only): show the owner and allow transferring the site.
+	let canManageUsers = $derived(hasPermission($permissions, 'users.manage'));
+	let panelUsers = $state<{ id: string; email: string }[]>([]);
+	let transferTarget = $state('');
+	let transferring = $state(false);
+	let transferMsg = $state('');
+	let transferError = $state('');
+
+	async function loadPanelUsers() {
+		if (!canManageUsers || panelUsers.length > 0) return;
+		try {
+			panelUsers = await api.get<{ id: string; email: string }[]>('/users');
+		} catch {
+			panelUsers = [];
+		}
+	}
+
+	async function transferOwnership() {
+		if (!website || !transferTarget || transferring) return;
+		transferring = true;
+		transferMsg = '';
+		transferError = '';
+		try {
+			const updated = await api.post<{ owner_email?: string }>(`/websites/${website.id}/owner`, {
+				user_id: transferTarget
+			});
+			website = { ...website, created_by: transferTarget, owner_email: updated.owner_email };
+			transferMsg = 'Ownership transferred.';
+			transferTarget = '';
+		} catch (err) {
+			transferError = err instanceof Error ? err.message : 'Transfer failed';
+		} finally {
+			transferring = false;
+		}
+	}
+
 	let terminalEndpoint = $derived.by(() => {
 		if (!website) return '';
 		const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -787,6 +827,12 @@
 	});
 
 	$effect(() => {
+		if (activeTab === 'Overview' && website) {
+			loadPanelUsers();
+		}
+	});
+
+	$effect(() => {
 		if (activeTab === 'Logs' && !logsInitialized && website) {
 			logsInitialized = true;
 			loadLogs(logTab);
@@ -885,6 +931,44 @@
 			<!-- ============================================================ -->
 			{#if activeTab === 'Overview'}
 				<div class="space-y-4">
+					{#if canManageUsers}
+						<div class="p-4 bg-gray-800 border border-gray-700 rounded-lg">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<h3 class="text-sm font-semibold text-white">Ownership</h3>
+								<span class="text-xs text-gray-500">
+									Owner: <span class="text-gray-300">{website.owner_email || website.created_by || 'legacy (admin)'}</span>
+								</span>
+							</div>
+							{#if website.created_by}
+								<p class="mt-1 text-xs text-gray-500">
+									{website.created_by === $authUser?.id ? 'This is your own website.' : 'Created by another panel account.'}
+								</p>
+							{/if}
+							<div class="mt-3 flex flex-wrap items-center gap-2">
+								<select
+									bind:value={transferTarget}
+									class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+									aria-label="New owner"
+								>
+									<option value="">Transfer to…</option>
+									{#each panelUsers as u (u.id)}
+										<option value={u.id}>{u.email}</option>
+									{/each}
+								</select>
+								<button
+									type="button"
+									onclick={transferOwnership}
+									disabled={!transferTarget || transferring}
+									class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									{transferring ? 'Transferring…' : 'Transfer'}
+								</button>
+							</div>
+							{#if transferMsg}<p class="mt-2 text-xs text-green-400">{transferMsg}</p>{/if}
+							{#if transferError}<p class="mt-2 text-xs text-red-400">{transferError}</p>{/if}
+						</div>
+					{/if}
+
 					{#if website.status === 'failed' && website.error_message}
 						<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
 							{website.error_message}

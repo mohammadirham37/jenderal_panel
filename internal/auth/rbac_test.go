@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"testing"
+
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 func TestSeedAndAdminHasPermission(t *testing.T) {
@@ -197,5 +199,56 @@ func assertRolePermission(t *testing.T, db interface {
 	}
 	if got := count > 0; got != want {
 		t.Fatalf("role %q permission %q = %v, want %v", role, permission, got, want)
+	}
+}
+
+func TestUserRoleSyncGrantsAndRevokes(t *testing.T) {
+	db := setupTestDB(t)
+	rbac := NewRBAC(db)
+	ctx := context.Background()
+
+	if err := rbac.Seed(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// The seed's declarative set grants websites.create...
+	has, err := rbac.RoleHasPermission(ctx, "user", "websites.create")
+	if err != nil {
+		t.Fatalf("role permission check: %v", err)
+	}
+	if !has {
+		t.Error("user role should have websites.create after seed sync")
+	}
+
+	// ...and revokes server-wide permissions the old seed used to grant.
+	has, err = rbac.RoleHasPermission(ctx, "user", "nginx.view")
+	if err != nil {
+		t.Fatalf("role permission check: %v", err)
+	}
+	if has {
+		t.Error("user role should no longer have nginx.view after seed sync")
+	}
+
+	// An explicit sync converges the set to exactly what was asked.
+	if err := rbac.SyncRolePermissions(ctx, "user", []string{"dashboard.view"}); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	has, err = rbac.RoleHasPermission(ctx, "user", "dashboard.view")
+	if err != nil {
+		t.Fatalf("role permission check: %v", err)
+	}
+	if !has {
+		t.Error("user role should keep dashboard.view after custom sync")
+	}
+	has, err = rbac.RoleHasPermission(ctx, "user", "websites.create")
+	if err != nil {
+		t.Fatalf("role permission check: %v", err)
+	}
+	if has {
+		t.Error("user role should lose websites.create after custom sync")
+	}
+
+	if err := rbac.SyncRolePermissions(ctx, "no-such-role", []string{"dashboard.view"}); err != model.ErrNotFound {
+		t.Fatalf("syncing a missing role should return ErrNotFound, got %v", err)
 	}
 }

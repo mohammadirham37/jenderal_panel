@@ -161,6 +161,8 @@ type Website struct {
 	ProvisionStage   string    `json:"provision_stage"`
 	ProvisionLog     string    `json:"provision_log"`
 	NginxProfile     string    `json:"nginx_profile"`
+	CreatedBy        string    `json:"created_by"`
+	OwnerEmail       string    `json:"owner_email,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 	Domains          []Domain  `json:"domains,omitempty"`
@@ -248,6 +250,7 @@ type ManagedDatabase struct {
 	Name      string    `json:"name"`
 	Engine    string    `json:"engine"`
 	Charset   string    `json:"charset"`
+	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

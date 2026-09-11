@@ -1,0 +1,2 @@
+ALTER TABLE websites ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
+ALTER TABLE managed_databases ADD COLUMN created_by TEXT NOT NULL DEFAULT '';

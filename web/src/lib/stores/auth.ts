@@ -1,8 +1,9 @@
 import { writable, get } from 'svelte/store';
 import { api, APIRequestError, setCSRFToken } from '$lib/api';
-import type { User, Permission, LoginResponse, UserWithRoles } from '$lib/types';
+import type { User, Role, Permission, LoginResponse, UserWithRoles } from '$lib/types';
 
 export const user = writable<User | null>(null);
+export const roles = writable<Role[]>([]);
 export const permissions = writable<Permission[]>([]);
 export const isAuthenticated = writable(false);
 export const authError = writable('');
@@ -25,6 +26,7 @@ export async function logout(): Promise<void> {
 		setTimeoutError(error);
 	}
 	user.set(null);
+	roles.set([]);
 	permissions.set([]);
 	isAuthenticated.set(false);
 	setCSRFToken('');
@@ -35,6 +37,7 @@ export async function checkAuth(): Promise<boolean> {
 		const data = await api.get<UserWithRoles>('/api/v1/auth/me', authRequestOptions);
 		authError.set('');
 		user.set(data.user);
+		roles.set(data.roles || []);
 		permissions.set(data.permissions || []);
 		isAuthenticated.set(true);
 		return true;

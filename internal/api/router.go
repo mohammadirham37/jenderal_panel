@@ -133,6 +133,7 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.SessionMiddleware(deps.AuthSvc))
 			r.Use(auth.CSRFMiddleware)
+			r.Use(deps.ScopeMiddleware)
 
 			r.Post("/auth/logout", authHandler.Logout)
 			r.Get("/auth/me", authHandler.Me)
@@ -271,6 +272,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/retry", websiteHandler.Retry)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/repair-laravel", websiteHandler.RepairLaravel)
+			r.With(auth.RequirePermission(deps.RBAC, "users.manage")).
+				Post("/websites/{id}/owner", websiteHandler.TransferOwnership)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/config", websiteHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
@@ -691,6 +694,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	// WebSocket (auth via session middleware, no CSRF needed)
 	r.Group(func(r chi.Router) {
 		r.Use(auth.SessionMiddleware(deps.AuthSvc))
+		r.Use(deps.ScopeMiddleware)
 		r.Get("/ws/metrics", systemHandler.WSMetrics)
 		r.Get("/ws/logs", systemHandler.StreamLog)
 		r.Get("/ws/terminal", terminalHandler.HandleWS)
