@@ -9,6 +9,16 @@
 	let actionMsg = $state('');
 	let actionError = $state('');
 
+	// Toolbar search
+	let search = $state('');
+	let filteredUsers = $derived.by(() => {
+		const query = search.trim().toLowerCase();
+		if (!query) return users;
+		return users.filter(
+			(u) => u.username.toLowerCase().includes(query) || u.email.toLowerCase().includes(query)
+		);
+	});
+
 	// Create form
 	let showCreate = $state(false);
 	let newUsername = $state('');
@@ -18,7 +28,7 @@
 	let newSSHEnabled = $state(true);
 	let creating = $state(false);
 
-	// Edit form
+	// Edit form (modal)
 	let editingUser = $state<User | null>(null);
 	let editUsername = $state('');
 	let editEmail = $state('');
@@ -26,7 +36,7 @@
 	let editSSHEnabled = $state(false);
 	let saving = $state(false);
 
-	// SSH keys panel
+	// SSH keys panel (modal)
 	let keysUser = $state<User | null>(null);
 	let keys = $state<SSHKey[]>([]);
 	let keysLoading = $state(false);
@@ -34,6 +44,10 @@
 	let newKeyName = $state('');
 	let newKeyMaterial = $state('');
 	let addingKey = $state(false);
+
+	function initials(name: string): string {
+		return name.slice(0, 2).toUpperCase();
+	}
 
 	async function loadUsers() {
 		try {
@@ -177,260 +191,502 @@
 	onMount(loadUsers);
 </script>
 
-<div class="space-y-6">
-	<div class="flex items-center justify-between">
-		<h2 class="text-2xl font-bold text-white">Users</h2>
+<svelte:window
+	onkeydown={(e) => {
+		if (e.key === 'Escape') {
+			editingUser = null;
+			keysUser = null;
+		}
+	}}
+/>
+
+<div class="space-y-5">
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div>
+			<h2 class="text-2xl font-bold text-white">Users</h2>
+			<p class="mt-0.5 text-sm text-gray-400">
+				{users.length === 0
+					? 'Panel accounts and their Linux SSH access.'
+					: `${users.length} account${users.length === 1 ? '' : 's'} · ${users.filter((u) => u.ssh_enabled).length} with SSH access`}
+			</p>
+		</div>
 		<button
 			onclick={() => (showCreate = !showCreate)}
-			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+			class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
 		>
+			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+			</svg>
 			{showCreate ? 'Cancel' : 'Create User'}
 		</button>
 	</div>
 
 	{#if actionMsg}
-		<div class="p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
-			{actionMsg}
-			<button onclick={() => (actionMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">
-				Dismiss
-			</button>
+		<div class="flex items-start justify-between gap-3 rounded-lg border border-green-700 bg-green-900/30 px-4 py-2.5 text-sm text-green-300">
+			<span>{actionMsg}</span>
+			<button onclick={() => (actionMsg = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
 		</div>
 	{/if}
 
 	{#if actionError}
-		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-			{actionError}
-			<button onclick={() => (actionError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">
-				Dismiss
-			</button>
+		<div class="flex items-start justify-between gap-3 rounded-lg border border-red-700 bg-red-900/30 px-4 py-2.5 text-sm text-red-300">
+			<span>{actionError}</span>
+			<button onclick={() => (actionError = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
 		</div>
 	{/if}
 
 	<!-- Create User Form -->
 	{#if showCreate}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 p-6">
-			<h3 class="text-lg font-semibold text-white mb-4">Create New User</h3>
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+			<h3 class="text-lg font-semibold text-white">Create New User</h3>
+			<p class="mt-0.5 text-xs text-gray-400">Panel login, with an optional Linux SSH account under the same name.</p>
 			<form
 				onsubmit={(e) => {
 					e.preventDefault();
 					createUser();
 				}}
-				class="grid grid-cols-1 md:grid-cols-2 gap-4"
+				class="mt-4 space-y-4"
 			>
-				<div>
-					<label for="new-username" class="block text-sm text-gray-300 mb-1">Username</label>
-					<input
-						id="new-username"
-						type="text"
-						bind:value={newUsername}
-						required
-						pattern="[a-z_][a-z0-9_-]*"
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-					{#if newSSHEnabled}
-						<p class="mt-1 text-xs text-gray-500">Lowercase letters, digits, underscore, hyphen. This becomes the Linux/SSH account name and cannot be renamed later.</p>
-					{/if}
+				<div class="grid gap-3 sm:grid-cols-2">
+					<div>
+						<label for="new-username" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Username</label>
+						<input
+							id="new-username"
+							type="text"
+							bind:value={newUsername}
+							required
+							pattern="[a-z_][a-z0-9_-]*"
+							spellcheck="false"
+							autocomplete="off"
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+						/>
+						{#if newSSHEnabled}
+							<p class="mt-1 text-xs text-gray-500">Lowercase letters, digits, underscore, hyphen. This becomes the Linux/SSH account name and cannot be renamed later.</p>
+						{/if}
+					</div>
+					<div>
+						<label for="new-email" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Email</label>
+						<input
+							id="new-email"
+							type="email"
+							bind:value={newEmail}
+							required
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+						/>
+					</div>
+					<div>
+						<label for="new-password" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Password</label>
+						<input
+							id="new-password"
+							type="password"
+							bind:value={newPassword}
+							required
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+						/>
+					</div>
+					<div>
+						<label for="new-role" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Role</label>
+						<select
+							id="new-role"
+							bind:value={newRole}
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+						>
+							<option value="user">User</option>
+							<option value="admin">Admin</option>
+						</select>
+					</div>
 				</div>
-				<div>
-					<label for="new-email" class="block text-sm text-gray-300 mb-1">Email</label>
-					<input
-						id="new-email"
-						type="email"
-						bind:value={newEmail}
-						required
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-				<div>
-					<label for="new-password" class="block text-sm text-gray-300 mb-1">Password</label>
-					<input
-						id="new-password"
-						type="password"
-						bind:value={newPassword}
-						required
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-				<div>
-					<label for="new-role" class="block text-sm text-gray-300 mb-1">Role</label>
-					<select
-						id="new-role"
-						bind:value={newRole}
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-					>
-						<option value="user">User</option>
-						<option value="admin">Admin</option>
-					</select>
-				</div>
-				<div class="md:col-span-2 flex items-start gap-2">
+				<label class="flex cursor-pointer items-start gap-2.5 rounded-lg border border-gray-700 bg-gray-900/60 p-3" for="new-ssh-enabled">
 					<input
 						id="new-ssh-enabled"
 						type="checkbox"
 						bind:checked={newSSHEnabled}
-						class="mt-1 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+						class="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
 					/>
-					<label for="new-ssh-enabled" class="text-sm text-gray-300">
+					<span class="text-sm text-gray-300">
 						SSH access
 						<span class="block text-xs text-gray-500">
 							Creates a Linux account with this username (password login disabled). The user can add public SSH keys from the panel and gets access to the websites they own.
 						</span>
-					</label>
-				</div>
-				<div class="md:col-span-2">
+					</span>
+				</label>
+				<div class="flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
+					<button
+						type="button"
+						onclick={() => (showCreate = false)}
+						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
+					>
+						Cancel
+					</button>
 					<button
 						type="submit"
 						disabled={creating}
-						class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 					>
-						{creating ? 'Creating...' : 'Create User'}
+						{creating ? 'Creating…' : 'Create User'}
 					</button>
 				</div>
 			</form>
 		</div>
 	{/if}
 
-	<!-- Edit User Modal (inline) -->
-	{#if editingUser}
-		<div class="bg-gray-800 rounded-lg border border-blue-600 p-6">
-			<h3 class="text-lg font-semibold text-white mb-4">
-				Edit User: {editingUser.username}
-			</h3>
+	<!-- Search -->
+	{#if !loading && users.length > 3}
+		<div class="relative sm:w-72">
+			<svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+			</svg>
+			<input
+				type="search"
+				bind:value={search}
+				placeholder="Search username or email…"
+				aria-label="Search users"
+				class="w-full rounded-lg border border-gray-600 bg-gray-800 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+			/>
+		</div>
+	{/if}
+
+	<!-- Users List -->
+	{#if loading}
+		<div class="space-y-3">
+			{#each Array(3) as _}
+				<div class="flex animate-pulse items-center gap-3 rounded-xl border border-gray-700 bg-gray-800 p-4">
+					<div class="h-10 w-10 rounded-full bg-gray-700/60"></div>
+					<div class="flex-1 space-y-2">
+						<div class="h-3.5 w-1/4 rounded bg-gray-700/60"></div>
+						<div class="h-3 w-1/3 rounded bg-gray-700/40"></div>
+					</div>
+					<div class="h-8 w-24 rounded bg-gray-700/30"></div>
+				</div>
+			{/each}
+		</div>
+	{:else if error}
+		<div class="rounded-lg border border-red-700 bg-red-900/30 p-4 text-sm text-red-300">{error}</div>
+	{:else if users.length === 0}
+		<div class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gray-600 bg-gray-800/50 px-6 py-12 text-center">
+			<span class="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
+				<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+				</svg>
+			</span>
+			<div>
+				<p class="font-medium text-gray-200">No users yet</p>
+				<p class="mt-1 text-sm text-gray-400">Create the first account to grant panel and SSH access.</p>
+			</div>
+			<button
+				onclick={() => (showCreate = true)}
+				class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+			>
+				Create User
+			</button>
+		</div>
+	{:else if filteredUsers.length === 0}
+		<div class="rounded-xl border border-dashed border-gray-600 bg-gray-800/50 px-6 py-10 text-center">
+			<p class="text-sm text-gray-400">No users match "{search}".</p>
+			<button
+				onclick={() => (search = '')}
+				class="mt-2 cursor-pointer text-sm text-blue-400 hover:underline"
+			>
+				Clear search
+			</button>
+		</div>
+	{:else}
+		<!-- Mobile: cards -->
+		<div class="space-y-3 md:hidden">
+			{#each filteredUsers as u (u.id)}
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+					<div class="flex items-center gap-3">
+						<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-sm font-bold text-blue-300 ring-1 ring-blue-400/20">
+							{initials(u.username)}
+						</span>
+						<div class="min-w-0 flex-1">
+							<p class="truncate text-sm font-semibold text-white">{u.username}</p>
+							<p class="truncate text-xs text-gray-400">{u.email}</p>
+						</div>
+					</div>
+					<div class="mt-3 flex flex-wrap items-center gap-1.5">
+						<span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {u.is_active ? 'bg-green-900/50 text-green-300' : 'bg-gray-700/60 text-gray-300'}">
+							<span class="h-1.5 w-1.5 rounded-full {u.is_active ? 'bg-green-400' : 'bg-gray-400'}"></span>
+							{u.is_active ? 'Active' : 'Inactive'}
+						</span>
+						<span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {u.ssh_enabled ? 'bg-purple-900/50 text-purple-300' : 'bg-gray-700/60 text-gray-300'}">
+							{u.ssh_enabled ? 'SSH on' : 'SSH off'}
+						</span>
+						<span class="ml-auto text-xs text-gray-500">{new Date(u.created_at).toLocaleDateString()}</span>
+					</div>
+					<div class="mt-3 flex flex-wrap gap-2 border-t border-gray-700 pt-3">
+						<button
+							onclick={() => openKeys(u)}
+							class="cursor-pointer rounded-md bg-purple-700/80 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-purple-700"
+						>
+							SSH Keys
+						</button>
+						<button
+							onclick={() => startEdit(u)}
+							class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
+						>
+							Edit
+						</button>
+						<button
+							onclick={() => deleteUser(u)}
+							class="ml-auto cursor-pointer rounded-md px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10"
+						>
+							Delete
+						</button>
+					</div>
+				</div>
+			{/each}
+		</div>
+
+		<!-- Desktop: table -->
+		<div class="hidden overflow-hidden rounded-xl border border-gray-700 bg-gray-800 md:block">
+			<div class="overflow-x-auto">
+				<table class="w-full">
+					<thead>
+						<tr class="border-b border-gray-700">
+							<th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">User</th>
+							<th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Status</th>
+							<th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">SSH</th>
+							<th class="px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-gray-400">Created</th>
+							<th class="px-4 py-3 text-right text-[11px] font-medium uppercase tracking-wider text-gray-400">Actions</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-gray-700">
+						{#each filteredUsers as u (u.id)}
+							<tr class="transition hover:bg-gray-700/30">
+								<td class="px-4 py-3">
+									<div class="flex items-center gap-3">
+										<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-xs font-bold text-blue-300 ring-1 ring-blue-400/20">
+											{initials(u.username)}
+										</span>
+										<div class="min-w-0">
+											<p class="truncate text-sm font-semibold text-white">{u.username}</p>
+											<p class="truncate text-xs text-gray-400">{u.email}</p>
+										</div>
+									</div>
+								</td>
+								<td class="px-4 py-3">
+									<span class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {u.is_active ? 'bg-green-900/50 text-green-300' : 'bg-gray-700/60 text-gray-300'}">
+										<span class="h-1.5 w-1.5 rounded-full {u.is_active ? 'bg-green-400' : 'bg-gray-400'}"></span>
+										{u.is_active ? 'Active' : 'Inactive'}
+									</span>
+								</td>
+								<td class="px-4 py-3">
+									<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium {u.ssh_enabled ? 'bg-purple-900/50 text-purple-300' : 'bg-gray-700/60 text-gray-300'}">
+										{u.ssh_enabled ? 'Enabled' : 'Off'}
+									</span>
+								</td>
+								<td class="px-4 py-3 text-sm text-gray-400">
+									{new Date(u.created_at).toLocaleDateString()}
+								</td>
+								<td class="px-4 py-3">
+									<div class="flex items-center justify-end gap-2">
+										<button
+											onclick={() => openKeys(u)}
+											class="cursor-pointer rounded-md bg-purple-700/80 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-purple-700"
+										>
+											SSH Keys
+										</button>
+										<button
+											onclick={() => startEdit(u)}
+											class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
+										>
+											Edit
+										</button>
+										<button
+											onclick={() => deleteUser(u)}
+											class="cursor-pointer rounded-md px-2.5 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10"
+										>
+											Delete
+										</button>
+									</div>
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	{/if}
+</div>
+
+<!-- Edit User modal -->
+{#if editingUser}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		aria-label="Edit user"
+		tabindex="-1"
+	>
+		<div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-4 flex items-center justify-between">
+				<h3 class="text-lg font-semibold text-white">
+					Edit User
+					<span class="ml-1 text-blue-400">{editingUser.username}</span>
+				</h3>
+				<button
+					type="button"
+					onclick={() => (editingUser = null)}
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+					aria-label="Close"
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
 			<form
 				onsubmit={(e) => {
 					e.preventDefault();
 					saveEdit();
 				}}
-				class="grid grid-cols-1 md:grid-cols-2 gap-4"
+				class="space-y-4"
 			>
-				<div>
-					<label for="edit-username" class="block text-sm text-gray-300 mb-1">Username</label>
-					<input
-						id="edit-username"
-						type="text"
-						bind:value={editUsername}
-						disabled={editingUser.ssh_enabled}
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60"
-					/>
-					{#if editingUser.ssh_enabled}
-						<p class="mt-1 text-xs text-gray-500">Usernames of SSH-enabled accounts cannot be changed.</p>
-					{/if}
+				<div class="grid gap-3 sm:grid-cols-2">
+					<div>
+						<label for="edit-username" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Username</label>
+						<input
+							id="edit-username"
+							type="text"
+							bind:value={editUsername}
+							disabled={editingUser.ssh_enabled}
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 disabled:opacity-60"
+						/>
+						{#if editingUser.ssh_enabled}
+							<p class="mt-1 text-xs text-gray-500">Usernames of SSH-enabled accounts cannot be changed.</p>
+						{/if}
+					</div>
+					<div>
+						<label for="edit-email" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Email</label>
+						<input
+							id="edit-email"
+							type="email"
+							bind:value={editEmail}
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+						/>
+					</div>
 				</div>
-				<div>
-					<label for="edit-email" class="block text-sm text-gray-300 mb-1">Email</label>
-					<input
-						id="edit-email"
-						type="email"
-						bind:value={editEmail}
-						class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-					/>
-				</div>
-				<div class="flex items-center gap-2">
+				<label class="flex cursor-pointer items-center gap-2.5" for="edit-active">
 					<input
 						id="edit-active"
 						type="checkbox"
 						bind:checked={editIsActive}
-						class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+						class="h-4 w-4 cursor-pointer rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
 					/>
-					<label for="edit-active" class="text-sm text-gray-300">Active</label>
-				</div>
-				<div class="flex items-start gap-2">
+					<span class="text-sm text-gray-300">Active — this account can log in to the panel.</span>
+				</label>
+				<label class="flex cursor-pointer items-start gap-2.5 rounded-lg border border-gray-700 bg-gray-900/60 p-3" for="edit-ssh-enabled">
 					<input
 						id="edit-ssh-enabled"
 						type="checkbox"
 						bind:checked={editSSHEnabled}
-						class="mt-1 w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
+						class="mt-0.5 h-4 w-4 cursor-pointer rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500"
 					/>
-					<label for="edit-ssh-enabled" class="text-sm text-gray-300">
+					<span class="text-sm text-gray-300">
 						SSH access
 						<span class="block text-xs text-gray-500">
 							{editingUser.ssh_enabled
 								? 'Turning this off locks the Linux account (files are kept).'
 								: 'Turning this on provisions the Linux account /home/' + editingUser.username + '.'}
 						</span>
-					</label>
-				</div>
-				<div class="md:col-span-2 flex gap-2">
-					<button
-						type="submit"
-						disabled={saving}
-						class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
-					>
-						{saving ? 'Saving...' : 'Save Changes'}
-					</button>
+					</span>
+				</label>
+				<div class="flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
 					<button
 						type="button"
 						onclick={() => (editingUser = null)}
-						class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
+						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
 					>
 						Cancel
+					</button>
+					<button
+						type="submit"
+						disabled={saving}
+						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+					>
+						{saving ? 'Saving…' : 'Save Changes'}
 					</button>
 				</div>
 			</form>
 		</div>
-	{/if}
+	</div>
+{/if}
 
-	<!-- SSH Keys panel -->
-	{#if keysUser}
-		<div class="bg-gray-800 rounded-lg border border-purple-600 p-6">
-			<div class="flex items-center justify-between mb-4">
-				<h3 class="text-lg font-semibold text-white">
-					SSH Keys: {keysUser.username}
-					{#if !keysUser.ssh_enabled}
-						<span class="ml-2 text-xs font-normal text-yellow-400">SSH access is disabled for this account</span>
-					{/if}
-				</h3>
+<!-- SSH Keys modal -->
+{#if keysUser}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		aria-label="SSH keys"
+		tabindex="-1"
+	>
+		<div class="w-full max-w-2xl rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-4 flex items-start justify-between gap-3">
+				<div class="flex items-center gap-3">
+					<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/10 text-purple-300">
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+						</svg>
+					</span>
+					<div>
+						<h3 class="text-lg font-semibold text-white">SSH Keys — {keysUser.username}</h3>
+						{#if !keysUser.ssh_enabled}
+							<p class="text-xs text-yellow-400">SSH access is disabled for this account</p>
+						{:else}
+							<p class="text-xs text-gray-400">authorized_keys is rewritten from this list whenever it changes.</p>
+						{/if}
+					</div>
+				</div>
 				<button
 					type="button"
 					onclick={() => (keysUser = null)}
-					class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded-lg transition-colors cursor-pointer"
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+					aria-label="Close"
 				>
-					Close
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+					</svg>
 				</button>
 			</div>
 
 			{#if keysError}
-				<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
-					{keysError}
-					<button onclick={() => (keysError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+				<div class="mb-3 flex items-start justify-between gap-3 rounded-lg border border-red-700 bg-red-900/30 px-3 py-2.5 text-sm text-red-300">
+					<span>{keysError}</span>
+					<button onclick={() => (keysError = '')} class="cursor-pointer font-medium hover:underline" aria-label="Dismiss">✕</button>
 				</div>
 			{/if}
 
 			{#if keysLoading}
-				<div class="text-gray-400 text-sm">Loading keys...</div>
-			{:else if keys.length === 0}
-				<p class="text-sm text-gray-400 mb-4">No SSH keys stored. authorized_keys is rewritten from this list whenever it changes.</p>
-			{:else}
-				<div class="overflow-x-auto mb-4">
-					<table class="w-full">
-						<thead>
-							<tr class="border-b border-gray-700">
-								<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
-								<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Fingerprint</th>
-								<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Type</th>
-								<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Added</th>
-								<th class="text-right px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
-							</tr>
-						</thead>
-						<tbody class="divide-y divide-gray-700">
-							{#each keys as key (key.id)}
-								<tr>
-									<td class="px-3 py-2 text-sm text-gray-200">{key.name}</td>
-									<td class="px-3 py-2 text-sm text-gray-400 font-mono">{key.fingerprint}</td>
-									<td class="px-3 py-2 text-sm text-gray-400">{key.algo} {key.bits}bit</td>
-									<td class="px-3 py-2 text-sm text-gray-400">{new Date(key.created_at).toLocaleDateString()}</td>
-									<td class="px-3 py-2 text-right">
-										<button
-											onclick={() => deleteKey(key)}
-											class="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-xs rounded cursor-pointer"
-										>
-											Delete
-										</button>
-									</td>
-								</tr>
-							{/each}
-						</tbody>
-					</table>
+				<div class="space-y-2">
+					{#each Array(2) as _}
+						<div class="h-14 animate-pulse rounded-lg bg-gray-700/40"></div>
+					{/each}
 				</div>
+			{:else if keys.length === 0}
+				<div class="rounded-lg border border-dashed border-gray-600 px-4 py-8 text-center">
+					<p class="text-sm font-medium text-gray-300">No SSH keys stored</p>
+					<p class="mt-1 text-xs text-gray-500">Add the first public key below to grant key-based SSH access.</p>
+				</div>
+			{:else}
+				<ul class="mb-4 max-h-64 space-y-2 overflow-y-auto">
+					{#each keys as key (key.id)}
+						<li class="flex items-start justify-between gap-3 rounded-lg border border-gray-700 bg-gray-900/60 px-3 py-2.5">
+							<div class="min-w-0">
+								<p class="truncate text-sm font-medium text-gray-200">{key.name || '(unlabeled)'}</p>
+								<p class="truncate font-mono text-xs text-gray-400">{key.fingerprint}</p>
+								<p class="mt-0.5 text-xs text-gray-500">{key.algo} {key.bits}-bit · added {new Date(key.created_at).toLocaleDateString()}</p>
+							</div>
+							<button
+								onclick={() => deleteKey(key)}
+								class="shrink-0 cursor-pointer rounded-md px-2.5 py-1.5 text-xs font-medium text-red-400 transition hover:bg-red-500/10"
+							>
+								Delete
+							</button>
+						</li>
+					{/each}
+				</ul>
 			{/if}
 
 			<form
@@ -440,122 +696,40 @@
 				}}
 				class="space-y-3 border-t border-gray-700 pt-4"
 			>
-				<div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+				<div class="grid gap-3 sm:grid-cols-3">
 					<div>
-						<label for="key-name" class="block text-sm text-gray-300 mb-1">Label</label>
+						<label for="key-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Label</label>
 						<input
 							id="key-name"
 							type="text"
 							bind:value={newKeyName}
 							placeholder="laptop"
-							class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 						/>
 					</div>
-					<div class="md:col-span-2">
-						<label for="key-material" class="block text-sm text-gray-300 mb-1">Public key (ssh-rsa / ssh-ed25519 / ecdsa)</label>
+					<div class="sm:col-span-2">
+						<label for="key-material" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Public key (ssh-ed25519 / ssh-rsa / ecdsa)</label>
 						<input
 							id="key-material"
 							type="text"
 							bind:value={newKeyMaterial}
 							placeholder="ssh-ed25519 AAAA... user@host"
 							spellcheck="false"
-							class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+							autocomplete="off"
+							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-xs text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 						/>
 					</div>
 				</div>
-				<button
-					type="submit"
-					disabled={addingKey || !newKeyMaterial.trim()}
-					class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
-				>
-					{addingKey ? 'Adding...' : 'Add Key'}
-				</button>
+				<div class="flex justify-end">
+					<button
+						type="submit"
+						disabled={addingKey || !newKeyMaterial.trim()}
+						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+					>
+						{addingKey ? 'Adding…' : 'Add Key'}
+					</button>
+				</div>
 			</form>
 		</div>
-	{/if}
-
-	<!-- Users Table -->
-	{#if loading}
-		<div class="text-gray-400">Loading users...</div>
-	{:else if error}
-		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
-	{:else}
-		<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
-			<table class="w-full">
-				<thead>
-					<tr class="border-b border-gray-700 bg-gray-800/80">
-						<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium"
-							>Username</th
-						>
-						<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium"
-							>Email</th
-						>
-						<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium"
-							>Status</th
-						>
-						<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium"
-							>SSH</th
-						>
-						<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium"
-							>Created</th
-						>
-						<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium"
-							>Actions</th
-						>
-					</tr>
-				</thead>
-				<tbody class="divide-y divide-gray-700">
-					{#each users as u (u.id)}
-						<tr class="hover:bg-gray-750">
-							<td class="px-4 py-3 text-sm text-white font-medium">{u.username}</td>
-							<td class="px-4 py-3 text-sm text-gray-300">{u.email}</td>
-							<td class="px-4 py-3">
-								<span
-									class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium {u.is_active
-										? 'bg-green-900/50 text-green-400'
-										: 'bg-gray-700 text-gray-400'}"
-								>
-									{u.is_active ? 'Active' : 'Inactive'}
-								</span>
-							</td>
-							<td class="px-4 py-3">
-								<span
-									class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium {u.ssh_enabled
-										? 'bg-purple-900/50 text-purple-300'
-										: 'bg-gray-700 text-gray-400'}"
-								>
-									{u.ssh_enabled ? 'Enabled' : 'Off'}
-								</span>
-							</td>
-							<td class="px-4 py-3 text-sm text-gray-400">
-								{new Date(u.created_at).toLocaleDateString()}
-							</td>
-							<td class="px-4 py-3 text-right">
-								<div class="flex items-center justify-end gap-2">
-									<button
-										onclick={() => openKeys(u)}
-										class="px-2.5 py-1 bg-purple-700 hover:bg-purple-600 text-white text-xs rounded cursor-pointer"
-									>
-										SSH Keys
-									</button>
-									<button
-										onclick={() => startEdit(u)}
-										class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded cursor-pointer"
-									>
-										Edit
-									</button>
-									<button
-										onclick={() => deleteUser(u)}
-										class="px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white text-xs rounded cursor-pointer"
-									>
-										Delete
-									</button>
-								</div>
-							</td>
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{/if}
-</div>
+	</div>
+{/if}
