@@ -5,6 +5,7 @@
 	import { user as authUser } from '$lib/stores/auth';
 	import { language } from '$lib/stores/language';
 import { toast } from '$lib/stores/toast';
+import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	let settings = $state<Setting[]>([]);
 	let loading = $state(true);
@@ -179,6 +180,78 @@ import { toast } from '$lib/stores/toast';
 			toast.error(err instanceof Error ? err.message : 'Failed to save remote storage');
 		} finally {
 			savingRemote = false;
+		}
+	}
+
+	// ─── Panel domain (HTTPS untuk panel) ─────────────────────────
+	interface PanelDomainStatus {
+		domain: string;
+		email: string;
+		enabled: boolean;
+		vhost_present: boolean;
+		cert_expiry?: string;
+	}
+	let pdStatus = $state<PanelDomainStatus | null>(null);
+	let pdDomain = $state('');
+	let pdEmail = $state('');
+	let pdBusy = $state(false);
+	let pdTaskId = $state('');
+	let pdConfirmDisable = $state(false);
+
+	async function loadPanelDomain() {
+		try {
+			pdStatus = await api.get<PanelDomainStatus>('/api/v1/panel-domain');
+			if (pdStatus.domain) pdDomain = pdStatus.domain;
+			if (pdStatus.email) pdEmail = pdStatus.email;
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to load panel domain');
+		}
+	}
+
+	async function setupPanelDomain() {
+		if (pdBusy || !pdDomain.trim() || !pdEmail.trim()) return;
+		pdBusy = true;
+		try {
+			const res = await api.post<{ task_id: string }>('/api/v1/panel-domain/setup', {
+				domain: pdDomain.trim(),
+				email: pdEmail.trim()
+			});
+			pdTaskId = res.task_id;
+			toast.success('Panel domain setup started. Pastikan DNS A record sudah mengarah ke server ini.');
+			await loadPanelDomain();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to start setup');
+		} finally {
+			pdBusy = false;
+		}
+	}
+
+	async function renewPanelDomain() {
+		if (pdBusy) return;
+		pdBusy = true;
+		try {
+			const res = await api.post<{ task_id: string }>('/api/v1/panel-domain/renew', {});
+			pdTaskId = res.task_id;
+			toast.success('Certificate renewal started.');
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to start renewal');
+		} finally {
+			pdBusy = false;
+		}
+	}
+
+	async function disablePanelDomain() {
+		if (pdBusy || !pdConfirmDisable) { pdConfirmDisable = true; return; }
+		pdBusy = true;
+		try {
+			await api.post('/api/v1/panel-domain/disable', { domain: pdStatus?.domain || pdDomain });
+			toast.success('Panel domain removed.');
+			pdConfirmDisable = false;
+			await loadPanelDomain();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Failed to remove panel domain');
+		} finally {
+			pdBusy = false;
 		}
 	}
 
@@ -386,6 +459,56 @@ import { toast } from '$lib/stores/toast';
 			<option value="en">English</option>
 			<option value="id">Bahasa Indonesia</option>
 		</select>
+	</div>
+	<!-- Panel domain (HTTPS untuk panel) -->
+	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5 mb-6">
+		<div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+			<h3 class="text-lg font-semibold text-white">Panel domain</h3>
+			{#if pdStatus?.enabled}
+				<span class="rounded-full bg-green-900/50 px-2.5 py-0.5 text-[11px] font-medium text-green-400">enabled</span>
+			{/if}
+		</div>
+		<p class="text-xs text-gray-500 mb-4">
+			Akses panel via HTTPS dengan domain sendiri: <code class="text-gray-400">https://panel.domain-anda.com</code>.
+			Titikkan A record domain ke IP server terlebih dahulu, lalu jalankan setup. Nginx mem-proxies ke panel
+			dengan sertifikat Let's Encrypt + auto-renew, dan websocket untuk terminal sudah termasuk.
+		</p>
+		{#if pdTaskId}
+			<div class="rounded-lg border border-gray-700 bg-gray-900 p-3 mb-3">
+				<p class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">Setup progress</p>
+				<TaskProgress bind:taskId={pdTaskId} storageKey="panel-domain-task" onComplete={loadPanelDomain} />
+			</div>
+		{/if}
+		<div class="grid gap-3 md:grid-cols-2">
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="pd-domain">Panel domain</label>
+				<input id="pd-domain" type="text" bind:value={pdDomain} placeholder="panel.example.com"
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+			<div>
+				<label class="block text-[11px] font-medium uppercase tracking-wider text-gray-400 mb-1" for="pd-email">Email (Let's Encrypt)</label>
+				<input id="pd-email" type="email" bind:value={pdEmail} placeholder="admin@example.com"
+					class="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+			</div>
+		</div>
+		{#if pdStatus?.cert_expiry}
+			<p class="mt-3 text-xs text-gray-500">Certificate expires: {new Date(pdStatus.cert_expiry).toLocaleString()}</p>
+		{/if}
+		<div class="mt-4 flex flex-wrap items-center gap-2">
+			<button type="button" onclick={setupPanelDomain} disabled={pdBusy || !pdDomain.trim() || !pdEmail.trim()}
+				class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer">
+				{pdBusy ? 'Working…' : (pdStatus?.enabled ? 'Re-run setup' : 'Set up panel domain')}
+			</button>
+			{#if pdStatus?.enabled}
+				<button type="button" onclick={renewPanelDomain} disabled={pdBusy}
+					class="px-3 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-xs rounded-lg transition-colors cursor-pointer">Renew certificate</button>
+				<button type="button" onclick={disablePanelDomain} disabled={pdBusy}
+					class="px-3 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded-lg transition-colors cursor-pointer">{pdConfirmDisable ? 'Confirm remove' : 'Remove'}</button>
+			{/if}
+		</div>
+		{#if pdConfirmDisable}
+			<p class="mt-2 text-[11px] text-red-400">Klik Remove sekali lagi untuk menghapus vhost panel domain. Akses akan kembali ke IP:8443.</p>
+		{/if}
 	</div>
 
 

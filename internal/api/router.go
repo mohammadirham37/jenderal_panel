@@ -26,6 +26,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
+	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
@@ -80,6 +81,7 @@ type Dependencies struct {
 	Fail2banSvc     *fail2ban.Service
 	MalwareSvc      *malware.Service
 	MalwareRepo     *malware.Repository
+	PanelDomainSvc  *paneldomain.Service
 	TrafficGuardSvc *trafficguard.Service
 	SecuritySetup   *security.SetupService
 	SSHAccountSvc   *sshaccount.Service
@@ -133,6 +135,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
 	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
 	trafficHandler := trafficguard.NewHandler(deps.TrafficGuardSvc, deps.Tasks, deps.AuditSvc)
+	panelDomainHandler := paneldomain.NewHandler(deps.PanelDomainSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -219,6 +222,16 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/frankenphp", frankenphpHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
 				Post("/frankenphp/install", frankenphpHandler.Install)
+
+			// Panel domain (admin)
+			r.With(auth.RequirePermission(deps.RBAC, "settings.view")).
+				Get("/panel-domain", panelDomainHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "settings.update")).
+				Post("/panel-domain/setup", panelDomainHandler.Setup)
+			r.With(auth.RequirePermission(deps.RBAC, "settings.update")).
+				Post("/panel-domain/renew", panelDomainHandler.Renew)
+			r.With(auth.RequirePermission(deps.RBAC, "settings.update")).
+				Post("/panel-domain/disable", panelDomainHandler.Disable)
 
 			// Audit logs
 			r.With(auth.RequirePermission(deps.RBAC, "audit.view")).

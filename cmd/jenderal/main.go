@@ -33,6 +33,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
@@ -258,6 +259,8 @@ func cmdServe() {
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
+	panelDomainSvc := paneldomain.NewService(db, exec, auditSvc)
+	panelDomainSvc.SetTaskRunner(tasks)
 	healthChecker := website.NewHealthChecker(websiteSvc, func(message string) {
 		if err := notifSvc.SendAll(context.Background(), message); err != nil {
 			logger.Error("send health check notification failed", "error", err)
@@ -369,6 +372,7 @@ func cmdServe() {
 	deploySvc.Start(bgCtx)
 	backupScheduler.Start(bgCtx)
 	healthChecker.Start(bgCtx)
+	panelDomainSvc.Start(bgCtx)
 	alertChecker.Start(bgCtx)
 	fail2banSvc.StartReconciler(bgCtx)
 	malwareScheduler.Start(bgCtx)
