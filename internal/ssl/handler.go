@@ -8,6 +8,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // Handler handles SSL management HTTP requests.
@@ -220,5 +221,96 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logAction(r, "delete_ssl", id, "deleted SSL certificate")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// --- Website-scoped certificate actions ---
+
+// scopedCert resolves a certificate from the URL and verifies it belongs to
+// the website in the same path; mismatches return NotFound so other sites'
+// certificates are not discoverable.
+func (h *Handler) scopedCert(r *http.Request) (model.SSLCertificate, error) {
+	cert, err := h.svc.Get(r.Context(), chi.URLParam(r, "certId"))
+	if err != nil {
+		return model.SSLCertificate{}, err
+	}
+	if cert.WebsiteID != chi.URLParam(r, "id") {
+		return model.SSLCertificate{}, model.ErrNotFound
+	}
+	return cert, nil
+}
+
+// GetForWebsite handles GET /api/websites/{id}/ssl/{certId}.
+func (h *Handler) GetForWebsite(w http.ResponseWriter, r *http.Request) {
+	cert, err := h.scopedCert(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, cert)
+}
+
+// UpdateForWebsite handles PUT /api/websites/{id}/ssl/{certId}.
+func (h *Handler) UpdateForWebsite(w http.ResponseWriter, r *http.Request) {
+	cert, err := h.scopedCert(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	var req autoRenewRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.SetAutoRenew(r.Context(), cert.ID, req.AutoRenew); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "update_ssl", cert.ID, "updated SSL auto-renew for website "+cert.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// RenewForWebsite handles POST /api/websites/{id}/ssl/{certId}/renew.
+func (h *Handler) RenewForWebsite(w http.ResponseWriter, r *http.Request) {
+	cert, err := h.scopedCert(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Renew(r.Context(), cert.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "renew_ssl", cert.ID, "renewed SSL certificate for website "+cert.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// RevokeForWebsite handles POST /api/websites/{id}/ssl/{certId}/revoke.
+func (h *Handler) RevokeForWebsite(w http.ResponseWriter, r *http.Request) {
+	cert, err := h.scopedCert(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Revoke(r.Context(), cert.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "revoke_ssl", cert.ID, "revoked SSL certificate for website "+cert.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DeleteForWebsite handles DELETE /api/websites/{id}/ssl/{certId}.
+func (h *Handler) DeleteForWebsite(w http.ResponseWriter, r *http.Request) {
+	cert, err := h.scopedCert(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.Delete(r.Context(), cert.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "delete_ssl", cert.ID, "deleted SSL certificate for website "+cert.WebsiteID)
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }

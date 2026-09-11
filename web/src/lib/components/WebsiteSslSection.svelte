@@ -204,7 +204,7 @@
 		actionError = '';
 		actionInProgress = true;
 		try {
-			await api.post(`/api/v1/ssl/${cert.id}/renew`);
+			await api.post(`/api/v1/websites/${website.id}/ssl/${cert.id}/renew`);
 			actionMsg = `Renewal started for "${cert.domain}".`;
 			await loadCertificates(website.id);
 		} catch (err) {
@@ -221,7 +221,7 @@
 		actionError = '';
 		actionInProgress = true;
 		try {
-			await api.post(`/api/v1/ssl/${id}/revoke`);
+			await api.post(`/api/v1/websites/${website.id}/ssl/${id}/revoke`);
 			actionMsg = 'Certificate revoked.';
 			await loadCertificates(website.id);
 		} catch (err) {
@@ -238,7 +238,7 @@
 		actionError = '';
 		actionInProgress = true;
 		try {
-			await api.del(`/api/v1/ssl/${id}`);
+			await api.del(`/api/v1/websites/${website.id}/ssl/${id}`);
 			actionMsg = 'Certificate deleted.';
 			await loadCertificates(website.id);
 		} catch (err) {
@@ -249,10 +249,11 @@
 	}
 
 	async function toggleAutoRenew(cert: SSLCertificate) {
+		if (!website) return;
 		actionMsg = '';
 		actionError = '';
 		try {
-			await api.put(`/api/v1/ssl/${cert.id}`, { auto_renew: !cert.auto_renew });
+			await api.put(`/api/v1/websites/${website.id}/ssl/${cert.id}`, { auto_renew: !cert.auto_renew });
 			cert.auto_renew = !cert.auto_renew;
 		} catch (err) {
 			actionError = err instanceof Error ? err.message : 'Failed to update auto-renew';

@@ -382,12 +382,24 @@ func NewRouter(deps Dependencies) http.Handler {
 				Put("/php/{version}/config", phpHandler.SaveConfig)
 
 			// SSL
-			r.With(auth.RequirePermission(deps.RBAC, "ssl.view")).
+			// SSL (website-scoped; ownership handled by the scope middleware,
+			// so website-level permissions are enough here)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/ssl", sslHandler.ListForWebsite)
-			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/ssl/issue", sslHandler.IssueForWebsite)
-			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/ssl/custom", sslHandler.InstallCustomForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/ssl/{certId}", sslHandler.GetForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/ssl/{certId}", sslHandler.UpdateForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/ssl/{certId}/renew", sslHandler.RenewForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/ssl/{certId}/revoke", sslHandler.RevokeForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.delete")).
+				Delete("/websites/{id}/ssl/{certId}", sslHandler.DeleteForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
 				Post("/ssl/issue", sslHandler.Issue)
 			r.With(auth.RequirePermission(deps.RBAC, "ssl.manage")).
