@@ -4,6 +4,7 @@
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
+	import { language, translate } from '$lib/stores/language';
 
 	interface Website {
 		id: string;
@@ -23,7 +24,7 @@
 		websiteError = '';
 		website = null;
 		if (!requestedWebsiteID) {
-			websiteError = 'Website ID is required';
+			websiteError = translate($language, 'wsslp.error.website_id_required');
 			loadingWebsite = false;
 			return;
 		}
@@ -31,7 +32,7 @@
 		try {
 			website = await api.get<Website>(scopedAPI.website);
 		} catch (err) {
-			websiteError = err instanceof Error ? err.message : 'Failed to load website';
+			websiteError = err instanceof Error ? err.message : translate($language, 'wsslp.error.load_website');
 		} finally {
 			loadingWebsite = false;
 		}
@@ -44,16 +45,16 @@
 
 <div class="space-y-6">
 	{#if loadingWebsite}
-		<div class="text-gray-400">Loading website...</div>
+		<div class="text-gray-400">{translate($language, 'wsslp.loading_website')}</div>
 	{:else if websiteError}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
 	{:else if website}
 	<div class="flex items-center justify-between">
 		<div>
-			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
+			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">{translate($language, 'wsslp.back_to_websites')}</a>
 			<div class="flex flex-wrap items-center gap-3">
-				<h2 class="text-2xl font-bold text-white">SSL Certificates · {website.domain}</h2>
-				<span aria-label="Website status" class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{website.status}</span>
+				<h2 class="text-2xl font-bold text-white">{translate($language, 'wsslp.title').replace('{domain}', website.domain)}</h2>
+				<span aria-label={translate($language, 'wsslp.website_status')} class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{website.status}</span>
 			</div>
 		</div>
 	</div>

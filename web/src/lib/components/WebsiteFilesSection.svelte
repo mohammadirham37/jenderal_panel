@@ -3,6 +3,7 @@
 	import { api, getCSRFToken } from '$lib/api';
 	import { createFileManagerAPI } from '$lib/file-manager.js';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	interface FileEntry {
 		name: string;
@@ -169,7 +170,7 @@ import { toast } from '$lib/stores/toast';
 			currentPath = requested;
 			search = '';
 		} catch (err) {
-			filesError = err instanceof Error ? err.message : 'Failed to load files';
+			filesError = err instanceof Error ? err.message : translate($language, 'wsf.errLoad');
 		} finally {
 			filesLoading = false;
 		}
@@ -185,7 +186,7 @@ import { toast } from '$lib/stores/toast';
 			editFileContent = data.content || '';
 			editFileSaved = editFileContent;
 		} catch (err) {
-			fail(err, 'Failed to read file');
+			fail(err, translate($language, 'wsf.errRead'));
 			editingFile = null;
 		} finally {
 			editFileLoading = false;
@@ -198,17 +199,17 @@ import { toast } from '$lib/stores/toast';
 		try {
 			await fm.write(editingFile, editFileContent);
 			editFileSaved = editFileContent;
-			flash('File saved.');
+			flash(translate($language, 'wsf.saved'));
 			await loadFiles(currentPath);
 		} catch (err) {
-			fail(err, 'Failed to save file');
+			fail(err, translate($language, 'wsf.errSave'));
 		} finally {
 			editSaving = false;
 		}
 	}
 
 	function closeEditor(force = false) {
-		if (editDirty && !force && !confirm('Discard unsaved changes?')) return;
+		if (editDirty && !force && !confirm(translate($language, 'wsf.confirmDiscard'))) return;
 		editingFile = null;
 	}
 
@@ -218,10 +219,10 @@ import { toast } from '$lib/stores/toast';
 		pendingDelete = null;
 		try {
 			await fm.remove(joinPath(entry.name));
-			flash(`"${entry.name}" deleted.`);
+			flash(translate($language, 'wsf.deleted').replace('{name}', entry.name));
 			await loadFiles(currentPath);
 		} catch (err) {
-			fail(err, 'Failed to delete');
+			fail(err, translate($language, 'wsf.errDelete'));
 		}
 	}
 
@@ -232,12 +233,14 @@ import { toast } from '$lib/stores/toast';
 		try {
 			if (creating === 'dir') await fm.mkdir(target);
 			else await fm.write(target, '');
-			flash(`${creating === 'dir' ? 'Directory' : 'File'} "${name}" created.`);
+			flash(creating === 'dir'
+				? translate($language, 'wsf.dirCreated').replace('{name}', name)
+				: translate($language, 'wsf.fileCreated').replace('{name}', name));
 			creating = null;
 			newName = '';
 			await loadFiles(currentPath);
 		} catch (err) {
-			fail(err, `Failed to create ${creating}`);
+			fail(err, creating === 'dir' ? translate($language, 'wsf.errCreateDir') : translate($language, 'wsf.errCreateFile'));
 		}
 	}
 
@@ -246,11 +249,11 @@ import { toast } from '$lib/stores/toast';
 		if (!name || name === oldName) { renamingFile = null; return; }
 		try {
 			await fm.rename(joinPath(oldName), joinPath(name));
-			flash(`Renamed "${oldName}" to "${name}".`);
+			flash(translate($language, 'wsf.renamed').replace('{old}', oldName).replace('{name}', name));
 			renamingFile = null;
 			await loadFiles(currentPath);
 		} catch (err) {
-			fail(err, 'Failed to rename');
+			fail(err, translate($language, 'wsf.errRename'));
 		}
 	}
 
@@ -275,12 +278,14 @@ import { toast } from '$lib/stores/toast';
 			} catch (err) {
 				uploadQueue = [];
 				uploadTotal = 0;
-				fail(err, `Failed to upload "${file.name}"`);
+				fail(err, translate($language, 'wsf.errUploadFile').replace('{name}', file.name));
 				await loadFiles(currentPath);
 				return;
 			}
 		}
-		flash(uploadTotal === 1 ? `"${arr[0].name}" uploaded.` : `${arr.length} files uploaded.`);
+		flash(uploadTotal === 1
+			? translate($language, 'wsf.uploadedOne').replace('{name}', arr[0].name)
+			: translate($language, 'wsf.uploadedMany').replace('{count}', String(arr.length)));
 		uploadQueue = [];
 		uploadTotal = 0;
 		await loadFiles(currentPath);
@@ -338,28 +343,28 @@ import { toast } from '$lib/stores/toast';
 					<span class="rounded bg-blue-900/50 px-1.5 py-0.5 text-[10px] font-bold text-blue-300">{fileExt(editingFile).toUpperCase() || 'FILE'}</span>
 					<span class="truncate font-mono text-sm text-gray-200">{editingFile}</span>
 					{#if editDirty}
-						<span class="shrink-0 rounded-full bg-yellow-900/50 px-2 py-0.5 text-[10px] font-semibold text-yellow-300">● unsaved</span>
+						<span class="shrink-0 rounded-full bg-yellow-900/50 px-2 py-0.5 text-[10px] font-semibold text-yellow-300">{translate($language, 'wsf.unsavedBadge')}</span>
 					{/if}
 				</div>
 				<div class="flex items-center gap-2">
-					<span class="hidden text-[11px] text-gray-500 sm:inline">Ctrl+S to save</span>
+					<span class="hidden text-[11px] text-gray-500 sm:inline">{translate($language, 'wsf.ctrlSave')}</span>
 					<button
 						onclick={saveFileEdit}
 						disabled={editSaving || editFileLoading || !editDirty}
 						class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 					>
-						{editSaving ? 'Saving…' : 'Save'}
+						{editSaving ? translate($language, 'wsf.saving') : translate($language, 'wsf.save')}
 					</button>
 					<button
 						onclick={() => closeEditor()}
 						class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
 					>
-						Close
+						{translate($language, 'wsf.close')}
 					</button>
 				</div>
 			</div>
 			{#if editFileLoading}
-				<div class="p-8 text-center text-sm text-gray-400">Loading file…</div>
+				<div class="p-8 text-center text-sm text-gray-400">{translate($language, 'wsf.loadingFile')}</div>
 			{:else}
 				<textarea
 					bind:value={editFileContent}
@@ -368,7 +373,7 @@ import { toast } from '$lib/stores/toast';
 					class="h-[60vh] w-full resize-none bg-gray-950 p-4 font-mono text-[13px] leading-relaxed text-gray-200 focus:outline-none"
 				></textarea>
 				<div class="flex justify-between border-t border-gray-700 bg-gray-900/60 px-4 py-1.5 text-[11px] text-gray-500">
-					<span>{editFileContent.split('\n').length} lines · {editFileContent.length} chars</span>
+					<span>{translate($language, 'wsf.linesChars').replace('{lines}', String(editFileContent.split('\n').length)).replace('{chars}', String(editFileContent.length))}</span>
 					<span>{formatSize(new Blob([editFileContent]).size)}</span>
 				</div>
 			{/if}
@@ -378,7 +383,7 @@ import { toast } from '$lib/stores/toast';
 		<div class="rounded-xl border border-gray-700 bg-gray-800">
 			<div class="flex flex-wrap items-center gap-2 border-b border-gray-700 px-3 py-2.5">
 				<!-- Breadcrumb -->
-				<nav class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm" aria-label="File path">
+				<nav class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto text-sm" aria-label={translate($language, 'wsf.filePathAria')}>
 					{#each breadcrumbParts() as part, i}
 						{#if i > 0}<span class="text-gray-600">/</span>{/if}
 						<button
@@ -391,7 +396,7 @@ import { toast } from '$lib/stores/toast';
 				<button
 					onclick={() => loadFiles(currentPath)}
 					disabled={filesLoading}
-					title="Refresh"
+					title={translate($language, 'wsf.refresh')}
 					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 p-1.5 text-gray-300 transition hover:text-white disabled:opacity-50"
 				>
 					<svg class="h-4 w-4 {filesLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
@@ -409,8 +414,8 @@ import { toast } from '$lib/stores/toast';
 					<input
 						bind:value={search}
 						type="text"
-						placeholder="Filter in this folder…"
-						aria-label="Filter files"
+						placeholder={translate($language, 'wsf.filterPlaceholder')}
+						aria-label={translate($language, 'wsf.filterAria')}
 						class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 					/>
 				</div>
@@ -419,20 +424,20 @@ import { toast } from '$lib/stores/toast';
 					onclick={() => uploadInput?.click()}
 					disabled={uploadTotal > 0}
 					class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
-				>Upload</button>
+				>{translate($language, 'wsf.upload')}</button>
 				<button
 					onclick={() => startCreate('file')}
 					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
-				>+ File</button>
+				>{translate($language, 'wsf.addFile')}</button>
 				<button
 					onclick={() => startCreate('dir')}
 					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
-				>+ Folder</button>
+				>{translate($language, 'wsf.addFolder')}</button>
 			</div>
 
 			{#if uploadTotal > 0}
 				<div class="border-b border-gray-700 bg-blue-900/20 px-4 py-2 text-xs text-blue-300">
-					Uploading {uploadTotal - uploadQueue.length + (uploadQueue.length ? 1 : 0)}/{uploadTotal}
+					{translate($language, 'wsf.uploadingProgress').replace('{done}', String(uploadTotal - uploadQueue.length + (uploadQueue.length ? 1 : 0))).replace('{total}', String(uploadTotal))}
 					{#if uploadQueue.length > 0}— {uploadQueue[0]}{/if}
 				</div>
 			{/if}
@@ -442,7 +447,7 @@ import { toast } from '$lib/stores/toast';
 					onsubmit={(e) => { e.preventDefault(); createEntry(); }}
 					class="flex items-center gap-2 border-b border-gray-700 bg-gray-900/60 px-4 py-2.5"
 				>
-					<span class="text-xs text-gray-400">{creating === 'dir' ? 'Folder' : 'File'} name:</span>
+					<span class="text-xs text-gray-400">{creating === 'dir' ? translate($language, 'wsf.folderNameLabel') : translate($language, 'wsf.fileNameLabel')}</span>
 					<input
 						bind:this={newNameInput}
 						bind:value={newName}
@@ -450,8 +455,8 @@ import { toast } from '$lib/stores/toast';
 						placeholder={creating === 'dir' ? 'new-folder' : 'index.html'}
 						class="flex-1 rounded-lg border border-gray-600 bg-gray-900 px-3 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 focus:outline-none"
 					/>
-					<button type="submit" disabled={!newName.trim()} class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40">Create</button>
-					<button type="button" onclick={() => (creating = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600">Cancel</button>
+					<button type="submit" disabled={!newName.trim()} class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40">{translate($language, 'wsf.create')}</button>
+					<button type="button" onclick={() => (creating = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
 				</form>
 			{/if}
 
@@ -472,22 +477,22 @@ import { toast } from '$lib/stores/toast';
 				<!-- Sort header -->
 				<div class="flex items-center gap-3 border-b border-gray-700 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-gray-500">
 					<button onclick={() => toggleSort('name')} class="flex flex-1 cursor-pointer items-center gap-1 text-left hover:text-gray-300">
-						Name
+						{translate($language, 'wsf.name')}
 						{#if sortKey === 'name'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
 					</button>
 					<button onclick={() => toggleSort('size')} class="hidden w-20 cursor-pointer items-center gap-1 text-right hover:text-gray-300 sm:flex">
-						Size {#if sortKey === 'size'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
+						{translate($language, 'wsf.size')} {#if sortKey === 'size'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
 					</button>
 					<button onclick={() => toggleSort('time')} class="hidden w-32 cursor-pointer items-center gap-1 text-right hover:text-gray-300 md:flex">
-						Modified {#if sortKey === 'time'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
+						{translate($language, 'wsf.modified')} {#if sortKey === 'time'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
 					</button>
-					<span class="w-32 text-right">Actions</span>
+					<span class="w-32 text-right">{translate($language, 'wsf.actions')}</span>
 				</div>
 
 				<div
 					class="divide-y divide-gray-700/50"
 					role="region"
-					aria-label="Drop files to upload"
+					aria-label={translate($language, 'wsf.dropAria')}
 					ondragover={(e) => { e.preventDefault(); dragging = true; }}
 					ondragleave={() => (dragging = false)}
 					ondrop={handleDrop}
@@ -515,14 +520,14 @@ import { toast } from '$lib/stores/toast';
 										type="text"
 										class="w-full max-w-sm rounded-lg border border-blue-500 bg-gray-900 px-2.5 py-1 font-mono text-sm text-gray-200 focus:outline-none"
 									/>
-									<button type="submit" class="cursor-pointer rounded bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700">Save</button>
-									<button type="button" onclick={() => (renamingFile = null)} class="cursor-pointer rounded bg-gray-700 px-2.5 py-1 text-xs text-gray-200 hover:bg-gray-600">Cancel</button>
+									<button type="submit" class="cursor-pointer rounded bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700">{translate($language, 'wsf.save')}</button>
+									<button type="button" onclick={() => (renamingFile = null)} class="cursor-pointer rounded bg-gray-700 px-2.5 py-1 text-xs text-gray-200 hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
 								</form>
 							{:else}
 								<button
 									onclick={() => (entry.is_dir ? loadFiles(joinPath(entry.name)) : (isTextFile(entry.name) && entry.size < 2_000_000 ? openFileEdit(entry) : undefined))}
 									class="min-w-0 flex-1 cursor-pointer text-left"
-									title={entry.is_dir ? 'Open folder' : isTextFile(entry.name) ? 'Click to edit' : entry.name}
+									title={entry.is_dir ? translate($language, 'wsf.openFolder') : isTextFile(entry.name) ? translate($language, 'wsf.clickEdit') : entry.name}
 								>
 									<span class="block truncate text-sm font-mono {entry.is_dir ? 'text-blue-400 hover:text-blue-300' : 'text-gray-200'}">{entry.name}</span>
 									<span class="block text-[10px] text-gray-500">{entry.owner} · {entry.permissions}</span>
@@ -534,38 +539,38 @@ import { toast } from '$lib/stores/toast';
 
 							<div class="flex w-32 shrink-0 items-center justify-end gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
 								{#if !entry.is_dir && isTextFile(entry.name)}
-									<button onclick={() => openFileEdit(entry)} title="Edit" class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+									<button onclick={() => openFileEdit(entry)} title={translate($language, 'wsf.edit')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" /></svg>
 									</button>
 								{/if}
 								{#if !entry.is_dir}
-									<button onclick={() => downloadFile(entry)} title="Download" class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+									<button onclick={() => downloadFile(entry)} title={translate($language, 'wsf.download')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
 									</button>
 								{/if}
-								<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} title="Rename" class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+								<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} title={translate($language, 'wsf.rename')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
 								</button>
-								<button onclick={() => (pendingDelete = entry)} title="Delete" class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white">
+								<button onclick={() => (pendingDelete = entry)} title={translate($language, 'wsf.delete')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white">
 									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
 								</button>
 							</div>
 						</div>
 					{:else}
 						{#if search}
-							<div class="px-4 py-8 text-center text-sm text-gray-500">No files match "{search}".</div>
+							<div class="px-4 py-8 text-center text-sm text-gray-500">{translate($language, 'wsf.noMatch').replace('{query}', search)}</div>
 						{:else}
 							<div class="px-4 py-10 text-center">
-								<p class="text-sm text-gray-400">This folder is empty.</p>
-								<p class="mt-1 text-xs text-gray-500">Drop files here or use the Upload button.</p>
+								<p class="text-sm text-gray-400">{translate($language, 'wsf.emptyFolder')}</p>
+								<p class="mt-1 text-xs text-gray-500">{translate($language, 'wsf.emptyHint')}</p>
 							</div>
 						{/if}
 					{/each}
 				</div>
 
 				<div class="flex items-center justify-between border-t border-gray-700 bg-gray-900/40 px-4 py-2 text-[11px] text-gray-500">
-					<span>{fileCount.dirs} folders · {fileCount.files} files</span>
-					<span class="hidden sm:inline">Drag &amp; drop files anywhere in the list to upload</span>
+					<span>{translate($language, 'wsf.counts').replace('{dirs}', String(fileCount.dirs)).replace('{files}', String(fileCount.files))}</span>
+					<span class="hidden sm:inline">{translate($language, 'wsf.dragHint')}</span>
 				</div>
 			{/if}
 		</div>
@@ -574,7 +579,7 @@ import { toast } from '$lib/stores/toast';
 			<div class="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-blue-950/60 backdrop-blur-sm">
 				<div class="rounded-2xl border-2 border-dashed border-blue-400 bg-blue-900/40 px-10 py-8 text-center">
 					<svg class="mx-auto h-10 w-10 text-blue-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z" /></svg>
-					<p class="mt-3 text-sm font-semibold text-blue-100">Drop files to upload to <span class="font-mono">{currentPath}</span></p>
+					<p class="mt-3 text-sm font-semibold text-blue-100">{translate($language, 'wsf.dropTo')} <span class="font-mono">{currentPath}</span></p>
 				</div>
 			</div>
 		{/if}
@@ -582,18 +587,18 @@ import { toast } from '$lib/stores/toast';
 
 	<!-- Delete confirmation -->
 	{#if pendingDelete}
-		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Confirm delete">
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={translate($language, 'wsf.confirmDeleteAria')}>
 			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
-				<h4 class="text-base font-semibold text-white">Delete "{pendingDelete.name}"?</h4>
+				<h4 class="text-base font-semibold text-white">{translate($language, 'wsf.deleteTitle').replace('{name}', pendingDelete.name)}</h4>
 				<p class="mt-2 text-sm text-gray-400">
 					{pendingDelete.is_dir
-						? 'This folder and everything inside it will be permanently deleted.'
-						: 'This file will be permanently deleted.'}
-					This cannot be undone.
+						? translate($language, 'wsf.deleteFolderBody')
+						: translate($language, 'wsf.deleteFileBody')}
+					{translate($language, 'wsf.cannotUndo')}
 				</p>
 				<div class="mt-4 flex justify-end gap-2">
-					<button onclick={() => (pendingDelete = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">Cancel</button>
-					<button onclick={confirmDelete} class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700">Delete</button>
+					<button onclick={() => (pendingDelete = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
+					<button onclick={confirmDelete} class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700">{translate($language, 'wsf.delete')}</button>
 				</div>
 			</div>
 		</div>

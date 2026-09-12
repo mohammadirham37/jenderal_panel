@@ -10,7 +10,9 @@ import {
 
 test('uses Native PHP wording in the website template selector', () => {
 	const source = readFileSync(new URL('../../src/routes/websites/+page.svelte', import.meta.url), 'utf8');
-	assert.match(source, /<option value="php">Native PHP<\/option>/);
+	const dict = readFileSync(new URL('../../src/lib/i18n/domains/wl.ts', import.meta.url), 'utf8');
+	assert.match(source, /<option value="php">\{translate\(\$language, 'wl\.optPhp'\)\}<\/option>/);
+	assert.match(dict, /'wl\.optPhp': 'Native PHP'/);
 	assert.doesNotMatch(source, /PHP murni/);
 });
 

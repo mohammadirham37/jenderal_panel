@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { websiteSectionLinks } from '$lib/website-sections.js';
+	import { language, translate } from '$lib/stores/language';
 
 	let {
 		websiteId,
@@ -10,9 +11,18 @@
 	} = $props();
 
 	const links = $derived(websiteSectionLinks(websiteId));
+
+	// Display labels from website-sections.js mapped to dictionary keys.
+	const labelKeys: Record<string, string> = {
+		Overview: 'wsnav.overview',
+		Deployments: 'wsnav.deployments',
+		SSL: 'wsnav.ssl',
+		'Cron Jobs': 'wsnav.cron',
+		'Queue Workers': 'wsnav.queue'
+	};
 </script>
 
-<nav aria-label="Website sections" class="flex flex-wrap gap-2 border-b border-gray-700 pb-3">
+<nav aria-label={translate($language, 'wsnav.aria')} class="flex flex-wrap gap-2 border-b border-gray-700 pb-3">
 	{#each links as link}
 		<a
 			href={link.href}
@@ -21,7 +31,7 @@
 				? 'bg-blue-500/15 text-blue-100'
 				: 'text-gray-400 hover:bg-white/5 hover:text-gray-100'}"
 		>
-			{link.label}
+			{translate($language, labelKeys[link.label] ?? link.label)}
 		</a>
 	{/each}
 </nav>

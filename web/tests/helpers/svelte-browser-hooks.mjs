@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { compile, compileModule } from 'svelte/compiler';
 import ts from 'typescript';
@@ -10,8 +10,15 @@ export function resolve(specifier, context, nextResolve) {
 	if (specifier === '$app/state') return { url: appStateURL, shortCircuit: true };
 	if (specifier.startsWith('$lib/')) {
 		let path = specifier.slice(5);
-		if (!/\.(js|ts|svelte)$/.test(path)) path += '.ts';
+		if (!/\.(js|ts|svelte)$/.test(path)) {
+			const asFile = new URL(`../../src/lib/${path}.ts`, import.meta.url);
+			const asIndex = new URL(`../../src/lib/${path}/index.ts`, import.meta.url);
+			path = !existsSync(asFile) && existsSync(asIndex) ? `${path}/index.ts` : `${path}.ts`;
+		}
 		return { url: new URL(`../../src/lib/${path}`, import.meta.url).href, shortCircuit: true };
+	}
+	if (/^(\.\/|\.\.\/)/.test(specifier) && !/\.(js|ts|svelte|mjs|css|json)$/.test(specifier)) {
+		return nextResolve(`${specifier}.ts`, context);
 	}
 	return nextResolve(specifier, { ...context, conditions: [...context.conditions, 'browser'] });
 }

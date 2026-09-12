@@ -76,8 +76,8 @@ test('mode switches preserve the current unsaved draft', () => {
 test('nginx page exposes simple and manual modes through the shared helper', async () => {
 	const source = await readFile(new URL('../../src/routes/nginx/+page.svelte', import.meta.url), 'utf8');
 	assert.match(source, /from '\$lib\/nginx-config\.js'/);
-	assert.match(source, />Simple</);
-	assert.match(source, />Manual</);
+	assert.match(source, />\{translate\(\$language, 'ngx\.simple'\)\}</);
+	assert.match(source, />\{translate\(\$language, 'ngx\.manual'\)\}</);
 	for (const field of ['worker_processes', 'worker_connections', 'client_max_body_size', 'keepalive_timeout', 'server_tokens', 'gzip']) {
 		assert.match(source, new RegExp(field));
 	}

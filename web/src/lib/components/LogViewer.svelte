@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
+	import { language, translate } from '$lib/stores/language';
 
 	let { path, title }: { path: string; title: string } = $props();
 
@@ -20,7 +21,7 @@
 			content = data.content || '';
 			scrollToBottom();
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load logs';
+			error = err instanceof Error ? err.message : translate($language, 'common.failedToLoadLogs');
 		} finally {
 			loading = false;
 		}
@@ -55,7 +56,7 @@
 			scrollToBottom();
 		};
 		ws.onerror = () => {
-			error = 'WebSocket connection error';
+			error = translate($language, 'common.wsError');
 			stopStream();
 		};
 		ws.onclose = () => {
@@ -88,16 +89,16 @@
 				onchange={fetchLogs}
 				class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-gray-300 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
 			>
-				<option value={50}>50 lines</option>
-				<option value={100}>100 lines</option>
-				<option value={500}>500 lines</option>
+				<option value={50}>{translate($language, 'common.nLines').replace('{n}', '50')}</option>
+				<option value={100}>{translate($language, 'common.nLines').replace('{n}', '100')}</option>
+				<option value={500}>{translate($language, 'common.nLines').replace('{n}', '500')}</option>
 			</select>
 			<button
 				onclick={fetchLogs}
 				disabled={loading}
 				class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
 			>
-				{loading ? 'Loading...' : 'Refresh'}
+				{loading ? translate($language, 'common.loading') : translate($language, 'common.refresh')}
 			</button>
 			<button
 				onclick={toggleStream}
@@ -105,7 +106,7 @@
 					? 'bg-red-600 hover:bg-red-700 text-white'
 					: 'bg-green-600 hover:bg-green-700 text-white'}"
 			>
-				{streaming ? 'Stop Stream' : 'Stream'}
+				{streaming ? translate($language, 'common.stopStream') : translate($language, 'common.stream')}
 			</button>
 		</div>
 	</div>

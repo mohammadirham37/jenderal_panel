@@ -4,6 +4,7 @@
 	import type { ServerInfo } from '$lib/types';
 	import { hasPermission, permissions } from '$lib/stores/auth';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	let info = $state<ServerInfo | null>(null);
 	let loading = $state(true);
@@ -37,7 +38,7 @@ import { toast } from '$lib/stores/toast';
 			sshPortError = '';
 		} catch (err) {
 			sshPort = null;
-			sshPortError = err instanceof Error ? err.message : 'Failed to load SSH port';
+			sshPortError = err instanceof Error ? err.message : translate($language, 'srv.errorLoadSSHPort');
 		} finally {
 			sshPortLoading = false;
 		}
@@ -47,51 +48,52 @@ import { toast } from '$lib/stores/toast';
 		const port = Number(newSSHPort);
 		if (!port || sshPortBusy) return;
 		if (!confirm(
-			`Change the SSH port from ${sshPort?.current_port} to ${port}?\n\n` +
-			'The firewall opens the new port and sshd restarts. The old port keeps working until you finalize — confirm you can log in on the new port before finalizing.'
+			translate($language, 'srv.confirmChangePort')
+				.replace('{old}', String(sshPort?.current_port))
+				.replace('{new}', String(port))
 		)) return;
 		sshPortBusy = true;
 		sshPortMsg = '';
 		sshPortError = '';
 		try {
 			const result = await api.post<{ message: string }>('/api/v1/ssh/port/change', { port });
-			sshPortMsg = result.message || 'Port change started.';
+			sshPortMsg = result.message || translate($language, 'srv.msgPortChangeStarted');
 			newSSHPort = '';
 			await loadSSHPort();
 		} catch (err) {
-			sshPortError = err instanceof Error ? err.message : 'Failed to change SSH port';
+			sshPortError = err instanceof Error ? err.message : translate($language, 'srv.errorChangePort');
 		} finally {
 			sshPortBusy = false;
 		}
 	}
 
 	async function finalizeSSHPortChange() {
-		if (!confirm('Finalize the SSH port change? The OLD port stops accepting connections and its firewall rule is removed. Make sure you can log in on the new port first.')) return;
+		if (!confirm(translate($language, 'srv.confirmFinalize'))) return;
 		sshPortBusy = true;
 		sshPortMsg = '';
 		sshPortError = '';
 		try {
 			await api.post('/api/v1/ssh/port/change/finalize');
-			sshPortMsg = 'SSH port change finalized.';
+			sshPortMsg = translate($language, 'srv.msgFinalized');
 			await loadSSHPort();
 		} catch (err) {
-			sshPortError = err instanceof Error ? err.message : 'Failed to finalize SSH port change';
+			sshPortError = err instanceof Error ? err.message : translate($language, 'srv.errorFinalize');
 		} finally {
 			sshPortBusy = false;
 		}
 	}
 
 	async function cancelSSHPortChange() {
-		if (!confirm('Cancel the pending SSH port change and restore the old port?')) return;
+		if (!confirm(translate($language, 'srv.confirmCancelChange'))) return;
 		sshPortBusy = true;
 		sshPortMsg = '';
 		sshPortError = '';
 		try {
 			await api.del('/api/v1/ssh/port/change');
-			sshPortMsg = 'SSH port change cancelled.';
+			sshPortMsg = translate($language, 'srv.msgCancelled');
 			await loadSSHPort();
 		} catch (err) {
-			sshPortError = err instanceof Error ? err.message : 'Failed to cancel SSH port change';
+			sshPortError = err instanceof Error ? err.message : translate($language, 'srv.errorCancel');
 		} finally {
 			sshPortBusy = false;
 		}
@@ -144,21 +146,21 @@ import { toast } from '$lib/stores/toast';
 			newHostname = info.hostname;
 			newTimezone = info.timezone;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load server info';
+			error = err instanceof Error ? err.message : translate($language, 'srv.errorLoadInfo');
 		} finally {
 			loading = false;
 		}
 	}
 
 	async function handleReboot() {
-		if (!confirm('Are you sure you want to reboot the server? This will disconnect all sessions.')) {
+		if (!confirm(translate($language, 'srv.confirmReboot'))) {
 			return;
 		}
 		try {
 			await api.post('/api/v1/server/reboot');
-			toast.success('Reboot initiated. Server will restart shortly.');
+			toast.success(translate($language, 'srv.msgReboot'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to initiate reboot');
+			toast.error(err instanceof Error ? err.message : translate($language, 'srv.errorReboot'));
 		}
 	}
 
@@ -166,10 +168,10 @@ import { toast } from '$lib/stores/toast';
 		try {
 			await api.post('/api/v1/server/hostname', { hostname: newHostname });
 			editingHostname = false;
-			toast.success('Hostname updated successfully.');
+			toast.success(translate($language, 'srv.msgHostname'));
 			await loadInfo();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to update hostname');
+			toast.error(err instanceof Error ? err.message : translate($language, 'srv.errorHostname'));
 		}
 	}
 
@@ -178,10 +180,10 @@ import { toast } from '$lib/stores/toast';
 		try {
 			await api.post('/api/v1/server/timezone', { timezone: newTimezone });
 			editingTimezone = false;
-			toast.success('Timezone updated successfully.');
+			toast.success(translate($language, 'srv.msgTimezone'));
 			await loadInfo();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to update timezone');
+			toast.error(err instanceof Error ? err.message : translate($language, 'srv.errorTimezone'));
 		}
 	}
 
@@ -237,18 +239,18 @@ import { toast } from '$lib/stores/toast';
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<h2 class="text-2xl font-bold text-white">Server</h2>
+		<h2 class="text-2xl font-bold text-white">{translate($language, 'srv.title')}</h2>
 		<button
 			onclick={handleReboot}
 			class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
 		>
-			Reboot Server
+			{translate($language, 'srv.rebootServer')}
 		</button>
 	</div>
 
 
 	{#if loading}
-		<div class="text-gray-400">Loading server info...</div>
+		<div class="text-gray-400">{translate($language, 'srv.loading')}</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 	{:else if info}
@@ -256,7 +258,7 @@ import { toast } from '$lib/stores/toast';
 			<!-- Hostname -->
 			<div class="flex items-center justify-between p-4">
 				<div>
-					<div class="text-xs text-gray-400 uppercase tracking-wider">Hostname</div>
+					<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.hostname')}</div>
 					{#if editingHostname}
 						<div class="flex items-center gap-2 mt-1">
 							<input
@@ -268,7 +270,7 @@ import { toast } from '$lib/stores/toast';
 								onclick={saveHostname}
 								class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer"
 							>
-								Save
+								{translate($language, 'srv.save')}
 							</button>
 							<button
 								onclick={() => {
@@ -277,7 +279,7 @@ import { toast } from '$lib/stores/toast';
 								}}
 								class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer"
 							>
-								Cancel
+								{translate($language, 'srv.cancel')}
 							</button>
 						</div>
 					{:else}
@@ -287,41 +289,41 @@ import { toast } from '$lib/stores/toast';
 				{#if !editingHostname}
 					<button
 						onclick={() => (editingHostname = true)}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded cursor-pointer"
-					>
-						Edit
-					</button>
+							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded cursor-pointer"
+						>
+							{translate($language, 'srv.edit')}
+						</button>
 				{/if}
 			</div>
 
 			<!-- IP -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">IP Address</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.ipAddress')}</div>
 				<div class="text-white mt-1">{info.ip}</div>
 			</div>
 
 			<!-- OS -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">Operating System</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.os')}</div>
 				<div class="text-white mt-1">{info.os}</div>
 			</div>
 
 			<!-- Kernel -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">Kernel</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.kernel')}</div>
 				<div class="text-white mt-1">{info.kernel}</div>
 			</div>
 
 			<!-- CPU -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">CPU</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.cpu')}</div>
 				<div class="text-white mt-1">{info.cpu}</div>
 			</div>
 
 			<!-- CPU Model -->
 			{#if info.cpu_model}
 				<div class="p-4">
-					<div class="text-xs text-gray-400 uppercase tracking-wider">CPU Model</div>
+					<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.cpuModel')}</div>
 					<div class="text-white mt-1">{info.cpu_model}</div>
 				</div>
 			{/if}
@@ -329,33 +331,33 @@ import { toast } from '$lib/stores/toast';
 			<!-- CPU Cores -->
 			{#if info.cpu_cores}
 				<div class="p-4">
-					<div class="text-xs text-gray-400 uppercase tracking-wider">CPU Cores</div>
+					<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.cpuCores')}</div>
 					<div class="text-white mt-1">{info.cpu_cores}</div>
 				</div>
 			{/if}
 
 			<!-- RAM -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">Memory</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.memory')}</div>
 				<div class="text-white mt-1">{info.ram}</div>
 			</div>
 
 			<!-- Disk -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">Disk</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.disk')}</div>
 				<div class="text-white mt-1">{info.disk}</div>
 			</div>
 
 			<!-- Uptime -->
 			<div class="p-4">
-				<div class="text-xs text-gray-400 uppercase tracking-wider">Uptime</div>
+				<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.uptime')}</div>
 				<div class="text-white mt-1">{info.uptime}</div>
 			</div>
 
 			<!-- Timezone -->
 			<div class="flex items-center justify-between p-4">
 				<div>
-					<div class="text-xs text-gray-400 uppercase tracking-wider">Timezone</div>
+					<div class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'srv.timezone')}</div>
 					{#if editingTimezone}
 						<div class="flex items-start gap-2 mt-1" bind:this={tzEditRoot}>
 							<div class="relative">
@@ -379,8 +381,8 @@ import { toast } from '$lib/stores/toast';
 											tzHighlight = 0;
 										}}
 										onkeydown={handleTzKeydown}
-										placeholder="Search timezone..."
-										aria-label="Search timezone"
+										placeholder={translate($language, 'srv.searchTimezone')}
+										aria-label={translate($language, 'srv.searchTimezoneAria')}
 										autocomplete="off"
 										class="w-64 pl-8 pr-3 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
 									/>
@@ -389,7 +391,7 @@ import { toast } from '$lib/stores/toast';
 									<ul
 										class="absolute z-20 mt-1 max-h-60 w-72 overflow-y-auto rounded-lg border border-gray-600 bg-gray-800 py-1 shadow-lg"
 										role="listbox"
-										aria-label="Timezone options"
+										aria-label={translate($language, 'srv.timezoneOptions')}
 									>
 										{#each filteredTimezones as tz, i}
 											<li>
@@ -411,19 +413,19 @@ import { toast } from '$lib/stores/toast';
 												</button>
 											</li>
 										{:else}
-											<li class="px-3 py-2 text-sm text-gray-400">No matching timezone</li>
+											<li class="px-3 py-2 text-sm text-gray-400">{translate($language, 'srv.noMatchingTimezone')}</li>
 										{/each}
 									</ul>
 								{/if}
-								<p class="mt-1 text-xs text-gray-400">
-									Current: <span class="text-gray-300">{newTimezone}</span>
-								</p>
+									<p class="mt-1 text-xs text-gray-400">
+										{translate($language, 'srv.current')} <span class="text-gray-300">{newTimezone}</span>
+									</p>
 							</div>
 							<button
 								onclick={saveTimezone}
 								class="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded cursor-pointer"
 							>
-								Save
+								{translate($language, 'srv.save')}
 							</button>
 							<button
 								onclick={() => {
@@ -434,7 +436,7 @@ import { toast } from '$lib/stores/toast';
 								}}
 								class="px-2 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded cursor-pointer"
 							>
-								Cancel
+								{translate($language, 'srv.cancel')}
 							</button>
 						</div>
 					{:else}
@@ -444,10 +446,10 @@ import { toast } from '$lib/stores/toast';
 				{#if !editingTimezone}
 					<button
 						onclick={() => (editingTimezone = true)}
-						class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded cursor-pointer"
-					>
-						Edit
-					</button>
+							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded cursor-pointer"
+						>
+							{translate($language, 'srv.edit')}
+						</button>
 				{/if}
 			</div>
 		</div>
@@ -455,38 +457,37 @@ import { toast } from '$lib/stores/toast';
 		<!-- SSH Port Management -->
 		{#if canManageSSH}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-				<h3 class="text-lg font-semibold text-white mb-3">SSH Port</h3>
+				<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'srv.sshPort')}</h3>
 
 				{#if sshPortMsg}
 					<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
 						{sshPortMsg}
-						<button onclick={() => (sshPortMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+						<button onclick={() => (sshPortMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">{translate($language, 'srv.dismiss')}</button>
 					</div>
 				{/if}
 
 				{#if sshPortError}
 					<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
 						{sshPortError}
-						<button onclick={() => (sshPortError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+						<button onclick={() => (sshPortError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">{translate($language, 'srv.dismiss')}</button>
 					</div>
 				{/if}
 
 				{#if sshPortLoading}
-					<div class="text-gray-400 text-sm">Loading SSH port...</div>
+					<div class="text-gray-400 text-sm">{translate($language, 'srv.loadingSSHPort')}</div>
 				{:else if sshPort}
 					<div class="flex flex-wrap gap-4 text-sm text-gray-400 mb-4">
-						<span>Effective port (sshd -T): <span class="text-white font-mono">{sshPort.current_port}</span></span>
-						<span>Panel port: <span class="text-white font-mono">{sshPort.panel_port}</span></span>
+						<span>{translate($language, 'srv.effectivePort')} <span class="text-white font-mono">{sshPort.current_port}</span></span>
+						<span>{translate($language, 'srv.panelPort')} <span class="text-white font-mono">{sshPort.panel_port}</span></span>
 					</div>
 
 					{#if sshPort.pending_change}
 						<div class="p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-sm text-yellow-300">
 							<p class="font-medium mb-2">
-								Port change in progress: {sshPort.pending_change.old_port} → {sshPort.pending_change.new_port}.
-								Both ports currently accept connections.
+								{translate($language, 'srv.pendingTitle').replace('{old}', String(sshPort.pending_change.old_port)).replace('{new}', String(sshPort.pending_change.new_port))}
 							</p>
 							<p class="mb-3 text-yellow-200/80">
-								Verify you can open a new SSH session on port {sshPort.pending_change.new_port} before finalizing. Finalizing removes the old port and its firewall rule.
+								{translate($language, 'srv.pendingVerify').replace('{port}', String(sshPort.pending_change.new_port))}
 							</p>
 							{#if canChangeSSH}
 								<div class="flex gap-2">
@@ -495,14 +496,14 @@ import { toast } from '$lib/stores/toast';
 										disabled={sshPortBusy}
 										class="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 									>
-										Finalize
+										{translate($language, 'srv.finalize')}
 									</button>
 									<button
 										onclick={cancelSSHPortChange}
 										disabled={sshPortBusy}
 										class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-xs rounded transition-colors cursor-pointer"
 									>
-										Cancel change
+										{translate($language, 'srv.cancelChange')}
 									</button>
 								</div>
 							{/if}
@@ -510,7 +511,7 @@ import { toast } from '$lib/stores/toast';
 					{:else if canChangeSSH}
 						<div class="flex flex-wrap items-end gap-3">
 							<div>
-								<label for="new-ssh-port" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">New port (1–65535)</label>
+								<label for="new-ssh-port" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'srv.newPort')}</label>
 								<input
 									id="new-ssh-port"
 									type="number"
@@ -526,11 +527,11 @@ import { toast } from '$lib/stores/toast';
 								disabled={sshPortBusy || !newSSHPort}
 								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 							>
-								{sshPortBusy ? 'Working…' : 'Change Port'}
+								{sshPortBusy ? translate($language, 'srv.working') : translate($language, 'srv.changePort')}
 							</button>
 						</div>
 						<p class="mt-2 text-xs text-gray-500">
-							The change is two-phase: the new port opens first and sshd restarts with both ports accepting connections. Finalize only after confirming the new port works.
+							{translate($language, 'srv.twoPhaseHint')}
 						</p>
 					{/if}
 				{/if}
@@ -541,18 +542,18 @@ import { toast } from '$lib/stores/toast';
 		{#if info.disk_partitions && info.disk_partitions.length > 0}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
 				<div class="px-4 py-3 border-b border-gray-700">
-					<h3 class="text-sm font-semibold text-white">Disk Partitions</h3>
+					<h3 class="text-sm font-semibold text-white">{translate($language, 'srv.diskPartitions')}</h3>
 				</div>
 				<div class="overflow-x-auto">
 					<table class="w-full">
 						<thead>
 							<tr class="border-b border-gray-700 bg-gray-800/80">
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Device</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Mount</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Size</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Used</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Available</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Use%</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.device')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.mount')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.size')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.used')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.available')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.usePercent')}</th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-gray-700">
@@ -576,15 +577,15 @@ import { toast } from '$lib/stores/toast';
 		{#if info.network_interfaces && info.network_interfaces.length > 0}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
 				<div class="px-4 py-3 border-b border-gray-700">
-					<h3 class="text-sm font-semibold text-white">Network Interfaces</h3>
+					<h3 class="text-sm font-semibold text-white">{translate($language, 'srv.networkInterfaces')}</h3>
 				</div>
 				<div class="overflow-x-auto">
 					<table class="w-full">
 						<thead>
 							<tr class="border-b border-gray-700 bg-gray-800/80">
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Name</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">IP Address</th>
-								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">MAC Address</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.name')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.ipAddress')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'srv.macAddress')}</th>
 							</tr>
 						</thead>
 						<tbody class="divide-y divide-gray-700">

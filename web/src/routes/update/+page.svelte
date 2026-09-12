@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { cacheBustedURL, classifyUpdateRecovery, waitForUpdatedPanel } from '$lib/update-readiness.js';
+	import { language, translate } from '$lib/stores/language';
 
 	interface UpdateInfo {
 		current_version: string;
@@ -41,7 +42,7 @@
 				updating = false;
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to check for updates';
+			error = err instanceof Error ? err.message : translate($language, 'upd.failedToCheck');
 		} finally {
 			loading = false;
 		}
@@ -59,9 +60,9 @@
 			if (expectedUpdateVersion) localStorage.setItem(updateTargetStorageKey, expectedUpdateVersion);
 			const result = await api.post<{ task_id: string }>('/api/v1/update/perform');
 			currentTaskId = result.task_id;
-			updateMsg = 'Update started. See progress below. Panel will restart after completion.';
+			updateMsg = translate($language, 'upd.started');
 		} catch (err) {
-			updateError = err instanceof Error ? err.message : 'Failed to start update';
+			updateError = err instanceof Error ? err.message : translate($language, 'upd.failedToStart');
 			updating = false;
 			localStorage.removeItem(updateTargetStorageKey);
 		}
@@ -91,7 +92,7 @@
 			return;
 		}
 		reloadTimedOut = true;
-		updateMsg = 'Update recovery timed out. The panel may still be restarting.';
+		updateMsg = translate($language, 'upd.recoveryTimedOut');
 	}
 
 	async function onTaskComplete(task: { status?: string; error?: string }) {
@@ -100,15 +101,15 @@
 			reloadWatcherGeneration += 1;
 			reloadWatcherActive = false;
 			localStorage.removeItem(updateTargetStorageKey);
-			updateError = task.error || 'Panel update failed.';
+			updateError = task.error || translate($language, 'upd.failed');
 			return;
 		}
 
-		updateMsg = 'Update completed. Waiting for the updated panel to restart...';
+		updateMsg = translate($language, 'upd.completedWaiting');
 		const target = expectedUpdateVersion || localStorage.getItem(updateTargetStorageKey) || info?.latest_version || '';
 		if (!target) {
 			reloadTimedOut = true;
-			updateMsg = 'Update completed, but the target version could not be confirmed.';
+			updateMsg = translate($language, 'upd.completedUnconfirmed');
 			return;
 		}
 
@@ -138,13 +139,13 @@
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<h2 class="text-2xl font-bold text-white">Update Panel</h2>
+		<h2 class="text-2xl font-bold text-white">{translate($language, 'upd.title')}</h2>
 		<button
 			onclick={checkUpdate}
 			disabled={loading || updateInProgress}
 			class="px-4 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded-lg transition-colors cursor-pointer"
 		>
-			{loading ? 'Checking...' : 'Check Again'}
+			{loading ? translate($language, 'upd.checking') : translate($language, 'upd.checkAgain')}
 		</button>
 	</div>
 
@@ -157,7 +158,7 @@
 	{#if updateError}
 		<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
 			{updateError}
-			<button onclick={() => (updateError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+			<button onclick={() => (updateError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">{translate($language, 'upd.dismiss')}</button>
 		</div>
 	{/if}
 
@@ -166,26 +167,26 @@
 			onclick={reloadPanel}
 			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
 		>
-			Reload Panel
+			{translate($language, 'upd.reloadPanel')}
 		</button>
 	{/if}
 
 	{#if loading}
-		<div class="text-gray-400">Checking for updates...</div>
+		<div class="text-gray-400">{translate($language, 'upd.checkingForUpdates')}</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 	{:else if info}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 			<div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
 				<div>
-					<span class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Current Version</span>
+					<span class="block text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'upd.currentVersion')}</span>
 					<span class="text-lg font-mono text-white">{info.current_version}</span>
 				</div>
 				<div>
-					<span class="block text-xs text-gray-400 uppercase tracking-wider mb-1">Latest Commit</span>
+					<span class="block text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'upd.latestCommit')}</span>
 					<span class="text-lg font-mono text-white">{info.latest_version}</span>
 					{#if info.release_url}
-						<a href={info.release_url} target="_blank" rel="noopener" class="ml-2 text-xs text-blue-400 hover:text-blue-300">View on GitHub</a>
+						<a href={info.release_url} target="_blank" rel="noopener" class="ml-2 text-xs text-blue-400 hover:text-blue-300">{translate($language, 'upd.viewOnGitHub')}</a>
 					{/if}
 				</div>
 			</div>
@@ -194,12 +195,12 @@
 				{#if info.update_available}
 					<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-900/50 text-yellow-400">
 						<span class="w-1.5 h-1.5 rounded-full bg-yellow-400"></span>
-						Update Available
+						{translate($language, 'upd.updateAvailable')}
 					</span>
 				{:else}
 					<span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-900/50 text-green-400">
 						<span class="w-1.5 h-1.5 rounded-full bg-green-400"></span>
-						Up to Date
+						{translate($language, 'upd.upToDate')}
 					</span>
 				{/if}
 			</div>
@@ -207,23 +208,22 @@
 			{#if info.update_available && !updateInProgress}
 				{#if confirmUpdate}
 					<div class="p-4 bg-yellow-950 border border-yellow-700 rounded-lg">
-						<p class="text-yellow-300 text-sm font-medium mb-1">Confirm Update</p>
+						<p class="text-yellow-300 text-sm font-medium mb-1">{translate($language, 'upd.confirmUpdate')}</p>
 						<p class="text-yellow-400 text-xs mb-3">
-							This will pull latest source, rebuild, and restart the panel.
-							The process takes 2-5 minutes. Panel will be briefly unavailable during restart.
+							{translate($language, 'upd.confirmUpdateDesc')}
 						</p>
 						<div class="flex gap-2">
 							<button
 								onclick={performUpdate}
 								class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 							>
-								Confirm Update
+								{translate($language, 'upd.confirmUpdate')}
 							</button>
 							<button
 								onclick={() => (confirmUpdate = false)}
 								class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
 							>
-								Cancel
+								{translate($language, 'upd.cancel')}
 							</button>
 						</div>
 					</div>
@@ -232,7 +232,7 @@
 						onclick={() => (confirmUpdate = true)}
 						class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer"
 					>
-						Update Now
+						{translate($language, 'upd.updateNow')}
 					</button>
 				{/if}
 			{/if}

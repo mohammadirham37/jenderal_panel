@@ -12,9 +12,13 @@ async function loadComponent() {
 	const { js } = compile(source, { filename: 'WebsiteSectionNav.svelte', generate: 'server' });
 	const serverRuntime = import.meta.resolve('svelte/internal/server');
 	const helperUrl = new URL('../../src/lib/website-sections.js', import.meta.url).href;
+	const i18nStub = `data:text/javascript;base64,${Buffer.from(
+		"export const language = { subscribe(run) { run('en'); return () => {}; } };\nexport const translate = (lang, key) => key;"
+	).toString('base64')}`;
 	const code = js.code
 		.replace("'svelte/internal/server'", JSON.stringify(serverRuntime))
-		.replace("'$lib/website-sections.js'", JSON.stringify(helperUrl));
+		.replace("'$lib/website-sections.js'", JSON.stringify(helperUrl))
+		.replace("'$lib/stores/language'", JSON.stringify(i18nStub));
 	const url = `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 	return (await import(url)).default;
 }

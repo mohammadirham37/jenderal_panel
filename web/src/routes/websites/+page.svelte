@@ -4,6 +4,7 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	interface Website {
 		id: string;
@@ -54,11 +55,11 @@ import { toast } from '$lib/stores/toast';
 	let search = $state('');
 	let statusFilter = $state('all');
 	const statusFilters = [
-		{ value: 'all', label: 'All' },
-		{ value: 'active', label: 'Active' },
-		{ value: 'pending', label: 'In progress' },
-		{ value: 'failed', label: 'Failed' },
-		{ value: 'suspended', label: 'Suspended' }
+		{ value: 'all', label: 'wl.filterAll' },
+		{ value: 'active', label: 'wl.filterActive' },
+		{ value: 'pending', label: 'wl.filterInProgress' },
+		{ value: 'failed', label: 'wl.filterFailed' },
+		{ value: 'suspended', label: 'wl.filterSuspended' }
 	];
 
 	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
@@ -88,7 +89,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const result = await api.post<{task_id: string}>(`/api/v1/websites/${id}/repair-laravel`, {confirm: true});
 			repairTaskId = result.task_id;
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Laravel repair failed'); repairing = false; }
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'wl.toastRepairFailed')); repairing = false; }
 	}
 
 	// Create form
@@ -117,7 +118,7 @@ import { toast } from '$lib/stores/toast';
 			options = await api.get<WebsiteOptions>('/api/v1/websites/options');
 			selection = normalizeWebsiteSelection(options.defaults || {}, options) as WebsiteSelection;
 		} catch (err) {
-			optionsError = err instanceof Error ? err.message : 'Failed to load website options';
+			optionsError = err instanceof Error ? err.message : translate($language, 'wl.errorLoadOptions');
 		}
 	}
 
@@ -196,7 +197,7 @@ import { toast } from '$lib/stores/toast';
 				startPolling();
 			}
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load websites';
+			error = err instanceof Error ? err.message : translate($language, 'wl.errorLoad');
 		} finally {
 			loading = false;
 		}
@@ -207,13 +208,13 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const body: Record<string, string> = { domain: createDomain, ...selection };
 			await api.post('/api/v1/websites', body);
-			toast.success(`Website "${createDomain}" creation started.`);
+			toast.success(translate($language, 'wl.toastCreateStarted').replace('{domain}', createDomain));
 			showCreateForm = false;
 			createDomain = '';
 			if (options) selection = normalizeWebsiteSelection(options.defaults || {}, options) as WebsiteSelection;
 			await loadWebsites();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to create website');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorCreate'));
 		} finally {
 			creating = false;
 		}
@@ -222,20 +223,20 @@ import { toast } from '$lib/stores/toast';
 	async function suspendWebsite(id: string) {
 		try {
 			await api.post(`/api/v1/websites/${id}/suspend`);
-			toast.success('Website suspended.');
+			toast.success(translate($language, 'wl.toastSuspended'));
 			await loadWebsites();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to suspend website');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorSuspend'));
 		}
 	}
 
 	async function enableWebsite(id: string) {
 		try {
 			await api.post(`/api/v1/websites/${id}/enable`);
-			toast.success('Website enabled.');
+			toast.success(translate($language, 'wl.toastEnabled'));
 			await loadWebsites();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to enable website');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorEnable'));
 		}
 	}
 
@@ -243,20 +244,20 @@ import { toast } from '$lib/stores/toast';
 		deleteConfirmId = null;
 		try {
 			await api.del(`/api/v1/websites/${id}`);
-			toast.success('Website deleted.');
+			toast.success(translate($language, 'wl.toastDeleted'));
 			await loadWebsites();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to delete website');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorDelete'));
 		}
 	}
 
 	async function retryWebsite(id: string) {
 		try {
 			await api.post(`/api/v1/websites/${id}/retry`);
-			toast.success('Website retry initiated.');
+			toast.success(translate($language, 'wl.toastRetry'));
 			await loadWebsites();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to retry website');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorRetry'));
 		}
 	}
 
@@ -270,11 +271,15 @@ import { toast } from '$lib/stores/toast';
 <div class="space-y-5">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
-			<h2 class="text-2xl font-bold text-white">Websites</h2>
+			<h2 class="text-2xl font-bold text-white">{translate($language, 'wl.title')}</h2>
 			<p class="mt-0.5 text-sm text-gray-400">
 				{websites.length === 0
-					? 'Provision and manage hosted sites on this server.'
-					: `${counts.active} active · ${counts.pending} in progress · ${counts.failed} failed · ${counts.suspended} suspended`}
+					? translate($language, 'wl.subtitleEmpty')
+					: translate($language, 'wl.summaryCounts')
+							.replace('{active}', String(counts.active))
+							.replace('{pending}', String(counts.pending))
+							.replace('{failed}', String(counts.failed))
+							.replace('{suspended}', String(counts.suspended))}
 			</p>
 		</div>
 		<button
@@ -284,30 +289,30 @@ import { toast } from '$lib/stores/toast';
 			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
 				<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
 			</svg>
-			{showCreateForm ? 'Cancel' : 'Create Website'}
+			{showCreateForm ? translate($language, 'wl.cancel') : translate($language, 'wl.createWebsite')}
 		</button>
 	</div>
 
 
-	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') toast.success('Laravel repair completed.'); }} onMissing={() => { repairing = false; }} />
+	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') toast.success(translate($language, 'wl.toastRepairCompleted')); }} onMissing={() => { repairing = false; }} />
 
 	<!-- Create Form -->
 	{#if showCreateForm}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 			<div class="mb-4 flex items-center justify-between">
 				<div>
-					<h3 class="text-lg font-semibold text-white">New Website</h3>
-					<p class="text-xs text-gray-400">Pick a domain and a stack; provisioning runs in the background.</p>
+					<h3 class="text-lg font-semibold text-white">{translate($language, 'wl.newWebsite')}</h3>
+					<p class="text-xs text-gray-400">{translate($language, 'wl.newWebsiteHint')}</p>
 				</div>
 			</div>
 			{#if optionsError}
 				<div class="mb-4 rounded-lg border border-red-700 bg-red-900/30 px-3 py-2.5 text-sm text-red-300">
-					{optionsError} <button class="cursor-pointer underline" onclick={loadOptions}>Retry</button>
+					{optionsError} <button class="cursor-pointer underline" onclick={loadOptions}>{translate($language, 'wl.retry')}</button>
 				</div>
 			{/if}
 			<div class="space-y-5">
 				<div>
-					<label for="create-domain" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Domain</label>
+					<label for="create-domain" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wl.labelDomain')}</label>
 					<input
 						id="create-domain"
 						type="text"
@@ -320,51 +325,51 @@ import { toast } from '$lib/stores/toast';
 				</div>
 
 				<fieldset class="space-y-3">
-					<legend class="text-[11px] font-medium uppercase tracking-wider text-gray-400">Application</legend>
+					<legend class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wl.labelApplication')}</legend>
 					<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
 						<div>
-							<label for="create-app-type" class="mb-1 block text-xs text-gray-400">Template</label>
+							<label for="create-app-type" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelTemplate')}</label>
 							<select
 								id="create-app-type"
 								value={selection.template}
 								onchange={(event) => { selection.template = event.currentTarget.value; normalizeSelection(); }}
 								class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 							>
-								<option value="static">Static HTML</option>
-								<option value="php">Native PHP</option>
-								<option value="codeigniter3">CodeIgniter 3</option>
-								<option value="codeigniter4">CodeIgniter 4</option>
-								<option value="laravel">Laravel</option>
-								<option value="laravel-octane">Laravel Octane (FrankenPHP)</option>
-								<option value="go-build">Go (build on server)</option>
-								<option value="go-binary">Go (prebuilt binary)</option>
-								<option value="python">Python (FastAPI/Flask/Django)</option>
-								<option value="deno">Deno</option>
-								<option value="bun">Bun</option>
+								<option value="static">{translate($language, 'wl.optStatic')}</option>
+								<option value="php">{translate($language, 'wl.optPhp')}</option>
+								<option value="codeigniter3">{translate($language, 'wl.optCi3')}</option>
+								<option value="codeigniter4">{translate($language, 'wl.optCi4')}</option>
+								<option value="laravel">{translate($language, 'wl.optLaravel')}</option>
+								<option value="laravel-octane">{translate($language, 'wl.optLaravelOctane')}</option>
+								<option value="go-build">{translate($language, 'wl.optGoBuild')}</option>
+								<option value="go-binary">{translate($language, 'wl.optGoBinary')}</option>
+								<option value="python">{translate($language, 'wl.optPython')}</option>
+								<option value="deno">{translate($language, 'wl.optDeno')}</option>
+								<option value="bun">{translate($language, 'wl.optBun')}</option>
 							</select>
 						</div>
 						{#if selection.template !== 'static'}
 							<div>
-								<label for="create-php-version" class="mb-1 block text-xs text-gray-400">PHP Version</label>
+								<label for="create-php-version" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelPhpVersion')}</label>
 								<select
 									id="create-php-version"
 									bind:value={selection.php_version}
 									class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 								>
 									{#each installedPHP as runtime}
-										<option value={runtime.version}>{runtime.version}{runtime.running ? '' : ' (FPM stopped)'}</option>
+										<option value={runtime.version}>{runtime.version}{runtime.running ? '' : ' (' + translate($language, 'wl.fpmStopped') + ')'}</option>
 									{/each}
 								</select>
 								{#if installedPHP.length === 0}
-									<p class="mt-1 text-xs text-yellow-300">No PHP version is installed. <a class="underline" href="/php">Install PHP</a></p>
+									<p class="mt-1 text-xs text-yellow-300">{translate($language, 'wl.noPhpInstalled')} <a class="underline" href="/php">{translate($language, 'wl.installPhp')}</a></p>
 								{:else if installedPHP.find((runtime) => runtime.version === selection.php_version)?.running === false}
-									<p class="mt-1 text-xs text-yellow-300">PHP {selection.php_version} FPM is stopped; provisioning will try to restart it.</p>
+									<p class="mt-1 text-xs text-yellow-300">{translate($language, 'wl.fpmRestartNote').replace('{version}', selection.php_version)}</p>
 								{/if}
 							</div>
 						{/if}
 						{#if selection.template === 'laravel' || selection.template === 'laravel-octane'}
 							<div>
-								<label for="framework-version" class="mb-1 block text-xs text-gray-400">Laravel Version</label>
+								<label for="framework-version" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelLaravelVersion')}</label>
 								<select id="framework-version" value={selection.framework_version} onchange={(event) => { selection.framework_version = event.currentTarget.value; normalizeSelection(); }} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
 									{#if selection.template === 'laravel-octane'}
 										{#each laravelOctaneVersions as version}<option value={version}>Laravel {version}</option>{/each}
@@ -375,14 +380,14 @@ import { toast } from '$lib/stores/toast';
 							</div>
 							{#if selection.template === 'laravel'}
 							<div>
-								<label for="frontend-stack" class="mb-1 block text-xs text-gray-400">Frontend</label>
+								<label for="frontend-stack" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelFrontend')}</label>
 								<select id="frontend-stack" value={selection.frontend_stack} onchange={(event) => { selection.frontend_stack = event.currentTarget.value; normalizeSelection(); }} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
 									<option value="blade">Blade</option><option value="inertia">Inertia</option><option value="livewire">Livewire</option>
 								</select>
 							</div>
 							{#if selection.frontend_stack === 'inertia'}
 								<div>
-									<label for="inertia-adapter" class="mb-1 block text-xs text-gray-400">Inertia Adapter</label>
+									<label for="inertia-adapter" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelInertiaAdapter')}</label>
 									<select id="inertia-adapter" value={selection.inertia_adapter} onchange={(event) => { selection.inertia_adapter = event.currentTarget.value; normalizeSelection(); }} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
 										{#each options?.inertia_adapters || [] as adapter}<option value={adapter}>{adapter[0].toUpperCase() + adapter.slice(1)}</option>{/each}
 									</select>
@@ -390,9 +395,9 @@ import { toast } from '$lib/stores/toast';
 							{/if}
 							{#if selection.frontend_stack !== 'blade'}
 								<div>
-									<label for="project-variant" class="mb-1 block text-xs text-gray-400">Project</label>
+									<label for="project-variant" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelProject')}</label>
 									<select id="project-variant" value={selection.project_variant} onchange={(event) => { selection.project_variant = event.currentTarget.value; normalizeSelection(); }} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
-										<option value="empty">Empty project</option><option value="starter-kit">Starter kit</option>
+										<option value="empty">{translate($language, 'wl.optEmptyProject')}</option><option value="starter-kit">{translate($language, 'wl.optStarterKit')}</option>
 									</select>
 								</div>
 							{/if}
@@ -402,33 +407,33 @@ import { toast } from '$lib/stores/toast';
 				</fieldset>
 
 				<fieldset class="space-y-3">
-					<legend class="text-[11px] font-medium uppercase tracking-wider text-gray-400">Environment</legend>
+					<legend class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wl.labelEnvironment')}</legend>
 					<div class="grid gap-3 sm:grid-cols-2">
 						<div>
-							<label for="setup-mode" class="mb-1 block text-xs text-gray-400">Setup</label>
+							<label for="setup-mode" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelSetup')}</label>
 							<select id="setup-mode" value={selection.setup_mode} onchange={(event) => { selection.setup_mode = event.currentTarget.value; normalizeSelection(); }} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
-								<option value="config-only">Nginx config only</option><option value="auto-install">Install framework automatically</option>
+								<option value="config-only">{translate($language, 'wl.optConfigOnly')}</option><option value="auto-install">{translate($language, 'wl.optAutoInstall')}</option>
 							</select>
 						</div>
 						<div>
-							<label for="website-node-version" class="mb-1 block text-xs text-gray-400">Node.js (NVM per website)</label>
+							<label for="website-node-version" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelNode')}</label>
 							<select id="website-node-version" bind:value={selection.node_version} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40">
-								<option value="" disabled={selection.setup_mode === 'auto-install' && combination?.prerequisites?.includes('node')}>None</option>
-								{#each options?.node_versions || [] as version}<option value={version}>Node.js {version}{version === '24' ? ' (recommended)' : ''}</option>{/each}
+								<option value="" disabled={selection.setup_mode === 'auto-install' && combination?.prerequisites?.includes('node')}>{translate($language, 'wl.optNone')}</option>
+								{#each options?.node_versions || [] as version}<option value={version}>Node.js {version}{version === '24' ? ' (' + translate($language, 'wl.recommended') + ')' : ''}</option>{/each}
 							</select>
-							<p class="mt-1 text-xs text-gray-500">{selection.setup_mode === 'config-only' ? 'Selection is saved only. Install the runtime later on the Node.js page.' : 'Node.js is installed under this website user; global Node.js is not required.'}</p>
+							<p class="mt-1 text-xs text-gray-500">{selection.setup_mode === 'config-only' ? translate($language, 'wl.nodeHintConfigOnly') : translate($language, 'wl.nodeHintAutoInstall')}</p>
 						</div>
 					</div>
 				</fieldset>
 
 				{#if combination}
 					<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3 text-sm text-gray-300">
-						<p>Document root: <code class="text-gray-200">{combination.document_root || '-'}</code></p>
+						<p>{translate($language, 'wl.documentRoot')} <code class="text-gray-200">{combination.document_root || '-'}</code></p>
 						{#if !combination.enabled}<p class="mt-2 text-yellow-300">{combination.reason}</p>{/if}
 						{#if combination.missing_dependencies?.length}
 							<div class="mt-2 flex flex-wrap gap-3">
 								{#each combination.missing_dependencies as dependency}
-									<a class="text-blue-400 underline" href={dependency.manage_url}>Install {dependency.name}</a>
+									<a class="text-blue-400 underline" href={dependency.manage_url}>{translate($language, 'wl.installDependency').replace('{name}', dependency.name)}</a>
 								{/each}
 							</div>
 						{/if}
@@ -441,14 +446,14 @@ import { toast } from '$lib/stores/toast';
 						onclick={() => (showCreateForm = false)}
 						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
 					>
-						Cancel
+						{translate($language, 'wl.cancel')}
 					</button>
 					<button
 						onclick={createWebsite}
 						disabled={creating || !createDomain.trim() || !options || !combination?.enabled || (selection.template !== 'static' && !selection.php_version)}
 						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 					>
-						{creating ? 'Creating…' : 'Create Website'}
+						{creating ? translate($language, 'wl.creating') : translate($language, 'wl.createWebsite')}
 					</button>
 				</div>
 			</div>
@@ -465,8 +470,8 @@ import { toast } from '$lib/stores/toast';
 				<input
 					type="search"
 					bind:value={search}
-					placeholder="Search domain…"
-					aria-label="Search websites by domain"
+					placeholder={translate($language, 'wl.searchPlaceholder')}
+					aria-label={translate($language, 'wl.searchAria')}
 					class="w-full rounded-lg border border-gray-600 bg-gray-800 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 				/>
 			</div>
@@ -478,7 +483,7 @@ import { toast } from '$lib/stores/toast';
 							? 'bg-blue-600 text-white'
 							: 'border border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700'}"
 					>
-						{filter.label}
+						{translate($language, filter.label)}
 						{#if counts[filter.value as keyof typeof counts] !== undefined}
 							<span class="ml-1 opacity-70">{counts[filter.value as keyof typeof counts]}</span>
 						{/if}
@@ -510,24 +515,24 @@ import { toast } from '$lib/stores/toast';
 				</svg>
 			</span>
 			<div>
-				<p class="font-medium text-gray-200">No websites configured yet</p>
-				<p class="mt-1 text-sm text-gray-400">Create your first website to provision Nginx, PHP, and SSL automatically.</p>
+				<p class="font-medium text-gray-200">{translate($language, 'wl.emptyTitle')}</p>
+				<p class="mt-1 text-sm text-gray-400">{translate($language, 'wl.emptyDesc')}</p>
 			</div>
 			<button
 				onclick={() => (showCreateForm = true)}
 				class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
 			>
-				Create Website
+				{translate($language, 'wl.createWebsite')}
 			</button>
 		</div>
 	{:else if filteredWebsites.length === 0}
 		<div class="rounded-xl border border-dashed border-gray-600 bg-gray-800/50 px-6 py-10 text-center">
-			<p class="text-sm text-gray-400">No websites match your search or filter.</p>
+			<p class="text-sm text-gray-400">{translate($language, 'wl.emptyFiltered')}</p>
 			<button
 				onclick={() => { search = ''; statusFilter = 'all'; }}
 				class="mt-2 cursor-pointer text-sm text-blue-400 hover:underline"
 			>
-				Clear filters
+				{translate($language, 'wl.clearFilters')}
 			</button>
 		</div>
 	{:else}
@@ -546,7 +551,7 @@ import { toast } from '$lib/stores/toast';
 
 					<dl class="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
 						<div class="min-w-0">
-							<dt class="text-gray-500">Stack</dt>
+							<dt class="text-gray-500">{translate($language, 'wl.labelStack')}</dt>
 							<dd class="truncate font-medium capitalize text-gray-300">{frameworkLabel(website)}</dd>
 						</div>
 						<div>
@@ -554,7 +559,7 @@ import { toast } from '$lib/stores/toast';
 							<dd class="truncate font-medium text-gray-300">{website.app_type === 'static' ? '—' : website.php_version || '—'}</dd>
 						</div>
 						<div class="col-span-2">
-							<dt class="text-gray-500">Created</dt>
+							<dt class="text-gray-500">{translate($language, 'wl.labelCreated')}</dt>
 							<dd class="font-medium text-gray-300">{new Date(website.created_at).toLocaleDateString()}</dd>
 						</div>
 					</dl>
@@ -570,7 +575,7 @@ import { toast } from '$lib/stores/toast';
 					{/if}
 					{#if website.status === 'failed' && website.provision_log}
 						<details class="mt-2">
-							<summary class="cursor-pointer text-xs text-gray-400 hover:text-gray-300">Provisioning log</summary>
+							<summary class="cursor-pointer text-xs text-gray-400 hover:text-gray-300">{translate($language, 'wl.provisionLog')}</summary>
 							<pre class="mt-1 max-h-40 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-950 p-2 text-xs text-gray-300">{website.provision_log}</pre>
 						</details>
 					{/if}
@@ -578,18 +583,18 @@ import { toast } from '$lib/stores/toast';
 					<div class="mt-auto pt-4">
 						{#if repairConfirmId === website.id}
 							<div class="rounded-lg border border-yellow-600/50 bg-yellow-900/20 p-2.5">
-								<p class="text-xs text-yellow-300">Create missing SQLite files and run pending SQLite migrations? Existing data and app key are preserved.</p>
+								<p class="text-xs text-yellow-300">{translate($language, 'wl.repairConfirm')}</p>
 								<div class="mt-2 flex gap-2">
-									<button class="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50" onclick={() => repairLaravel(website.id)} disabled={repairBusy}>Confirm repair</button>
-									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => repairConfirmId = null}>Cancel</button>
+									<button class="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50" onclick={() => repairLaravel(website.id)} disabled={repairBusy}>{translate($language, 'wl.confirmRepair')}</button>
+									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => repairConfirmId = null}>{translate($language, 'wl.cancel')}</button>
 								</div>
 							</div>
 						{:else if deleteConfirmId === website.id}
 							<div class="rounded-lg border border-red-600/50 bg-red-900/20 p-2.5">
-								<p class="text-xs text-red-300">Delete this website, its SSL certificate, and all files? This cannot be undone.</p>
+								<p class="text-xs text-red-300">{translate($language, 'wl.deleteConfirm')}</p>
 								<div class="mt-2 flex gap-2">
-									<button class="cursor-pointer rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-red-700" onclick={() => deleteWebsite(website.id)}>Yes, delete</button>
-									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (deleteConfirmId = null)}>Cancel</button>
+									<button class="cursor-pointer rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-red-700" onclick={() => deleteWebsite(website.id)}>{translate($language, 'wl.yesDelete')}</button>
+									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (deleteConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
 								</div>
 							</div>
 						{:else}
@@ -598,28 +603,28 @@ import { toast } from '$lib/stores/toast';
 									href="/websites/{website.id}"
 									class="rounded-md bg-blue-600/90 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-blue-600"
 								>
-									Manage
+									{translate($language, 'wl.manage')}
 								</a>
 								{#if website.status === 'active' && website.framework === 'laravel' && website.setup_mode === 'auto-install'}
-									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>Repair</button>
+									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>{translate($language, 'wl.repair')}</button>
 								{/if}
 								{#if website.status === 'failed'}
 									<button onclick={() => retryWebsite(website.id)} class="cursor-pointer rounded-md border border-yellow-600/50 bg-yellow-600/20 px-2.5 py-1.5 text-xs font-medium text-yellow-300 transition hover:bg-yellow-600/30">
-										Retry
+										{translate($language, 'wl.retry')}
 									</button>
 								{/if}
 								{#if website.status === 'active'}
 									<button onclick={() => suspendWebsite(website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600">
-										Suspend
+										{translate($language, 'wl.suspend')}
 									</button>
 								{/if}
 								{#if website.status === 'suspended' || website.status === 'disabled'}
 									<button onclick={() => enableWebsite(website.id)} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 px-2.5 py-1.5 text-xs font-medium text-green-300 transition hover:bg-green-600/30">
-										Enable
+										{translate($language, 'wl.enable')}
 									</button>
 								{/if}
-								<button onclick={() => (deleteConfirmId = website.id)} class="ml-auto cursor-pointer rounded-md px-2.5 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10" title="Delete website">
-									Delete
+								<button onclick={() => (deleteConfirmId = website.id)} class="ml-auto cursor-pointer rounded-md px-2.5 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10" title={translate($language, 'wl.titleDelete')}>
+									{translate($language, 'wl.delete')}
 								</button>
 							</div>
 						{/if}

@@ -4,6 +4,7 @@
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	interface QueueWorker {
 		id: string;
@@ -77,7 +78,7 @@ import { toast } from '$lib/stores/toast';
 		websiteError = '';
 		resetForWebsiteChange();
 		if (!requestedWebsiteID) {
-			websiteError = 'Website ID is required';
+			websiteError = translate($language, 'wsqueuep.error.website_id_required');
 			loadingWebsite = false;
 			return;
 		}
@@ -90,7 +91,7 @@ import { toast } from '$lib/stores/toast';
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRequest(requestedWebsiteID, generation)) {
-				websiteError = err instanceof Error ? err.message : 'Failed to load website';
+				websiteError = err instanceof Error ? err.message : translate($language, 'wsqueuep.error.load_website');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) loadingWebsite = false;
@@ -114,7 +115,7 @@ import { toast } from '$lib/stores/toast';
 			workers = nextWorkers;
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				error = err instanceof Error ? err.message : 'Failed to load queue workers';
+				error = err instanceof Error ? err.message : translate($language, 'wsqueuep.error.load_workers');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) loading = false;
@@ -130,14 +131,14 @@ import { toast } from '$lib/stores/toast';
 		try {
 			await api.post(scopedAPI.queueWorkers, { command: createCommand.trim(), num_workers: createNumWorkers });
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			toast.success('Queue worker created successfully.');
+			toast.success(translate($language, 'wsqueuep.toast.created'));
 			showCreateForm = false;
 			createCommand = 'php artisan queue:work';
 			createNumWorkers = 1;
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				toast.error(err instanceof Error ? err.message : 'Failed to create queue worker');
+				toast.error(err instanceof Error ? err.message : translate($language, 'wsqueuep.error.create'));
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) creating = false;
@@ -170,11 +171,11 @@ import { toast } from '$lib/stores/toast';
 		try {
 			await api.del(`${scopedAPI.queueWorkers}/${id}`);
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			toast.success('Queue worker deleted.');
+			toast.success(translate($language, 'wsqueuep.toast.deleted'));
 			await loadWorkers(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				toast.error(err instanceof Error ? err.message : 'Failed to delete queue worker');
+				toast.error(err instanceof Error ? err.message : translate($language, 'wsqueuep.error.delete'));
 			}
 		}
 	}
@@ -186,19 +187,19 @@ import { toast } from '$lib/stores/toast';
 
 <div class="space-y-6">
 	{#if loadingWebsite}
-		<div class="text-gray-400">Loading website...</div>
+		<div class="text-gray-400">{translate($language, 'wsqueuep.loading_website')}</div>
 	{:else if websiteError}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
 	{:else if currentWebsite}
 		<div class="flex items-center justify-between">
 			<div>
-				<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
+				<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">{translate($language, 'wsqueuep.back_to_websites')}</a>
 				<div class="flex flex-wrap items-center gap-3">
-					<h2 class="text-2xl font-bold text-white">Queue Workers · {currentWebsite.domain}</h2>
-					<span aria-label="Website status" class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{currentWebsite.status}</span>
+					<h2 class="text-2xl font-bold text-white">{translate($language, 'wsqueuep.title').replace('{domain}', currentWebsite.domain)}</h2>
+					<span aria-label={translate($language, 'wsqueuep.website_status')} class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{currentWebsite.status}</span>
 				</div>
 			</div>
-			<button onclick={() => (showCreateForm = !showCreateForm)} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">{showCreateForm ? 'Cancel' : 'Add Worker'}</button>
+			<button onclick={() => (showCreateForm = !showCreateForm)} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">{showCreateForm ? translate($language, 'wsqueuep.cancel') : translate($language, 'wsqueuep.add_worker')}</button>
 		</div>
 
 		<WebsiteSectionNav websiteId={currentWebsite.id} currentPath={page.url.pathname} />
@@ -206,34 +207,34 @@ import { toast } from '$lib/stores/toast';
 
 		{#if showCreateForm}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-				<h3 class="text-lg font-semibold text-white mb-4">New Queue Worker</h3>
+				<h3 class="text-lg font-semibold text-white mb-4">{translate($language, 'wsqueuep.new_worker')}</h3>
 				<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 					<div>
-						<label for="qw-command" class="block text-sm text-gray-400 mb-1">Command</label>
+						<label for="qw-command" class="block text-sm text-gray-400 mb-1">{translate($language, 'wsqueuep.command')}</label>
 						<input id="qw-command" type="text" bind:value={createCommand} placeholder="php artisan queue:work" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
 					</div>
 					<div>
-						<label for="qw-workers" class="block text-sm text-gray-400 mb-1">Number of Workers</label>
+						<label for="qw-workers" class="block text-sm text-gray-400 mb-1">{translate($language, 'wsqueuep.num_workers')}</label>
 						<input id="qw-workers" type="number" bind:value={createNumWorkers} min="1" max="10" class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
 					</div>
 				</div>
-				<div class="mt-4"><button onclick={createWorker} disabled={creating || !createCommand.trim() || createNumWorkers < 1} class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer">{creating ? 'Creating...' : 'Create'}</button></div>
+				<div class="mt-4"><button onclick={createWorker} disabled={creating || !createCommand.trim() || createNumWorkers < 1} class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer">{creating ? translate($language, 'wsqueuep.creating') : translate($language, 'wsqueuep.create')}</button></div>
 			</div>
 		{/if}
 
 		{#if loading}
-			<div class="text-gray-400">Loading queue workers...</div>
+			<div class="text-gray-400">{translate($language, 'wsqueuep.loading_workers')}</div>
 		{:else if error}
 			<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 		{:else if workers.length === 0}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center"><p class="text-gray-400">No queue workers configured yet.</p></div>
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center"><p class="text-gray-400">{translate($language, 'wsqueuep.empty')}</p></div>
 		{:else}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden"><div class="overflow-x-auto"><table class="w-full">
 				<thead><tr class="border-b border-gray-700">
-					<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Command</th>
-					<th class="text-center px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Workers</th>
-					<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
-					<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
+					<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsqueuep.command')}</th>
+					<th class="text-center px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsqueuep.workers')}</th>
+					<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsqueuep.status')}</th>
+					<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsqueuep.actions')}</th>
 				</tr></thead>
 				<tbody class="divide-y divide-gray-700">
 					{#each workers as worker}
@@ -242,13 +243,13 @@ import { toast } from '$lib/stores/toast';
 							<td class="px-4 py-3 text-sm text-gray-300 text-center">{worker.num_workers}</td>
 							<td class="px-4 py-3"><span class="inline-block px-2 py-0.5 rounded text-xs font-medium {statusBadgeClass(worker.status)}">{worker.status}</span></td>
 							<td class="px-4 py-3 text-right"><div class="flex items-center justify-end gap-2">
-								{#if worker.status === 'stopped' || worker.status === 'failed'}<button onclick={() => runWorkerAction(worker.id, 'start', 'Worker started.', 'Failed to start worker')} class="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors cursor-pointer">Start</button>{/if}
-								{#if worker.status === 'running'}<button onclick={() => runWorkerAction(worker.id, 'stop', 'Worker stopped.', 'Failed to stop worker')} class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer">Stop</button>{/if}
-								{#if worker.status === 'running' || worker.status === 'failed'}<button onclick={() => runWorkerAction(worker.id, 'restart', 'Worker restarted.', 'Failed to restart worker')} class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">Restart</button>{/if}
+								{#if worker.status === 'stopped' || worker.status === 'failed'}<button onclick={() => runWorkerAction(worker.id, 'start', translate($language, 'wsqueuep.toast.started'), translate($language, 'wsqueuep.error.start'))} class="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wsqueuep.start')}</button>{/if}
+								{#if worker.status === 'running'}<button onclick={() => runWorkerAction(worker.id, 'stop', translate($language, 'wsqueuep.toast.stopped'), translate($language, 'wsqueuep.error.stop'))} class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wsqueuep.stop')}</button>{/if}
+								{#if worker.status === 'running' || worker.status === 'failed'}<button onclick={() => runWorkerAction(worker.id, 'restart', translate($language, 'wsqueuep.toast.restarted'), translate($language, 'wsqueuep.error.restart'))} class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wsqueuep.restart')}</button>{/if}
 								{#if deleteConfirmId === worker.id}
-									<span class="text-xs text-red-400">Delete?</span><button onclick={() => deleteWorker(worker.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Yes</button><button onclick={() => (deleteConfirmId = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">Cancel</button>
+									<span class="text-xs text-red-400">{translate($language, 'wsqueuep.delete_confirm')}</span><button onclick={() => deleteWorker(worker.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wsqueuep.yes')}</button><button onclick={() => (deleteConfirmId = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wsqueuep.cancel')}</button>
 								{:else}
-									<button onclick={() => (deleteConfirmId = worker.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">Delete</button>
+									<button onclick={() => (deleteConfirmId = worker.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wsqueuep.delete')}</button>
 								{/if}
 							</div></td>
 						</tr>

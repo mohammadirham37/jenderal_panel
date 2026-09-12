@@ -2,7 +2,8 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
-import { toast } from '$lib/stores/toast';
+	import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 	import {
 		buildWebsiteSSLInstallRequest,
 		certificateInstallError,
@@ -154,7 +155,7 @@ import { toast } from '$lib/stores/toast';
 			}
 		} catch (err) {
 			if (isCurrent(requestedWebsiteID, generation)) {
-				error = err instanceof Error ? err.message : 'Failed to load SSL certificates';
+				error = err instanceof Error ? err.message : translate($language, 'wss.errLoad');
 			}
 		} finally {
 			if (isCurrent(requestedWebsiteID, generation)) {
@@ -180,15 +181,15 @@ import { toast } from '$lib/stores/toast';
 			const installError = certificateInstallError(installed);
 			if (installError) throw new Error(installError);
 			toast.success(
-			installMode === 'custom'
-				? `Custom SSL certificate installed for "${issueDomain}".`
-				: `Let's Encrypt certificate installed for "${issueDomain}".`
+				installMode === 'custom'
+					? translate($language, 'wss.installedCustom').replace('{domain}', issueDomain)
+					: translate($language, 'wss.installedLE').replace('{domain}', issueDomain)
 			);
 			closeIssueForm();
 			await loadCertificates(requestedWebsiteID);
 		} catch (err) {
 			if (isCurrent(requestedWebsiteID, loadGeneration)) {
-				toast.error(err instanceof Error ? err.message : 'Failed to install certificate');
+				toast.error(err instanceof Error ? err.message : translate($language, 'wss.errInstall'));
 			}
 		} finally {
 			issuing = false;
@@ -206,10 +207,10 @@ import { toast } from '$lib/stores/toast';
 		actionInProgress = true;
 		try {
 			await api.post(`/api/v1/websites/${website.id}/ssl/${cert.id}/renew`);
-			toast.success(`Renewal started for "${cert.domain}".`);
+			toast.success(translate($language, 'wss.renewStarted').replace('{domain}', cert.domain));
 			await loadCertificates(website.id);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to renew certificate');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wss.errRenew'));
 		} finally {
 			actionInProgress = false;
 		}
@@ -221,10 +222,10 @@ import { toast } from '$lib/stores/toast';
 		actionInProgress = true;
 		try {
 			await api.post(`/api/v1/websites/${website.id}/ssl/${id}/revoke`);
-			toast.success('Certificate revoked.');
+			toast.success(translate($language, 'wss.revoked'));
 			await loadCertificates(website.id);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to revoke certificate');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wss.errRevoke'));
 		} finally {
 			actionInProgress = false;
 		}
@@ -236,10 +237,10 @@ import { toast } from '$lib/stores/toast';
 		actionInProgress = true;
 		try {
 			await api.del(`/api/v1/websites/${website.id}/ssl/${id}`);
-			toast.success('Certificate deleted.');
+			toast.success(translate($language, 'wss.deleted'));
 			await loadCertificates(website.id);
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to delete certificate');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wss.errDelete'));
 		} finally {
 			actionInProgress = false;
 		}
@@ -251,7 +252,7 @@ import { toast } from '$lib/stores/toast';
 			await api.put(`/api/v1/websites/${website.id}/ssl/${cert.id}`, { auto_renew: !cert.auto_renew });
 			cert.auto_renew = !cert.auto_renew;
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to update auto-renew');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wss.errAutoRenew'));
 		}
 	}
 
@@ -295,45 +296,45 @@ import { toast } from '$lib/stores/toast';
 
 
 	<div class="flex items-center justify-between">
-		<h3 class="text-lg font-semibold text-white">SSL Certificates</h3>
+		<h3 class="text-lg font-semibold text-white">{translate($language, 'wss.title')}</h3>
 		<button
 			onclick={() => showIssueForm ? closeIssueForm() : openIssueForm()}
 			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 		>
-			{showIssueForm ? 'Cancel' : 'Install Certificate'}
+			{showIssueForm ? translate($language, 'wss.cancel') : translate($language, 'wss.installCert')}
 		</button>
 	</div>
 
 	<!-- Install Certificate Form -->
 	{#if showIssueForm}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<h4 class="text-lg font-semibold text-white mb-4">Install SSL Certificate</h4>
-			<div class="mb-4" role="group" aria-label="Certificate source">
-				<div class="text-sm text-gray-400 mb-2">Certificate Type</div>
+			<h4 class="text-lg font-semibold text-white mb-4">{translate($language, 'wss.installTitle')}</h4>
+			<div class="mb-4" role="group" aria-label={translate($language, 'wss.sourceAria')}>
+				<div class="text-sm text-gray-400 mb-2">{translate($language, 'wss.certType')}</div>
 				<div class="inline-flex rounded-lg border border-gray-600 p-1 bg-gray-900">
 					<button
 						type="button"
 						onclick={() => (installMode = 'letsencrypt')}
 						aria-pressed={installMode === 'letsencrypt'}
 						class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {installMode === 'letsencrypt' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-					>Let's Encrypt (Free)</button>
+					>{translate($language, 'wss.leFree')}</button>
 					<button
 						type="button"
 						onclick={() => (installMode = 'custom')}
 						aria-pressed={installMode === 'custom'}
 						class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {installMode === 'custom' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-					>Custom SSL</button>
+					>{translate($language, 'wss.customSsl')}</button>
 				</div>
 			</div>
 			<div>
-				<label for="ssl-domain" class="block text-sm text-gray-400 mb-1">Domain</label>
+				<label for="ssl-domain" class="block text-sm text-gray-400 mb-1">{translate($language, 'wss.domain')}</label>
 				<select
 					id="ssl-domain"
 					bind:value={issueDomain}
 					class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 					disabled={!website}
 				>
-					<option value="">Select a domain...</option>
+					<option value="">{translate($language, 'wss.selectDomain')}</option>
 					{#each issueDomains as domain}
 						<option value={domain}>{domain}</option>
 					{/each}
@@ -344,14 +345,14 @@ import { toast } from '$lib/stores/toast';
 					<input id="ssl-wildcard" type="checkbox" bind:checked={wildcardIssue}
 						class="h-4 w-4 rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500" />
 					<label for="ssl-wildcard" class="text-xs text-gray-300">
-						Wildcard (issues <code class="font-mono">{issueDomain}</code> + <code class="font-mono">*.{issueDomain}</code> via DNS-01)
+						{translate($language, 'wss.wildcardIssues')} <code class="font-mono">{issueDomain}</code> + <code class="font-mono">*.{issueDomain}</code> {translate($language, 'wss.viaDns01')}
 					</label>
 				</div>
 				{#if wildcardIssue}
 					<div class="mt-2">
-						<label for="ssl-cf-token" class="block text-xs text-gray-400 mb-1">Cloudflare API token</label>
+						<label for="ssl-cf-token" class="block text-xs text-gray-400 mb-1">{translate($language, 'wss.cfToken')}</label>
 						<input id="ssl-cf-token" type="password" bind:value={wildcardToken}
-							placeholder="Cloudflare API token with DNS edit permission"
+							placeholder={translate($language, 'wss.cfTokenPlaceholder')}
 							class="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
 					</div>
 				{/if}
@@ -359,7 +360,7 @@ import { toast } from '$lib/stores/toast';
 			{#if installMode === 'custom'}
 				<div class="mt-4 grid grid-cols-1 gap-4">
 					<div>
-						<label for="ssl-certificate-pem" class="block text-sm text-gray-400 mb-1">Certificate / Full Chain PEM</label>
+						<label for="ssl-certificate-pem" class="block text-sm text-gray-400 mb-1">{translate($language, 'wss.certPem')}</label>
 						<textarea
 							id="ssl-certificate-pem"
 							bind:value={certificatePEM}
@@ -370,7 +371,7 @@ import { toast } from '$lib/stores/toast';
 						></textarea>
 					</div>
 					<div>
-						<label for="ssl-private-key-pem" class="block text-sm text-gray-400 mb-1">Private Key PEM</label>
+						<label for="ssl-private-key-pem" class="block text-sm text-gray-400 mb-1">{translate($language, 'wss.keyPem')}</label>
 						<textarea
 							id="ssl-private-key-pem"
 							bind:value={privateKeyPEM}
@@ -379,7 +380,7 @@ import { toast } from '$lib/stores/toast';
 							placeholder="-----BEGIN PRIVATE KEY-----"
 							class="w-full px-3 py-2 bg-gray-950 border border-gray-600 rounded text-gray-200 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
 						></textarea>
-						<p class="mt-1 text-xs text-gray-500">The private key is used only for installation and is never stored in the panel database.</p>
+						<p class="mt-1 text-xs text-gray-500">{translate($language, 'wss.keyHint')}</p>
 					</div>
 				</div>
 			{/if}
@@ -389,7 +390,7 @@ import { toast } from '$lib/stores/toast';
 					disabled={issuing || !formIsValid()}
 					class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 				>
-					{issuing ? 'Installing...' : 'Install & Enable HTTPS'}
+					{issuing ? translate($language, 'wss.installing') : translate($language, 'wss.installEnable')}
 				</button>
 			</div>
 		</div>
@@ -397,12 +398,12 @@ import { toast } from '$lib/stores/toast';
 
 	<!-- Certificates Table -->
 	{#if loading}
-		<div class="text-gray-400">Loading SSL certificates...</div>
+		<div class="text-gray-400">{translate($language, 'wss.loading')}</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 	{:else if certificates.length === 0}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-			<p class="text-gray-400">No SSL certificates configured yet.</p>
+			<p class="text-gray-400">{translate($language, 'wss.none')}</p>
 		</div>
 	{:else}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -410,12 +411,12 @@ import { toast } from '$lib/stores/toast';
 				<table class="w-full">
 					<thead>
 						<tr class="border-b border-gray-700">
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Domain</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Issuer</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Expires</th>
-							<th class="text-center px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Auto Renew</th>
-							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wss.domain')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wss.issuer')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wss.status')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wss.expires')}</th>
+							<th class="text-center px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wss.autoRenew')}</th>
+							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wss.actions')}</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-gray-700">
@@ -433,7 +434,7 @@ import { toast } from '$lib/stores/toast';
 									{#if cert.status === 'active'}
 										{@const days = daysUntilExpiry(cert.expires_at)}
 										{#if days < 30}
-											<span class="ml-1 text-xs">({days}d left)</span>
+											<span class="ml-1 text-xs">{translate($language, 'wss.daysLeft').replace('{days}', String(days))}</span>
 										{/if}
 									{/if}
 								</td>
@@ -444,14 +445,14 @@ import { toast } from '$lib/stores/toast';
 											class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none {cert.auto_renew ? 'bg-blue-600' : 'bg-gray-600'}"
 											role="switch"
 											aria-checked={cert.auto_renew}
-											aria-label="Toggle auto-renew for {cert.domain}"
+											aria-label={translate($language, 'wss.autoRenewAria').replace('{domain}', cert.domain)}
 										>
 											<span
 												class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 {cert.auto_renew ? 'translate-x-4' : 'translate-x-0'}"
 											></span>
 										</button>
 									{:else}
-										<span class="text-xs text-gray-500">Manual</span>
+										<span class="text-xs text-gray-500">{translate($language, 'wss.manual')}</span>
 									{/if}
 								</td>
 								<td class="px-4 py-3 text-right">
@@ -462,7 +463,7 @@ import { toast } from '$lib/stores/toast';
 												disabled={actionInProgress}
 												class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 											>
-												Renew
+												{translate($language, 'wss.renew')}
 											</button>
 										{/if}
 										{#if cert.issuer === 'custom'}
@@ -471,23 +472,23 @@ import { toast } from '$lib/stores/toast';
 												disabled={actionInProgress}
 												class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 											>
-												Replace
+												{translate($language, 'wss.replace')}
 											</button>
 										{/if}
 										{#if cert.issuer === 'letsencrypt' && cert.status === 'active'}
 											{#if revokeConfirmId === cert.id}
-												<span class="text-xs text-yellow-400">Confirm?</span>
+												<span class="text-xs text-yellow-400">{translate($language, 'wss.confirmQ')}</span>
 												<button
 													onclick={() => revokeCertificate(cert.id)}
 													class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer"
 												>
-													Yes, Revoke
+													{translate($language, 'wss.yesRevoke')}
 												</button>
 												<button
 													onclick={() => (revokeConfirmId = null)}
 													class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
 												>
-													Cancel
+													{translate($language, 'wss.cancel')}
 												</button>
 											{:else}
 												<button
@@ -495,32 +496,32 @@ import { toast } from '$lib/stores/toast';
 													disabled={actionInProgress}
 													class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 												>
-													Revoke
+													{translate($language, 'wss.revoke')}
 												</button>
 											{/if}
 										{/if}
 										{#if deleteConfirmId === cert.id}
-											<span class="text-xs text-red-400">Delete?</span>
-											<button
-												onclick={() => deleteCertificate(cert.id)}
-												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Yes, Delete
-											</button>
-											<button
-												onclick={() => (deleteConfirmId = null)}
-												class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Cancel
-											</button>
+											<span class="text-xs text-red-400">{translate($language, 'wss.deleteQ')}</span>
+												<button
+													onclick={() => deleteCertificate(cert.id)}
+													class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
+												>
+													{translate($language, 'wss.yesDelete')}
+												</button>
+												<button
+													onclick={() => (deleteConfirmId = null)}
+													class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
+												>
+													{translate($language, 'wss.cancel')}
+												</button>
 										{:else}
-											<button
-												onclick={() => (deleteConfirmId = cert.id)}
-												disabled={actionInProgress}
-												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
-											>
-												Delete
-											</button>
+												<button
+													onclick={() => (deleteConfirmId = cert.id)}
+													disabled={actionInProgress}
+													class="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
+												>
+													{translate($language, 'wss.delete')}
+												</button>
 										{/if}
 									</div>
 								</td>

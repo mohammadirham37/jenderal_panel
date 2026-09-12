@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	interface Props {
 		websiteID: string;
@@ -12,19 +13,19 @@ import { toast } from '$lib/stores/toast';
 
 	interface Field {
 		key: string;
-		label: string;
+		labelKey: string;
 		phpName: string;
 		placeholder: string;
 	}
 
 	// Managed settings and the php.ini names they map to.
 	const fields: Field[] = [
-		{ key: 'memory_limit', label: 'Memory limit', phpName: 'memory_limit', placeholder: '256M' },
-		{ key: 'upload_max_filesize', label: 'Upload max filesize', phpName: 'upload_max_filesize', placeholder: '64M' },
-		{ key: 'post_max_size', label: 'Post max size', phpName: 'post_max_size', placeholder: '64M' },
-		{ key: 'max_execution_time', label: 'Max execution time (s)', phpName: 'max_execution_time', placeholder: '60' },
-		{ key: 'max_input_time', label: 'Max input time (s)', phpName: 'max_input_time', placeholder: '60' },
-		{ key: 'max_input_vars', label: 'Max input vars', phpName: 'max_input_vars', placeholder: '3000' }
+		{ key: 'memory_limit', labelKey: 'wsphp.field.memory_limit', phpName: 'memory_limit', placeholder: '256M' },
+		{ key: 'upload_max_filesize', labelKey: 'wsphp.field.upload_max_filesize', phpName: 'upload_max_filesize', placeholder: '64M' },
+		{ key: 'post_max_size', labelKey: 'wsphp.field.post_max_size', phpName: 'post_max_size', placeholder: '64M' },
+		{ key: 'max_execution_time', labelKey: 'wsphp.field.max_execution_time', phpName: 'max_execution_time', placeholder: '60' },
+		{ key: 'max_input_time', labelKey: 'wsphp.field.max_input_time', phpName: 'max_input_time', placeholder: '60' },
+		{ key: 'max_input_vars', labelKey: 'wsphp.field.max_input_vars', phpName: 'max_input_vars', placeholder: '3000' }
 	];
 
 	let values = $state<Record<string, string>>({});
@@ -45,7 +46,7 @@ import { toast } from '$lib/stores/toast';
 			for (const f of fields) next[f.key] = data[f.key] ?? '';
 			values = next;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load PHP settings';
+			error = err instanceof Error ? err.message : translate($language, 'wsphp.error.load');
 		} finally {
 			loading = false;
 		}
@@ -56,9 +57,9 @@ import { toast } from '$lib/stores/toast';
 		saving = true;
 		try {
 			await api.put(`/api/v1/websites/${encodeURIComponent(websiteID)}/php-settings`, { ...values });
-			toast.success('PHP settings saved and applied.');
+			toast.success(translate($language, 'wsphp.toast.saved'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to save PHP settings');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wsphp.error.save'));
 		} finally {
 			saving = false;
 		}
@@ -76,15 +77,15 @@ import { toast } from '$lib/stores/toast';
 <div class="space-y-4">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<p class="text-xs text-gray-500">
-			Per-site PHP overrides written to <code class="text-gray-400">.user.ini</code> in the site root
-			and applied to the site's PHP-FPM pool immediately.
+			{translate($language, 'wsphp.subtitle.a')} <code class="text-gray-400">.user.ini</code>
+			{translate($language, 'wsphp.subtitle.b')}
 		</p>
 		<button
 			type="button"
 			onclick={loadSettings}
 			class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 		>
-			Refresh
+			{translate($language, 'wsphp.refresh')}
 		</button>
 	</div>
 
@@ -103,7 +104,7 @@ import { toast } from '$lib/stores/toast';
 				{#each fields as f (f.key)}
 					<div>
 						<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for={f.key}>
-							{f.label}
+							{translate($language, f.labelKey)}
 						</label>
 						<input
 							id={f.key}
@@ -122,7 +123,7 @@ import { toast } from '$lib/stores/toast';
 					disabled={saving}
 					class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 				>
-					{saving ? 'Saving…' : 'Save & apply'}
+					{saving ? translate($language, 'wsphp.saving') : translate($language, 'wsphp.saveApply')}
 				</button>
 				{#each fields as f (f.key)}
 					{#if (values[f.key] ?? '') !== ''}
@@ -130,15 +131,15 @@ import { toast } from '$lib/stores/toast';
 							type="button"
 							onclick={() => { values = { ...values, [f.key]: '' }; }}
 							class="cursor-pointer rounded-md border border-gray-600 px-2 py-1 text-[10px] text-gray-400 transition hover:bg-gray-700 hover:text-gray-200"
-							title="Clear {f.phpName} (revert to server default)"
+							title={translate($language, 'wsphp.tooltip.clear').replace('{name}', f.phpName)}
 						>
-							clear {f.phpName}
+							{translate($language, 'wsphp.clear')} {f.phpName}
 						</button>
 					{/if}
 				{/each}
 			</div>
 			<p class="mt-3 text-[11px] text-gray-500">
-				Empty value = server default. Sizes use K/M suffixes (e.g. 256M).
+				{translate($language, 'wsphp.hint')}
 			</p>
 		</div>
 	{/if}

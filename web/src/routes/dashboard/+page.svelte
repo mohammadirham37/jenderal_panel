@@ -194,7 +194,7 @@
 			metricsSnapshot =
 				snapshot && !String(snapshot.timestamp || '').startsWith('0001-01-01') ? snapshot : null;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load dashboard';
+			error = err instanceof Error ? err.message : translate($language, 'dash.error');
 			loading = false;
 			refreshing = false;
 			return;
@@ -644,7 +644,7 @@
 					<div class="flex items-center gap-4 text-[11px] text-gray-400">
 						<span class="flex items-center gap-1.5">
 							<span class="h-1.5 w-4 rounded-full bg-blue-400"></span>
-							CPU
+							{translate($language, 'dash.cpu')}
 						</span>
 						<span class="flex items-center gap-1.5">
 							<span class="h-1.5 w-4 rounded-full bg-purple-400"></span>
@@ -698,7 +698,7 @@
 							<div class="mt-1 flex justify-between text-[10px] text-gray-500">
 								<span>-5 min</span>
 								<span>-2.5 min</span>
-								<span>now</span>
+								<span>{translate($language, 'dash.chart.now')}</span>
 							</div>
 						</div>
 					</div>
@@ -738,7 +738,7 @@
 							<dd class="truncate font-medium text-gray-200">{serverInfo.ip}</dd>
 						</div>
 						<div class="flex items-center justify-between gap-3">
-							<dt class="shrink-0 text-xs text-gray-500">CPU</dt>
+							<dt class="shrink-0 text-xs text-gray-500">{translate($language, 'dash.cpu')}</dt>
 							<dd class="truncate text-right font-medium text-gray-200" title={serverInfo.cpu_model}>
 								{serverInfo.cpu_cores}
 								{translate($language, 'dash.cores')}
@@ -749,7 +749,7 @@
 							<dd class="truncate font-medium text-gray-200">{serverInfo.kernel}</dd>
 						</div>
 						<div class="flex items-center justify-between gap-3">
-							<dt class="shrink-0 text-xs text-gray-500">Timezone</dt>
+							<dt class="shrink-0 text-xs text-gray-500">{translate($language, 'dash.timezone')}</dt>
 							<dd class="truncate font-medium text-gray-200">{serverInfo.timezone}</dd>
 						</div>
 					</dl>

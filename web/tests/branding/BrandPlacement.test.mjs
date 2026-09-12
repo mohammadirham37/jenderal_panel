@@ -6,12 +6,15 @@ import assert from 'node:assert/strict';
 
 const login = readFileSync(new URL('../../src/routes/login/+page.svelte', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../../src/routes/+layout.svelte', import.meta.url), 'utf8');
+const accountDict = readFileSync(new URL('../../src/lib/i18n/domains/account.ts', import.meta.url), 'utf8');
+const dashDict = readFileSync(new URL('../../src/lib/i18n/domains/dash.ts', import.meta.url), 'utf8');
 
 test('places the logo on the login page', () => {
 	assert.match(login, /import LogoMark from '\$lib\/components\/LogoMark\.svelte'/);
 	assert.match(login, /<LogoMark size="lg"/);
 	assert.match(login, /class="login-shell/);
-	assert.match(login, /<h1[^>]*>Welcome back<\/h1>/);
+	assert.match(login, /<h1[^>]*>\{translate\(\$language, 'lg\.welcomeBack'\)\}<\/h1>/);
+	assert.match(accountDict, /'lg\.welcomeBack': 'Welcome back'/);
 	assert.match(login, /role="alert"/);
 });
 
@@ -26,8 +29,10 @@ test('keeps the logo visible in both sidebar states', () => {
 test('uses off-canvas navigation on mobile', () => {
 	assert.match(layout, /let mobileSidebarOpen = \$state\(false\)/);
 	assert.match(layout, /mobileSidebarOpen \? 'translate-x-0' : '-translate-x-full'/);
-	assert.match(layout, /aria-label="Open navigation"/);
-	assert.match(layout, /aria-label="Close navigation"/);
+	assert.match(layout, /aria-label=\{translate\(\$language, 'nav\.open_nav'\)\}/);
+	assert.match(layout, /aria-label=\{translate\(\$language, 'nav\.close_nav'\)\}/);
+	assert.match(dashDict, /'nav\.open_nav': 'Open navigation'/);
+	assert.match(dashDict, /'nav\.close_nav': 'Close navigation'/);
 });
 
 test('manages mobile drawer focus and background interaction', () => {

@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	interface WpStatus {
 		installed: boolean;
@@ -38,21 +39,25 @@ import { toast } from '$lib/stores/toast';
 		try {
 			status = await api.get<WpStatus>(`/api/v1/websites/${encodeURIComponent(websiteID)}/wp`);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load WordPress status';
+			error = err instanceof Error ? err.message : translate($language, 'wswp.error.load');
 		} finally {
 			loading = false;
 		}
 	}
 
-	async function runAction(action: string, label: string) {
+	async function runAction(action: string, labelKey: string) {
 		if (activeAction) return;
 		activeAction = action;
 		try {
 			const res = await api.post<{ task_id: string }>(actionAPI(action), {});
 			actionTaskId = res.task_id;
-			toast.success(label + ' started.');
+			toast.success(translate($language, 'wswp.toast.started').replace('{label}', translate($language, labelKey)));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : `Failed to run ${label}`);
+			toast.error(
+				err instanceof Error
+					? err.message
+					: translate($language, 'wswp.error.action').replace('{label}', translate($language, labelKey))
+			);
 		} finally {
 			activeAction = null;
 		}
@@ -80,14 +85,17 @@ import { toast } from '$lib/stores/toast';
 <div class="space-y-4">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<p class="text-xs text-gray-500">
-			{domain ? `WordPress toolkit for ${domain}` : 'WordPress toolkit'} · maintenance runs as background tasks
+			{domain
+				? translate($language, 'wswp.toolkitFor').replace('{domain}', domain)
+				: translate($language, 'wswp.toolkit')}
+			· {translate($language, 'wswp.subtitleNote')}
 		</p>
 		<button
 			type="button"
 			onclick={loadStatus}
 			class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 		>
-			Refresh
+			{translate($language, 'wswp.refresh')}
 		</button>
 	</div>
 
@@ -102,13 +110,13 @@ import { toast } from '$lib/stores/toast';
 		<div class="rounded-lg border border-red-700 bg-red-900/30 p-3.5 text-sm text-red-300">{error}</div>
 	{:else if !status}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-10 text-center">
-			<p class="text-sm text-gray-400">No WordPress installation detected.</p>
+			<p class="text-sm text-gray-400">{translate($language, 'wswp.empty.detected')}</p>
 		</div>
 	{:else if !status.installed}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-10 text-center">
-			<p class="text-sm text-gray-400">WordPress is not installed on this site yet.</p>
+			<p class="text-sm text-gray-400">{translate($language, 'wswp.empty.notInstalled')}</p>
 			<p class="mt-1 text-xs text-gray-500">
-				Create the site with the WordPress template (automatic install), or install WordPress manually.
+				{translate($language, 'wswp.empty.hint')}
 			</p>
 		</div>
 	{:else}
@@ -118,73 +126,73 @@ import { toast } from '$lib/stores/toast';
 					WordPress {status.core_version || '?'}
 				</span>
 				{#if status.core_update}
-					<span class="rounded-md bg-yellow-900/50 px-2 py-0.5 text-[11px] font-medium text-yellow-300">core update available</span>
+					<span class="rounded-md bg-yellow-900/50 px-2 py-0.5 text-[11px] font-medium text-yellow-300">{translate($language, 'wswp.badge.coreUpdate')}</span>
 				{/if}
 				{#if status.plugin_update}
-					<span class="rounded-md bg-yellow-900/50 px-2 py-0.5 text-[11px] font-medium text-yellow-300">plugin updates</span>
+					<span class="rounded-md bg-yellow-900/50 px-2 py-0.5 text-[11px] font-medium text-yellow-300">{translate($language, 'wswp.badge.pluginUpdates')}</span>
 				{/if}
 				{#if status.theme_update}
-					<span class="rounded-md bg-yellow-900/50 px-2 py-0.5 text-[11px] font-medium text-yellow-300">theme updates</span>
+					<span class="rounded-md bg-yellow-900/50 px-2 py-0.5 text-[11px] font-medium text-yellow-300">{translate($language, 'wswp.badge.themeUpdates')}</span>
 				{/if}
 				{#if !hasUpdateBadge()}
-					<span class="rounded-md bg-green-900/50 px-2 py-0.5 text-[11px] font-medium text-green-400">everything up to date</span>
+					<span class="rounded-md bg-green-900/50 px-2 py-0.5 text-[11px] font-medium text-green-400">{translate($language, 'wswp.badge.upToDate')}</span>
 				{/if}
 			</div>
 		</div>
 
 		{#if actionTaskId}
 			<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
-				<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Task progress</p>
+				<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wswp.taskProgress')}</p>
 				<TaskProgress bind:taskId={actionTaskId} storageKey={'wp-task-' + websiteID} onComplete={loadStatus} />
 			</div>
 		{/if}
 
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-			<h3 class="mb-3 text-sm font-semibold text-white">Maintenance</h3>
+			<h3 class="mb-3 text-sm font-semibold text-white">{translate($language, 'wswp.maintenance')}</h3>
 			<div class="flex flex-wrap gap-2">
 				<button
 					type="button"
-					onclick={() => runAction('core-update', 'Core update')}
+					onclick={() => runAction('core-update', 'wswp.action.coreUpdate')}
 					disabled={activeAction !== null}
 					class="cursor-pointer rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 				>
-					Update core
+					{translate($language, 'wswp.btn.updateCore')}
 				</button>
 				<button
 					type="button"
-					onclick={() => runAction('plugin-update', 'Plugin update')}
+					onclick={() => runAction('plugin-update', 'wswp.action.pluginUpdate')}
 					disabled={activeAction !== null}
 					class="cursor-pointer rounded-lg bg-gray-700 px-3 py-2 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 				>
-					Update all plugins
+					{translate($language, 'wswp.btn.updatePlugins')}
 				</button>
 				<button
 					type="button"
-					onclick={() => runAction('theme-update', 'Theme update')}
+					onclick={() => runAction('theme-update', 'wswp.action.themeUpdate')}
 					disabled={activeAction !== null}
 					class="cursor-pointer rounded-lg bg-gray-700 px-3 py-2 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 				>
-					Update all themes
+					{translate($language, 'wswp.btn.updateThemes')}
 				</button>
 				<button
 					type="button"
-					onclick={() => runAction('core-update-db', 'Database update')}
+					onclick={() => runAction('core-update-db', 'wswp.action.dbUpdate')}
 					disabled={activeAction !== null}
 					class="cursor-pointer rounded-lg bg-gray-700 px-3 py-2 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 				>
-					Update database
+					{translate($language, 'wswp.btn.updateDb')}
 				</button>
 				<button
 					type="button"
-					onclick={() => runAction('cache-flush', 'Cache flush')}
+					onclick={() => runAction('cache-flush', 'wswp.action.cacheFlush')}
 					disabled={activeAction !== null}
 					class="cursor-pointer rounded-lg bg-gray-700 px-3 py-2 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 				>
-					Flush cache
+					{translate($language, 'wswp.btn.flushCache')}
 				</button>
 			</div>
 			<p class="mt-3 text-[11px] text-gray-500">
-				Actions run wp-cli as this site's system user. Major core upgrades are safer after a backup.
+				{translate($language, 'wswp.hint')}
 			</p>
 		</div>
 	{/if}

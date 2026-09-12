@@ -14,6 +14,7 @@
 	import WebsiteAppSection from '$lib/components/WebsiteAppSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
+	import { language, translate } from '$lib/stores/language';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
 import { toast } from '$lib/stores/toast';
 
@@ -80,6 +81,23 @@ import { toast } from '$lib/stores/toast';
 
 	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'App', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
+	// Display labels are translated; the values in `allTabs` stay English (used in URLs and logic).
+	const tabKeys: Record<Tab, string> = {
+		Overview: 'wd.tab.overview',
+		Deployment: 'wd.tab.deployment',
+		SSL: 'wd.tab.ssl',
+		Commands: 'wd.tab.commands',
+		'PHP Settings': 'wd.tab.php_settings',
+		App: 'wd.tab.app',
+		'WP Toolkit': 'wd.tab.wp_toolkit',
+		'Cron Jobs': 'wd.tab.cron',
+		Files: 'wd.tab.files',
+		Terminal: 'wd.tab.terminal',
+		Logs: 'wd.tab.logs',
+		Config: 'wd.tab.config',
+		Domains: 'wd.tab.domains',
+		Queue: 'wd.tab.queue'
+	};
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
 		return (allTabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'Overview';
@@ -173,9 +191,9 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/enable`);
 			octaneTaskId = result.task_id || '';
-			toast.success('Octane installation started — this installs laravel/octane, then starts the server.');
+			toast.success(translate($language, 'wd.octane.install_started'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to enable Octane');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.octane.enable_failed'));
 		} finally {
 			octaneBusy = false;
 		}
@@ -183,16 +201,16 @@ import { toast } from '$lib/stores/toast';
 
 	async function disableOctane() {
 		if (!website || octaneBusy) return;
-		if (!confirm('Disable Octane and switch this website back to PHP-FPM serving? The allocated port is kept.')) return;
+		if (!confirm(translate($language, 'wd.octane.disable_confirm'))) return;
 		octaneBusy = true;
 		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/octane/disable`);
-			toast.success('Octane disabled; the PHP-FPM vhost is active again.');
+			toast.success(translate($language, 'wd.octane.disabled_success'));
 			await loadOctaneStatus();
 			await loadWebsite();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to disable Octane');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.octane.disable_failed'));
 		} finally {
 			octaneBusy = false;
 		}
@@ -201,12 +219,13 @@ import { toast } from '$lib/stores/toast';
 	async function octaneAction(action: 'start' | 'stop' | 'restart') {
 		if (!website || octaneBusy) return;
 		octaneBusy = true;
-		
+
 		try {
 			await api.post(`/api/v1/websites/${website.id}/octane/${action}`);
 			await loadOctaneStatus();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : `Failed to ${action} Octane`);
+			const failedKeys = { start: 'wd.octane.start_failed', stop: 'wd.octane.stop_failed', restart: 'wd.octane.restart_failed' } as const;
+			toast.error(err instanceof Error ? err.message : translate($language, failedKeys[action]));
 		} finally {
 			octaneBusy = false;
 		}
@@ -220,7 +239,7 @@ import { toast } from '$lib/stores/toast';
 			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/reload`);
 			octaneTaskId = result.task_id || '';
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to reload Octane');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.octane.reload_failed'));
 		} finally {
 			octaneBusy = false;
 		}
@@ -232,10 +251,10 @@ import { toast } from '$lib/stores/toast';
 		
 		try {
 			await api.put(`/api/v1/websites/${website.id}/octane/workers`, { workers: Number(octaneWorkersChoice) });
-			toast.success('Worker count saved; the server restarts to apply it.');
+			toast.success(translate($language, 'wd.octane.workers_saved'));
 			await loadOctaneStatus();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to save worker count');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.octane.workers_save_failed'));
 		} finally {
 			octaneBusy = false;
 		}
@@ -250,7 +269,7 @@ import { toast } from '$lib/stores/toast';
 			const result = await api.post<{ task_id: string }>('/api/v1/frankenphp/install');
 			octaneTaskId = result.task_id || '';
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to start FrankenPHP install');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.frankenphp.install_start_failed'));
 		}
 	}
 
@@ -334,10 +353,10 @@ import { toast } from '$lib/stores/toast';
 				user_id: transferTarget
 			});
 			website = { ...website, created_by: transferTarget, owner_email: updated.owner_email };
-			transferMsg = 'Ownership transferred.';
+			transferMsg = translate($language, 'wd.ownership.transferred');
 			transferTarget = '';
 		} catch (err) {
-			transferError = err instanceof Error ? err.message : 'Transfer failed';
+			transferError = err instanceof Error ? err.message : translate($language, 'wd.ownership.transfer_failed');
 		} finally {
 			transferring = false;
 		}
@@ -380,9 +399,9 @@ import { toast } from '$lib/stores/toast';
 				expected_status: healthExpected,
 				enabled: healthEnabled
 			});
-			toast.success('Health check saved.');
+			toast.success(translate($language, 'wd.health.saved'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to save health check');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.health.save_failed'));
 		} finally {
 			healthBusy = false;
 		}
@@ -394,7 +413,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			health = await api.post<HealthCheck>(`/api/v1/websites/${website.id}/health/check`, {});
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Health check failed');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.health.check_failed'));
 		} finally {
 			healthBusy = false;
 		}
@@ -432,20 +451,21 @@ import { toast } from '$lib/stores/toast';
 	let profileChoice = $state('');
 	let profileSaving = $state(false);
 
+	// Labels/descriptions are i18n keys — translate them at render time.
 	const profileOptions: { value: string; label: string; description: string }[] = [
-		{ value: '', label: 'Auto (from app type)', description: 'Derives the template from the detected framework — recommended default.' },
-		{ value: 'php', label: 'Generic PHP', description: 'Standard PHP front-controller: try_files to index.php, all .php files executed.' },
-		{ value: 'laravel', label: 'Laravel', description: 'Hardened: only /index.php is executable, security headers, dotfiles blocked except .well-known.' },
-		{ value: 'codeigniter3', label: 'CodeIgniter 3', description: 'CI3 routing with 404 fallback to index.php.' },
-		{ value: 'codeigniter4', label: 'CodeIgniter 4', description: 'CI4 front-controller routing via index.php.' },
-		{ value: 'static', label: 'Static', description: 'Pure static files — no PHP handling at all.' }
+		{ value: '', label: 'wd.profile.auto.label', description: 'wd.profile.auto.desc' },
+		{ value: 'php', label: 'wd.profile.php.label', description: 'wd.profile.php.desc' },
+		{ value: 'laravel', label: 'wd.profile.laravel.label', description: 'wd.profile.laravel.desc' },
+		{ value: 'codeigniter3', label: 'wd.profile.ci3.label', description: 'wd.profile.ci3.desc' },
+		{ value: 'codeigniter4', label: 'wd.profile.ci4.label', description: 'wd.profile.ci4.desc' },
+		{ value: 'static', label: 'wd.profile.static.label', description: 'wd.profile.static.desc' }
 	];
 
 	let effectiveProfileLabel = $derived.by(() => {
 		if (!website) return '—';
 		const effective = website.nginx_profile || deriveAutoProfile(website);
 		const opt = profileOptions.find((o) => o.value === effective);
-		return opt ? opt.label : effective;
+		return opt ? translate($language, opt.label) : effective;
 	});
 
 	function deriveAutoProfile(w: Website): string {
@@ -454,9 +474,10 @@ import { toast } from '$lib/stores/toast';
 		return 'php';
 	}
 
-	let selectedProfileDescription = $derived(
-		profileOptions.find((o) => o.value === profileChoice)?.description || ''
-	);
+	let selectedProfileDescription = $derived.by(() => {
+		const opt = profileOptions.find((o) => o.value === profileChoice);
+		return opt ? translate($language, opt.description) : '';
+	});
 
 	async function applyNginxProfile() {
 		if (!website || profileSaving) return;
@@ -465,12 +486,13 @@ import { toast } from '$lib/stores/toast';
 		configSaveMsg = '';
 		try {
 			await api.put(`/api/v1/websites/${website.id}/nginx-profile`, { profile: profileChoice });
+			const opt = profileOptions.find((o) => o.value === profileChoice);
 			configSaveMsg = profileChoice
-				? `Template set to "${profileOptions.find((o) => o.value === profileChoice)?.label}" — vhost regenerated.`
-				: 'Template reset to automatic — vhost regenerated.';
+				? translate($language, 'wd.profile.applied').replace('{name}', opt ? translate($language, opt.label) : '')
+				: translate($language, 'wd.profile.reset_auto');
 			await Promise.all([loadWebsite(), loadConfig()]);
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'Failed to apply template';
+			configError = err instanceof Error ? err.message : translate($language, 'wd.profile.apply_failed');
 		} finally {
 			profileSaving = false;
 		}
@@ -534,10 +556,10 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	const providerInstructions: Record<string, string> = {
-		github: 'Go to your repo → Settings → Deploy Keys → Add deploy key → Paste the key above',
-		gitlab: 'Go to your repo → Settings → Repository → Deploy Keys → Add key',
-		bitbucket: 'Go to your repo → Repository settings → Access keys → Add key',
-		custom: 'Add the public key to your Git server\'s authorized keys'
+		github: 'wd.deploy.instructions.github',
+		gitlab: 'wd.deploy.instructions.gitlab',
+		bitbucket: 'wd.deploy.instructions.bitbucket',
+		custom: 'wd.deploy.instructions.custom'
 	};
 
 	// ─── API Calls ────────────────────────────────────────────────────
@@ -548,7 +570,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			website = await api.get<Website>(`/api/v1/websites/${page.params.id}`);
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load website';
+			error = err instanceof Error ? err.message : translate($language, 'wd.load_failed');
 		} finally {
 			loading = false;
 		}
@@ -564,7 +586,7 @@ import { toast } from '$lib/stores/toast';
 			nodeRuntimeError = '';
 		} catch (err) {
 			nodeRuntime = null;
-			nodeRuntimeError = err instanceof Error ? err.message : 'Failed to load Node.js runtime';
+			nodeRuntimeError = err instanceof Error ? err.message : translate($language, 'wd.node.load_failed');
 		} finally {
 			nodeRuntimeLoading = false;
 		}
@@ -579,7 +601,7 @@ import { toast } from '$lib/stores/toast';
 			});
 			nodeRuntimeTaskId = result.task_id || '';
 		} catch (err) {
-			nodeRuntimeError = err instanceof Error ? err.message : 'Runtime installation failed';
+			nodeRuntimeError = err instanceof Error ? err.message : translate($language, 'wd.node.install_failed');
 		}
 	}
 
@@ -589,9 +611,9 @@ import { toast } from '$lib/stores/toast';
 		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/suspend`);
-			toast.success('Website suspended.');
+			toast.success(translate($language, 'wd.suspend_success'));
 			await loadWebsite();
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to suspend website'); }
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'wd.suspend_failed')); }
 	}
 
 	async function enableWebsite() {
@@ -599,9 +621,9 @@ import { toast } from '$lib/stores/toast';
 		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/enable`);
-			toast.success('Website enabled.');
+			toast.success(translate($language, 'wd.enable_success'));
 			await loadWebsite();
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to enable website'); }
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'wd.enable_failed')); }
 	}
 
 	async function retryWebsite() {
@@ -609,9 +631,9 @@ import { toast } from '$lib/stores/toast';
 		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/retry`);
-			toast.success('Retry initiated.');
+			toast.success(translate($language, 'wd.retry_success'));
 			await loadWebsite();
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Failed to retry'); }
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'wd.retry_failed')); }
 	}
 
 	async function deleteWebsite() {
@@ -621,7 +643,7 @@ import { toast } from '$lib/stores/toast';
 			await api.del(`/api/v1/websites/${website.id}`);
 			goto('/websites');
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to delete website');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.delete_failed'));
 			deleteConfirm = false;
 		}
 	}
@@ -649,7 +671,7 @@ import { toast } from '$lib/stores/toast';
 			const data = await api.post<{ public_key: string }>(`/api/v1/websites/${website.id}/deploy-key`);
 			deployKey = data.public_key || '';
 		} catch (err) {
-			deployKeyError = err instanceof Error ? err.message : 'Failed to generate deploy key';
+			deployKeyError = err instanceof Error ? err.message : translate($language, 'wd.deploykey.generate_failed');
 		} finally {
 			deployKeyLoading = false;
 		}
@@ -663,7 +685,7 @@ import { toast } from '$lib/stores/toast';
 			await api.del(`/api/v1/websites/${website.id}/deploy-key`);
 			deployKey = '';
 		} catch (err) {
-			deployKeyError = err instanceof Error ? err.message : 'Failed to delete deploy key';
+			deployKeyError = err instanceof Error ? err.message : translate($language, 'wd.deploykey.delete_failed');
 		} finally {
 			deployKeyLoading = false;
 		}
@@ -687,10 +709,10 @@ import { toast } from '$lib/stores/toast';
 				repo: repoUrl,
 				branch: repoBranch
 			});
-			toast.success(d?.id ? `Deployment started (${d.id.slice(-6).toLowerCase()}).` : 'Deployment started.');
+			toast.success(d?.id ? translate($language, 'wd.deploy.started_id').replace('{id}', d.id.slice(-6).toLowerCase()) : translate($language, 'wd.deploy.started'));
 			await loadDeployments();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to start deployment');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.deploy.start_failed'));
 		} finally {
 			deploying = false;
 		}
@@ -698,14 +720,14 @@ import { toast } from '$lib/stores/toast';
 
 	async function repairLayout() {
 		if (!website) return;
-		if (!confirm('Move the git repository from app/public up to app/ so nginx serves the correct index.php? The site may briefly error during the move.')) return;
+		if (!confirm(translate($language, 'wd.deploy.repair_confirm'))) return;
 		repairingLayout = true;
 		
 		try {
 			const data = await api.post<{ output: string }>(`/api/v1/websites/${website.id}/repair-layout`, {});
-			toast.success(data.output || 'Directory layout fixed.');
+			toast.success(data.output || translate($language, 'wd.deploy.repair_done'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to repair directory layout');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.deploy.repair_failed'));
 		} finally {
 			repairingLayout = false;
 		}
@@ -727,13 +749,13 @@ import { toast } from '$lib/stores/toast';
 				credentials: 'include',
 				body: formData
 			});
-			if (!res.ok) throw new Error(`Upload failed: ${res.statusText}`);
+			if (!res.ok) throw new Error(translate($language, 'wd.deploy.upload_failed_status').replace('{status}', res.statusText));
 			const json = await res.json();
 			uploadDeployTaskId = json.data?.task_id || '';
-			toast.success('Upload started.');
+			toast.success(translate($language, 'wd.deploy.upload_started'));
 			input.value = '';
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to upload');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.deploy.upload_failed'));
 		} finally {
 			uploadingDeploy = false;
 		}
@@ -779,7 +801,7 @@ import { toast } from '$lib/stores/toast';
 				expandedDeploymentId = failed.id;
 			}
 		} catch (err) {
-			deploymentsError = err instanceof Error ? err.message : 'Failed to load deployments';
+			deploymentsError = err instanceof Error ? err.message : translate($language, 'wd.deploy.load_failed');
 		} finally {
 			deploymentsLoading = false;
 		}
@@ -793,7 +815,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			commandPresets = await api.get<CommandPreset[]>(`/api/v1/websites/${website.id}/command-presets`) || [];
 		} catch (err) {
-			commandsError = err instanceof Error ? err.message : 'Failed to load command presets';
+			commandsError = err instanceof Error ? err.message : translate($language, 'wd.cmd.load_failed');
 		} finally {
 			commandsLoading = false;
 		}
@@ -808,7 +830,7 @@ import { toast } from '$lib/stores/toast';
 			});
 			commandTaskId = data.task_id || '';
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to run command');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.cmd.run_failed'));
 		}
 	}
 
@@ -843,7 +865,7 @@ import { toast } from '$lib/stores/toast';
 			envRaw = data.content || '';
 			if (envExists) syncEnvValues();
 		} catch (err) {
-			envError = err instanceof Error ? err.message : 'Failed to load .env';
+			envError = err instanceof Error ? err.message : translate($language, 'wd.env.load_failed');
 		} finally {
 			envLoading = false;
 		}
@@ -872,10 +894,10 @@ import { toast } from '$lib/stores/toast';
 				command: 'cp .env.example .env'
 			});
 			commandTaskId = data.task_id || '';
-			envMsg = 'Copying .env.example to .env...';
+			envMsg = translate($language, 'wd.env.copying');
 			await pollEnvAfterCreate();
 		} catch (err) {
-			envError = err instanceof Error ? err.message : 'Failed to copy .env.example';
+			envError = err instanceof Error ? err.message : translate($language, 'wd.env.copy_failed');
 		}
 	}
 
@@ -891,14 +913,14 @@ import { toast } from '$lib/stores/toast';
 					envExists = true;
 					envRaw = data.content || '';
 					syncEnvValues();
-					envMsg = '.env created from .env.example.';
+					envMsg = translate($language, 'wd.env.created');
 					return;
 				}
 			} catch {
 				// Keep polling; the task may still be running.
 			}
 		}
-		envError = '.env was not created — check the command task output below.';
+		envError = translate($language, 'wd.env.not_created');
 	}
 
 	async function saveEnv() {
@@ -912,9 +934,9 @@ import { toast } from '$lib/stores/toast';
 			await api.put(`/api/v1/websites/${website.id}/env`, { content });
 			envRaw = content;
 			syncEnvValues();
-			envMsg = '.env saved.';
+			envMsg = translate($language, 'wd.env.saved');
 		} catch (err) {
-			envError = err instanceof Error ? err.message : 'Failed to save .env';
+			envError = err instanceof Error ? err.message : translate($language, 'wd.env.save_failed');
 		} finally {
 			envSaving = false;
 		}
@@ -933,7 +955,7 @@ import { toast } from '$lib/stores/toast';
 			else if (type === 'octane') octaneLogs = data.content || '';
 			else errorLogs = data.content || '';
 		} catch (err) {
-			logsError = err instanceof Error ? err.message : 'Failed to load logs';
+			logsError = err instanceof Error ? err.message : translate($language, 'wd.logs.load_failed');
 		} finally {
 			logsLoading = false;
 		}
@@ -948,7 +970,7 @@ import { toast } from '$lib/stores/toast';
 			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/config`);
 			configContent = data.content || '';
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'Failed to load config';
+			configError = err instanceof Error ? err.message : translate($language, 'wd.config.load_failed');
 		} finally {
 			configLoading = false;
 		}
@@ -959,9 +981,9 @@ import { toast } from '$lib/stores/toast';
 		configSaveMsg = ''; configError = '';
 		try {
 			await api.put(`/api/v1/websites/${website.id}/config`, { content: configContent });
-			configSaveMsg = 'Configuration saved successfully.';
+			configSaveMsg = translate($language, 'wd.config.saved');
 		} catch (err) {
-			configError = err instanceof Error ? err.message : 'Failed to save config';
+			configError = err instanceof Error ? err.message : translate($language, 'wd.config.save_failed');
 		}
 	}
 
@@ -972,12 +994,12 @@ import { toast } from '$lib/stores/toast';
 		
 		try {
 			await api.post(`/api/v1/websites/${website.id}/domains`, { name: addDomainName, type: addDomainType });
-			toast.success(`Domain "${addDomainName}" added.`);
+			toast.success(translate($language, 'wd.domains.added').replace('{name}', addDomainName));
 			addDomainName = '';
 			addDomainType = 'alias';
 			await loadWebsite();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to add domain');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.domains.add_failed'));
 		} finally {
 			addingDomain = false;
 		}
@@ -988,10 +1010,10 @@ import { toast } from '$lib/stores/toast';
 		
 		try {
 			await api.del(`/api/v1/websites/${website.id}/domains/${domainId}`);
-			toast.success('Domain removed.');
+			toast.success(translate($language, 'wd.domains.removed'));
 			await loadWebsite();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to remove domain');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.domains.remove_failed'));
 		}
 	}
 
@@ -1083,13 +1105,13 @@ import { toast } from '$lib/stores/toast';
 		<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
 			<path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
 		</svg>
-		Back to Websites
+		{translate($language, 'wd.back')}
 	</a>
 
 
 
 	{#if loading}
-		<div class="text-gray-400">Loading website details...</div>
+		<div class="text-gray-400">{translate($language, 'wd.loading')}</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 	{:else if website}
@@ -1102,12 +1124,12 @@ import { toast } from '$lib/stores/toast';
 				</span>
 			</div>
 			<div class="flex flex-wrap gap-4 text-sm text-gray-400">
-				<span>App Type: <span class="text-gray-200 capitalize">{website.app_type}</span></span>
+				<span>{translate($language, 'wd.app_type')} <span class="text-gray-200 capitalize">{website.app_type}</span></span>
 				{#if website.app_type !== 'static'}
-					<span>PHP Version: <span class="text-gray-200">{website.php_version}</span></span>
+					<span>{translate($language, 'wd.php_version')} <span class="text-gray-200">{website.php_version}</span></span>
 				{/if}
-				<span>SSL: <span class={website.ssl_enabled ? 'text-green-400' : 'text-gray-300'}>{website.ssl_enabled ? 'Enabled' : 'Not configured'}</span></span>
-				<a href="/ssl" class="text-blue-400 hover:text-blue-300 transition-colors">Manage SSL Certificates</a>
+				<span>{translate($language, 'wd.ssl_label')} <span class={website.ssl_enabled ? 'text-green-400' : 'text-gray-300'}>{website.ssl_enabled ? translate($language, 'wd.enabled') : translate($language, 'wd.ssl_not_configured')}</span></span>
+				<a href="/ssl" class="text-blue-400 hover:text-blue-300 transition-colors">{translate($language, 'wd.manage_ssl')}</a>
 			</div>
 		</div>
 
@@ -1121,7 +1143,7 @@ import { toast } from '$lib/stores/toast';
 							? 'bg-gray-800 text-white border border-gray-700 border-b-gray-800 -mb-px'
 							: 'text-gray-400 hover:text-gray-200 hover:bg-gray-800/50'}"
 				>
-					{tab}
+					{translate($language, tabKeys[tab])}
 				</button>
 			{/each}
 		</div>
@@ -1137,23 +1159,23 @@ import { toast } from '$lib/stores/toast';
 					{#if canManageUsers}
 						<div class="p-4 bg-gray-800 border border-gray-700 rounded-lg">
 							<div class="flex flex-wrap items-center justify-between gap-2">
-								<h3 class="text-sm font-semibold text-white">Ownership</h3>
+								<h3 class="text-sm font-semibold text-white">{translate($language, 'wd.ownership.title')}</h3>
 								<span class="text-xs text-gray-500">
-									Owner: <span class="text-gray-300">{website.owner_email || website.created_by || 'legacy (admin)'}</span>
+									{translate($language, 'wd.ownership.owner')} <span class="text-gray-300">{website.owner_email || website.created_by || translate($language, 'wd.ownership.legacy')}</span>
 								</span>
 							</div>
 							{#if website.created_by}
 								<p class="mt-1 text-xs text-gray-500">
-									{website.created_by === $authUser?.id ? 'This is your own website.' : 'Created by another panel account.'}
+									{website.created_by === $authUser?.id ? translate($language, 'wd.ownership.yours') : translate($language, 'wd.ownership.other')}
 								</p>
 							{/if}
 							<div class="mt-3 flex flex-wrap items-center gap-2">
 								<select
 									bind:value={transferTarget}
 									class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
-									aria-label="New owner"
+									aria-label={translate($language, 'wd.ownership.new_owner')}
 								>
-									<option value="">Transfer to…</option>
+									<option value="">{translate($language, 'wd.ownership.transfer_to')}</option>
 									{#each panelUsers as u (u.id)}
 										<option value={u.id}>{u.email}</option>
 									{/each}
@@ -1164,7 +1186,7 @@ import { toast } from '$lib/stores/toast';
 									disabled={!transferTarget || transferring}
 									class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 								>
-									{transferring ? 'Transferring…' : 'Transfer'}
+									{transferring ? translate($language, 'wd.ownership.transferring') : translate($language, 'wd.ownership.transfer')}
 								</button>
 							</div>
 							{#if transferMsg}<p class="mt-2 text-xs text-green-400">{transferMsg}</p>{/if}
@@ -1175,11 +1197,11 @@ import { toast } from '$lib/stores/toast';
 					{#if website.app_type !== 'static'}
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 							<div class="flex flex-wrap items-center justify-between gap-2">
-								<h3 class="text-sm font-semibold text-white">Health check</h3>
+								<h3 class="text-sm font-semibold text-white">{translate($language, 'wd.health.title')}</h3>
 								{#if health && health.last_checked_at}
 									<span class="text-xs {health.consecutive_failures > 0 ? 'text-red-400' : 'text-green-400'}">
-										{health.last_status || '—'} · {health.last_latency_ms}ms · checked {formatDate(health.last_checked_at)}
-										{#if health.consecutive_failures > 0}· {health.consecutive_failures} consecutive failures{/if}
+										{health.last_status || '—'} · {health.last_latency_ms}ms · {translate($language, 'wd.health.checked').replace('{date}', formatDate(health.last_checked_at))}
+										{#if health.consecutive_failures > 0}· {translate($language, 'wd.health.consecutive_failures').replace('{count}', String(health.consecutive_failures))}{/if}
 									</span>
 								{/if}
 							</div>
@@ -1188,7 +1210,7 @@ import { toast } from '$lib/stores/toast';
 									type="text"
 									bind:value={healthURL}
 									placeholder={`http://${website.domain}`}
-									aria-label="Health check URL"
+									aria-label={translate($language, 'wd.health.url_label')}
 									class="flex-1 min-w-48 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
 								/>
 								<input
@@ -1196,7 +1218,7 @@ import { toast } from '$lib/stores/toast';
 									bind:value={healthExpected}
 									min="100"
 									max="599"
-									aria-label="Expected status"
+									aria-label={translate($language, 'wd.health.expected_label')}
 									class="w-20 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
 								/>
 								<button
@@ -1205,7 +1227,7 @@ import { toast } from '$lib/stores/toast';
 									disabled={healthBusy}
 									class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 								>
-									Save
+									{translate($language, 'wd.save')}
 								</button>
 								<button
 									type="button"
@@ -1213,11 +1235,11 @@ import { toast } from '$lib/stores/toast';
 									disabled={healthBusy}
 									class="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 								>
-									{healthBusy ? 'Checking…' : 'Check now'}
+									{healthBusy ? translate($language, 'wd.health.checking') : translate($language, 'wd.health.check_now')}
 								</button>
 							</div>
 							<p class="mt-2 text-[11px] text-gray-500">
-								Probes every minute while enabled; alerts fire after 2 consecutive failures through your notification channels.
+								{translate($language, 'wd.health.hint')}
 							</p>
 						</div>
 					{/if}
@@ -1230,55 +1252,55 @@ import { toast } from '$lib/stores/toast';
 
 					{#if pendingStatuses.includes(website.status)}
 						<div class="p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
-							Provisioning in progress: <span class="font-medium">{website.status}</span>
+							{translate($language, 'wd.provisioning')} <span class="font-medium">{website.status}</span>
 						</div>
 					{/if}
 
 					<!-- Info Cards -->
 					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Document Root</div>
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'wd.docroot')}</div>
 							<div class="text-sm text-gray-200 font-mono">{website.document_root}</div>
 						</div>
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Web User</div>
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'wd.web_user')}</div>
 							<div class="text-sm text-gray-200 font-mono">{website.web_user}</div>
 						</div>
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">Created</div>
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'wd.created')}</div>
 							<div class="text-sm text-gray-200">{formatDate(website.created_at)}</div>
 						</div>
 					</div>
 
 					<!-- Node.js Runtime (moved from the Node.js page) -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-3">Node.js Runtime</h3>
+						<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.node.title')}</h3>
 						{#if nodeRuntimeError}
 							<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
 								{nodeRuntimeError}
-								<button onclick={() => (nodeRuntimeError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+								<button onclick={() => (nodeRuntimeError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">{translate($language, 'wd.dismiss')}</button>
 							</div>
 						{/if}
 						{#if nodeRuntimeLoading}
-							<div class="text-gray-400 text-sm">Loading runtime...</div>
+							<div class="text-gray-400 text-sm">{translate($language, 'wd.node.loading')}</div>
 						{:else}
 							<div class="flex flex-wrap items-center justify-between gap-4">
 								<div>
 									{#if nodeRuntime}
 										<p class="text-sm text-gray-300">
-											{nodeRuntime.installed ? 'Node ' + nodeRuntime.installed_version + ' · npm ' + nodeRuntime.npm_version : 'Runtime not installed'}
+											{nodeRuntime.installed ? translate($language, 'wd.node.installed').replace('{version}', nodeRuntime.installed_version).replace('{npm}', nodeRuntime.npm_version) : translate($language, 'wd.node.not_installed')}
 											· NVM {nodeRuntime.nvm_version || nodeRuntime.nvm_state}
 										</p>
-										<p class="text-xs text-gray-400">Selected: {nodeRuntime.selected_version || 'None'}</p>
+										<p class="text-xs text-gray-400">{translate($language, 'wd.node.selected').replace('{version}', nodeRuntime.selected_version || translate($language, 'wd.none'))}</p>
 										{#if nodeRuntime.error_message}<p class="text-sm text-red-400">{nodeRuntime.error_message}</p>{/if}
 									{:else}
-										<p class="text-sm text-gray-400">No Node.js runtime is configured for this website yet.</p>
+										<p class="text-sm text-gray-400">{translate($language, 'wd.node.none_configured')}</p>
 									{/if}
 								</div>
 								<div class="flex gap-2">
 									<select
 										bind:value={nodeRuntimeChoice}
-										aria-label="Node.js version"
+										aria-label={translate($language, 'wd.node.version_label')}
 										disabled={!!nodeRuntimeTaskId}
 										class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200"
 									>
@@ -1289,7 +1311,7 @@ import { toast } from '$lib/stores/toast';
 										disabled={!!nodeRuntimeTaskId}
 										class="rounded bg-blue-600 px-4 py-2 text-white text-sm disabled:opacity-50"
 									>
-										{nodeRuntime?.installed ? 'Install / update' : 'Install'}
+										{nodeRuntime?.installed ? translate($language, 'wd.node.install_update') : translate($language, 'wd.install')}
 									</button>
 								</div>
 							</div>
@@ -1304,19 +1326,19 @@ import { toast } from '$lib/stores/toast';
 								<h3 class="text-lg font-semibold text-white">Laravel Octane (FrankenPHP)</h3>
 								{#if octane?.enabled}
 									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium {octane.running ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'}">
-										{octane.running ? 'Running' : 'Stopped'}
+										{octane.running ? translate($language, 'wd.running') : translate($language, 'wd.stopped')}
 									</span>
 								{:else}
-									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400">Disabled</span>
+									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400">{translate($language, 'wd.disabled')}</span>
 								{/if}
 							</div>
 
 							{#if octaneLoading}
-								<div class="text-gray-400 text-sm">Loading Octane status...</div>
+								<div class="text-gray-400 text-sm">{translate($language, 'wd.octane.loading')}</div>
 							{:else if octane?.enabled}
 								<div class="flex flex-wrap gap-4 text-sm text-gray-400 mb-4">
-									<span>Port: <span class="text-gray-200 font-mono">127.0.0.1:{octane.port}</span></span>
-									<span>Unit: <span class="text-gray-200 font-mono">{octane.unit}</span></span>
+									<span>{translate($language, 'wd.port')} <span class="text-gray-200 font-mono">127.0.0.1:{octane.port}</span></span>
+									<span>{translate($language, 'wd.octane.unit')} <span class="text-gray-200 font-mono">{octane.unit}</span></span>
 									{#if octane.frankenphp_version}
 										<span>FrankenPHP: <span class="text-gray-200">v{octane.frankenphp_version}</span></span>
 									{/if}
@@ -1326,52 +1348,52 @@ import { toast } from '$lib/stores/toast';
 										onclick={() => octaneAction('start')}
 										disabled={octaneBusy || octane.running}
 										class="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-									>Start</button>
+									>{translate($language, 'wd.start')}</button>
 									<button
 										onclick={() => octaneAction('stop')}
 										disabled={octaneBusy || !octane.running}
 										class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-									>Stop</button>
+									>{translate($language, 'wd.stop')}</button>
 									<button
 										onclick={() => octaneAction('restart')}
 										disabled={octaneBusy}
 										class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-									>Restart</button>
+									>{translate($language, 'wd.restart')}</button>
 									<button
 										onclick={reloadOctane}
 										disabled={octaneBusy || !octane.running}
 										class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-sm rounded transition-colors cursor-pointer"
-										title="Graceful worker reload for zero-downtime deploys"
+										title={translate($language, 'wd.octane.reload_title')}
 									>octane:reload</button>
 									<button
 										onclick={disableOctane}
 										disabled={octaneBusy}
 										class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-									>Disable Octane</button>
+									>{translate($language, 'wd.octane.disable')}</button>
 									<select
 										bind:value={octaneWorkersChoice}
-										aria-label="Octane workers"
+										aria-label={translate($language, 'wd.octane.workers_label')}
 										class="rounded border border-gray-600 bg-gray-900 px-2 py-1.5 text-sm text-gray-200"
 									>
-										{#each [1, 2, 4, 6, 8, 12, 16] as count}<option value={String(count)}>{count} workers</option>{/each}
+										{#each [1, 2, 4, 6, 8, 12, 16] as count}<option value={String(count)}>{translate($language, 'wd.octane.workers_count').replace('{count}', String(count))}</option>{/each}
 									</select>
 									<button
 										onclick={saveOctaneWorkers}
 										disabled={octaneBusy || octaneWorkersChoice === String(octane.workers || 4)}
 										class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-sm rounded transition-colors cursor-pointer"
-									>Save workers</button>
+									>{translate($language, 'wd.octane.save_workers')}</button>
 								</div>
 							{:else}
 								<p class="text-sm text-gray-400 mb-3">
-									Serve this Laravel site with Octane on FrankenPHP: nginx keeps handling TLS and static assets while the app runs on a loopback Octane worker. Converting an existing site installs <code class="text-gray-300 font-mono">laravel/octane</code>, writes the site Caddyfile and systemd unit, then switches the vhost — disabling restores PHP-FPM instantly.
+									{translate($language, 'wd.octane.desc')}<code class="text-gray-300 font-mono">laravel/octane</code>{translate($language, 'wd.octane.desc_tail')}
 								</p>
 								{#if octane && !octane.frankenphp_version}
 									<div class="mb-3 p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
-										FrankenPHP is not installed on this server yet.
+										{translate($language, 'wd.frankenphp.not_installed')}
 										{#if canInstallFrankenphp}
-											<button onclick={installFrankenphp} class="ml-2 underline cursor-pointer hover:text-yellow-200">Install FrankenPHP {octane ? '' : ''}</button>
+											<button onclick={installFrankenphp} class="ml-2 underline cursor-pointer hover:text-yellow-200">{translate($language, 'wd.frankenphp.install')} {octane ? '' : ''}</button>
 										{:else}
-											Ask an administrator to install it from the services page.
+											{translate($language, 'wd.frankenphp.ask_admin')}
 										{/if}
 									</div>
 								{/if}
@@ -1380,7 +1402,7 @@ import { toast } from '$lib/stores/toast';
 									disabled={octaneBusy || website.status !== 'active' || (!!octane && !octane.frankenphp_version)}
 									class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 								>
-									{octaneBusy ? 'Working…' : 'Enable Octane'}
+									{octaneBusy ? translate($language, 'wd.working') : translate($language, 'wd.octane.enable')}
 								</button>
 							{/if}
 							<TaskProgress
@@ -1393,14 +1415,14 @@ import { toast } from '$lib/stores/toast';
 
 					<!-- Actions -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-3">Actions</h3>
+						<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.actions')}</h3>
 						<div class="flex flex-wrap gap-2">
 							{#if website.status === 'active'}
 								<button
 									onclick={suspendWebsite}
 									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
 								>
-									Suspend
+									{translate($language, 'wd.suspend')}
 								</button>
 							{/if}
 							{#if website.status === 'suspended' || website.status === 'disabled'}
@@ -1408,7 +1430,7 @@ import { toast } from '$lib/stores/toast';
 									onclick={enableWebsite}
 									class="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition-colors cursor-pointer"
 								>
-									Enable
+									{translate($language, 'wd.enable')}
 								</button>
 							{/if}
 							{#if website.status === 'failed'}
@@ -1416,24 +1438,24 @@ import { toast } from '$lib/stores/toast';
 									onclick={retryWebsite}
 									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
 								>
-									Retry
+									{translate($language, 'wd.retry')}
 								</button>
 							{/if}
 
 							{#if deleteConfirm}
 								<div class="flex items-center gap-2 p-2 bg-red-900/30 border border-red-700 rounded-lg">
-									<span class="text-sm text-red-300">Delete this website, its SSL certificates, and all files? This cannot be undone.</span>
+									<span class="text-sm text-red-300">{translate($language, 'wd.delete_confirm')}</span>
 									<button
 										onclick={deleteWebsite}
 										class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
 									>
-										Yes, Delete
+										{translate($language, 'wd.delete_yes')}
 									</button>
 									<button
 										onclick={() => (deleteConfirm = false)}
 										class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
 									>
-										Cancel
+										{translate($language, 'wd.cancel')}
 									</button>
 								</div>
 							{:else}
@@ -1441,7 +1463,7 @@ import { toast } from '$lib/stores/toast';
 									onclick={() => (deleteConfirm = true)}
 									class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
 								>
-									Delete
+									{translate($language, 'wd.delete')}
 								</button>
 							{/if}
 						</div>
@@ -1455,11 +1477,11 @@ import { toast } from '$lib/stores/toast';
 				<div class="space-y-6">
 					<!-- Git Repository -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-4">Git Repository</h3>
+						<h3 class="text-lg font-semibold text-white mb-4">{translate($language, 'wd.deploy.repo_title')}</h3>
 						<div class="space-y-4">
 							<!-- Provider -->
 							<div>
-								<label for="git-provider" class="block text-sm text-gray-400 mb-1">Provider</label>
+								<label for="git-provider" class="block text-sm text-gray-400 mb-1">{translate($language, 'wd.deploy.provider')}</label>
 								<select
 									id="git-provider"
 									bind:value={gitProvider}
@@ -1468,13 +1490,13 @@ import { toast } from '$lib/stores/toast';
 									<option value="github">GitHub</option>
 									<option value="gitlab">GitLab</option>
 									<option value="bitbucket">Bitbucket</option>
-									<option value="custom">Custom</option>
+									<option value="custom">{translate($language, 'wd.custom')}</option>
 								</select>
 							</div>
 
 							<!-- Repo URL -->
 							<div>
-								<label for="repo-url" class="block text-sm text-gray-400 mb-1">Repository URL</label>
+								<label for="repo-url" class="block text-sm text-gray-400 mb-1">{translate($language, 'wd.deploy.repo_url')}</label>
 								<input
 									id="repo-url"
 									type="text"
@@ -1486,7 +1508,7 @@ import { toast } from '$lib/stores/toast';
 
 							<!-- Branch -->
 							<div>
-								<label for="repo-branch" class="block text-sm text-gray-400 mb-1">Branch</label>
+								<label for="repo-branch" class="block text-sm text-gray-400 mb-1">{translate($language, 'wd.branch')}</label>
 								<input
 									id="repo-branch"
 									type="text"
@@ -1498,15 +1520,15 @@ import { toast } from '$lib/stores/toast';
 
 							<!-- Visibility -->
 							<div>
-								<span class="block text-sm text-gray-400 mb-2">Visibility</span>
+								<span class="block text-sm text-gray-400 mb-2">{translate($language, 'wd.deploy.visibility')}</span>
 								<div class="flex gap-4">
 									<label class="flex items-center gap-2 cursor-pointer">
 										<input type="radio" bind:group={repoVisibility} value="public" class="accent-blue-500" />
-										<span class="text-sm text-gray-200">Public</span>
+										<span class="text-sm text-gray-200">{translate($language, 'wd.public')}</span>
 									</label>
 									<label class="flex items-center gap-2 cursor-pointer">
 										<input type="radio" bind:group={repoVisibility} value="private" class="accent-blue-500" />
-										<span class="text-sm text-gray-200">Private</span>
+										<span class="text-sm text-gray-200">{translate($language, 'wd.private')}</span>
 									</label>
 								</div>
 							</div>
@@ -1514,7 +1536,7 @@ import { toast } from '$lib/stores/toast';
 							<!-- Deploy Key (visible when private) -->
 							{#if repoVisibility === 'private'}
 								<div class="p-4 bg-gray-900 rounded-lg border border-gray-700 space-y-3">
-									<h4 class="text-sm font-medium text-gray-300">Deploy Key</h4>
+									<h4 class="text-sm font-medium text-gray-300">{translate($language, 'wd.deploykey.title')}</h4>
 
 									{#if deployKeyError}
 										<div class="text-red-400 text-sm">{deployKeyError}</div>
@@ -1533,18 +1555,18 @@ import { toast } from '$lib/stores/toast';
 													onclick={copyDeployKey}
 													class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer"
 												>
-													{deployKeyCopied ? 'Copied!' : 'Copy'}
+													{deployKeyCopied ? translate($language, 'wd.copied') : translate($language, 'wd.copy')}
 												</button>
 												<button
 													onclick={deleteDeployKey}
 													disabled={deployKeyLoading}
 													class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
 												>
-													Delete Key
+													{translate($language, 'wd.deploykey.delete')}
 												</button>
 											</div>
 											<p class="text-xs text-gray-400 mt-2">
-												{providerInstructions[gitProvider]}
+												{translate($language, providerInstructions[gitProvider])}
 											</p>
 										</div>
 									{:else}
@@ -1553,7 +1575,7 @@ import { toast } from '$lib/stores/toast';
 											disabled={deployKeyLoading}
 											class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
 										>
-											{deployKeyLoading ? 'Generating...' : 'Generate Deploy Key'}
+											{deployKeyLoading ? translate($language, 'wd.deploykey.generating') : translate($language, 'wd.deploykey.generate')}
 										</button>
 									{/if}
 								</div>
@@ -1566,10 +1588,10 @@ import { toast } from '$lib/stores/toast';
 									disabled={deploying || !repoUrl.trim()}
 									class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 								>
-									{deploying ? 'Deploying...' : 'Deploy Now'}
+									{deploying ? translate($language, 'wd.deploy.deploying') : translate($language, 'wd.deploy.now')}
 								</button>
 								{#if deploying}
-									<span class="text-sm text-gray-400">Deployment is queued and running in the background.</span>
+									<span class="text-sm text-gray-400">{translate($language, 'wd.deploy.queued')}</span>
 								{/if}
 							</div>
 						</div>
@@ -1581,17 +1603,17 @@ import { toast } from '$lib/stores/toast';
 									disabled={repairingLayout}
 									class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 								>
-									{repairingLayout ? 'Fixing...' : 'Fix Directory Layout'}
+									{repairingLayout ? translate($language, 'wd.deploy.fixing') : translate($language, 'wd.deploy.fix')}
 								</button>
-								<p class="text-xs text-gray-500 mt-2">Moves a git repository that was cloned into app/public up to app/ so nginx finds index.php. Use this if the site returns 403 after a git deploy.</p>
+								<p class="text-xs text-gray-500 mt-2">{translate($language, 'wd.deploy.fix_hint')}</p>
 							</div>
 						{/if}
 					</div>
 
 					<!-- Upload Files -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-4">Upload Files</h3>
-						<p class="text-sm text-gray-400 mb-3">Upload a ZIP or tar.gz archive to deploy directly.</p>
+						<h3 class="text-lg font-semibold text-white mb-4">{translate($language, 'wd.upload_title')}</h3>
+						<p class="text-sm text-gray-400 mb-3">{translate($language, 'wd.upload_hint')}</p>
 						<div class="flex items-center gap-3">
 							<input
 								type="file"
@@ -1605,7 +1627,7 @@ import { toast } from '$lib/stores/toast';
 								disabled={uploadingDeploy}
 								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 							>
-								{uploadingDeploy ? 'Uploading...' : 'Upload & Extract'}
+								{uploadingDeploy ? translate($language, 'wd.uploading') : translate($language, 'wd.upload_extract')}
 							</button>
 						</div>
 						<TaskProgress bind:taskId={uploadDeployTaskId} storageKey="upload-deploy-task-{website.id}" />
@@ -1613,7 +1635,7 @@ import { toast } from '$lib/stores/toast';
 
 					<!-- Manual (SSH) -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-4">Manual (SSH)</h3>
+						<h3 class="text-lg font-semibold text-white mb-4">{translate($language, 'wd.manual_ssh')}</h3>
 						<div class="space-y-3">
 							<div class="flex items-center gap-2">
 								<span class="text-sm text-gray-400">SSH:</span>
@@ -1622,24 +1644,24 @@ import { toast } from '$lib/stores/toast';
 									onclick={() => copyText(`ssh ${website?.web_user}@${window.location.hostname}`, 'ssh')}
 									class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors cursor-pointer"
 								>
-									{copiedField === 'ssh' ? 'Copied!' : 'Copy'}
+									{copiedField === 'ssh' ? translate($language, 'wd.copied') : translate($language, 'wd.copy')}
 								</button>
 							</div>
 							<div class="flex items-center gap-2">
-								<span class="text-sm text-gray-400">Document Root:</span>
+								<span class="text-sm text-gray-400">{translate($language, 'wd.docroot_label')}</span>
 								<code class="text-sm text-gray-200 font-mono bg-gray-900 px-2 py-1 rounded">{website.document_root}</code>
 								<button
 									onclick={() => copyText(website?.document_root ?? '', 'docroot')}
 									class="px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 text-xs rounded transition-colors cursor-pointer"
 								>
-									{copiedField === 'docroot' ? 'Copied!' : 'Copy'}
+									{copiedField === 'docroot' ? translate($language, 'wd.copied') : translate($language, 'wd.copy')}
 								</button>
 							</div>
 							<button
 								onclick={() => setActiveTab('Terminal')}
 								class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white text-sm rounded transition-colors cursor-pointer"
 							>
-								Open Terminal
+								{translate($language, 'wd.open_terminal')}
 							</button>
 						</div>
 					</div>
@@ -1647,32 +1669,32 @@ import { toast } from '$lib/stores/toast';
 					<!-- Deployment History -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 						<div class="flex items-center justify-between mb-4">
-							<h3 class="text-lg font-semibold text-white">Deployment History</h3>
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.deploy.history')}</h3>
 							<button
 								onclick={loadDeployments}
 								disabled={deploymentsLoading}
 								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
 							>
-								{deploymentsLoading ? 'Loading...' : 'Refresh'}
+								{deploymentsLoading ? translate($language, 'wd.loading_generic') : translate($language, 'wd.refresh')}
 							</button>
 						</div>
 
 						{#if deploymentsLoading && deployments.length === 0}
-							<div class="text-gray-400 text-sm">Loading deployments...</div>
+							<div class="text-gray-400 text-sm">{translate($language, 'wd.deploy.loading')}</div>
 						{:else if deploymentsError}
 							<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{deploymentsError}</div>
 						{:else if deployments.length === 0}
-							<div class="text-gray-400 text-sm">No deployments yet.</div>
+							<div class="text-gray-400 text-sm">{translate($language, 'wd.deploy.empty')}</div>
 						{:else}
 							<div class="overflow-x-auto">
 								<table class="w-full">
 									<thead>
 										<tr class="border-b border-gray-700">
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Commit</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Branch</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Duration</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Date</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.commit')}</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.branch')}</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.status')}</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.duration')}</th>
+											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.date')}</th>
 										</tr>
 									</thead>
 									<tbody class="divide-y divide-gray-700">
@@ -1686,7 +1708,7 @@ import { toast } from '$lib/stores/toast';
 												<td class="px-4 py-2">
 													<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {deployStatusBadgeClass(dep.status)}">{dep.status}</span>
 													{#if dep.status === 'failed'}
-														<span class="ml-2 text-xs text-red-400">view error</span>
+														<span class="ml-2 text-xs text-red-400">{translate($language, 'wd.deploy.view_error')}</span>
 													{/if}
 												</td>
 												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration_ms ? formatDuration(dep.duration_ms) : '-'}</td>
@@ -1695,7 +1717,7 @@ import { toast } from '$lib/stores/toast';
 											{#if expandedDeploymentId === dep.id}
 												<tr>
 													<td colspan="5" class="px-4 py-2">
-														<pre class="text-xs bg-gray-950 rounded p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? 'Deployment failed with no output captured. Check git repository URL, branch name, and deploy key configuration.' : 'No output captured.')}</pre>
+														<pre class="text-xs bg-gray-950 rounded p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? translate($language, 'wd.deploy.failed_no_output') : translate($language, 'wd.deploy.no_output'))}</pre>
 													</td>
 												</tr>
 											{/if}
@@ -1719,12 +1741,12 @@ import { toast } from '$lib/stores/toast';
 			{:else if activeTab === 'Commands'}
 				<div class="space-y-6">
 					{#if commandsLoading}
-						<div class="text-gray-400 text-sm">Loading command presets...</div>
+						<div class="text-gray-400 text-sm">{translate($language, 'wd.cmd.loading')}</div>
 					{:else if commandsError}
 						<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{commandsError}</div>
 					{:else if commandPresets.length === 0}
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-							<p class="text-gray-400 text-sm">No command presets available for this website.</p>
+							<p class="text-gray-400 text-sm">{translate($language, 'wd.cmd.empty')}</p>
 						</div>
 					{:else}
 						<div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
@@ -1753,19 +1775,19 @@ import { toast } from '$lib/stores/toast';
 									<div class="flex items-center justify-between mb-4">
 										<h3 class="text-lg font-semibold text-white">Laravel .env</h3>
 										{#if envExists}
-											<div class="inline-flex rounded-lg border border-gray-600 p-1 bg-gray-900" role="group" aria-label="Edit mode">
+											<div class="inline-flex rounded-lg border border-gray-600 p-1 bg-gray-900" role="group" aria-label={translate($language, 'wd.env.mode_label')}>
 												<button
 													type="button"
 													onclick={() => switchEnvMode('values')}
 													aria-pressed={envMode === 'values'}
 													class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'values' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-												>Edit Values</button>
+												>{translate($language, 'wd.env.edit_values')}</button>
 												<button
 													type="button"
 													onclick={() => switchEnvMode('raw')}
 													aria-pressed={envMode === 'raw'}
 													class="px-3 py-1.5 rounded text-sm transition-colors cursor-pointer {envMode === 'raw' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-												>Manual</button>
+												>{translate($language, 'wd.env.manual')}</button>
 											</div>
 										{/if}
 									</div>
@@ -1773,21 +1795,21 @@ import { toast } from '$lib/stores/toast';
 									{#if envError}
 										<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
 											{envError}
-											<button onclick={() => (envError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">Dismiss</button>
+											<button onclick={() => (envError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">{translate($language, 'wd.dismiss')}</button>
 										</div>
 									{/if}
 
 									{#if envMsg}
 										<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
 											{envMsg}
-											<button onclick={() => (envMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">Dismiss</button>
+											<button onclick={() => (envMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">{translate($language, 'wd.dismiss')}</button>
 										</div>
 									{/if}
 
 									{#if envLoading}
-										<div class="text-gray-400 text-sm">Loading .env...</div>
+										<div class="text-gray-400 text-sm">{translate($language, 'wd.env.loading')}</div>
 									{:else if !envExists}
-										<p class="text-sm text-gray-400 mb-3">No <code class="text-gray-300 font-mono">.env</code> file found in the project. Create it from <code class="text-gray-300 font-mono">.env.example</code> first.</p>
+										<p class="text-sm text-gray-400 mb-3">{translate($language, 'wd.env.not_found_a')} <code class="text-gray-300 font-mono">.env</code>{translate($language, 'wd.env.not_found_b')}<code class="text-gray-300 font-mono">.env.example</code>{translate($language, 'wd.env.not_found_c')}</p>
 										<button
 											type="button"
 											onclick={createEnvFile}
@@ -1797,10 +1819,10 @@ import { toast } from '$lib/stores/toast';
 										<div class="max-h-96 overflow-y-auto border border-gray-700 rounded">
 											<table class="w-full">
 												<thead>
-													<tr class="border-b border-gray-700">
-														<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Key</th>
-														<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">Value</th>
-													</tr>
+												<tr class="border-b border-gray-700">
+													<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.env.key')}</th>
+													<th class="text-left px-3 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.env.value')}</th>
+												</tr>
 												</thead>
 												<tbody class="divide-y divide-gray-700">
 													{#each envValues as row}
@@ -1823,14 +1845,14 @@ import { toast } from '$lib/stores/toast';
 											disabled={envSaving}
 											class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 										>
-											{envSaving ? 'Saving...' : 'Save .env'}
+											{envSaving ? translate($language, 'wd.saving') : translate($language, 'wd.env.save')}
 										</button>
 									{:else}
 										<textarea
 											bind:value={envRaw}
 											rows={16}
 											spellcheck="false"
-											aria-label=".env contents"
+											aria-label={translate($language, 'wd.env.contents_label')}
 											class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-xs font-mono text-gray-200 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
 										></textarea>
 										<button
@@ -1838,7 +1860,7 @@ import { toast } from '$lib/stores/toast';
 											disabled={envSaving}
 											class="mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 										>
-										{envSaving ? 'Saving...' : 'Save .env'}
+										{envSaving ? translate($language, 'wd.saving') : translate($language, 'wd.env.save')}
 									</button>
 										{/if}
 							</div>
@@ -1894,7 +1916,7 @@ import { toast } from '$lib/stores/toast';
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Logs'}
 				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-					<h3 class="text-lg font-semibold text-white mb-3">Logs</h3>
+					<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.logs.title')}</h3>
 
 					<div class="flex gap-2 mb-4">
 						<button
@@ -1903,7 +1925,7 @@ import { toast } from '$lib/stores/toast';
 								? 'bg-blue-600 text-white'
 								: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
 						>
-							Access Log
+							{translate($language, 'wd.logs.access')}
 						</button>
 						<button
 							onclick={() => { logTab = 'error'; loadLogs('error'); }}
@@ -1911,7 +1933,7 @@ import { toast } from '$lib/stores/toast';
 								? 'bg-blue-600 text-white'
 								: 'bg-gray-700 text-gray-300 hover:bg-gray-600'}"
 						>
-							Error Log
+							{translate($language, 'wd.logs.error')}
 						</button>
 						{#if website.octane_enabled}
 							<button
@@ -1935,8 +1957,8 @@ import { toast } from '$lib/stores/toast';
 							disabled={logsLoading}
 							class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
 						>
-							{logsLoading ? 'Loading...' : 'Refresh'}
-						</button>
+							{logsLoading ? translate($language, 'wd.loading_generic') : translate($language, 'wd.refresh')}
+							</button>
 					</div>
 
 					<textarea
@@ -1954,18 +1976,18 @@ import { toast } from '$lib/stores/toast';
 					<!-- Template Engine -->
 					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
 						<div class="mb-1 flex items-center gap-2.5">
-							<h3 class="text-lg font-semibold text-white">Template Engine</h3>
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.config.template_title')}</h3>
 							<span class="rounded-full bg-blue-900/50 px-2.5 py-0.5 text-[11px] font-semibold text-blue-300">
 								{effectiveProfileLabel}
 							</span>
 						</div>
 						<p class="mb-4 text-sm text-gray-400">
-							Choose which nginx template generates this site's vhost. Applying a template regenerates the configuration below — manual edits will be overwritten.
+							{translate($language, 'wd.config.template_hint')}
 						</p>
 
 						<div class="flex flex-wrap items-start gap-3">
 							<div class="min-w-56 flex-1">
-								<label for="nginx-profile" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-400">Template</label>
+								<label for="nginx-profile" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wd.config.template')}</label>
 								<select
 									id="nginx-profile"
 									bind:value={profileChoice}
@@ -1973,7 +1995,7 @@ import { toast } from '$lib/stores/toast';
 									class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 								>
 									{#each profileOptions as opt}
-										<option value={opt.value}>{opt.label}</option>
+										<option value={opt.value}>{translate($language, opt.label)}</option>
 									{/each}
 								</select>
 								{#if selectedProfileDescription}
@@ -1985,14 +2007,14 @@ import { toast } from '$lib/stores/toast';
 								disabled={profileSaving || (website.nginx_profile || '') === profileChoice}
 								class="mt-6 cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 							>
-								{profileSaving ? 'Applying…' : 'Apply & Regenerate'}
+								{profileSaving ? translate($language, 'wd.config.applying') : translate($language, 'wd.config.apply')}
 							</button>
 						</div>
 					</div>
 
 					<!-- Manual editor -->
 					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
-						<h3 class="text-lg font-semibold text-white mb-3">Nginx Configuration</h3>
+						<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.config.nginx_title')}</h3>
 
 						{#if configError}
 							<div class="mb-2 text-red-400 text-sm">{configError}</div>
@@ -2000,12 +2022,12 @@ import { toast } from '$lib/stores/toast';
 						{#if configSaveMsg}
 							<div class="mb-2 text-green-400 text-sm">
 								{configSaveMsg}
-								<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">Dismiss</button>
+								<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">{translate($language, 'wd.dismiss')}</button>
 							</div>
 						{/if}
 
 						{#if configLoading}
-							<div class="text-gray-400 text-sm">Loading configuration...</div>
+							<div class="text-gray-400 text-sm">{translate($language, 'wd.config.loading')}</div>
 						{:else}
 							<textarea
 								bind:value={configContent}
@@ -2017,13 +2039,13 @@ import { toast } from '$lib/stores/toast';
 									onclick={saveConfig}
 									class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 								>
-									Save Configuration
+									{translate($language, 'wd.config.save')}
 								</button>
 								<button
 									onclick={loadConfig}
 									class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
 								>
-									Reload
+									{translate($language, 'wd.reload')}
 								</button>
 							</div>
 						{/if}
@@ -2035,7 +2057,7 @@ import { toast } from '$lib/stores/toast';
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Domains'}
 				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-					<h3 class="text-lg font-semibold text-white mb-3">Domains</h3>
+					<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.domains.title')}</h3>
 
 					{#if website.domains && website.domains.length > 0}
 						<div class="space-y-2 mb-4">
@@ -2047,25 +2069,25 @@ import { toast } from '$lib/stores/toast';
 											{domain.type}
 										</span>
 									</div>
-									{#if domain.type !== 'primary'}
-										<button
-											onclick={() => removeDomain(domain.id)}
-											class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-										>
-											Remove
-										</button>
-									{/if}
-								</div>
-							{/each}
-						</div>
-					{:else}
-						<p class="text-sm text-gray-400 mb-4">No additional domains configured.</p>
-					{/if}
+										{#if domain.type !== 'primary'}
+											<button
+												onclick={() => removeDomain(domain.id)}
+												class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
+											>
+												{translate($language, 'wd.remove')}
+											</button>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{:else}
+							<p class="text-sm text-gray-400 mb-4">{translate($language, 'wd.domains.empty')}</p>
+						{/if}
 
-					<!-- Add Domain Form -->
-					<div class="flex flex-wrap items-end gap-3">
-						<div>
-							<label for="add-domain-name" class="block text-sm text-gray-400 mb-1">Domain Name</label>
+						<!-- Add Domain Form -->
+						<div class="flex flex-wrap items-end gap-3">
+							<div>
+								<label for="add-domain-name" class="block text-sm text-gray-400 mb-1">{translate($language, 'wd.domains.name')}</label>
 							<input
 								id="add-domain-name"
 								type="text"
@@ -2075,14 +2097,14 @@ import { toast } from '$lib/stores/toast';
 							/>
 						</div>
 						<div>
-							<label for="add-domain-type" class="block text-sm text-gray-400 mb-1">Type</label>
+							<label for="add-domain-type" class="block text-sm text-gray-400 mb-1">{translate($language, 'wd.type')}</label>
 							<select
 								id="add-domain-type"
 								bind:value={addDomainType}
 								class="px-3 py-2 bg-gray-900 border border-gray-600 rounded text-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 							>
-								<option value="alias">Alias</option>
-								<option value="subdomain">Subdomain</option>
+								<option value="alias">{translate($language, 'wd.domains.alias')}</option>
+								<option value="subdomain">{translate($language, 'wd.domains.subdomain')}</option>
 							</select>
 						</div>
 						<button
@@ -2090,7 +2112,7 @@ import { toast } from '$lib/stores/toast';
 							disabled={addingDomain || !addDomainName.trim()}
 							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 						>
-							{addingDomain ? 'Adding...' : 'Add Domain'}
+							{addingDomain ? translate($language, 'wd.adding') : translate($language, 'wd.domains.add')}
 						</button>
 					</div>
 				</div>
@@ -2105,7 +2127,7 @@ import { toast } from '$lib/stores/toast';
 		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
 		role="dialog"
 		aria-modal="true"
-		aria-label="Confirm command"
+		aria-label={translate($language, 'wd.cmd.confirm_label')}
 	>
 		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
 			<div class="flex items-start gap-3">
@@ -2124,15 +2146,15 @@ import { toast } from '$lib/stores/toast';
 				</span>
 				<div class="min-w-0">
 					<h4 class="text-base font-semibold text-white">
-						{pendingCommand.danger ? 'Run dangerous command?' : 'Run this command?'}
+						{pendingCommand.danger ? translate($language, 'wd.cmd.danger_title') : translate($language, 'wd.cmd.title')}
 					</h4>
 					<p class="mt-1 text-sm text-gray-400">
 						{#if pendingCommand.danger}
-							This command is destructive. Make sure you have a backup before continuing.
+							{translate($language, 'wd.cmd.danger_body')}
 						{:else}
-							The command runs in the background as <span class="font-mono text-gray-300">{website?.web_user}</span>.
+							{translate($language, 'wd.cmd.runs_as')} <span class="font-mono text-gray-300">{website?.web_user}</span>.
 						{/if}
-						The page reloads automatically when it finishes.
+						{translate($language, 'wd.cmd.auto_reload')}
 					</p>
 				</div>
 			</div>
@@ -2146,7 +2168,7 @@ import { toast } from '$lib/stores/toast';
 					disabled={commandConfirmBusy}
 					class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 				>
-					Cancel
+					{translate($language, 'wd.cancel')}
 				</button>
 				<button
 					type="button"
@@ -2156,7 +2178,7 @@ import { toast } from '$lib/stores/toast';
 						? 'bg-red-600 hover:bg-red-700'
 						: 'bg-blue-600 hover:bg-blue-700'}"
 				>
-					{commandConfirmBusy ? 'Starting…' : pendingCommand.danger ? 'Yes, run it' : 'Run command'}
+					{commandConfirmBusy ? translate($language, 'wd.cmd.starting') : pendingCommand.danger ? translate($language, 'wd.cmd.yes_run') : translate($language, 'wd.cmd.run')}
 				</button>
 			</div>
 		</div>

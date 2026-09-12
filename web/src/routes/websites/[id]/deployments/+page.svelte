@@ -5,6 +5,7 @@
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
 import { toast } from '$lib/stores/toast';
+import { language, translate } from '$lib/stores/language';
 
 	interface Deployment {
 		id: string;
@@ -151,7 +152,7 @@ import { toast } from '$lib/stores/toast';
 		websiteError = '';
 		resetForWebsiteChange();
 		if (!requestedWebsiteID) {
-			websiteError = 'Website ID is required';
+			websiteError = translate($language, 'wsdep.error.website_id_required');
 			loadingWebsite = false;
 			return;
 		}
@@ -164,7 +165,7 @@ import { toast } from '$lib/stores/toast';
 			await loadDeployments(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRequest(requestedWebsiteID, generation)) {
-				websiteError = err instanceof Error ? err.message : 'Failed to load website';
+				websiteError = err instanceof Error ? err.message : translate($language, 'wsdep.error.load_website');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) {
@@ -193,7 +194,7 @@ import { toast } from '$lib/stores/toast';
 			}
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				error = err instanceof Error ? err.message : 'Failed to load deployments';
+				error = err instanceof Error ? err.message : translate($language, 'wsdep.error.load_deployments');
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) {
@@ -214,14 +215,14 @@ import { toast } from '$lib/stores/toast';
 				branch: deployBranch.trim() || 'main'
 			});
 			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
-			toast.success('Deployment started.');
+			toast.success(translate($language, 'wsdep.toast.started'));
 			showDeployForm = false;
 			deployRepoUrl = '';
 			deployBranch = 'main';
 			await loadDeployments(scopedAPI, requestedWebsiteID, generation);
 		} catch (err) {
 			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
-				toast.error(err instanceof Error ? err.message : 'Failed to start deployment');
+				toast.error(err instanceof Error ? err.message : translate($language, 'wsdep.error.start'));
 			}
 		} finally {
 			if (isCurrentRequest(requestedWebsiteID, generation)) {
@@ -246,23 +247,23 @@ import { toast } from '$lib/stores/toast';
 
 <div class="space-y-6">
 	{#if loadingWebsite}
-		<div class="text-gray-400">Loading website...</div>
+		<div class="text-gray-400">{translate($language, 'wsdep.loading_website')}</div>
 	{:else if websiteError}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{websiteError}</div>
 	{:else if currentWebsite}
 	<div class="flex items-center justify-between">
 		<div>
-			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">Websites</a>
+			<a href="/websites" class="text-sm text-blue-400 hover:text-blue-300">{translate($language, 'wsdep.back_to_websites')}</a>
 			<div class="flex flex-wrap items-center gap-3">
-				<h2 class="text-2xl font-bold text-white">Deployments · {currentWebsite.domain}</h2>
-				<span aria-label="Website status" class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{currentWebsite.status}</span>
+				<h2 class="text-2xl font-bold text-white">{translate($language, 'wsdep.title').replace('{domain}', currentWebsite.domain)}</h2>
+				<span aria-label={translate($language, 'wsdep.website_status')} class="inline-block px-2.5 py-0.5 rounded bg-gray-700 text-xs font-medium text-gray-300">{currentWebsite.status}</span>
 			</div>
 		</div>
 		<button
 			onclick={() => (showDeployForm = !showDeployForm)}
 			class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 		>
-			{showDeployForm ? 'Cancel' : 'Deploy'}
+			{showDeployForm ? translate($language, 'wsdep.cancel') : translate($language, 'wsdep.deploy')}
 		</button>
 	</div>
 
@@ -273,10 +274,10 @@ import { toast } from '$lib/stores/toast';
 	<!-- Deploy Form -->
 	{#if showDeployForm}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-			<h3 class="text-lg font-semibold text-white mb-4">New Deployment</h3>
+			<h3 class="text-lg font-semibold text-white mb-4">{translate($language, 'wsdep.new_deployment')}</h3>
 			<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
 				<div>
-					<label for="deploy-repo" class="block text-sm text-gray-400 mb-1">Repository URL</label>
+					<label for="deploy-repo" class="block text-sm text-gray-400 mb-1">{translate($language, 'wsdep.repo_url')}</label>
 					<input
 						id="deploy-repo"
 						type="text"
@@ -286,7 +287,7 @@ import { toast } from '$lib/stores/toast';
 					/>
 				</div>
 				<div>
-					<label for="deploy-branch" class="block text-sm text-gray-400 mb-1">Branch</label>
+					<label for="deploy-branch" class="block text-sm text-gray-400 mb-1">{translate($language, 'wsdep.branch')}</label>
 					<input
 						id="deploy-branch"
 						type="text"
@@ -302,7 +303,7 @@ import { toast } from '$lib/stores/toast';
 					disabled={deploying || !deployRepoUrl.trim()}
 					class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 				>
-					{deploying ? 'Deploying...' : 'Start Deploy'}
+					{deploying ? translate($language, 'wsdep.deploying') : translate($language, 'wsdep.start_deploy')}
 				</button>
 			</div>
 		</div>
@@ -310,12 +311,12 @@ import { toast } from '$lib/stores/toast';
 
 	<!-- Deployment History -->
 	{#if loading}
-		<div class="text-gray-400">Loading deployments...</div>
+		<div class="text-gray-400">{translate($language, 'wsdep.loading_deployments')}</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 	{:else if deployments.length === 0}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-8 text-center">
-			<p class="text-gray-400">No deployments yet for this website.</p>
+			<p class="text-gray-400">{translate($language, 'wsdep.empty')}</p>
 		</div>
 	{:else}
 		<div class="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -323,12 +324,12 @@ import { toast } from '$lib/stores/toast';
 				<table class="w-full">
 					<thead>
 						<tr class="border-b border-gray-700">
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Commit</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Branch</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Status</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Duration</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Created</th>
-							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Log</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsdep.commit')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsdep.branch')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsdep.status')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsdep.duration')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsdep.created')}</th>
+							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wsdep.log')}</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-gray-700">
@@ -364,7 +365,7 @@ import { toast } from '$lib/stores/toast';
 								<tr>
 									<td colspan="6" class="px-4 py-3 bg-gray-900">
 										<div class="max-h-80 overflow-auto">
-											<pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{dep.log || 'No log output available.'}</pre>
+											<pre class="text-xs text-gray-300 whitespace-pre-wrap font-mono leading-relaxed">{dep.log || translate($language, 'wsdep.no_log')}</pre>
 										</div>
 									</td>
 								</tr>

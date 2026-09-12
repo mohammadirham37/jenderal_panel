@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, getCSRFToken } from '$lib/api';
+	import { language, translate } from '$lib/stores/language';
 
 	// ─── Types ────────────────────────────────────────────────────────
 
@@ -122,10 +123,10 @@
 			const code = json?.error?.code || '';
 			if (code === 'MANAGE_SESSION_EXPIRED' || res.status === 401) {
 				lockSession(true);
-				const message = json?.error?.message || 'Management session expired.';
+				const message = json?.error?.message || translate($language, 'dbm.session_expired');
 				throw new Error(message);
 			}
-			throw new Error(json?.error?.message || `Request failed (HTTP ${res.status})`);
+			throw new Error(json?.error?.message || translate($language, 'dbm.request_failed_http').replace('{code}', String(res.status)));
 		}
 		return json?.data as T;
 	}
@@ -145,7 +146,7 @@
 		tables = [];
 		selectedDb = '';
 		selectedTable = '';
-		if (expired) sessionError = 'Management session expired. Unlock again to continue.';
+		if (expired) sessionError = translate($language, 'dbm.session_expired_full');
 	}
 
 	async function unlock() {
@@ -161,14 +162,14 @@
 				body: JSON.stringify({ password: unlockPassword })
 			});
 			const json = await res.json().catch(() => null);
-			if (!res.ok) throw new Error(json?.error?.message || 'Unlock failed');
+			if (!res.ok) throw new Error(json?.error?.message || translate($language, 'dbm.unlock_failed'));
 			token = json.data.token;
 			unlockedUser = { username: json.data.username, engine: json.data.engine };
 			sessionStorage.setItem(tokenKey, token);
 			unlockPassword = '';
 			await loadDatabases();
 		} catch (err) {
-			unlockError = err instanceof Error ? err.message : 'Unlock failed';
+			unlockError = err instanceof Error ? err.message : translate($language, 'dbm.unlock_failed');
 		} finally {
 			unlockBusy = false;
 		}
@@ -232,7 +233,7 @@
 				(browseSearch ? `&search=${encodeURIComponent(browseSearch)}` : '')
 			);
 		} catch (err) {
-			browseError = err instanceof Error ? err.message : 'Failed to load rows';
+			browseError = err instanceof Error ? err.message : translate($language, 'dbm.load_rows_failed');
 			browse = null;
 		} finally {
 			browseLoading = false;
@@ -269,7 +270,7 @@
 				body: { database: selectedDb, sql: sqlText }
 			});
 		} catch (err) {
-			sqlError = err instanceof Error ? err.message : 'Query failed';
+			sqlError = err instanceof Error ? err.message : translate($language, 'dbm.query_failed');
 		} finally {
 			sqlRunning = false;
 		}
@@ -286,12 +287,12 @@
 		if (!confirmAction || confirmBusy) return;
 		confirmBusy = true;
 		try {
-			if (action === 'empty') {
-				await mapi('/empty-table', { method: 'POST', body: { database: selectedDb, table: selectedTable } });
-				toast(`Table "${selectedTable}" emptied.`);
-			} else {
-				await mapi('/drop-table', { method: 'POST', body: { database: selectedDb, table: selectedTable } });
-				toast(`Table "${selectedTable}" dropped.`);
+				if (action === 'empty') {
+					await mapi('/empty-table', { method: 'POST', body: { database: selectedDb, table: selectedTable } });
+					toast(translate($language, 'dbm.emptied').replace('{name}', selectedTable));
+				} else {
+					await mapi('/drop-table', { method: 'POST', body: { database: selectedDb, table: selectedTable } });
+					toast(translate($language, 'dbm.dropped').replace('{name}', selectedTable));
 				selectedTable = '';
 				structure = [];
 				browse = null;
@@ -299,7 +300,7 @@
 			confirmAction = null;
 			await loadTables();
 		} catch (err) {
-			toast(err instanceof Error ? err.message : 'Action failed', true);
+				toast(err instanceof Error ? err.message : translate($language, 'dbm.action_failed'), true);
 		} finally {
 			confirmBusy = false;
 		}
@@ -362,10 +363,9 @@
 						<path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
 					</svg>
 				</span>
-				<h2 class="mt-4 text-xl font-bold text-white">Database Management</h2>
+				<h2 class="mt-4 text-xl font-bold text-white">{translate($language, 'dbm.title')}</h2>
 				<p class="mt-2 text-sm text-gray-400">
-					Enter this database user's password to open a management session
-					(similar to signing in to phpMyAdmin). The session expires after 60 minutes of inactivity.
+					{translate($language, 'dbm.unlock_help')}
 				</p>
 			</div>
 
@@ -381,7 +381,7 @@
 			>
 				<div>
 					<label for="manage-pass" class="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-gray-400">
-						Database user password
+						{translate($language, 'dbm.password_label')}
 					</label>
 					<input
 						id="manage-pass"
@@ -400,10 +400,10 @@
 					disabled={unlockBusy || !unlockPassword}
 					class="w-full cursor-pointer rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 				>
-					{unlockBusy ? 'Unlocking…' : 'Unlock Management'}
+					{unlockBusy ? translate($language, 'dbm.unlocking') : translate($language, 'dbm.unlock')}
 				</button>
 			</form>
-			<a href="/databases" class="mt-4 block text-center text-xs text-gray-500 transition hover:text-gray-300">← Back to Databases</a>
+			<a href="/databases" class="mt-4 block text-center text-xs text-gray-500 transition hover:text-gray-300">{translate($language, 'dbm.back')}</a>
 		</div>
 	</div>
 {:else}
@@ -414,15 +414,15 @@
 			<div class="border-b border-white/5 px-4 py-3">
 				<div class="flex items-center justify-between gap-2">
 					<div class="min-w-0">
-						<p class="truncate font-mono text-sm font-semibold text-white">{unlockedUser?.username || 'session'}</p>
+						<p class="truncate font-mono text-sm font-semibold text-white">{unlockedUser?.username || translate($language, 'dbm.session_fallback')}</p>
 						<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-400">
-							{unlockedUser?.engine || ''} management
+							{unlockedUser?.engine || ''} {translate($language, 'dbm.management')}
 						</p>
 					</div>
 					<button
 						type="button"
 						onclick={() => lockSession(false)}
-						title="End management session"
+						title={translate($language, 'dbm.end_session')}
 						class="shrink-0 cursor-pointer rounded-lg border border-gray-600 bg-gray-700 p-1.5 text-gray-300 transition hover:border-red-400/40 hover:bg-red-600/20 hover:text-red-300"
 					>
 						<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
@@ -433,7 +433,7 @@
 			</div>
 
 			<div class="border-b border-white/5 px-4 py-3">
-				<label for="manage-db" class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">Database</label>
+				<label for="manage-db" class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.database')}</label>
 				<select
 					id="manage-db"
 					bind:value={selectedDb}
@@ -453,7 +453,7 @@
 					<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
 						<path stroke-linecap="round" stroke-linejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
 					</svg>
-					SQL Console
+					{translate($language, 'dbm.sql_console')}
 				</button>
 			</div>
 
@@ -461,13 +461,13 @@
 				<input
 					type="text"
 					bind:value={tableFilter}
-					placeholder="Filter tables…"
-					aria-label="Filter tables"
+					placeholder={translate($language, 'dbm.filter_tables')}
+					aria-label={translate($language, 'dbm.filter_tables')}
 					class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
 				/>
 			</div>
 
-			<nav class="flex-1 overflow-y-auto px-2 pb-2" aria-label="Tables">
+			<nav class="flex-1 overflow-y-auto px-2 pb-2" aria-label={translate($language, 'dbm.tables_aria')}>
 				{#each filteredTables as t (t.name)}
 					<button
 						type="button"
@@ -479,7 +479,7 @@
 						<span class="shrink-0 text-[10px] tabular-nums text-gray-500">{t.rows > 0 ? t.rows : ''}</span>
 					</button>
 				{:else}
-					<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? 'No tables match.' : 'No tables in this database.'}</p>
+					<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? translate($language, 'dbm.no_tables_match') : translate($language, 'dbm.no_tables')}</p>
 				{/each}
 			</nav>
 		</aside>
@@ -497,9 +497,9 @@
 				<!-- SQL console -->
 				<div class="flex items-center justify-between border-b border-white/5 px-5 py-3">
 					<h3 class="text-sm font-semibold text-white">
-						SQL Console — <span class="font-mono text-blue-300">{selectedDb || 'no database'}</span>
+						{translate($language, 'dbm.sql_console')} — <span class="font-mono text-blue-300">{selectedDb || translate($language, 'dbm.no_database')}</span>
 					</h3>
-					<span class="text-[11px] text-gray-500">Ctrl+Enter to run</span>
+					<span class="text-[11px] text-gray-500">{translate($language, 'dbm.ctrl_enter')}</span>
 				</div>
 				<div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-5">
 					<textarea
@@ -516,10 +516,10 @@
 							disabled={sqlRunning || !sqlText.trim() || !selectedDb}
 							class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 						>
-							{sqlRunning ? 'Running…' : 'Run (Ctrl+Enter)'}
+							{sqlRunning ? translate($language, 'dbm.running') : translate($language, 'dbm.run')}
 						</button>
 						{#if sqlResult?.capped}
-							<span class="text-[11px] text-yellow-400">Results capped at 1,000 rows.</span>
+							<span class="text-[11px] text-yellow-400">{translate($language, 'dbm.capped')}</span>
 						{/if}
 					</div>
 
@@ -545,17 +545,17 @@
 													</td>
 												{/each}
 											</tr>
-										{:else}
-											<tr><td class="px-3 py-3 text-center text-gray-500" colspan="{sqlResult.columns.length || 1}">No rows returned.</td></tr>
-										{/each}
-									</tbody>
-								</table>
-							</div>
-							<p class="text-[11px] text-gray-500">{sqlResult.rows.length} rows</p>
+											{:else}
+												<tr><td class="px-3 py-3 text-center text-gray-500" colspan="{sqlResult.columns.length || 1}">{translate($language, 'dbm.no_rows_returned')}</td></tr>
+											{/each}
+										</tbody>
+									</table>
+								</div>
+								<p class="text-[11px] text-gray-500">{translate($language, 'dbm.rows_count').replace('{count}', String(sqlResult.rows.length))}</p>
 						{:else}
 							<div class="rounded-xl border border-green-700/50 bg-green-900/20 p-4 text-sm text-green-300">
 								{sqlResult.tag || 'OK'}
-								{#if sqlResult.affected > 0}— {sqlResult.affected} row(s) affected{/if}
+								{#if sqlResult.affected > 0}{translate($language, 'dbm.affected').replace('{count}', String(sqlResult.affected))}{/if}
 							</div>
 						{/if}
 					{/if}
@@ -565,7 +565,7 @@
 				<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-3">
 					<div class="flex items-center gap-2.5">
 						<h3 class="font-mono text-sm font-semibold text-white">{selectedTable}</h3>
-						<span class="text-[11px] text-gray-500">in {selectedDb}</span>
+						<span class="text-[11px] text-gray-500">{translate($language, 'dbm.in_db').replace('{name}', selectedDb)}</span>
 					</div>
 					<div class="flex items-center gap-2">
 						<button
@@ -573,14 +573,14 @@
 							onclick={() => (confirmAction = 'empty')}
 							class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-medium text-gray-200 transition hover:border-yellow-400/40 hover:bg-yellow-600/20 hover:text-yellow-200"
 						>
-							Empty
+							{translate($language, 'dbm.empty')}
 						</button>
 						<button
 							type="button"
 							onclick={() => (confirmAction = 'drop')}
 							class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-medium text-gray-200 transition hover:border-red-400/40 hover:bg-red-600/20 hover:text-red-300"
 						>
-							Drop
+							{translate($language, 'dbm.drop')}
 						</button>
 					</div>
 				</div>
@@ -590,12 +590,12 @@
 						type="button"
 						onclick={() => (tableTab = 'browse')}
 						class="cursor-pointer rounded-t-lg px-4 py-2 text-xs font-semibold transition {tableTab === 'browse' ? 'bg-blue-500/15 text-blue-200' : 'text-gray-400 hover:bg-white/5'}"
-					>Browse</button>
+						>{translate($language, 'dbm.browse')}</button>
 					<button
 						type="button"
 						onclick={() => { tableTab = 'structure'; if (structure.length === 0) loadStructure().catch((err) => toast(err.message, true)); }}
 						class="cursor-pointer rounded-t-lg px-4 py-2 text-xs font-semibold transition {tableTab === 'structure' ? 'bg-blue-500/15 text-blue-200' : 'text-gray-400 hover:bg-white/5'}"
-					>Structure</button>
+					>{translate($language, 'dbm.structure')}</button>
 				</div>
 
 				{#if tableTab === 'browse'}
@@ -609,18 +609,18 @@
 								type="text"
 								bind:value={browseSearchInput}
 								oninput={onSearchInput}
-								placeholder="Search all columns…"
-								aria-label="Search rows"
+								placeholder={translate($language, 'dbm.search_columns')}
+								aria-label={translate($language, 'dbm.search_rows')}
 								class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
 							/>
 						</form>
 						<select
 							bind:value={browsePerPage}
 							onchange={() => { browsePage = 1; loadBrowse().catch((err) => toast(err.message, true)); }}
-							aria-label="Rows per page"
+							aria-label={translate($language, 'dbm.rows_per_page')}
 							class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
 						>
-							{#each [25, 50, 100, 250] as n}<option value={n}>{n} / page</option>{/each}
+							{#each [25, 50, 100, 250] as n}<option value={n}>{translate($language, 'dbm.per_page').replace('{n}', String(n))}</option>{/each}
 						</select>
 						<button
 							type="button"
@@ -628,7 +628,7 @@
 							disabled={!browse || browse.rows.length === 0}
 							class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
 						>
-							Export CSV
+							{translate($language, 'dbm.export_csv')}
 						</button>
 					</div>
 
@@ -670,7 +670,7 @@
 										</tr>
 									{:else}
 										<tr><td class="px-4 py-8 text-center text-gray-500" colspan="{browse.columns.length || 1}">
-											{browseSearch ? `No rows match "${browseSearch}".` : 'This table is empty.'}
+											{browseSearch ? translate($language, 'dbm.no_rows_match').replace('{query}', browseSearch) : translate($language, 'dbm.table_empty')}
 										</td></tr>
 									{/each}
 								</tbody>
@@ -682,8 +682,8 @@
 						{@const bp = browse}
 						<div class="flex items-center justify-between gap-3 border-t border-white/5 px-5 py-2.5 text-xs text-gray-400">
 							<span>
-								{bp.total} rows{browseSearch ? ` (filtered)` : ''}
-								· page {bp.page} / {bp.total_pages}
+								{translate($language, 'dbm.rows_count').replace('{count}', String(bp.total))}{browseSearch ? translate($language, 'dbm.filtered') : ''}
+								· {translate($language, 'dbm.page_of').replace('{page}', String(bp.page)).replace('{total}', String(bp.total_pages))}
 							</span>
 							<div class="flex items-center gap-1">
 								<button type="button" onclick={() => goToPage(1)} disabled={bp.page <= 1} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2 py-1 transition hover:bg-gray-600 disabled:opacity-40">«</button>
@@ -706,11 +706,11 @@
 							<table class="w-full text-xs">
 								<thead>
 									<tr class="border-b border-gray-700">
-										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">Column</th>
-										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">Type</th>
-										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">Null</th>
-										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">Key</th>
-										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">Default</th>
+										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_column')}</th>
+										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_type')}</th>
+										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_null')}</th>
+										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_key')}</th>
+										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_default')}</th>
 									</tr>
 								</thead>
 								<tbody class="divide-y divide-gray-700/40">
@@ -740,8 +740,8 @@
 							<path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 7.25 6 6.746 6 6.125v1.5m0-1.5c0-.621-.504-1.125-1.125-1.125M6 7.25v-1.5M6 7.25c0 .621.504 1.125 1.125 1.125h1.5m11.25 0h1.5m-1.5 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m2.25-3.75c0 .621-.504 1.125-1.125 1.125M18 5.625v1.5m0-1.5c0-.621-.504-1.125-1.125-1.125M6 7.25v1.5c0 .621-.504 1.125-1.125 1.125M6 7.25c0 .621.504 1.125 1.125 1.125" />
 						</svg>
 					</span>
-					<p class="text-sm text-gray-400">Select a table from the sidebar to browse its data and structure.</p>
-					<p class="text-xs text-gray-500">Or open the SQL Console to run any query as this user.</p>
+					<p class="text-sm text-gray-400">{translate($language, 'dbm.select_table_hint')}</p>
+					<p class="text-xs text-gray-500">{translate($language, 'dbm.select_table_alt')}</p>
 				</div>
 			{/if}
 		</div>
@@ -749,27 +749,27 @@
 
 	<!-- Confirm modal for Empty / Drop -->
 	{#if confirmAction}
-		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="Confirm table action">
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={translate($language, 'dbm.confirm_aria')}>
 			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
 				<h4 class="text-base font-semibold text-white">
-					{confirmAction === 'drop' ? 'Drop table' : 'Empty table'} <span class="font-mono">{selectedTable}</span>?
+					{confirmAction === 'drop' ? translate($language, 'dbm.drop_table') : translate($language, 'dbm.empty_table')} <span class="font-mono">{selectedTable}</span>?
 				</h4>
 				<p class="mt-2 text-sm text-gray-400">
 					{#if confirmAction === 'drop'}
-						The table and all of its data will be permanently deleted. This cannot be undone.
+						{translate($language, 'dbm.drop_warning')}
 					{:else}
-						All rows will be removed. The table structure is kept. This cannot be undone.
+						{translate($language, 'dbm.empty_warning')}
 					{/if}
 				</p>
 				<div class="mt-4 flex justify-end gap-2">
-					<button type="button" onclick={() => (confirmAction = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">Cancel</button>
+					<button type="button" onclick={() => (confirmAction = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'db.cancel')}</button>
 					<button
 						type="button"
 						onclick={() => runTableAction(confirmAction!)}
 						disabled={confirmBusy}
 						class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
 					>
-						{confirmBusy ? 'Working…' : confirmAction === 'drop' ? 'Drop table' : 'Empty table'}
+						{confirmBusy ? translate($language, 'dbm.working') : confirmAction === 'drop' ? translate($language, 'dbm.drop_table') : translate($language, 'dbm.empty_table')}
 					</button>
 				</div>
 			</div>

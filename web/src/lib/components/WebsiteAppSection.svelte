@@ -2,6 +2,7 @@
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	interface AppStatus {
@@ -56,7 +57,7 @@
 			startCommand = s.start_command;
 			buildCommand = s.build_command;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load app service';
+			error = err instanceof Error ? err.message : translate($language, 'wsapp.error.load');
 		} finally {
 			loading = false;
 		}
@@ -72,9 +73,9 @@
 				start_command: startCommand.trim(),
 				build_command: buildCommand.trim()
 			});
-			toast.success('App service configuration saved.');
+			toast.success(translate($language, 'wsapp.toast.saved'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to save app service');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wsapp.error.save'));
 		} finally {
 			saving = false;
 		}
@@ -87,10 +88,16 @@
 		actionError = '';
 		try {
 			await api.post(appAPI(action), {});
-			toast.success(`App service ${action === 'restart' ? 'restarted' : action + 'ed'}.`);
+			toast.success(
+				action === 'restart'
+					? translate($language, 'wsapp.toast.restarted')
+					: action === 'stop'
+						? translate($language, 'wsapp.toast.stopped')
+						: translate($language, 'wsapp.toast.started')
+			);
 			await loadStatus();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : `Failed to ${action} app service`);
+			toast.error(err instanceof Error ? err.message : translate($language, 'wsapp.error.action').replace('{action}', action));
 		} finally {
 			busyAction = '';
 		}
@@ -104,9 +111,9 @@
 		try {
 			const res = await api.post<{ task_id: string }>(appAPI('build'), {});
 			buildTaskId = res.task_id;
-			toast.success('Build started. The app restarts automatically when it finishes.');
+			toast.success(translate($language, 'wsapp.toast.buildStarted'));
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Failed to start build');
+			toast.error(err instanceof Error ? err.message : translate($language, 'wsapp.error.build'));
 		} finally {
 			busyAction = '';
 		}
@@ -129,16 +136,18 @@
 <div class="space-y-4">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<p class="text-xs text-gray-500">
-			{domain ? `App service for ${domain}` : 'App service'}
+			{domain
+				? translate($language, 'wsapp.serviceFor').replace('{domain}', domain)
+				: translate($language, 'wsapp.service')}
 			{#if status?.port}· port {status.port}{/if}
-			· Node {nodeVersion || 'default'}{status?.unit ? ` · ${status.unit}` : ''}
+			· Node {nodeVersion || translate($language, 'wsapp.default')}{status?.unit ? ` · ${status.unit}` : ''}
 		</p>
 		<button
 			type="button"
 			onclick={loadStatus}
 			class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 		>
-			Refresh
+			{translate($language, 'wsapp.refresh')}
 		</button>
 	</div>
 
@@ -148,7 +157,7 @@
 
 	{#if buildTaskId}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
-			<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">Build progress</p>
+			<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wsapp.buildProgress')}</p>
 			<TaskProgress bind:taskId={buildTaskId} storageKey={'app-build-' + websiteID} onComplete={loadStatus} />
 		</div>
 	{/if}
@@ -164,45 +173,45 @@
 	{:else if status}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 			<div class="flex flex-wrap items-center justify-between gap-2">
-				<h3 class="text-sm font-semibold text-white">Service</h3>
+				<h3 class="text-sm font-semibold text-white">{translate($language, 'wsapp.serviceHeading')}</h3>
 				<span class="rounded-full px-2.5 py-0.5 text-[11px] font-medium {statusBadgeClass(status.active)}">
-					{status.active ? 'running' : 'stopped'}
+					{status.active ? translate($language, 'wsapp.running') : translate($language, 'wsapp.stopped')}
 				</span>
 			</div>
 			<div class="mt-3 flex flex-wrap gap-2">
 				{#if status.active}
 					<button type="button" onclick={() => runAction('restart')} disabled={busyAction !== ''}
-						class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">Restart</button>
+						class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">{translate($language, 'wsapp.restart')}</button>
 					<button type="button" onclick={() => runAction('stop')} disabled={busyAction !== ''}
-						class="cursor-pointer rounded-lg bg-yellow-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50">Stop</button>
+						class="cursor-pointer rounded-lg bg-yellow-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50">{translate($language, 'wsapp.stop')}</button>
 				{:else}
 					<button type="button" onclick={() => runAction('start')} disabled={busyAction !== ''}
-						class="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-50">Start</button>
+						class="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-50">{translate($language, 'wsapp.start')}</button>
 				{/if}
 				{#if status.build_command}
 					<button type="button" onclick={runBuild} disabled={busyAction !== ''}
-						class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">Build & restart</button>
+						class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'wsapp.buildRestart')}</button>
 				{/if}
 			</div>
 		</div>
 
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-			<h3 class="mb-3 text-sm font-semibold text-white">Configuration</h3>
+			<h3 class="mb-3 text-sm font-semibold text-white">{translate($language, 'wsapp.configuration')}</h3>
 			<div class="grid gap-3">
 				<div>
-					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="app-start">Start command</label>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="app-start">{translate($language, 'wsapp.startCommand')}</label>
 					<input id="app-start" type="text" bind:value={startCommand} placeholder="npm run start"
 						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
 					<p class="mt-1 text-[10px] text-gray-500">
 				{#if runtime === 'python'}
-					Start command runs with the site virtualenv on PATH (created on first build; deps from requirements.txt).
+					{translate($language, 'wsapp.hint.python')}
 				{:else}
-					Runs via nvm-exec with Node {nodeVersion || 'default'} from the site directory.
+					{translate($language, 'wsapp.hint.node').replace('{version}', nodeVersion || translate($language, 'wsapp.default'))}
 				{/if}
 			</p>
 				</div>
 				<div>
-					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="app-build">Build command (optional)</label>
+					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="app-build">{translate($language, 'wsapp.buildCommand')}</label>
 					<input id="app-build" type="text" bind:value={buildCommand} placeholder="npm run build"
 						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
 				</div>
@@ -213,7 +222,7 @@
 				disabled={saving || !startCommand.trim()}
 				class="mt-3 cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 			>
-				{saving ? 'Saving…' : 'Save configuration'}
+				{saving ? translate($language, 'wsapp.saving') : translate($language, 'wsapp.saveConfig')}
 			</button>
 		</div>
 	{/if}

@@ -23,6 +23,7 @@ function harness(overrides = {}) {
 		Error,
 		api, apiRaw: async (method, path, payload) => { calls.push({method, path, payload}); return {data: {task_id: 'remove-1'}}; },
 		toast: {success: () => {}, error: () => {}, info: () => {}},
+		translate: (lang, key) => key, $language: 'en',
 		$state: (value) => value, $derived: (value) => value, onMount: () => {}
 	});
 	vm.runInContext(javascript + `

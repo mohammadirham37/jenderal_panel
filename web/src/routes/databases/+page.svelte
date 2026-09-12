@@ -4,6 +4,7 @@
 	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface EngineStatus {
@@ -86,14 +87,14 @@ import { toast } from '$lib/stores/toast';
 
 	async function exportDatabase(id: string, name: string, format: 'sql' | 'sql.gz') {
 		exportMenuId = null;
-		exportStatus = { id, message: 'Preparing export…', error: false };
+		exportStatus = { id, message: translate($language, 'db.preparing_export'), error: false };
 		try {
 			const res = await fetch(`/api/v1/databases/${id}/export?format=${encodeURIComponent(format)}`, {
 				credentials: 'include'
 			});
 			if (!res.ok) {
 				const json = await res.json().catch(() => null);
-				throw new Error(json?.error?.message || `Export failed (HTTP ${res.status})`);
+				throw new Error(json?.error?.message || translate($language, 'db.export_failed_http').replace('{code}', String(res.status)));
 			}
 			const blob = await res.blob();
 			const a = document.createElement('a');
@@ -101,10 +102,10 @@ import { toast } from '$lib/stores/toast';
 			a.download = `${name}-${new Date().toISOString().slice(0, 10)}.${format}`;
 			a.click();
 			URL.revokeObjectURL(a.href);
-			exportStatus = { id, message: 'Exported ' + format, error: false };
+			exportStatus = { id, message: translate($language, 'db.exported').replace('{format}', format), error: false };
 			setTimeout(() => { if (exportStatus?.id === id) exportStatus = null; }, 3000);
 		} catch (err) {
-			exportStatus = { id, message: err instanceof Error ? err.message : 'Export failed', error: true };
+			exportStatus = { id, message: err instanceof Error ? err.message : translate($language, 'db.export_failed'), error: true };
 			setTimeout(() => { if (exportStatus?.id === id) exportStatus = null; }, 4000);
 		}
 	}
@@ -138,7 +139,7 @@ import { toast } from '$lib/stores/toast';
 		const pending = restorePending;
 		if (!pending || restoreBusy) return;
 		restoreBusy = true;
-		restoreStatus = { id: pending.id, message: 'Restoring… this can take a while', error: false };
+		restoreStatus = { id: pending.id, message: translate($language, 'db.restoring_note'), error: false };
 		try {
 			const form = new FormData();
 			form.append('file', pending.file);
@@ -150,12 +151,12 @@ import { toast } from '$lib/stores/toast';
 			});
 			if (!res.ok) {
 				const json = await res.json().catch(() => null);
-				throw new Error(json?.error?.message || `Restore failed (HTTP ${res.status})`);
+				throw new Error(json?.error?.message || translate($language, 'db.restore_failed_http').replace('{code}', String(res.status)));
 			}
-			restoreStatus = { id: pending.id, message: 'Restored from ' + pending.fileName, error: false };
+			restoreStatus = { id: pending.id, message: translate($language, 'db.restored_from').replace('{name}', pending.fileName), error: false };
 			setTimeout(() => { if (restoreStatus?.id === pending.id) restoreStatus = null; }, 4000);
 		} catch (err) {
-			restoreStatus = { id: pending.id, message: err instanceof Error ? err.message : 'Restore failed', error: true };
+			restoreStatus = { id: pending.id, message: err instanceof Error ? err.message : translate($language, 'db.restore_failed'), error: true };
 			setTimeout(() => { if (restoreStatus?.id === pending.id) restoreStatus = null; }, 6000);
 		} finally {
 			restorePending = null;
@@ -271,7 +272,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			engines = (await api.get<EngineStatus[]>('/api/v1/databases/engines')) || [];
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load database engines';
+			error = err instanceof Error ? err.message : translate($language, 'db.load_engines_failed');
 		} finally {
 			loadingEngines = false;
 		}
@@ -282,7 +283,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			databases = (await api.get<Database[]>('/api/v1/databases')) || [];
 		} catch (err) {
-			if (!error) error = err instanceof Error ? err.message : 'Failed to load databases';
+			if (!error) error = err instanceof Error ? err.message : translate($language, 'db.load_databases_failed');
 		} finally {
 			loadingDatabases = false;
 		}
@@ -293,7 +294,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			dbUsers = (await api.get<DbUser[]>('/api/v1/databases/users')) || [];
 		} catch (err) {
-			if (!error) error = err instanceof Error ? err.message : 'Failed to load database users';
+			if (!error) error = err instanceof Error ? err.message : translate($language, 'db.load_users_failed');
 		} finally {
 			loadingUsers = false;
 		}
@@ -310,9 +311,9 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/databases/engines/${engineName}/install`);
 			currentTaskId = result.task_id;
-			flash(`${engineLabel(engineName)} installation started.`);
+			flash(translate($language, 'db.install_started').replace('{name}', engineLabel(engineName)));
 		} catch (err) {
-			fail(err, `Failed to install ${engineLabel(engineName)}`);
+			fail(err, translate($language, 'db.install_failed').replace('{name}', engineLabel(engineName)));
 		} finally {
 			actionInProgress = null;
 		}
@@ -322,10 +323,10 @@ import { toast } from '$lib/stores/toast';
 		actionInProgress = `${action}-${engineName}`;
 		try {
 			await api.post(`/api/v1/databases/engines/${engineName}/${action}`);
-			flash(`${engineLabel(engineName)} ${action === 'start' ? 'started' : action === 'stop' ? 'stopped' : 'restarted'} successfully.`);
+			flash(translate($language, action === 'start' ? 'db.started' : action === 'stop' ? 'db.stopped' : 'db.restarted').replace('{name}', engineLabel(engineName)));
 			await loadEngines();
 		} catch (err) {
-			fail(err, `Failed to ${action} ${engineLabel(engineName)}`);
+			fail(err, translate($language, action === 'start' ? 'db.start_failed' : action === 'stop' ? 'db.stop_failed' : 'db.restart_failed').replace('{name}', engineLabel(engineName)));
 		} finally {
 			actionInProgress = null;
 		}
@@ -341,13 +342,13 @@ import { toast } from '$lib/stores/toast';
 				engine: newDbEngine,
 				charset: newDbCharset.trim() || 'utf8mb4'
 			});
-			flash(`Database "${newDbName.trim()}" created successfully.`);
+			flash(translate($language, 'db.created').replace('{name}', newDbName.trim()));
 			newDbName = '';
 			newDbEngine = 'mysql';
 			newDbCharset = 'utf8mb4';
 			await loadDatabases();
 		} catch (err) {
-			fail(err, 'Failed to create database');
+			fail(err, translate($language, 'db.create_failed'));
 		} finally {
 			creatingDb = false;
 		}
@@ -357,10 +358,10 @@ import { toast } from '$lib/stores/toast';
 		deleteDbConfirmId = null;
 		try {
 			await api.del(`/api/v1/databases/${id}`);
-			flash(`Database "${name}" deleted.`);
+			flash(translate($language, 'db.deleted').replace('{name}', name));
 			await loadDatabases();
 		} catch (err) {
-			fail(err, 'Failed to delete database');
+			fail(err, translate($language, 'db.delete_failed'));
 		}
 	}
 
@@ -374,14 +375,14 @@ import { toast } from '$lib/stores/toast';
 				password: newPassword.trim(),
 				engine: newUserEngine
 			});
-			flash(`User "${newUsername.trim()}" created successfully.`);
+			flash(translate($language, 'db.user_created').replace('{name}', newUsername.trim()));
 			newUsername = '';
 			newPassword = '';
 			showNewPassword = false;
 			newUserEngine = 'mysql';
 			await loadUsers();
 		} catch (err) {
-			fail(err, 'Failed to create database user');
+			fail(err, translate($language, 'db.user_create_failed'));
 		} finally {
 			creatingUser = false;
 		}
@@ -394,12 +395,12 @@ import { toast } from '$lib/stores/toast';
 			await api.post(`/api/v1/databases/users/${userId}/password`, {
 				password: resetPasswordValue.trim()
 			});
-			flash('Password reset successfully.');
+			flash(translate($language, 'db.password_reset'));
 			resetPasswordUserId = null;
 			resetPasswordValue = '';
 			showResetPassword = false;
 		} catch (err) {
-			fail(err, 'Failed to reset password');
+			fail(err, translate($language, 'db.password_reset_failed'));
 		}
 	}
 
@@ -413,11 +414,11 @@ import { toast } from '$lib/stores/toast';
 				database_id: grantDatabase
 			});
 			const dbName = databases.find((d) => d.id === grantDatabase)?.name || grantDatabase;
-			flash(`Privileges on "${dbName}" granted successfully.`);
+			flash(translate($language, 'db.granted').replace('{name}', dbName));
 			grantUserId = null;
 			grantDatabase = '';
 		} catch (err) {
-			fail(err, 'Failed to grant privileges');
+			fail(err, translate($language, 'db.grant_failed'));
 		}
 	}
 
@@ -425,10 +426,10 @@ import { toast } from '$lib/stores/toast';
 		deleteUserConfirmId = null;
 		try {
 			await api.del(`/api/v1/databases/users/${id}`);
-			flash(`User "${username}" deleted.`);
+			flash(translate($language, 'db.user_deleted').replace('{name}', username));
 			await loadUsers();
 		} catch (err) {
-			fail(err, 'Failed to delete database user');
+			fail(err, translate($language, 'db.user_delete_failed'));
 		}
 	}
 
@@ -458,13 +459,13 @@ import { toast } from '$lib/stores/toast';
 	<!-- Header -->
 	<div class="flex flex-wrap items-end justify-between gap-4">
 		<div>
-			<h2 class="text-2xl font-bold text-white">Databases</h2>
+			<h2 class="text-2xl font-bold text-white">{translate($language, 'db.title')}</h2>
 			<div class="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-400">
-				<span>{databases.length} databases</span>
+				<span>{translate($language, 'db.count_databases').replace('{count}', String(databases.length))}</span>
 				<span class="text-gray-600">·</span>
-				<span>{dbUsers.length} users</span>
+				<span>{translate($language, 'db.count_users').replace('{count}', String(dbUsers.length))}</span>
 				<span class="text-gray-600">·</span>
-				<span>{engines.filter((e) => e.running).length} engines running</span>
+				<span>{translate($language, 'db.count_engines').replace('{count}', String(engines.filter((e) => e.running).length))}</span>
 			</div>
 		</div>
 		<button
@@ -485,7 +486,7 @@ import { toast } from '$lib/stores/toast';
 			>
 				<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.992 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M21.015 4.353v4.992" />
 			</svg>
-			Refresh
+			{translate($language, 'db.refresh')}
 		</button>
 	</div>
 
@@ -499,7 +500,7 @@ import { toast } from '$lib/stores/toast';
 
 
 	<!-- ═══════════════════════════ ENGINES ═══════════════════════════ -->
-	<section aria-label="Database engines">
+	<section aria-label={translate($language, 'db.engines_aria')}>
 		{#if loadingEngines}
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				{#each Array(3) as _}
@@ -517,7 +518,7 @@ import { toast } from '$lib/stores/toast';
 								</span>
 								<div>
 									<p class="font-semibold text-white">{engineLabel(eng.name)}</p>
-									<p class="text-xs text-gray-500">{eng.version || (eng.installed ? 'Installed' : 'Not installed')}</p>
+									<p class="text-xs text-gray-500">{eng.version || (eng.installed ? translate($language, 'db.installed') : translate($language, 'db.not_installed'))}</p>
 								</div>
 							</div>
 							<div class="flex flex-col items-end gap-1.5">
@@ -529,10 +530,10 @@ import { toast } from '$lib/stores/toast';
 											{/if}
 											<span class="relative inline-flex h-1.5 w-1.5 rounded-full {eng.running ? 'bg-green-400' : 'bg-red-400'}"></span>
 										</span>
-										{eng.running ? 'Running' : 'Stopped'}
+										{eng.running ? translate($language, 'db.status_running') : translate($language, 'db.status_stopped')}
 									</span>
 								{:else}
-									<span class="rounded-full bg-gray-700/60 px-2 py-0.5 text-[11px] font-semibold text-gray-400">Not installed</span>
+									<span class="rounded-full bg-gray-700/60 px-2 py-0.5 text-[11px] font-semibold text-gray-400">{translate($language, 'db.not_installed')}</span>
 								{/if}
 							</div>
 						</div>
@@ -544,7 +545,7 @@ import { toast } from '$lib/stores/toast';
 									disabled={engineOperationInProgress}
 									class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 								>
-									{actionInProgress === `install-${eng.name}` ? 'Installing…' : 'Install'}
+									{actionInProgress === `install-${eng.name}` ? translate($language, 'db.installing') : translate($language, 'db.install')}
 								</button>
 							{:else}
 								{#if !eng.running}
@@ -554,7 +555,7 @@ import { toast } from '$lib/stores/toast';
 										disabled={engineOperationInProgress}
 										class="cursor-pointer rounded-lg bg-green-600 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
 									>
-										{actionInProgress === `start-${eng.name}` ? 'Starting…' : 'Start'}
+										{actionInProgress === `start-${eng.name}` ? translate($language, 'db.starting') : translate($language, 'db.start')}
 									</button>
 								{:else}
 									<button
@@ -563,7 +564,7 @@ import { toast } from '$lib/stores/toast';
 										disabled={engineOperationInProgress}
 										class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
 									>
-										{actionInProgress === `stop-${eng.name}` ? 'Stopping…' : 'Stop'}
+										{actionInProgress === `stop-${eng.name}` ? translate($language, 'db.stopping') : translate($language, 'db.stop')}
 									</button>
 								{/if}
 								<button
@@ -572,7 +573,7 @@ import { toast } from '$lib/stores/toast';
 									disabled={engineOperationInProgress}
 									class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3.5 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 								>
-									{actionInProgress === `restart-${eng.name}` ? 'Restarting…' : 'Restart'}
+									{actionInProgress === `restart-${eng.name}` ? translate($language, 'db.restarting') : translate($language, 'db.restart')}
 								</button>
 							{/if}
 						</div>
@@ -583,10 +584,10 @@ import { toast } from '$lib/stores/toast';
 	</section>
 
 	<!-- ═══════════════════════════ DATABASES ═══════════════════════════ -->
-	<section class="rounded-2xl border border-white/5 bg-gray-800/60" aria-label="Databases">
+	<section class="rounded-2xl border border-white/5 bg-gray-800/60" aria-label={translate($language, 'db.title')}>
 		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
 			<div class="flex items-center gap-2.5">
-				<h3 class="text-sm font-semibold text-white">Databases</h3>
+				<h3 class="text-sm font-semibold text-white">{translate($language, 'db.title')}</h3>
 				{#if !loadingDatabases}
 					<span class="rounded-full bg-blue-900/40 px-2 py-0.5 text-[11px] font-semibold text-blue-300">{databases.length}</span>
 				{/if}
@@ -598,8 +599,8 @@ import { toast } from '$lib/stores/toast';
 				<input
 					type="text"
 					bind:value={dbSearch}
-					placeholder="Search databases…"
-					aria-label="Search databases"
+					placeholder={translate($language, 'db.search_databases')}
+					aria-label={translate($language, 'db.search_databases')}
 					class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 				/>
 			</div>
@@ -611,7 +612,7 @@ import { toast } from '$lib/stores/toast';
 			onsubmit={(e) => { e.preventDefault(); createDatabase(); }}
 		>
 			<div>
-				<label for="db-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Name</label>
+				<label for="db-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.name')}</label>
 				<input
 					id="db-name"
 					type="text"
@@ -621,7 +622,7 @@ import { toast } from '$lib/stores/toast';
 				/>
 			</div>
 			<div>
-				<label for="db-engine" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Engine</label>
+				<label for="db-engine" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.engine')}</label>
 				<select
 					id="db-engine"
 					bind:value={newDbEngine}
@@ -632,7 +633,7 @@ import { toast } from '$lib/stores/toast';
 				</select>
 			</div>
 			<div>
-				<label for="db-charset" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Charset</label>
+				<label for="db-charset" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.charset')}</label>
 				<input
 					id="db-charset"
 					type="text"
@@ -646,7 +647,7 @@ import { toast } from '$lib/stores/toast';
 				disabled={creatingDb || !newDbName.trim()}
 				class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 			>
-				{creatingDb ? 'Adding…' : 'Create Database'}
+				{creatingDb ? translate($language, 'db.adding') : translate($language, 'db.create_database')}
 			</button>
 		</form>
 
@@ -663,9 +664,9 @@ import { toast } from '$lib/stores/toast';
 			</div>
 		{:else if filteredDatabases.length === 0}
 			<div class="px-5 py-10 text-center">
-				<p class="text-sm text-gray-400">{dbSearch ? `No databases match "${dbSearch}".` : 'No databases yet.'}</p>
+				<p class="text-sm text-gray-400">{dbSearch ? translate($language, 'db.no_match').replace('{query}', dbSearch) : translate($language, 'db.none_yet')}</p>
 				{#if !dbSearch}
-					<p class="mt-1 text-xs text-gray-500">Create one with the form above.</p>
+					<p class="mt-1 text-xs text-gray-500">{translate($language, 'db.create_one_hint')}</p>
 				{/if}
 			</div>
 		{:else}
@@ -679,13 +680,13 @@ import { toast } from '$lib/stores/toast';
 							<button
 								type="button"
 								onclick={() => copyText(db.name, `db-${db.id}`)}
-								title="Click to copy name"
+								title={translate($language, 'db.click_copy_name')}
 								class="block cursor-pointer truncate text-left font-mono text-sm font-medium text-gray-100 hover:text-blue-300"
 							>
 								{db.name}
 							</button>
 							<p class="text-[11px] text-gray-500">
-								{db.charset || '—'} · created {formatDate(db.created_at)}
+								{db.charset || '—'} · {translate($language, 'db.created_at').replace('{date}', formatDate(db.created_at))}
 							</p>
 						</div>
 						<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(db.engine)}">
@@ -696,10 +697,10 @@ import { toast } from '$lib/stores/toast';
 								<button
 									type="button"
 									onclick={(e) => { e.stopPropagation(); exportMenuId = exportMenuId === db.id ? null : db.id; }}
-									title="Export database"
+									title={translate($language, 'db.export_title')}
 									class="cursor-pointer rounded-lg px-2 py-1 text-[11px] font-medium text-gray-400 transition hover:bg-gray-600 hover:text-white {exportMenuId === db.id ? 'bg-gray-600 text-white' : ''}"
 								>
-									Export
+									{translate($language, 'db.export')}
 								</button>
 								{#if exportMenuId === db.id}
 									<div
@@ -711,14 +712,14 @@ import { toast } from '$lib/stores/toast';
 											onclick={() => exportDatabase(db.id, db.name, 'sql')}
 											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700"
 										>
-											SQL dump <span class="text-gray-500">(.sql)</span>
+											{translate($language, 'db.sql_dump')} <span class="text-gray-500">(.sql)</span>
 										</button>
 										<button
 											type="button"
 											onclick={() => exportDatabase(db.id, db.name, 'sql.gz')}
 											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700"
 										>
-											Gzipped SQL <span class="text-gray-500">(.sql.gz)</span>
+											{translate($language, 'db.sql_gz')} <span class="text-gray-500">(.sql.gz)</span>
 										</button>
 										<div class="border-t border-gray-700"></div>
 										<button
@@ -726,23 +727,23 @@ import { toast } from '$lib/stores/toast';
 											onclick={() => { exportMenuId = null; pickRestoreFile(db.id, db.name); }}
 											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-yellow-300 transition hover:bg-gray-700"
 										>
-											Restore from file…
+											{translate($language, 'db.restore_from_file')}
 										</button>
 									</div>
 								{#if restorePending?.id === db.id}
 									<div class="absolute top-full right-0 z-20 mt-1 w-56 rounded-lg border border-yellow-700/60 bg-gray-800 p-3 shadow-xl">
 										<p class="text-[11px] leading-snug text-gray-300">
-											Overwrite <span class="font-mono font-semibold text-white">{restorePending.name}</span> with
-											<span class="font-mono">{restorePending.fileName}</span>? All current data will be lost.
+											{translate($language, 'db.overwrite')} <span class="font-mono font-semibold text-white">{restorePending.name}</span> {translate($language, 'db.with')}
+											<span class="font-mono">{restorePending.fileName}</span>? {translate($language, 'db.data_lost')}
 										</p>
 										<div class="mt-2 flex justify-end gap-1.5">
 											<button type="button" onclick={() => (restorePending = null)}
 												class="cursor-pointer rounded-md bg-gray-700 px-2 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600">
-												Cancel
+												{translate($language, 'db.cancel')}
 											</button>
 											<button type="button" onclick={confirmRestore} disabled={restoreBusy}
 												class="cursor-pointer rounded-md bg-yellow-600 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50">
-												{restoreBusy ? 'Restoring…' : 'Restore'}
+												{restoreBusy ? translate($language, 'db.restoring') : translate($language, 'db.restore')}
 											</button>
 										</div>
 									</div>
@@ -768,26 +769,26 @@ import { toast } from '$lib/stores/toast';
 								</span>
 							{/if}
 							{#if deleteDbConfirmId === db.id}
-								<span class="mr-1 text-[11px] text-red-400">Delete?</span>
+								<span class="mr-1 text-[11px] text-red-400">{translate($language, 'db.delete_confirm')}</span>
 								<button
 									type="button"
 									onclick={() => deleteDatabase(db.id, db.name)}
 									class="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-red-700"
 								>
-									Yes
+									{translate($language, 'db.yes')}
 								</button>
 								<button
 									type="button"
 									onclick={() => (deleteDbConfirmId = null)}
 									class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600"
 								>
-									No
+									{translate($language, 'db.no')}
 								</button>
 							{:else}
 								<button
 									type="button"
 									onclick={() => copyText(db.name, `db-${db.id}`)}
-									title="Copy name"
+									title={translate($language, 'db.copy_name')}
 									class="cursor-pointer rounded-lg p-1.5 text-gray-400 opacity-0 transition hover:bg-gray-600 hover:text-white group-hover:opacity-100"
 								>
 									{#if copiedField === `db-${db.id}`}
@@ -803,7 +804,7 @@ import { toast } from '$lib/stores/toast';
 								<button
 									type="button"
 									onclick={() => (deleteDbConfirmId = db.id)}
-									title="Delete database"
+									title={translate($language, 'db.delete_title')}
 									class="cursor-pointer rounded-lg p-1.5 text-gray-400 opacity-0 transition hover:bg-red-600 hover:text-white group-hover:opacity-100"
 								>
 									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
@@ -819,10 +820,10 @@ import { toast } from '$lib/stores/toast';
 	</section>
 
 	<!-- ═══════════════════════════ USERS ═══════════════════════════ -->
-	<section class="rounded-2xl border border-white/5 bg-gray-800/60" aria-label="Database users">
+	<section class="rounded-2xl border border-white/5 bg-gray-800/60" aria-label={translate($language, 'db.users_title')}>
 		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
 			<div class="flex items-center gap-2.5">
-				<h3 class="text-sm font-semibold text-white">Database Users</h3>
+				<h3 class="text-sm font-semibold text-white">{translate($language, 'db.users_title')}</h3>
 				{#if !loadingUsers}
 					<span class="rounded-full bg-blue-900/40 px-2 py-0.5 text-[11px] font-semibold text-blue-300">{dbUsers.length}</span>
 				{/if}
@@ -834,8 +835,8 @@ import { toast } from '$lib/stores/toast';
 				<input
 					type="text"
 					bind:value={userSearch}
-					placeholder="Search users…"
-					aria-label="Search users"
+					placeholder={translate($language, 'db.search_users')}
+					aria-label={translate($language, 'db.search_users')}
 					class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 				/>
 			</div>
@@ -848,7 +849,7 @@ import { toast } from '$lib/stores/toast';
 		>
 			<div class="flex flex-wrap items-end gap-3">
 				<div>
-					<label for="user-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Username</label>
+					<label for="user-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.username')}</label>
 					<input
 						id="user-name"
 						type="text"
@@ -859,7 +860,7 @@ import { toast } from '$lib/stores/toast';
 					/>
 				</div>
 				<div>
-					<label for="user-engine" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Engine</label>
+					<label for="user-engine" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.engine')}</label>
 					<select
 						id="user-engine"
 						bind:value={newUserEngine}
@@ -870,21 +871,21 @@ import { toast } from '$lib/stores/toast';
 					</select>
 				</div>
 				<div class="min-w-56 flex-1">
-					<label for="user-pass" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">Password</label>
+					<label for="user-pass" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.password')}</label>
 					<div class="flex items-center gap-2">
 						<div class="relative min-w-0 flex-1">
 							<input
 								id="user-pass"
 								type={showNewPassword ? 'text' : 'password'}
 								bind:value={newPassword}
-								placeholder="Password or click ⚄ to generate"
+								placeholder={translate($language, 'db.password_placeholder')}
 								autocomplete="new-password"
 								class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 pr-9 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 							/>
 							<button
 								type="button"
 								onclick={() => (showNewPassword = !showNewPassword)}
-								title={showNewPassword ? 'Hide password' : 'Show password'}
+								title={showNewPassword ? translate($language, 'db.hide_password') : translate($language, 'db.show_password')}
 								class="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer text-gray-500 transition hover:text-gray-200"
 							>
 								{#if showNewPassword}
@@ -902,10 +903,10 @@ import { toast } from '$lib/stores/toast';
 						<button
 							type="button"
 							onclick={() => fillGenerated('new')}
-							title="Generate strong password"
+							title={translate($language, 'db.generate_title')}
 							class="shrink-0 cursor-pointer rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-sm font-semibold text-blue-300 transition hover:bg-blue-500/20"
 						>
-							⚄ Generate
+							⚄ {translate($language, 'db.generate')}
 						</button>
 					</div>
 				</div>
@@ -914,7 +915,7 @@ import { toast } from '$lib/stores/toast';
 					disabled={creatingUser || !newUsername.trim() || !newPassword.trim()}
 					class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 				>
-					{creatingUser ? 'Creating…' : 'Create User'}
+					{creatingUser ? translate($language, 'db.creating') : translate($language, 'db.create_user')}
 				</button>
 			</div>
 			<!-- Generator options -->
@@ -924,19 +925,19 @@ import { toast } from '$lib/stores/toast';
 						<path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" />
 						<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 					</svg>
-					Generator options — length {genLength}{genSymbols ? ', with symbols' : ', letters & digits only'}
+					{translate($language, 'db.gen_options')} — {translate($language, 'db.gen_length').replace('{count}', String(genLength))}{genSymbols ? translate($language, 'db.gen_symbols') : translate($language, 'db.gen_letters')}
 				</summary>
 				<div class="mt-2 flex flex-wrap items-center gap-4 rounded-lg border border-gray-700 bg-gray-900/60 px-3.5 py-2.5">
 					<label class="flex items-center gap-2.5">
-						<span>Length</span>
+						<span>{translate($language, 'db.length')}</span>
 						<input type="range" min="12" max="40" bind:value={genLength} class="w-36 accent-blue-500" />
 						<span class="w-6 text-center font-mono font-semibold text-gray-200">{genLength}</span>
 					</label>
 					<label class="flex cursor-pointer items-center gap-2">
 						<input type="checkbox" bind:checked={genSymbols} class="accent-blue-500" />
-						<span>Include symbols</span>
+						<span>{translate($language, 'db.include_symbols')}</span>
 					</label>
-					<span class="font-mono text-gray-500">preview: {generatedPreview}</span>
+					<span class="font-mono text-gray-500">{translate($language, 'db.preview')} {generatedPreview}</span>
 				</div>
 			</details>
 		</form>
@@ -954,9 +955,9 @@ import { toast } from '$lib/stores/toast';
 			</div>
 		{:else if filteredUsers.length === 0}
 			<div class="px-5 py-10 text-center">
-				<p class="text-sm text-gray-400">{userSearch ? `No users match "${userSearch}".` : 'No database users yet.'}</p>
+				<p class="text-sm text-gray-400">{userSearch ? translate($language, 'db.no_users_match').replace('{query}', userSearch) : translate($language, 'db.no_users_yet')}</p>
 				{#if !userSearch}
-					<p class="mt-1 text-xs text-gray-500">Create one with the form above.</p>
+					<p class="mt-1 text-xs text-gray-500">{translate($language, 'db.create_one_hint')}</p>
 				{/if}
 			</div>
 		{:else}
@@ -973,13 +974,13 @@ import { toast } from '$lib/stores/toast';
 								<button
 									type="button"
 									onclick={() => copyText(u.username, `user-${u.id}`)}
-									title="Click to copy username"
+									title={translate($language, 'db.click_copy_username')}
 									class="block cursor-pointer truncate text-left font-mono text-sm font-medium text-gray-100 hover:text-blue-300"
 								>
 									{u.username}
 								</button>
 								<p class="text-[11px] text-gray-500">
-									{copiedField === `user-${u.id}` ? 'copied!' : 'click name to copy'}
+									{copiedField === `user-${u.id}` ? translate($language, 'db.copied_hint') : translate($language, 'db.click_to_copy')}
 								</p>
 							</div>
 							<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(u.engine)}">
@@ -987,20 +988,20 @@ import { toast } from '$lib/stores/toast';
 							</span>
 							<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
 								{#if deleteUserConfirmId === u.id}
-									<span class="mr-1 text-[11px] text-red-400">Delete user?</span>
+									<span class="mr-1 text-[11px] text-red-400">{translate($language, 'db.delete_user_confirm')}</span>
 									<button
 										type="button"
 										onclick={() => deleteUser(u.id, u.username)}
 										class="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-red-700"
 									>
-										Yes
+										{translate($language, 'db.yes')}
 									</button>
 									<button
 										type="button"
 										onclick={() => (deleteUserConfirmId = null)}
 										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600"
 									>
-										No
+										{translate($language, 'db.no')}
 									</button>
 								{:else}
 									<button
@@ -1008,7 +1009,7 @@ import { toast } from '$lib/stores/toast';
 										onclick={() => manageUser(u.id)}
 										class="cursor-pointer rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-700"
 									>
-										Manage
+										{translate($language, 'db.manage')}
 									</button>
 									<button
 										type="button"
@@ -1020,7 +1021,7 @@ import { toast } from '$lib/stores/toast';
 										}}
 										class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-200 transition hover:border-yellow-400/40 hover:bg-yellow-600/20 hover:text-yellow-200"
 									>
-										Reset Password
+										{translate($language, 'db.reset_password')}
 									</button>
 									<button
 										type="button"
@@ -1031,12 +1032,12 @@ import { toast } from '$lib/stores/toast';
 										}}
 										class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-200 transition hover:border-indigo-400/40 hover:bg-indigo-600/20 hover:text-indigo-200"
 									>
-										Grant
+										{translate($language, 'db.grant')}
 									</button>
 									<button
 										type="button"
 										onclick={() => (deleteUserConfirmId = u.id)}
-										title="Delete user"
+										title={translate($language, 'db.delete_user_title')}
 										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white"
 									>
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
@@ -1051,21 +1052,21 @@ import { toast } from '$lib/stores/toast';
 						{#if resetPasswordUserId === u.id}
 							<div class="mt-3 rounded-xl border border-yellow-700/40 bg-yellow-900/10 px-4 py-3">
 								<p class="mb-2 text-xs font-semibold text-yellow-300">
-									Reset password for <span class="font-mono">{u.username}</span>
+									{translate($language, 'db.reset_for')} <span class="font-mono">{u.username}</span>
 								</p>
 								<div class="flex flex-wrap items-center gap-2">
 									<div class="relative min-w-52 flex-1">
 										<input
 											type={showResetPassword ? 'text' : 'password'}
 											bind:value={resetPasswordValue}
-											placeholder="New password or click ⚄"
+											placeholder={translate($language, 'db.new_password_placeholder')}
 											autocomplete="new-password"
 											class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-1.5 pr-9 font-mono text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 										/>
 										<button
 											type="button"
 											onclick={() => (showResetPassword = !showResetPassword)}
-											title={showResetPassword ? 'Hide password' : 'Show password'}
+											title={showResetPassword ? translate($language, 'db.hide_password') : translate($language, 'db.show_password')}
 											class="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer text-gray-500 transition hover:text-gray-200"
 										>
 											{#if showResetPassword}
@@ -1083,10 +1084,10 @@ import { toast } from '$lib/stores/toast';
 									<button
 										type="button"
 										onclick={() => fillGenerated('reset')}
-										title="Generate strong password"
+										title={translate($language, 'db.generate_title')}
 										class="shrink-0 cursor-pointer rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/20"
 									>
-										⚄ Generate
+										⚄ {translate($language, 'db.generate')}
 									</button>
 									{#if resetPasswordValue}
 										<button
@@ -1094,7 +1095,7 @@ import { toast } from '$lib/stores/toast';
 											onclick={() => copyText(resetPasswordValue, `reset-${u.id}`)}
 											class="shrink-0 cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600"
 										>
-											{copiedField === `reset-${u.id}` ? 'Copied!' : 'Copy'}
+											{copiedField === `reset-${u.id}` ? translate($language, 'db.copied') : translate($language, 'db.copy')}
 										</button>
 									{/if}
 									<button
@@ -1103,18 +1104,18 @@ import { toast } from '$lib/stores/toast';
 										disabled={!resetPasswordValue.trim()}
 										class="shrink-0 cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
 									>
-										Save
+										{translate($language, 'db.save')}
 									</button>
 									<button
 										type="button"
 										onclick={() => { resetPasswordUserId = null; resetPasswordValue = ''; showResetPassword = false; }}
 										class="shrink-0 cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 									>
-										Cancel
+										{translate($language, 'db.cancel')}
 									</button>
 								</div>
 								<p class="mt-2 text-[11px] text-gray-500">
-									Uses the generator options from the form above (length {genLength}{genSymbols ? ', with symbols' : ''}).
+									{translate($language, 'db.gen_note').replace('{count}', String(genLength)).replace('{suffix}', genSymbols ? translate($language, 'db.gen_symbols') : '')}
 								</p>
 							</div>
 						{/if}
@@ -1123,14 +1124,14 @@ import { toast } from '$lib/stores/toast';
 						{#if grantUserId === u.id}
 							<div class="mt-3 rounded-xl border border-indigo-700/40 bg-indigo-900/10 px-4 py-3">
 								<p class="mb-2 text-xs font-semibold text-indigo-300">
-									Grant privileges to <span class="font-mono">{u.username}</span>
+									{translate($language, 'db.grant_to')} <span class="font-mono">{u.username}</span>
 								</p>
 								<div class="flex flex-wrap items-center gap-2">
 									<select
 										bind:value={grantDatabase}
 										class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 									>
-										<option value="">Select database…</option>
+										<option value="">{translate($language, 'db.select_database')}</option>
 										{#each databases.filter((d) => d.engine === u.engine) as db (db.id)}
 											<option value={db.id}>{db.name}</option>
 										{/each}
@@ -1141,14 +1142,14 @@ import { toast } from '$lib/stores/toast';
 										disabled={!grantDatabase}
 										class="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
 									>
-										Grant
+										{translate($language, 'db.grant')}
 									</button>
 									<button
 										type="button"
 										onclick={() => { grantUserId = null; grantDatabase = ''; }}
 										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 									>
-										Cancel
+										{translate($language, 'db.cancel')}
 									</button>
 								</div>
 							</div>

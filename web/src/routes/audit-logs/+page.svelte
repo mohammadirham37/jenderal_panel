@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { apiRaw, api } from '$lib/api';
 	import type { AuditEntry } from '$lib/types';
+	import { language, translate } from '$lib/stores/language';
 
 	interface AuditModules {
 		modules: string[];
@@ -102,7 +103,7 @@
 			}
 		} catch (err) {
 			if (seq !== requestSeq) return;
-			error = err instanceof Error ? err.message : 'Failed to load audit logs';
+			error = err instanceof Error ? err.message : translate($language, 'aud.loadFailed');
 		} finally {
 			if (seq === requestSeq) loading = false;
 		}
@@ -167,21 +168,21 @@
 
 <div class="space-y-6">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-2xl font-bold text-white">Audit Logs</h2>
+		<h2 class="text-2xl font-bold text-white">{translate($language, 'aud.title')}</h2>
 		<button
 			type="button"
 			onclick={() => loadLogs(currentPage)}
 			class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 		>
-			Refresh
-		</button>
+			{translate($language, 'aud.refresh')}
+			</button>
 	</div>
 
 	<!-- Filters -->
 	<div class="rounded-xl border border-gray-700 bg-gray-800 p-4 space-y-3">
 		<div class="flex flex-wrap items-center gap-2">
-			<span class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">Range:</span>
-			{#each [{ label: 'Today', value: 'today' }, { label: 'Yesterday', value: 'yesterday' }, { label: 'Last 7 days', value: '7d' }, { label: 'Last 30 days', value: '30d' }, { label: 'All time', value: 'all' }] as chip}
+			<span class="text-[11px] font-semibold uppercase tracking-wider text-gray-500">{translate($language, 'aud.range')}</span>
+			{#each [{ label: 'aud.today', value: 'today' }, { label: 'aud.yesterday', value: 'yesterday' }, { label: 'aud.last7', value: '7d' }, { label: 'aud.last30', value: '30d' }, { label: 'aud.allTime', value: 'all' }] as chip}
 				<button
 					type="button"
 					onclick={() => applyRange(chip.value as typeof range)}
@@ -189,28 +190,28 @@
 						? 'bg-blue-500/20 text-blue-200'
 						: 'text-gray-400 hover:bg-gray-700'}"
 				>
-					{chip.label}
-				</button>
+					{translate($language, chip.label)}
+					</button>
 			{/each}
 			<span class="ml-auto text-[11px] text-gray-500">
-				{fromDate || 'beginning'} → {toDate || 'now'}
+				{fromDate || translate($language, 'aud.beginning')} → {toDate || translate($language, 'aud.now')}
 			</span>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
 			<div>
-				<label class="sr-only" for="audit-from">From</label>
+				<label class="sr-only" for="audit-from">{translate($language, 'aud.from')}</label>
 				<input id="audit-from" type="date" bind:value={fromDate} onchange={onRangeDateChange}
 					class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
 				<span class="mx-1 text-xs text-gray-500">→</span>
-				<label class="sr-only" for="audit-to">To</label>
+				<label class="sr-only" for="audit-to">{translate($language, 'aud.to')}</label>
 				<input id="audit-to" type="date" bind:value={toDate} onchange={onRangeDateChange}
 					class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
 			</div>
 			<div>
-				<label class="sr-only" for="audit-module">Module</label>
+				<label class="sr-only" for="audit-module">{translate($language, 'aud.module')}</label>
 				<select id="audit-module" bind:value={moduleFilter} onchange={() => loadLogs(1)}
 					class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none">
-					<option value="">All modules</option>
+					<option value="">{translate($language, 'aud.allModules')}</option>
 					{#each modules as m}
 						<option value={m}>{m}</option>
 					{/each}
@@ -224,8 +225,8 @@
 					type="text"
 					bind:value={searchInput}
 					oninput={onSearchInput}
-					placeholder="Search action, target, detail, user…"
-					aria-label="Search audit logs"
+					placeholder={translate($language, 'aud.searchPlaceholder')}
+					aria-label={translate($language, 'aud.search')}
 					class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
 				/>
 			</div>
@@ -242,8 +243,8 @@
 		<div class="rounded-lg border border-red-700 bg-red-900/30 p-3.5 text-sm text-red-300">{error}</div>
 	{:else if entries.length === 0}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-10 text-center">
-			<p class="text-sm text-gray-400">No audit entries for this filter.</p>
-			<p class="mt-1 text-xs text-gray-500">Widen the date range or clear the search to see more.</p>
+			<p class="text-sm text-gray-400">{translate($language, 'aud.empty')}</p>
+			<p class="mt-1 text-xs text-gray-500">{translate($language, 'aud.emptyHint')}</p>
 		</div>
 	{:else}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 overflow-hidden">
@@ -251,13 +252,13 @@
 				<table class="w-full">
 					<thead>
 						<tr class="border-b border-gray-700 bg-gray-800/80">
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">Time</th>
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">User</th>
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">Action</th>
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">Module</th>
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">Target</th>
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">Detail</th>
-							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">IP</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.time')}</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.user')}</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.action')}</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.module')}</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.target')}</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.detail')}</th>
+							<th class="text-left px-4 py-3 text-[11px] text-gray-400 uppercase tracking-wider font-semibold">{translate($language, 'aud.ip')}</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-gray-700">
@@ -296,7 +297,7 @@
 		<!-- Pagination -->
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="text-xs text-gray-500">
-				{total} entries · page {currentPage} of {totalPages}
+				{translate($language, 'aud.pagination').replace('{total}', String(total)).replace('{page}', String(currentPage)).replace('{pages}', String(totalPages))}
 			</div>
 			<div class="flex items-center gap-2">
 				<button
@@ -304,8 +305,8 @@
 					disabled={currentPage <= 1}
 					class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-300 text-sm rounded transition-colors cursor-pointer"
 				>
-					Previous
-				</button>
+					{translate($language, 'aud.prev')}
+					</button>
 
 				{#each Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
 					const start = Math.max(1, Math.min(currentPage - 2, totalPages - 4));
@@ -327,8 +328,8 @@
 					disabled={currentPage >= totalPages}
 					class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed text-gray-300 text-sm rounded transition-colors cursor-pointer"
 				>
-					Next
-				</button>
+					{translate($language, 'aud.next')}
+					</button>
 			</div>
 		</div>
 	{/if}

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
 	import { decodeTerminalEvent } from '$lib/terminal-message.js';
+	import { language, translate } from '$lib/stores/language';
 
 	interface Props {
 		/** Full WebSocket URL of the /ws/terminal endpoint (with query params). */
@@ -48,7 +49,7 @@
 		ws.onopen = () => {
 			connected = true;
 			connecting = false;
-			output += '--- Connected to persistent shell ---\n';
+			output += translate($language, 'common.terminal.connectedBanner') + '\n';
 			scrollToBottom();
 		};
 
@@ -71,7 +72,7 @@
 			if (ev.output) output += ev.output;
 			if (!ev.partial) {
 				if (ev.output && !ev.output.endsWith('\n')) output += '\n';
-				if (ev.exitCode !== null && ev.exitCode !== 0) output += `[exit ${ev.exitCode}]\n`;
+				if (ev.exitCode !== null && ev.exitCode !== 0) output += translate($language, 'common.terminal.exitCode').replace('{code}', String(ev.exitCode)) + '\n';
 				if (ev.cwd) cwd = ev.cwd;
 				output += prompt();
 			}
@@ -81,14 +82,14 @@
 		ws.onclose = () => {
 			connected = false;
 			connecting = false;
-			output += '--- Disconnected ---\n';
+			output += translate($language, 'common.terminal.disconnectedBanner') + '\n';
 			scrollToBottom();
 		};
 
 		ws.onerror = () => {
 			connected = false;
 			connecting = false;
-			output += '--- Connection error ---\n';
+			output += translate($language, 'common.terminal.errorBanner') + '\n';
 			scrollToBottom();
 		};
 	}
@@ -193,7 +194,7 @@
 		<div class="flex shrink-0 items-center gap-2">
 			<span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium {connected ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}">
 				<span class="h-1.5 w-1.5 rounded-full {connected ? 'bg-green-400' : 'bg-red-400'}"></span>
-				{connecting ? 'Connecting...' : connected ? 'Connected' : 'Disconnected'}
+				{connecting ? translate($language, 'common.connecting') : connected ? translate($language, 'common.connected') : translate($language, 'common.disconnected')}
 			</span>
 			{#if connected}
 				<button
@@ -201,7 +202,7 @@
 					onclick={clearOutput}
 					class="cursor-pointer rounded px-2.5 py-1 text-xs text-gray-400 transition-colors hover:bg-gray-700 hover:text-gray-200"
 				>
-					Clear
+					{translate($language, 'common.clear')}
 				</button>
 			{:else if !connecting}
 				<button
@@ -209,7 +210,7 @@
 					onclick={connect}
 					class="cursor-pointer rounded bg-blue-600 px-3 py-1 text-xs text-white transition-colors hover:bg-blue-700"
 				>
-					Reconnect
+					{translate($language, 'common.reconnect')}
 				</button>
 			{/if}
 		</div>
@@ -238,7 +239,7 @@
 			onkeydown={handleKeydown}
 			onpaste={handlePaste}
 			disabled={!connected}
-			placeholder={connected ? 'Type a command…' : 'Not connected'}
+			placeholder={connected ? translate($language, 'common.typeCommand') : translate($language, 'common.notConnected')}
 			autocomplete="off"
 			spellcheck="false"
 			class="flex-1 bg-gray-900 px-3 py-3 font-mono text-sm text-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
@@ -249,12 +250,12 @@
 			disabled={!connected || !command.trim()}
 			class="cursor-pointer bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
 		>
-			Send
+			{translate($language, 'common.send')}
 		</button>
 	</div>
 
 	<!-- Hints -->
 	<div class="border-t border-gray-700/50 bg-gray-900 px-3 py-1.5 text-[10px] text-gray-500">
-		Shell state (cd, export) persists while connected · ↑/↓ history · Ctrl+L clear · paste multi-line to run it as one command
+		{translate($language, 'common.terminal.hints')}
 	</div>
 </div>

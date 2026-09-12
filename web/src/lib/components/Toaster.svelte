@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { toasts, dismissToast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 	import { fly } from 'svelte/transition';
 
 	interface ToastStyle {
@@ -43,7 +44,7 @@
 				type="button"
 				onclick={() => dismissToast(t.id)}
 				class="-m-1 cursor-pointer rounded-md p-1 text-gray-500 transition hover:bg-gray-700 hover:text-gray-200"
-				aria-label="Dismiss notification"
+				aria-label={translate($language, 'common.dismissNotification')}
 			>
 				<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
 					<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />

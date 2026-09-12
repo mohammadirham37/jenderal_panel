@@ -23,6 +23,7 @@
 	} from '$lib/traffic-guard.js';
 	import { buildSafeSetupRequest, normalizeSetupReview } from '$lib/security-setup.js';
 import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 
 	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'events';
 	interface ComponentStatus {
@@ -242,7 +243,7 @@ import { toast } from '$lib/stores/toast';
 			preventionEnabled = malware.on_access.prevention_enabled;
 			if (!banJail && fail2ban.jails.length > 0) banJail = fail2ban.jails[0].name;
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Unable to load Security Center.';
+			error = err instanceof Error ? err.message : translate($language, 'sec.err.load');
 		} finally {
 			loading = false;
 		}
@@ -263,26 +264,26 @@ import { toast } from '$lib/stores/toast';
 
 	async function reviewSecuritySetup() {
 		busy = 'setup-review'; setupConfirmed = false;
-		try { setupReview = normalizeSetupReview(await api.post<SetupReview>('/api/v1/security/setup/review', setupRequest())); actionMessage = 'Review generated. Confirm every mutation before applying.'; }
-		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to review Safe Setup.'); }
+		try { setupReview = normalizeSetupReview(await api.post<SetupReview>('/api/v1/security/setup/review', setupRequest())); actionMessage = translate($language, 'sec.setup.reviewGenerated'); }
+		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'sec.setup.errReview')); }
 		finally { busy = ''; }
 	}
 
 	async function applySecuritySetup() {
-		if (!setupReview || !setupConfirmed) { toast.error('Review and confirm the Safe Setup first.'); return; }
+		if (!setupReview || !setupConfirmed) { toast.error(translate($language, 'sec.setup.errConfirmFirst')); return; }
 		busy = 'setup-apply'; 
 		try {
 			const result = await api.post<{ run_id: string; task_id: string }>('/api/v1/security/setup/apply', { request: setupRequest(), review: setupReview, confirm: true });
-			currentTaskId = result.task_id; actionMessage = 'Safe Setup started. Its checkpoints and task output survive a page refresh.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to apply Safe Setup.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'sec.setup.started');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'sec.setup.errApply')); }
 		finally { busy = ''; }
 	}
 
 	async function resumeSecuritySetup() {
 		if (!setupAssessment.latest) return;
 		busy = 'setup-resume'; 
-		try { const result = await api.post<{ task_id: string }>('/api/v1/security/setup/resume', { run_id: setupAssessment.latest.id }); currentTaskId = result.task_id; actionMessage = 'Safe Setup resumed from its last completed checkpoint.'; }
-		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to resume Safe Setup.'); }
+		try { const result = await api.post<{ task_id: string }>('/api/v1/security/setup/resume', { run_id: setupAssessment.latest.id }); currentTaskId = result.task_id; actionMessage = translate($language, 'sec.setup.resumed'); }
+		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'sec.setup.errResume')); }
 		finally { busy = ''; }
 	}
 
@@ -302,7 +303,7 @@ import { toast } from '$lib/stores/toast';
 	async function loadTrafficBuckets() {
 		if (!selectedTrafficWebsite) { trafficBuckets = []; return; }
 		try { trafficBuckets = await api.get<TrafficBucket[]>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/buckets`) || []; }
-		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to load Traffic Guard evidence.'); trafficBuckets = []; }
+		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errEvidence')); trafficBuckets = []; }
 	}
 
 	async function chooseTrafficWebsite(id: string) {
@@ -312,7 +313,7 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	async function applyTrafficGuard() {
-		if (!selectedTrafficWebsite) { toast.error('Select a website first.'); return; }
+		if (!selectedTrafficWebsite) { toast.error(translate($language, 'sec.selectWebsiteFirst')); return; }
 		busy = 'traffic-apply'; actionMessage = '';
 		try {
 			const payload = buildTrafficProfile({
@@ -320,10 +321,10 @@ import { toast } from '$lib/stores/toast';
 				proxy_cidrs: trafficProxyCIDRs.split(/[\s,]+/).filter(Boolean),
 				requests_per_second: Number(trafficRPS), burst: Number(trafficBurst), connections: Number(trafficConnections)
 			});
-			if (trafficMode !== 'observe' && !trafficConfirmed) throw new Error('Confirm HTTP enforcement before applying this profile.');
+			if (trafficMode !== 'observe' && !trafficConfirmed) throw new Error(translate($language, 'tg.errConfirmEnforcement'));
 			const result = await api.put<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}`, { ...payload, confirm: trafficMode !== 'observe' && trafficConfirmed });
-			currentTaskId = result.task_id; actionMessage = 'Traffic Guard configuration is being validated and applied.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to apply Traffic Guard.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'tg.applied');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errApply')); }
 		finally { busy = ''; }
 	}
 
@@ -332,8 +333,8 @@ import { toast } from '$lib/stores/toast';
 		busy = 'traffic-observe'; 
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/observe`, {});
-			currentTaskId = result.task_id; actionMessage = 'Traffic Guard is returning to Observe Mode.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to restore Observe Mode.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'tg.observeReset');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errObserveReset')); }
 		finally { busy = ''; }
 	}
 
@@ -341,8 +342,8 @@ import { toast } from '$lib/stores/toast';
 		busy = 'traffic-cloudflare'; 
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/traffic/cloudflare/refresh', {});
-			currentTaskId = result.task_id; actionMessage = 'Official Cloudflare CIDR refresh started.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to refresh Cloudflare CIDRs.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'tg.cloudflareRefreshStarted');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errCloudflareRefresh')); }
 		finally { busy = ''; }
 	}
 
@@ -351,8 +352,8 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/install', { mode });
 			currentTaskId = result.task_id;
-			actionMessage = 'ClamAV installation started. Progress remains available after refresh.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to install ClamAV.'); }
+			actionMessage = translate($language, 'mal.installStarted');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errInstall')); }
 		finally { busy = ''; }
 	}
 
@@ -360,20 +361,20 @@ import { toast } from '$lib/stores/toast';
 		busy = 'malware-signatures'; actionMessage = '';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/signatures/update', {});
-			currentTaskId = result.task_id; actionMessage = 'ClamAV signature update started.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to update signatures.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.sigUpdateStarted');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errSigUpdate')); }
 		finally { busy = ''; }
 	}
 
 	async function startMalwareScan(mode: 'quick' | 'website' | 'full_websites') {
-		if (mode === 'website' && !selectedWebsite) { toast.error('Select a website first.'); return; }
+		if (mode === 'website' && !selectedWebsite) { toast.error(translate($language, 'sec.selectWebsiteFirst')); return; }
 		busy = `malware-scan:${mode}`; actionMessage = '';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/scans', {
 				mode, website_ids: mode === 'website' ? [selectedWebsite] : []
 			});
-			currentTaskId = result.task_id; actionMessage = 'Malware scan started with safe resource limits.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to start malware scan.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.scanStarted');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errScan')); }
 		finally { busy = ''; }
 	}
 
@@ -384,9 +385,9 @@ import { toast } from '$lib/stores/toast';
 			await api.put('/api/v1/security/malware/schedules', {
 				...safe, id: malwareSchedules[0]?.id || '', enabled: scheduleEnabled
 			});
-			actionMessage = scheduleEnabled ? `Daily Quick Scan saved for ${scheduleTime}.` : 'Daily malware scan disabled.';
+			actionMessage = scheduleEnabled ? translate($language, 'mal.scheduleSaved').replace('{time}', scheduleTime) : translate($language, 'mal.scheduleDisabled');
 			await loadData();
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to save scan schedule.'); }
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errSchedule')); }
 		finally { busy = ''; }
 	}
 
@@ -395,34 +396,34 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const request = buildOnAccessRequest({ enabled: onAccessEnabled, prevention: preventionEnabled, confirmed: preventionConfirmed });
 			const result = await api.put<{ task_id: string }>('/api/v1/security/malware/on-access', request);
-			currentTaskId = result.task_id; actionMessage = 'On-access configuration is being validated and applied.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to configure on-access scanning.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.onAccessApplied');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errOnAccess')); }
 		finally { busy = ''; }
 	}
 
 	async function restoreQuarantine(item: QuarantineItem) {
-		if (!confirm(`Restore ${item.original_path}? The destination must still be empty and the sample must scan clean.`)) return;
+		if (!confirm(translate($language, 'mal.confirmRestore').replace('{path}', item.original_path))) return;
 		busy = `restore:${item.id}`; 
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/security/malware/quarantine/${item.id}/restore`, {});
-			currentTaskId = result.task_id; actionMessage = 'Restore validation started.';
-		} catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to restore sample.'); }
+			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.restoreStarted');
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errRestore')); }
 		finally { busy = ''; }
 	}
 
 	async function markFalsePositive(item: QuarantineItem) {
-		if (!confirm('Allowlist only this exact website, path, and SHA-256 hash?')) return;
+		if (!confirm(translate($language, 'mal.confirmFalsePositive'))) return;
 		busy = `false-positive:${item.id}`; 
-		try { await api.post(`/api/v1/security/malware/quarantine/${item.id}/false-positive`, {}); actionMessage = 'Exact sample marked as false positive.'; await loadData(); }
-		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to mark false positive.'); }
+		try { await api.post(`/api/v1/security/malware/quarantine/${item.id}/false-positive`, {}); actionMessage = translate($language, 'mal.falsePositiveMarked'); await loadData(); }
+		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errFalsePositive')); }
 		finally { busy = ''; }
 	}
 
 	async function deleteQuarantine(item: QuarantineItem) {
-		if (!confirm(`Permanently delete quarantined sample ${item.id}? This cannot be undone.`)) return;
+		if (!confirm(translate($language, 'mal.confirmDelete').replace('{id}', item.id))) return;
 		busy = `delete:${item.id}`; 
-		try { await api.del(`/api/v1/security/malware/quarantine/${item.id}`); actionMessage = 'Quarantined sample permanently deleted.'; await loadData(); }
-		catch (err) { toast.error(err instanceof Error ? err.message : 'Unable to delete quarantined sample.'); }
+		try { await api.del(`/api/v1/security/malware/quarantine/${item.id}`); actionMessage = translate($language, 'mal.deleted'); await loadData(); }
+		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errDelete')); }
 		finally { busy = ''; }
 	}
 
@@ -432,9 +433,9 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/fail2ban/install', {});
 			currentTaskId = result.task_id;
-			actionMessage = 'Fail2ban installation started. Progress is saved if this page is refreshed.';
+			actionMessage = translate($language, 'f2b.installStarted');
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Unable to start installation.');
+			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errInstallStart'));
 		} finally {
 			busy = '';
 		}
@@ -453,9 +454,9 @@ import { toast } from '$lib/stores/toast';
 				ban_time_seconds: Number(settings.ban_time_seconds)
 			});
 			currentTaskId = result.task_id;
-			actionMessage = 'Fail2ban settings are being validated and applied.';
+			actionMessage = translate($language, 'f2b.settingsApplied');
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Unable to apply Fail2ban settings.');
+			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errSettings'));
 		} finally {
 			busy = '';
 		}
@@ -465,10 +466,10 @@ import { toast } from '$lib/stores/toast';
 		busy = action;
 		try {
 			await api.post(`/api/v1/security/fail2ban/${action}`, {});
-			actionMessage = `Fail2ban ${action} request completed.`;
+			actionMessage = translate($language, `f2b.actionDone.${action}`);
 			await loadData();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : `Unable to ${action} Fail2ban.`);
+			toast.error(err instanceof Error ? err.message : translate($language, `f2b.errAction.${action}`));
 		} finally {
 			busy = '';
 		}
@@ -479,25 +480,25 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const request = validateBan({ jail: banJail, ip: banIP, duration_seconds: Number(banDuration) });
 			await api.post('/api/v1/security/fail2ban/bans', request);
-			actionMessage = `${banIP} was temporarily banned.`;
+			actionMessage = translate($language, 'f2b.banCreated').replace('{ip}', banIP);
 			banIP = '';
 			await loadData();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Unable to create temporary ban.');
+			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errBan'));
 		} finally {
 			busy = '';
 		}
 	}
 
 	async function removeBan(ban: Ban) {
-		if (!confirm(`Unban ${ban.ip} from ${ban.jail}?`)) return;
+		if (!confirm(translate($language, 'f2b.confirmUnban').replace('{ip}', ban.ip).replace('{jail}', ban.jail))) return;
 		busy = `unban:${ban.jail}:${ban.ip}`;
 		try {
 			await api.del(`/api/v1/security/fail2ban/bans/${encodeURIComponent(ban.ip)}?jail=${encodeURIComponent(ban.jail)}`);
-			actionMessage = `${ban.ip} was unbanned.`;
+			actionMessage = translate($language, 'f2b.unbanned').replace('{ip}', ban.ip);
 			await loadData();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Unable to remove ban.');
+			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errUnban'));
 		} finally {
 			busy = '';
 		}
@@ -507,10 +508,10 @@ import { toast } from '$lib/stores/toast';
 		busy = `event:${event.id}`;
 		try {
 			await api.post(`/api/v1/security/events/${event.id}/transition`, { status });
-			actionMessage = `Security event marked ${status.replace('_', ' ')}.`;
+			actionMessage = translate($language, `sec.eventMarked.${status}`);
 			await loadData();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : 'Unable to update event.');
+			toast.error(err instanceof Error ? err.message : translate($language, 'sec.errEventUpdate'));
 		} finally {
 			busy = '';
 		}
@@ -518,10 +519,10 @@ import { toast } from '$lib/stores/toast';
 
 	function taskComplete(task: { status?: string; error?: string }) {
 		if (task.status === 'completed') {
-			actionMessage = 'Security operation completed successfully.';
+			actionMessage = translate($language, 'sec.taskCompleted');
 			void loadData();
 		} else {
-			toast.error(task.error || 'Security operation failed. Review the task output and retry.');
+			toast.error(task.error || translate($language, 'sec.taskFailed'));
 			void loadData();
 		}
 	}
@@ -529,21 +530,21 @@ import { toast } from '$lib/stores/toast';
 	onMount(() => void loadData());
 </script>
 
-<svelte:head><title>Security Center · Jenderal Panel</title></svelte:head>
+<svelte:head><title>{translate($language, 'sec.title')} · Jenderal Panel</title></svelte:head>
 
 <div class="space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
 		<div>
-			<p class="text-xs font-semibold uppercase tracking-[0.18em] text-blue-400">Server protection</p>
-			<h2 class="mt-1 text-2xl font-bold text-white">Security Center</h2>
-			<p class="mt-1 max-w-2xl text-sm text-gray-400">Detect risks, manage temporary protections, and keep recovery steps visible.</p>
+			<p class="text-xs font-semibold uppercase tracking-[0.18em] text-blue-400">{translate($language, 'sec.kicker')}</p>
+			<h2 class="mt-1 text-2xl font-bold text-white">{translate($language, 'sec.title')}</h2>
+			<p class="mt-1 max-w-2xl text-sm text-gray-400">{translate($language, 'sec.subtitle')}</p>
 		</div>
-		<button onclick={loadData} disabled={loading} class="rounded-lg border border-gray-600 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-50">Refresh status</button>
+		<button onclick={loadData} disabled={loading} class="rounded-lg border border-gray-600 px-3 py-2 text-sm text-gray-300 hover:bg-gray-800 disabled:opacity-50">{translate($language, 'sec.refreshStatus')}</button>
 	</div>
 
 	<div class="flex gap-1 overflow-x-auto rounded-xl border border-gray-700 bg-gray-900 p-1">
 		{#each ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'events'] as tab}
-			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{tab}</button>
+			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{translate($language, `sec.tab.${tab}`)}</button>
 		{/each}
 	</div>
 
@@ -552,50 +553,50 @@ import { toast } from '$lib/stores/toast';
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_security_fail2ban_task" onComplete={taskComplete} />
 
 	{#if loading}
-		<div class="rounded-xl border border-gray-700 bg-gray-800 p-8 text-center text-sm text-gray-400">Checking security components…</div>
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-8 text-center text-sm text-gray-400">{translate($language, 'sec.checking')}</div>
 	{:else if error}
 		<div class="rounded-xl border border-red-700 bg-red-900/40 p-6">
-			<p class="font-medium text-red-300">Security status could not be loaded.</p>
+			<p class="font-medium text-red-300">{translate($language, 'sec.errLoadStatus')}</p>
 			<p class="mt-1 text-sm text-red-300">{error}</p>
-			<button onclick={loadData} class="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700">Retry</button>
+			<button onclick={loadData} class="mt-4 rounded-lg bg-red-600 px-3 py-2 text-sm text-white hover:bg-red-700">{translate($language, 'sec.retry')}</button>
 		</div>
 	{:else if activeTab === 'setup'}
 		<div class="space-y-4">
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h3 class="text-lg font-semibold text-white">Safe Setup</h3><p class="mt-1 max-w-3xl text-sm text-gray-400">A resumable, reviewed setup for conservative defaults. Every completed step is checkpointed before the next mutation begins.</p></div>{#if setupAssessment.latest}<span class="rounded-full px-2 py-1 text-xs {setupAssessment.latest.status === 'completed' ? 'bg-green-900 text-green-300' : setupAssessment.latest.status === 'failed' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">Latest: {setupAssessment.latest.status}</span>{/if}</div>
-				{#if setupAssessment.latest && setupAssessment.latest.status !== 'completed'}<div class="mt-4 rounded-lg border border-red-700 bg-red-900/25 p-3"><p class="text-sm text-red-300">{setupAssessment.latest.safe_error || 'The previous setup may have stopped before completion. The backend will reject a duplicate if its task is still running.'}</p><p class="mt-1 text-xs text-gray-400">Completed: {setupAssessment.latest.completed_steps.join(', ') || 'none'}</p><button onclick={resumeSecuritySetup} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded bg-red-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">Resume from checkpoint</button></div>{/if}
+				<div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><h3 class="text-lg font-semibold text-white">{translate($language, 'sec.setup.title')}</h3><p class="mt-1 max-w-3xl text-sm text-gray-400">{translate($language, 'sec.setup.desc')}</p></div>{#if setupAssessment.latest}<span class="rounded-full px-2 py-1 text-xs {setupAssessment.latest.status === 'completed' ? 'bg-green-900 text-green-300' : setupAssessment.latest.status === 'failed' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{translate($language, 'sec.setup.latestStatus').replace('{status}', setupAssessment.latest.status)}</span>{/if}</div>
+				{#if setupAssessment.latest && setupAssessment.latest.status !== 'completed'}<div class="mt-4 rounded-lg border border-red-700 bg-red-900/25 p-3"><p class="text-sm text-red-300">{setupAssessment.latest.safe_error || translate($language, 'sec.setup.resumeError')}</p><p class="mt-1 text-xs text-gray-400">{translate($language, 'sec.setup.completedSteps').replace('{steps}', setupAssessment.latest.completed_steps.join(', ') || translate($language, 'sec.none'))}</p><button onclick={resumeSecuritySetup} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded bg-red-600 px-3 py-1.5 text-sm text-white disabled:opacity-50">{translate($language, 'sec.setup.resume')}</button></div>{/if}
 			</section>
 
 			<div class="grid gap-4 lg:grid-cols-2">
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">1 · Assessment</p><h3 class="mt-1 font-semibold text-white">Read-only server posture</h3><p class="mt-2 text-sm text-gray-400">UFW, AppArmor, effective SSH settings, Nginx, and Ubuntu security-update capability are checked without changing them.</p><p class="mt-3 text-xs text-gray-500">Last check: {overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : 'not available'}</p></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">2 · Management access</p><label class="mt-2 block"><span class="text-sm text-gray-300">Your trusted management IP/CIDR</span><textarea bind:value={setupManagementCIDRs} oninput={() => (setupReview = null)} rows="3" placeholder="203.0.113.10/32" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea></label><p class="mt-2 text-xs text-yellow-300">Keep the VPS provider console open during the first SSH protection test.</p></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">3 · Fail2ban</p><label class="mt-3 flex items-start gap-3"><input type="checkbox" bind:checked={setupFail2ban} onchange={() => (setupReview = null)} /><span><span class="block text-sm font-medium text-white">Install and configure SSH Safe preset</span><span class="text-xs text-gray-400">5 retries, 10-minute window, temporary 15-minute ban.</span></span></label></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">4 · Malware</p><label class="mt-2 block"><span class="text-sm text-gray-300">ClamAV runtime</span><select bind:value={setupMalwareMode} onchange={() => (setupReview = null)} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="low_memory">Low-memory (recommended)</option><option value="daemon">Daemon (2 GiB+ RAM)</option><option value="">Skip malware setup</option></select></label><div class="mt-3 flex items-center gap-3"><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={setupSchedule} disabled={!setupMalwareMode} /> Daily Quick Scan</label><input type="time" bind:value={setupScheduleTime} disabled={!setupSchedule || !setupMalwareMode} class="rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-white" /></div></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">5 · Traffic Guard Observe</p><p class="mt-1 text-sm text-gray-400">Select websites to begin a non-blocking 24-hour observation.</p><div class="mt-3 max-h-36 space-y-2 overflow-auto">{#each websites as website}<label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" checked={setupTrafficWebsites.includes(website.id)} onchange={() => toggleSetupWebsite(website.id)} /> {website.domain}</label>{/each}</div></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">6 · Trusted proxy</p><p class="mt-2 text-sm text-gray-400">Safe Setup starts with Direct mode. Configure Cloudflare or exact custom proxy CIDRs per website in the Traffic tab after initial observation.</p><p class="mt-2 text-xs text-yellow-300">Forwarded IP headers are never trusted from arbitrary peers.</p></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">7 · Notifications</p><p class="mt-2 text-sm text-gray-400">Critical security events use the notification channels already enabled in the Notifications page. Test those channels there before applying.</p><a href="/notifications" class="mt-3 inline-block text-sm text-blue-300 hover:text-blue-200">Open Notifications →</a></section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">8 · Review & Apply</p><button onclick={reviewSecuritySetup} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">Generate exact review</button>{#if setupReview}<div class="mt-4 space-y-3"><div><p class="text-xs uppercase text-gray-500">Mutations</p><ol class="mt-1 list-inside list-decimal text-sm text-gray-300">{#each setupReview.mutations as mutation}<li>{mutation}</li>{/each}</ol></div><div><p class="text-xs uppercase text-yellow-500">Warnings</p><ul class="mt-1 list-inside list-disc text-sm text-yellow-300">{#each setupReview.warnings as warning}<li>{warning}</li>{/each}</ul></div><label class="flex items-start gap-2 rounded border border-yellow-700 bg-yellow-900/20 p-2 text-xs text-yellow-200"><input class="mt-0.5" type="checkbox" bind:checked={setupConfirmed} /> I reviewed and confirm these exact changes.</label><button onclick={applySecuritySetup} disabled={!setupConfirmed || busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">Apply Safe Setup</button></div>{/if}</section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step1')}</p><h3 class="mt-1 font-semibold text-white">{translate($language, 'sec.setup.step1Title')}</h3><p class="mt-2 text-sm text-gray-400">{translate($language, 'sec.setup.step1Desc')}</p><p class="mt-3 text-xs text-gray-500">{overview.posture?.checked_at ? translate($language, 'sec.setup.lastCheck').replace('{time}', new Date(overview.posture.checked_at).toLocaleString()) : translate($language, 'sec.notAvailable')}</p></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step2')}</p><label class="mt-2 block"><span class="text-sm text-gray-300">{translate($language, 'sec.setup.mgmtLabel')}</span><textarea bind:value={setupManagementCIDRs} oninput={() => (setupReview = null)} rows="3" placeholder="203.0.113.10/32" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea></label><p class="mt-2 text-xs text-yellow-300">{translate($language, 'sec.setup.keepConsole')}</p></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step3')}</p><label class="mt-3 flex items-start gap-3"><input type="checkbox" bind:checked={setupFail2ban} onchange={() => (setupReview = null)} /><span><span class="block text-sm font-medium text-white">{translate($language, 'sec.setup.sshPreset')}</span><span class="text-xs text-gray-400">{translate($language, 'sec.setup.sshPresetHint')}</span></span></label></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step4')}</p><label class="mt-2 block"><span class="text-sm text-gray-300">{translate($language, 'sec.setup.clamavRuntime')}</span><select bind:value={setupMalwareMode} onchange={() => (setupReview = null)} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="low_memory">{translate($language, 'sec.setup.lowMemory')}</option><option value="daemon">{translate($language, 'sec.setup.daemonMode')}</option><option value="">{translate($language, 'sec.setup.skipMalware')}</option></select></label><div class="mt-3 flex items-center gap-3"><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={setupSchedule} disabled={!setupMalwareMode} /> {translate($language, 'sec.setup.dailyQuickScan')}</label><input type="time" bind:value={setupScheduleTime} disabled={!setupSchedule || !setupMalwareMode} class="rounded border border-gray-600 bg-gray-900 px-2 py-1 text-sm text-white" /></div></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step5')}</p><p class="mt-1 text-sm text-gray-400">{translate($language, 'sec.setup.step5Desc')}</p><div class="mt-3 max-h-36 space-y-2 overflow-auto">{#each websites as website}<label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" checked={setupTrafficWebsites.includes(website.id)} onchange={() => toggleSetupWebsite(website.id)} /> {website.domain}</label>{/each}</div></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step6')}</p><p class="mt-2 text-sm text-gray-400">{translate($language, 'sec.setup.step6Desc')}</p><p class="mt-2 text-xs text-yellow-300">{translate($language, 'sec.setup.step6Warn')}</p></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step7')}</p><p class="mt-2 text-sm text-gray-400">{translate($language, 'sec.setup.step7Desc')}</p><a href="/notifications" class="mt-3 inline-block text-sm text-blue-300 hover:text-blue-200">{translate($language, 'sec.setup.openNotifications')}</a></section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><p class="text-xs font-semibold uppercase text-blue-400">{translate($language, 'sec.setup.step8')}</p><button onclick={reviewSecuritySetup} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">{translate($language, 'sec.setup.generateReview')}</button>{#if setupReview}<div class="mt-4 space-y-3"><div><p class="text-xs uppercase text-gray-500">{translate($language, 'sec.setup.mutations')}</p><ol class="mt-1 list-inside list-decimal text-sm text-gray-300">{#each setupReview.mutations as mutation}<li>{mutation}</li>{/each}</ol></div><div><p class="text-xs uppercase text-yellow-500">{translate($language, 'sec.setup.warnings')}</p><ul class="mt-1 list-inside list-disc text-sm text-yellow-300">{#each setupReview.warnings as warning}<li>{warning}</li>{/each}</ul></div><label class="flex items-start gap-2 rounded border border-yellow-700 bg-yellow-900/20 p-2 text-xs text-yellow-200"><input class="mt-0.5" type="checkbox" bind:checked={setupConfirmed} /> {translate($language, 'sec.setup.confirmChanges')}</label><button onclick={applySecuritySetup} disabled={!setupConfirmed || busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">{translate($language, 'sec.setup.apply')}</button></div>{/if}</section>
 			</div>
 		</div>
 	{:else if activeTab === 'overview'}
 		{@const tone = conditionTone(overview.condition)}
 		<div class="grid gap-4 lg:grid-cols-[1.1fr_1.9fr]">
 			<section class="rounded-xl border p-5 {tone === 'critical' ? 'border-red-700 bg-red-900/30' : tone === 'warning' ? 'border-yellow-700 bg-yellow-900/25' : 'border-green-700 bg-green-900/20'}">
-				<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Current condition</p>
-				<h3 class="mt-2 text-2xl font-semibold text-white">{overview.condition === 'needs_attention' ? 'Needs Attention' : overview.condition === 'good' ? 'Good' : overview.condition === 'critical' ? 'Critical' : 'Unknown'}</h3>
+				<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'sec.overview.condition')}</p>
+				<h3 class="mt-2 text-2xl font-semibold text-white">{overview.condition === 'needs_attention' ? translate($language, 'sec.cond.needs_attention') : overview.condition === 'good' ? translate($language, 'sec.cond.good') : overview.condition === 'critical' ? translate($language, 'sec.cond.critical') : translate($language, 'sec.cond.unknown')}</h3>
 				<ul class="mt-4 space-y-2 text-sm text-gray-300">
 					{#each overview.reasons as reason}<li class="flex gap-2"><span aria-hidden="true">•</span><span>{reason}</span></li>{/each}
 				</ul>
-				<p class="mt-4 text-xs text-gray-400">This status summarizes observed signals; it is not a security guarantee.</p>
+				<p class="mt-4 text-xs text-gray-400">{translate($language, 'sec.overview.disclaimer')}</p>
 			</section>
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-				<div class="flex items-center justify-between"><h3 class="font-semibold text-white">Components</h3><span class="text-sm text-gray-400">{overview.open_events} active events</span></div>
-				{#if overview.components.length === 0}<p class="mt-4 text-sm text-gray-400">No security component is configured yet. Open Fail2ban to begin with the Safe preset.</p>{:else}
+				<div class="flex items-center justify-between"><h3 class="font-semibold text-white">{translate($language, 'sec.overview.components')}</h3><span class="text-sm text-gray-400">{translate($language, 'sec.overview.activeEvents').replace('{count}', String(overview.open_events))}</span></div>
+				{#if overview.components.length === 0}<p class="mt-4 text-sm text-gray-400">{translate($language, 'sec.overview.noComponents')}</p>{:else}
 					<div class="mt-4 grid gap-3 sm:grid-cols-2">
 						{#each overview.components as component}
 							<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-4">
 								<div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{component.name}</span><span class="rounded-full px-2 py-0.5 text-xs {component.healthy ? 'bg-green-900 text-green-300' : component.installed ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{component.state.replaceAll('_', ' ')}</span></div>
-								<p class="mt-2 text-sm text-gray-400">{component.message || (component.installed ? 'Status checked.' : 'Optional component is not installed.')}</p>
+								<p class="mt-2 text-sm text-gray-400">{component.message || (component.installed ? translate($language, 'sec.overview.statusChecked') : translate($language, 'sec.overview.optionalMissing'))}</p>
 							</div>
 						{/each}
 					</div>
@@ -603,39 +604,39 @@ import { toast } from '$lib/stores/toast';
 			</section>
 		</div>
 		<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-			<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h3 class="font-semibold text-white">Read-only posture findings</h3><p class="mt-1 text-sm text-gray-400">Guidance only—these checks never silently change SSH, UFW, AppArmor, packages, or Nginx.</p></div><span class="text-xs text-gray-500">{overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : 'Not checked'}</span></div>
-			{#if !overview.posture?.findings?.length}<p class="mt-4 text-sm text-green-300">No actionable posture finding was detected. Optional or unavailable tools remain labeled unknown.</p>{:else}<div class="mt-4 grid gap-3 md:grid-cols-2">{#each overview.posture.findings as finding}<article class="rounded-lg border border-gray-700 bg-gray-900/50 p-4"><div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{finding.component.replaceAll('_', ' ')}</span><span class="rounded-full px-2 py-0.5 text-xs uppercase {finding.severity === 'critical' ? 'bg-red-900 text-red-300' : finding.severity === 'medium' || finding.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{finding.severity}</span></div><p class="mt-2 text-sm text-gray-200">{finding.summary}</p><p class="mt-1 text-xs text-gray-400">{finding.remediation}</p></article>{/each}</div>{/if}
+			<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'sec.overview.postureTitle')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'sec.overview.postureDesc')}</p></div><span class="text-xs text-gray-500">{overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : translate($language, 'sec.overview.notChecked')}</span></div>
+			{#if !overview.posture?.findings?.length}<p class="mt-4 text-sm text-green-300">{translate($language, 'sec.overview.noFindings')}</p>{:else}<div class="mt-4 grid gap-3 md:grid-cols-2">{#each overview.posture.findings as finding}<article class="rounded-lg border border-gray-700 bg-gray-900/50 p-4"><div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{finding.component.replaceAll('_', ' ')}</span><span class="rounded-full px-2 py-0.5 text-xs uppercase {finding.severity === 'critical' ? 'bg-red-900 text-red-300' : finding.severity === 'medium' || finding.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{finding.severity}</span></div><p class="mt-2 text-sm text-gray-200">{finding.summary}</p><p class="mt-1 text-xs text-gray-400">{finding.remediation}</p></article>{/each}</div>{/if}
 		</section>
 	{:else if activeTab === 'fail2ban'}
 		<div class="space-y-4">
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 				<div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-					<div><div class="flex items-center gap-2"><h3 class="text-lg font-semibold text-white">Fail2ban</h3><span class="rounded-full px-2 py-0.5 text-xs {fail2ban.healthy ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}">{fail2ban.state.replaceAll('_', ' ')}</span></div><p class="mt-1 text-sm text-gray-400">{fail2ban.message || 'Temporary intrusion bans for SSH and supported Nginx logs.'}</p></div>
-					{#if !fail2ban.installed}<button onclick={installFail2ban} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy === 'install' ? 'Starting…' : 'Install Fail2ban'}</button>{:else}<div class="flex flex-wrap gap-2"><button onclick={() => serviceAction(fail2ban.running ? 'restart' : 'start')} disabled={busy !== ''} class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">{fail2ban.running ? 'Restart' : 'Start'}</button>{#if fail2ban.running}<button onclick={() => serviceAction('stop')} disabled={busy !== ''} class="rounded-lg border border-red-700 px-3 py-2 text-sm text-red-300 disabled:opacity-50">Stop</button>{/if}</div>{/if}
+					<div><div class="flex items-center gap-2"><h3 class="text-lg font-semibold text-white">Fail2ban</h3><span class="rounded-full px-2 py-0.5 text-xs {fail2ban.healthy ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}">{fail2ban.state.replaceAll('_', ' ')}</span></div><p class="mt-1 text-sm text-gray-400">{fail2ban.message || translate($language, 'f2b.desc')}</p></div>
+					{#if !fail2ban.installed}<button onclick={installFail2ban} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{busy === 'install' ? translate($language, 'f2b.starting') : translate($language, 'f2b.install')}</button>{:else}<div class="flex flex-wrap gap-2"><button onclick={() => serviceAction(fail2ban.running ? 'restart' : 'start')} disabled={busy !== ''} class="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white disabled:opacity-50">{fail2ban.running ? translate($language, 'f2b.restart') : translate($language, 'f2b.start')}</button>{#if fail2ban.running}<button onclick={() => serviceAction('stop')} disabled={busy !== ''} class="rounded-lg border border-red-700 px-3 py-2 text-sm text-red-300 disabled:opacity-50">{translate($language, 'f2b.stop')}</button>{/if}</div>{/if}
 				</div>
-				{#if fail2ban.installed}<div class="mt-4 grid gap-2 text-sm text-gray-400 sm:grid-cols-3"><span>Version: {fail2ban.version || 'unknown'}</span><span>SSH port: {fail2ban.ssh_port || 'unknown'}</span><span>Service: {fail2ban.enabled ? 'enabled at boot' : 'not enabled'}</span></div>{/if}
+				{#if fail2ban.installed}<div class="mt-4 grid gap-2 text-sm text-gray-400 sm:grid-cols-3"><span>{translate($language, 'f2b.version').replace('{value}', fail2ban.version || translate($language, 'sec.unknownValue'))}</span><span>{translate($language, 'f2b.sshPort').replace('{value}', String(fail2ban.ssh_port || translate($language, 'sec.unknownValue')))}</span><span>{translate($language, 'f2b.service').replace('{value}', fail2ban.enabled ? translate($language, 'f2b.serviceEnabled') : translate($language, 'f2b.serviceNotEnabled'))}</span></div>{/if}
 			</section>
 
 			{#if fail2ban.installed}
 				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Configuration</h3><p class="mt-1 text-sm text-gray-400">Simple mode uses conservative temporary-ban defaults.</p></div><div class="rounded-lg border border-gray-700 bg-gray-900 p-1"><button onclick={() => (editMode = 'simple')} class="rounded px-3 py-1.5 text-sm {editMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-400'}">Simple</button><button onclick={() => (editMode = 'advanced')} class="rounded px-3 py-1.5 text-sm {editMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-400'}">Advanced</button></div></div>
+					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'f2b.config')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'f2b.configDesc')}</p></div><div class="rounded-lg border border-gray-700 bg-gray-900 p-1"><button onclick={() => (editMode = 'simple')} class="rounded px-3 py-1.5 text-sm {editMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-400'}">{translate($language, 'sec.simple')}</button><button onclick={() => (editMode = 'advanced')} class="rounded px-3 py-1.5 text-sm {editMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-400'}">{translate($language, 'sec.advanced')}</button></div></div>
 					<div class="mt-5 grid gap-4 sm:grid-cols-2">
-						<label class="sm:col-span-2"><span class="text-sm text-gray-300">Management IPs or CIDRs</span><textarea bind:value={managementNetworks} rows="3" placeholder="203.0.113.8/32" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea><span class="mt-1 block text-xs text-gray-400">Separate entries with spaces, commas, or new lines. Loopback is always allowed by the backend.</span></label>
-						{#if settings.sshd_enabled && managementNetworks.trim() === ''}<div class="sm:col-span-2 rounded-lg border border-yellow-700 bg-yellow-900/30 p-3 text-sm text-yellow-300"><strong>Lockout warning:</strong> add the IP/CIDR used to manage this VPS and keep provider console access open before enabling SSH protection.</div>{/if}
-						<label class="flex items-center gap-3 rounded-lg border border-gray-700 bg-gray-900/50 p-3 sm:col-span-2"><input type="checkbox" bind:checked={settings.sshd_enabled} class="h-4 w-4" /><span><span class="block text-sm font-medium text-white">Protect SSH</span><span class="text-xs text-gray-400">Only temporary bans; SSH configuration is not changed.</span></span></label>
+						<label class="sm:col-span-2"><span class="text-sm text-gray-300">{translate($language, 'f2b.mgmtLabel')}</span><textarea bind:value={managementNetworks} rows="3" placeholder="203.0.113.8/32" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea><span class="mt-1 block text-xs text-gray-400">{translate($language, 'f2b.mgmtHint')}</span></label>
+						{#if settings.sshd_enabled && managementNetworks.trim() === ''}<div class="sm:col-span-2 rounded-lg border border-yellow-700 bg-yellow-900/30 p-3 text-sm text-yellow-300"><strong>{translate($language, 'f2b.lockoutWarning')}</strong> {translate($language, 'f2b.lockoutDesc')}</div>{/if}
+						<label class="flex items-center gap-3 rounded-lg border border-gray-700 bg-gray-900/50 p-3 sm:col-span-2"><input type="checkbox" bind:checked={settings.sshd_enabled} class="h-4 w-4" /><span><span class="block text-sm font-medium text-white">{translate($language, 'f2b.protectSsh')}</span><span class="text-xs text-gray-400">{translate($language, 'f2b.protectSshHint')}</span></span></label>
 						{#if editMode === 'advanced'}
-							<label><span class="text-sm text-gray-300">Maximum retries</span><input type="number" min="1" max="20" bind:value={settings.max_retry} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
-							<label><span class="text-sm text-gray-300">Observation window (seconds)</span><input type="number" min="60" max="86400" bind:value={settings.find_time_seconds} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
-							<label><span class="text-sm text-gray-300">Temporary ban (seconds)</span><input type="number" min="60" max="604800" bind:value={settings.ban_time_seconds} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
-						{:else}<div class="sm:col-span-2 grid gap-2 rounded-lg border border-gray-700 bg-gray-900/50 p-4 text-sm text-gray-300 sm:grid-cols-3"><span>5 failed attempts</span><span>10-minute window</span><span>15-minute ban</span></div>{/if}
+							<label><span class="text-sm text-gray-300">{translate($language, 'f2b.maxRetry')}</span><input type="number" min="1" max="20" bind:value={settings.max_retry} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
+							<label><span class="text-sm text-gray-300">{translate($language, 'f2b.findTime')}</span><input type="number" min="60" max="86400" bind:value={settings.find_time_seconds} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
+							<label><span class="text-sm text-gray-300">{translate($language, 'f2b.banTime')}</span><input type="number" min="60" max="604800" bind:value={settings.ban_time_seconds} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
+						{:else}<div class="sm:col-span-2 grid gap-2 rounded-lg border border-gray-700 bg-gray-900/50 p-4 text-sm text-gray-300 sm:grid-cols-3"><span>{translate($language, 'f2b.presetRetry')}</span><span>{translate($language, 'f2b.presetWindow')}</span><span>{translate($language, 'f2b.presetBan')}</span></div>{/if}
 					</div>
-					<button onclick={applySettings} disabled={busy !== '' || !!currentTaskId} class="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">Validate & Apply</button>
+					<button onclick={applySettings} disabled={busy !== '' || !!currentTaskId} class="mt-5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{translate($language, 'sec.validateApply')}</button>
 				</section>
 
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Active jails</h3>{#if fail2ban.jails.length === 0}<p class="mt-3 text-sm text-gray-400">No supported jail is active. Apply a validated configuration or retry after checking the task output.</p>{:else}<div class="mt-4 grid gap-3 md:grid-cols-2">{#each fail2ban.jails as jail}<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex justify-between"><span class="font-medium text-white">{jail.name}</span><span class="text-xs text-gray-400">{jail.currently_banned} banned</span></div><div class="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-400"><span>Failed now: {jail.currently_failed}</span><span>Failed total: {jail.total_failed}</span><span>Filter: {jail.filter_available ? 'ready' : 'missing'}</span><span>Log source: {jail.source_available ? 'ready' : 'missing'}</span></div></div>{/each}</div>{/if}</section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">{translate($language, 'f2b.activeJails')}</h3>{#if fail2ban.jails.length === 0}<p class="mt-3 text-sm text-gray-400">{translate($language, 'f2b.noJails')}</p>{:else}<div class="mt-4 grid gap-3 md:grid-cols-2">{#each fail2ban.jails as jail}<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex justify-between"><span class="font-medium text-white">{jail.name}</span><span class="text-xs text-gray-400">{translate($language, 'f2b.bannedCount').replace('{count}', String(jail.currently_banned))}</span></div><div class="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-400"><span>{translate($language, 'f2b.failedNow').replace('{value}', String(jail.currently_failed))}</span><span>{translate($language, 'f2b.failedTotal').replace('{value}', String(jail.total_failed))}</span><span>{translate($language, 'f2b.filter').replace('{value}', jail.filter_available ? translate($language, 'f2b.ready') : translate($language, 'f2b.missing'))}</span><span>{translate($language, 'f2b.logSource').replace('{value}', jail.source_available ? translate($language, 'f2b.ready') : translate($language, 'f2b.missing'))}</span></div></div>{/each}</div>{/if}</section>
 
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Temporary manual ban</h3><div class="mt-4 grid gap-3 sm:grid-cols-4"><select bind:value={banJail} class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="">Select jail</option>{#each fail2ban.jails as jail}<option value={jail.name}>{jail.name}</option>{/each}</select><input bind:value={banIP} placeholder="203.0.113.7" class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white sm:col-span-2" /><input type="number" min="60" max="604800" bind:value={banDuration} class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white" /></div><button onclick={createBan} disabled={busy !== '' || fail2ban.jails.length === 0} class="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-50">Ban temporarily</button>
-					{#if bans.length === 0}<p class="mt-5 text-sm text-gray-400">No active bans.</p>{:else}<div class="mt-5 overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs uppercase text-gray-400"><tr><th class="pb-2">Address</th><th class="pb-2">Jail</th><th class="pb-2">Expiry</th><th class="pb-2 text-right">Action</th></tr></thead><tbody class="divide-y divide-gray-700">{#each bans as ban}<tr><td class="py-3 font-mono text-white">{ban.ip}</td><td class="py-3 text-gray-300">{ban.jail}</td><td class="py-3 text-gray-400">{formatBanExpiry(ban.expires_at)}</td><td class="py-3 text-right"><button onclick={() => removeBan(ban)} disabled={busy !== ''} class="text-red-400 hover:text-red-300 disabled:opacity-50">Unban</button></td></tr>{/each}</tbody></table></div>{/if}
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">{translate($language, 'f2b.manualBan')}</h3><div class="mt-4 grid gap-3 sm:grid-cols-4"><select bind:value={banJail} class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="">{translate($language, 'f2b.selectJail')}</option>{#each fail2ban.jails as jail}<option value={jail.name}>{jail.name}</option>{/each}</select><input bind:value={banIP} placeholder="203.0.113.7" class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white sm:col-span-2" /><input type="number" min="60" max="604800" bind:value={banDuration} class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white" /></div><button onclick={createBan} disabled={busy !== '' || fail2ban.jails.length === 0} class="mt-3 rounded-lg bg-red-600 px-4 py-2 text-sm text-white disabled:opacity-50">{translate($language, 'f2b.banTemp')}</button>
+					{#if bans.length === 0}<p class="mt-5 text-sm text-gray-400">{translate($language, 'f2b.noBans')}</p>{:else}<div class="mt-5 overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs uppercase text-gray-400"><tr><th class="pb-2">{translate($language, 'f2b.thAddress')}</th><th class="pb-2">{translate($language, 'f2b.thJail')}</th><th class="pb-2">{translate($language, 'f2b.thExpiry')}</th><th class="pb-2 text-right">{translate($language, 'f2b.thAction')}</th></tr></thead><tbody class="divide-y divide-gray-700">{#each bans as ban}<tr><td class="py-3 font-mono text-white">{ban.ip}</td><td class="py-3 text-gray-300">{ban.jail}</td><td class="py-3 text-gray-400">{formatBanExpiry(ban.expires_at)}</td><td class="py-3 text-right"><button onclick={() => removeBan(ban)} disabled={busy !== ''} class="text-red-400 hover:text-red-300 disabled:opacity-50">{translate($language, 'f2b.unban')}</button></td></tr>{/each}</tbody></table></div>{/if}
 				</section>
 			{/if}
 		</div>
@@ -645,26 +646,26 @@ import { toast } from '$lib/stores/toast';
 				<div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 					<div>
 						<div class="flex flex-wrap items-center gap-2">
-							<h3 class="text-lg font-semibold text-white">Malware Scanner</h3>
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'mal.title')}</h3>
 							<span class="rounded-full px-2 py-0.5 text-xs {malware.healthy ? 'bg-green-900 text-green-300' : malware.installed ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{malware.state.replaceAll('_', ' ')}</span>
 						</div>
-						<p class="mt-1 max-w-2xl text-sm text-gray-400">{malware.message || 'Scan panel-managed website roots with ClamAV and isolate suspicious files outside Nginx document roots.'}</p>
+						<p class="mt-1 max-w-2xl text-sm text-gray-400">{malware.message || translate($language, 'mal.desc')}</p>
 					</div>
 					{#if !malware.installed}
 						<div class="flex flex-wrap gap-2">
-							<button onclick={() => installMalware('low_memory')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">Install low-memory</button>
-							<button onclick={() => installMalware('daemon')} disabled={!malware.daemon_supported || busy !== '' || !!currentTaskId} title={malware.daemon_supported ? 'Resident scanner for repeated scans' : 'Requires at least 2 GiB RAM'} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">Install daemon</button>
+							<button onclick={() => installMalware('low_memory')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{translate($language, 'mal.installLowMemory')}</button>
+							<button onclick={() => installMalware('daemon')} disabled={!malware.daemon_supported || busy !== '' || !!currentTaskId} title={malware.daemon_supported ? translate($language, 'mal.daemonTooltip') : translate($language, 'mal.daemonReq')} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">{translate($language, 'mal.installDaemon')}</button>
 						</div>
 					{:else}
-						<button onclick={updateSignatures} disabled={busy !== '' || !!currentTaskId} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">Update signatures</button>
+						<button onclick={updateSignatures} disabled={busy !== '' || !!currentTaskId} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">{translate($language, 'mal.updateSignatures')}</button>
 					{/if}
 				</div>
 				{#if malware.installed}
 					<div class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Engine</p><p class="mt-1 font-medium text-white">{malware.engine || 'clamscan'}</p><p class="text-xs text-gray-400">{malware.version || 'version unknown'}</p></div>
-						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Signatures</p><p class="mt-1 font-medium text-white">{malware.signature_version || 'unknown'}</p><p class="text-xs {malware.signature_fresh ? 'text-green-300' : 'text-yellow-300'}">{formatSignatureAge(malware.signature_updated_at)}</p></div>
-						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Updater</p><p class="mt-1 font-medium text-white">{malware.updater_running ? 'Running' : 'Needs attention'}</p></div>
-						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">Quarantine</p><p class="mt-1 font-medium text-white">{quarantine.filter((item) => item.status === 'quarantined' || item.status === 'false_positive').length} retained</p><p class="text-xs text-gray-400">Never auto-deleted</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">{translate($language, 'mal.engine')}</p><p class="mt-1 font-medium text-white">{malware.engine || 'clamscan'}</p><p class="text-xs text-gray-400">{malware.version || translate($language, 'mal.versionUnknown')}</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">{translate($language, 'mal.signatures')}</p><p class="mt-1 font-medium text-white">{malware.signature_version || translate($language, 'sec.unknownValue')}</p><p class="text-xs {malware.signature_fresh ? 'text-green-300' : 'text-yellow-300'}">{formatSignatureAge(malware.signature_updated_at)}</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">{translate($language, 'mal.updater')}</p><p class="mt-1 font-medium text-white">{malware.updater_running ? translate($language, 'mal.running') : translate($language, 'mal.needsAttention')}</p></div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-3"><p class="text-xs uppercase text-gray-500">{translate($language, 'mal.quarantine')}</p><p class="mt-1 font-medium text-white">{translate($language, 'mal.retained').replace('{count}', String(quarantine.filter((item) => item.status === 'quarantined' || item.status === 'false_positive').length))}</p><p class="text-xs text-gray-400">{translate($language, 'mal.neverAutoDeleted')}</p></div>
 					</div>
 				{/if}
 			</section>
@@ -672,43 +673,43 @@ import { toast } from '$lib/stores/toast';
 			{#if malware.installed}
 				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 					<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-						<div><h3 class="font-semibold text-white">Run a scan</h3><p class="mt-1 text-sm text-gray-400">One scan at a time, low CPU/I/O priority, one-hour limit, and files up to 100 MiB.</p></div>
-						<div class="flex gap-1 rounded-lg border border-gray-700 bg-gray-900 p-1"><button onclick={() => (malwareMode = 'simple')} class="rounded px-3 py-1.5 text-sm {malwareMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-400'}">Simple</button><button onclick={() => (malwareMode = 'advanced')} class="rounded px-3 py-1.5 text-sm {malwareMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-400'}">Advanced</button></div>
+						<div><h3 class="font-semibold text-white">{translate($language, 'mal.runScan')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'mal.scanDesc')}</p></div>
+						<div class="flex gap-1 rounded-lg border border-gray-700 bg-gray-900 p-1"><button onclick={() => (malwareMode = 'simple')} class="rounded px-3 py-1.5 text-sm {malwareMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-400'}">{translate($language, 'sec.simple')}</button><button onclick={() => (malwareMode = 'advanced')} class="rounded px-3 py-1.5 text-sm {malwareMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-400'}">{translate($language, 'sec.advanced')}</button></div>
 					</div>
 					<div class="mt-5 flex flex-wrap gap-3">
-						<button onclick={() => startMalwareScan('quick')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Quick scan</button>
-						<button onclick={() => startMalwareScan('full_websites')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">Full website scan</button>
+						<button onclick={() => startMalwareScan('quick')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{translate($language, 'mal.quickScan')}</button>
+						<button onclick={() => startMalwareScan('full_websites')} disabled={busy !== '' || !!currentTaskId} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 hover:bg-gray-900 disabled:opacity-50">{translate($language, 'mal.fullScan')}</button>
 					</div>
 					<div class="mt-4 flex flex-col gap-2 sm:flex-row">
-						<select bind:value={selectedWebsite} class="min-w-64 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="">Select website</option>{#each websites as website}<option value={website.id}>{website.domain}</option>{/each}</select>
-						<button onclick={() => startMalwareScan('website')} disabled={!selectedWebsite || busy !== '' || !!currentTaskId} class="rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">Scan selected website</button>
+						<select bind:value={selectedWebsite} class="min-w-64 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="">{translate($language, 'sec.selectWebsite')}</option>{#each websites as website}<option value={website.id}>{website.domain}</option>{/each}</select>
+						<button onclick={() => startMalwareScan('website')} disabled={!selectedWebsite || busy !== '' || !!currentTaskId} class="rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">{translate($language, 'mal.scanSelected')}</button>
 					</div>
 					{#if malwareMode === 'advanced'}
-						<div class="mt-5 grid gap-3 rounded-lg border border-gray-700 bg-gray-900/50 p-4 text-sm text-gray-300 sm:grid-cols-3"><span>Maximum files: 100,000</span><span>Maximum file size: 100 MiB</span><span>Archive depth: 16</span></div>
+						<div class="mt-5 grid gap-3 rounded-lg border border-gray-700 bg-gray-900/50 p-4 text-sm text-gray-300 sm:grid-cols-3"><span>{translate($language, 'mal.maxFiles')}</span><span>{translate($language, 'mal.maxFileSize')}</span><span>{translate($language, 'mal.archiveDepth')}</span></div>
 					{/if}
 				</section>
 
 				<div class="grid gap-4 lg:grid-cols-2">
 					<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-						<h3 class="font-semibold text-white">Daily schedule</h3><p class="mt-1 text-sm text-gray-400">The Safe preset scans only files changed since the last successful Quick Scan.</p>
-						<div class="mt-4 flex flex-wrap items-end gap-3"><label class="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2 text-sm text-gray-300"><input type="checkbox" bind:checked={scheduleEnabled} /> Enabled</label><label><span class="block text-xs text-gray-400">Server local time</span><input type="time" bind:value={scheduleTime} class="mt-1 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white" /></label><button onclick={saveMalwareSchedule} disabled={busy !== ''} class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">Save schedule</button></div>
+						<h3 class="font-semibold text-white">{translate($language, 'mal.dailySchedule')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'mal.scheduleDesc')}</p>
+						<div class="mt-4 flex flex-wrap items-end gap-3"><label class="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2 text-sm text-gray-300"><input type="checkbox" bind:checked={scheduleEnabled} /> {translate($language, 'mal.enabled')}</label><label><span class="block text-xs text-gray-400">{translate($language, 'mal.serverTime')}</span><input type="time" bind:value={scheduleTime} class="mt-1 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white" /></label><button onclick={saveMalwareSchedule} disabled={busy !== ''} class="rounded-lg bg-blue-600 px-4 py-2 text-sm text-white disabled:opacity-50">{translate($language, 'mal.saveSchedule')}</button></div>
 					</section>
 					<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-						<h3 class="font-semibold text-white">On-access protection <span class="ml-1 text-xs font-normal text-yellow-300">Advanced</span></h3><p class="mt-1 text-sm text-gray-400">Off by default. Requires the daemon, clamonacc, and supported Linux fanotify features.</p>
+						<h3 class="font-semibold text-white">{translate($language, 'mal.onAccessTitle')} <span class="ml-1 text-xs font-normal text-yellow-300">{translate($language, 'sec.advanced')}</span></h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'mal.onAccessDesc')}</p>
 						<p class="mt-2 text-xs text-gray-500">{malware.on_access.message}</p>
-						<div class="mt-4 space-y-3"><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={onAccessEnabled} disabled={!malware.on_access.available && !malware.on_access.enabled} /> Enable notify-only monitoring</label><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={preventionEnabled} disabled={!onAccessEnabled || !malware.on_access.prevention_supported} /> Block access to detected files</label>{#if preventionEnabled}<label class="flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/25 p-3 text-sm text-yellow-300"><input class="mt-1" type="checkbox" bind:checked={preventionConfirmed} /><span>I understand prevention can materially affect busy website directories and may block access.</span></label>{/if}</div>
-						<button onclick={configureOnAccess} disabled={busy !== '' || (!malware.on_access.available && !malware.on_access.enabled)} class="mt-4 rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">Validate & Apply</button>
+						<div class="mt-4 space-y-3"><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={onAccessEnabled} disabled={!malware.on_access.available && !malware.on_access.enabled} /> {translate($language, 'mal.enableNotifyOnly')}</label><label class="flex items-center gap-2 text-sm text-gray-300"><input type="checkbox" bind:checked={preventionEnabled} disabled={!onAccessEnabled || !malware.on_access.prevention_supported} /> {translate($language, 'mal.blockAccess')}</label>{#if preventionEnabled}<label class="flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/25 p-3 text-sm text-yellow-300"><input class="mt-1" type="checkbox" bind:checked={preventionConfirmed} /><span>{translate($language, 'mal.preventionConfirm')}</span></label>{/if}</div>
+						<button onclick={configureOnAccess} disabled={busy !== '' || (!malware.on_access.available && !malware.on_access.enabled)} class="mt-4 rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 disabled:opacity-50">{translate($language, 'sec.validateApply')}</button>
 					</section>
 				</div>
 
 				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Scan history</h3><p class="mt-1 text-sm text-gray-400">Recent persistent scan results.</p></div><span class="text-sm text-gray-400">{malwareScans.length} shown</span></div>
-					{#if malwareScans.length === 0}<p class="mt-4 text-sm text-gray-400">No malware scan has run yet.</p>{:else}<div class="mt-4 overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs uppercase text-gray-400"><tr><th class="pb-2">Mode</th><th class="pb-2">Status</th><th class="pb-2">Files</th><th class="pb-2">Findings</th><th class="pb-2">Started</th></tr></thead><tbody class="divide-y divide-gray-700">{#each malwareScans as scan}<tr><td class="py-3 text-white">{scan.mode.replaceAll('_', ' ')}</td><td class="py-3"><span class="rounded-full px-2 py-0.5 text-xs {scan.status === 'completed' ? 'bg-green-900 text-green-300' : scan.status === 'failed' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{scan.status}</span>{#if scan.error}<p class="mt-1 max-w-lg text-xs text-red-300">{scan.error}</p>{/if}</td><td class="py-3 text-gray-300">{scan.files_scanned}</td><td class="py-3 text-gray-300">{scan.findings_count}</td><td class="py-3 text-gray-400">{scan.started_at ? new Date(scan.started_at).toLocaleString() : '—'}</td></tr>{/each}</tbody></table></div>{/if}
+					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'mal.scanHistory')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'mal.historyDesc')}</p></div><span class="text-sm text-gray-400">{translate($language, 'sec.shownCount').replace('{count}', String(malwareScans.length))}</span></div>
+					{#if malwareScans.length === 0}<p class="mt-4 text-sm text-gray-400">{translate($language, 'mal.noScans')}</p>{:else}<div class="mt-4 overflow-x-auto"><table class="w-full text-left text-sm"><thead class="text-xs uppercase text-gray-400"><tr><th class="pb-2">{translate($language, 'mal.thMode')}</th><th class="pb-2">{translate($language, 'mal.thStatus')}</th><th class="pb-2">{translate($language, 'mal.thFiles')}</th><th class="pb-2">{translate($language, 'mal.thFindings')}</th><th class="pb-2">{translate($language, 'mal.thStarted')}</th></tr></thead><tbody class="divide-y divide-gray-700">{#each malwareScans as scan}<tr><td class="py-3 text-white">{scan.mode.replaceAll('_', ' ')}</td><td class="py-3"><span class="rounded-full px-2 py-0.5 text-xs {scan.status === 'completed' ? 'bg-green-900 text-green-300' : scan.status === 'failed' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{scan.status}</span>{#if scan.error}<p class="mt-1 max-w-lg text-xs text-red-300">{scan.error}</p>{/if}</td><td class="py-3 text-gray-300">{scan.files_scanned}</td><td class="py-3 text-gray-300">{scan.findings_count}</td><td class="py-3 text-gray-400">{scan.started_at ? new Date(scan.started_at).toLocaleString() : '—'}</td></tr>{/each}</tbody></table></div>{/if}
 				</section>
 
 				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Quarantine</h3><p class="mt-1 text-sm text-gray-400">Review comes first; permanent deletion is never the default action.</p></div><span class="text-sm text-gray-400">{quarantine.length} items</span></div>
-					{#if quarantine.length === 0}<p class="mt-4 text-sm text-gray-400">No quarantined files.</p>{:else}<div class="mt-4 space-y-3">{#each quarantine as item}<article class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="rounded-full bg-red-900 px-2 py-0.5 text-xs text-red-300">{item.signature}</span><span class="text-xs text-gray-400">{item.status.replaceAll('_', ' ')}</span></div><p class="mt-2 break-all font-mono text-sm text-white">{item.original_path}</p><p class="mt-1 break-all font-mono text-xs text-gray-500">SHA-256 {item.sha256}</p><p class="mt-1 text-xs text-gray-400">Detected {new Date(item.detected_at).toLocaleString()} · {item.size_bytes} bytes</p></div><div class="flex flex-wrap gap-2">{#if item.status === 'quarantined' || item.status === 'false_positive'}<a download href={`/api/v1/security/malware/quarantine/${item.id}/download`} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300">Download</a><button onclick={() => restoreQuarantine(item)} disabled={busy !== ''} class="rounded border border-green-700 px-3 py-1.5 text-xs text-green-300 disabled:opacity-50">Restore</button>{#if item.status === 'quarantined'}<button onclick={() => markFalsePositive(item)} disabled={busy !== ''} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-50">False positive</button>{/if}<button onclick={() => deleteQuarantine(item)} disabled={busy !== ''} class="rounded bg-red-700 px-3 py-1.5 text-xs text-white disabled:opacity-50">Delete permanently</button>{/if}</div></div></article>{/each}</div>{/if}
+					<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'mal.quarantine')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'mal.quarantineDesc')}</p></div><span class="text-sm text-gray-400">{translate($language, 'mal.itemCount').replace('{count}', String(quarantine.length))}</span></div>
+					{#if quarantine.length === 0}<p class="mt-4 text-sm text-gray-400">{translate($language, 'mal.noQuarantine')}</p>{:else}<div class="mt-4 space-y-3">{#each quarantine as item}<article class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><span class="rounded-full bg-red-900 px-2 py-0.5 text-xs text-red-300">{item.signature}</span><span class="text-xs text-gray-400">{item.status.replaceAll('_', ' ')}</span></div><p class="mt-2 break-all font-mono text-sm text-white">{item.original_path}</p><p class="mt-1 break-all font-mono text-xs text-gray-500">SHA-256 {item.sha256}</p><p class="mt-1 text-xs text-gray-400">{translate($language, 'mal.detectedLine').replace('{time}', new Date(item.detected_at).toLocaleString()).replace('{size}', String(item.size_bytes))}</p></div><div class="flex flex-wrap gap-2">{#if item.status === 'quarantined' || item.status === 'false_positive'}<a download href={`/api/v1/security/malware/quarantine/${item.id}/download`} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300">{translate($language, 'mal.download')}</a><button onclick={() => restoreQuarantine(item)} disabled={busy !== ''} class="rounded border border-green-700 px-3 py-1.5 text-xs text-green-300 disabled:opacity-50">{translate($language, 'mal.restore')}</button>{#if item.status === 'quarantined'}<button onclick={() => markFalsePositive(item)} disabled={busy !== ''} class="rounded border border-gray-600 px-3 py-1.5 text-xs text-gray-300 disabled:opacity-50">{translate($language, 'sec.falsePositive')}</button>{/if}<button onclick={() => deleteQuarantine(item)} disabled={busy !== ''} class="rounded bg-red-700 px-3 py-1.5 text-xs text-white disabled:opacity-50">{translate($language, 'mal.deletePermanently')}</button>{/if}</div></div></article>{/each}</div>{/if}
 				</section>
 			{/if}
 		</div>
@@ -717,63 +718,63 @@ import { toast } from '$lib/stores/toast';
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 				<div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
 					<div>
-						<div class="flex flex-wrap items-center gap-2"><h3 class="text-lg font-semibold text-white">Traffic Guard</h3><span class="rounded-full bg-blue-900 px-2 py-0.5 text-xs text-blue-300">HTTP layer</span><span class="rounded-full px-2 py-0.5 text-xs {trafficCondition === 'Critical' ? 'bg-red-900 text-red-300' : trafficCondition === 'High' || trafficCondition === 'Warning' ? 'bg-yellow-900 text-yellow-300' : 'bg-green-900 text-green-300'}">{trafficCondition}</span></div>
-						<p class="mt-1 max-w-3xl text-sm text-gray-400">Observe traffic per website, preserve the real client IP behind an explicitly trusted proxy, then optionally apply bounded Nginx limits.</p>
+						<div class="flex flex-wrap items-center gap-2"><h3 class="text-lg font-semibold text-white">{translate($language, 'tg.title')}</h3><span class="rounded-full bg-blue-900 px-2 py-0.5 text-xs text-blue-300">{translate($language, 'tg.httpLayer')}</span><span class="rounded-full px-2 py-0.5 text-xs {trafficCondition === 'Critical' ? 'bg-red-900 text-red-300' : trafficCondition === 'High' || trafficCondition === 'Warning' ? 'bg-yellow-900 text-yellow-300' : 'bg-green-900 text-green-300'}">{translate($language, `tg.cond.${trafficCondition.toLowerCase()}`)}</span></div>
+						<p class="mt-1 max-w-3xl text-sm text-gray-400">{translate($language, 'tg.desc')}</p>
 					</div>
 					<select value={selectedTrafficWebsite} onchange={(event) => chooseTrafficWebsite(event.currentTarget.value)} class="min-w-64 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white">
-						<option value="">Select website</option>{#each websites as website}<option value={website.id}>{website.domain}</option>{/each}
+						<option value="">{translate($language, 'sec.selectWebsite')}</option>{#each websites as website}<option value={website.id}>{website.domain}</option>{/each}
 					</select>
 				</div>
 				<div class="mt-5 rounded-lg border border-blue-800 bg-blue-950/40 p-4">
-					<div class="flex items-center justify-between text-sm"><span class="font-medium text-blue-200">24-hour observation</span><span class="text-blue-300">{trafficObservation}%</span></div>
+					<div class="flex items-center justify-between text-sm"><span class="font-medium text-blue-200">{translate($language, 'tg.observation')}</span><span class="text-blue-300">{trafficObservation}%</span></div>
 					<div class="mt-2 h-2 overflow-hidden rounded-full bg-gray-700"><div class="h-full rounded-full bg-blue-500 transition-all" style={`width: ${trafficObservation}%`}></div></div>
-					<p class="mt-2 text-xs text-gray-400">Enforcement remains unavailable until a complete 24-hour observation period has been recorded. Observe Mode never rejects a request.</p>
+					<p class="mt-2 text-xs text-gray-400">{translate($language, 'tg.observationNote')}</p>
 				</div>
 			</section>
 
 			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">Requests / 24h</p><p class="mt-1 text-xl font-semibold text-white">{trafficSummary.requests.toLocaleString()}</p></div>
-				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">Peak RPS</p><p class="mt-1 text-xl font-semibold text-white">{trafficSummary.peakRPS}</p></div>
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">{translate($language, 'tg.requests24h')}</p><p class="mt-1 text-xl font-semibold text-white">{trafficSummary.requests.toLocaleString()}</p></div>
+				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">{translate($language, 'tg.peakRps')}</p><p class="mt-1 text-xl font-semibold text-white">{trafficSummary.peakRPS}</p></div>
 				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">4xx</p><p class="mt-1 text-xl font-semibold text-yellow-300">{trafficSummary.status4xx}</p></div>
 				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">5xx</p><p class="mt-1 text-xl font-semibold text-red-300">{trafficSummary.status5xx}</p></div>
 				<div class="rounded-xl border border-gray-700 bg-gray-800 p-4"><p class="text-xs uppercase text-gray-500">HTTP 429</p><p class="mt-1 text-xl font-semibold text-blue-300">{trafficSummary.status429}</p></div>
 			</div>
 
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-				<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Request activity</h3><p class="mt-1 text-sm text-gray-400">Latest collected minute buckets; collection continues after panel restarts.</p></div><span class="text-xs text-gray-500">Last {Math.min(30, trafficBuckets.length)} minutes shown</span></div>
-				{#if trafficBuckets.length === 0}<p class="mt-6 text-sm text-gray-400">No completed access-log buckets are available yet.</p>{:else}
-					<div class="mt-5 flex h-32 items-end gap-1 overflow-hidden" aria-label="Request chart">
-						{#each trafficBuckets.slice(-30) as bucket}<div title={`${new Date(bucket.bucket_at).toLocaleTimeString()}: ${bucket.requests} requests`} class="min-w-1 flex-1 rounded-t bg-blue-500/80" style={`height: ${Math.max(3, (bucket.requests / trafficPeak) * 100)}%`}></div>{/each}
+				<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'tg.activity')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'tg.activityDesc')}</p></div><span class="text-xs text-gray-500">{translate($language, 'tg.minutesShown').replace('{count}', String(Math.min(30, trafficBuckets.length)))}</span></div>
+				{#if trafficBuckets.length === 0}<p class="mt-6 text-sm text-gray-400">{translate($language, 'tg.noBuckets')}</p>{:else}
+					<div class="mt-5 flex h-32 items-end gap-1 overflow-hidden" aria-label={translate($language, 'tg.chartAria')}>
+						{#each trafficBuckets.slice(-30) as bucket}<div title={translate($language, 'tg.bucketTitle').replace('{time}', new Date(bucket.bucket_at).toLocaleTimeString()).replace('{count}', String(bucket.requests))} class="min-w-1 flex-1 rounded-t bg-blue-500/80" style={`height: ${Math.max(3, (bucket.requests / trafficPeak) * 100)}%`}></div>{/each}
 					</div>
 				{/if}
 			</section>
 
 			<div class="grid gap-4 lg:grid-cols-2">
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Top client IPs</h3>{#if trafficSummary.topIPs.length === 0}<p class="mt-4 text-sm text-gray-400">No client evidence yet.</p>{:else}<div class="mt-4 space-y-2">{#each trafficSummary.topIPs.slice(0, 10) as [ip, count]}<div class="flex items-center justify-between rounded border border-gray-700 bg-gray-900/50 px-3 py-2"><code class="text-sm text-gray-200">{ip}</code><span class="text-xs text-gray-400">{count} requests</span></div>{/each}</div>{/if}</section>
-				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">Top paths</h3>{#if topTrafficPaths.length === 0}<p class="mt-4 text-sm text-gray-400">No path evidence yet.</p>{:else}<div class="mt-4 space-y-2">{#each topTrafficPaths as [path, count]}<div class="flex items-center justify-between gap-3 rounded border border-gray-700 bg-gray-900/50 px-3 py-2"><code class="truncate text-sm text-gray-200">{path}</code><span class="shrink-0 text-xs text-gray-400">{count}</span></div>{/each}</div>{/if}</section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">{translate($language, 'tg.topIps')}</h3>{#if trafficSummary.topIPs.length === 0}<p class="mt-4 text-sm text-gray-400">{translate($language, 'tg.noIpEvidence')}</p>{:else}<div class="mt-4 space-y-2">{#each trafficSummary.topIPs.slice(0, 10) as [ip, count]}<div class="flex items-center justify-between rounded border border-gray-700 bg-gray-900/50 px-3 py-2"><code class="text-sm text-gray-200">{ip}</code><span class="text-xs text-gray-400">{translate($language, 'tg.requestCount').replace('{count}', String(count))}</span></div>{/each}</div>{/if}</section>
+				<section class="rounded-xl border border-gray-700 bg-gray-800 p-5"><h3 class="font-semibold text-white">{translate($language, 'tg.topPaths')}</h3>{#if topTrafficPaths.length === 0}<p class="mt-4 text-sm text-gray-400">{translate($language, 'tg.noPathEvidence')}</p>{:else}<div class="mt-4 space-y-2">{#each topTrafficPaths as [path, count]}<div class="flex items-center justify-between gap-3 rounded border border-gray-700 bg-gray-900/50 px-3 py-2"><code class="truncate text-sm text-gray-200">{path}</code><span class="shrink-0 text-xs text-gray-400">{count}</span></div>{/each}</div>{/if}</section>
 			</div>
 
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-				<div><h3 class="font-semibold text-white">Protection profile</h3><p class="mt-1 text-sm text-gray-400">A candidate is written atomically, tested with <code>nginx -t</code>, reloaded, health-checked, and rolled back on failure.</p></div>
+				<div><h3 class="font-semibold text-white">{translate($language, 'tg.profile')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'tg.profileDesc1')}<code>nginx -t</code>{translate($language, 'tg.profileDesc2')}</p></div>
 				<div class="mt-5 grid gap-4 md:grid-cols-2">
-					<label><span class="text-sm text-gray-300">Mode</span><select bind:value={trafficMode} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="observe">Observe (recommended first)</option><option value="balanced" disabled={trafficObservation < 100}>Balanced</option><option value="strict" disabled={trafficObservation < 100}>Strict</option><option value="custom" disabled={trafficObservation < 100}>Custom</option></select></label>
-					<label><span class="text-sm text-gray-300">Traffic source</span><select bind:value={trafficProxyMode} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="direct">Direct to VPS</option><option value="cloudflare">Cloudflare proxy</option><option value="custom">Custom trusted proxy</option></select></label>
-					{#if trafficProxyMode === 'cloudflare'}<div class="rounded-lg border border-gray-700 bg-gray-900/50 p-3 text-sm text-gray-300 md:col-span-2"><p>Uses only <code>CF-Connecting-IP</code> from official Cloudflare CIDRs.</p><button onclick={refreshCloudflareCIDRs} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded border border-blue-600 px-3 py-1.5 text-xs text-blue-300 disabled:opacity-50">Refresh official CIDRs</button></div>{/if}
+					<label><span class="text-sm text-gray-300">{translate($language, 'tg.mode')}</span><select bind:value={trafficMode} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="observe">{translate($language, 'tg.modeObserve')}</option><option value="balanced" disabled={trafficObservation < 100}>{translate($language, 'tg.modeBalanced')}</option><option value="strict" disabled={trafficObservation < 100}>{translate($language, 'tg.modeStrict')}</option><option value="custom" disabled={trafficObservation < 100}>{translate($language, 'tg.modeCustom')}</option></select></label>
+					<label><span class="text-sm text-gray-300">{translate($language, 'tg.source')}</span><select bind:value={trafficProxyMode} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option value="direct">{translate($language, 'tg.srcDirect')}</option><option value="cloudflare">{translate($language, 'tg.srcCloudflare')}</option><option value="custom">{translate($language, 'tg.srcCustom')}</option></select></label>
+					{#if trafficProxyMode === 'cloudflare'}<div class="rounded-lg border border-gray-700 bg-gray-900/50 p-3 text-sm text-gray-300 md:col-span-2"><p>{translate($language, 'tg.cloudflareDesc1')}<code>CF-Connecting-IP</code>{translate($language, 'tg.cloudflareDesc2')}</p><button onclick={refreshCloudflareCIDRs} disabled={busy !== '' || !!currentTaskId} class="mt-3 rounded border border-blue-600 px-3 py-1.5 text-xs text-blue-300 disabled:opacity-50">{translate($language, 'tg.refreshCidrs')}</button></div>{/if}
 					{#if trafficProxyMode === 'custom'}
-						<label><span class="text-sm text-gray-300">Forwarded IP header</span><select bind:value={trafficProxyHeader} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option>X-Forwarded-For</option><option>X-Real-IP</option><option>CF-Connecting-IP</option></select></label>
-						<label><span class="text-sm text-gray-300">Exact trusted proxy CIDRs</span><textarea bind:value={trafficProxyCIDRs} rows="3" placeholder="203.0.113.0/24" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea></label>
+						<label><span class="text-sm text-gray-300">{translate($language, 'tg.headerLabel')}</span><select bind:value={trafficProxyHeader} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"><option>X-Forwarded-For</option><option>X-Real-IP</option><option>CF-Connecting-IP</option></select></label>
+						<label><span class="text-sm text-gray-300">{translate($language, 'tg.cidrLabel')}</span><textarea bind:value={trafficProxyCIDRs} rows="3" placeholder="203.0.113.0/24" class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-white"></textarea></label>
 					{/if}
-					{#if trafficMode === 'custom'}<label><span class="text-sm text-gray-300">Requests per second</span><input type="number" min="1" max="1000" bind:value={trafficRPS} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label><label><span class="text-sm text-gray-300">Burst</span><input type="number" min="1" max="5000" bind:value={trafficBurst} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label><label><span class="text-sm text-gray-300">Connections per IP</span><input type="number" min="1" max="1000" bind:value={trafficConnections} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>{/if}
+					{#if trafficMode === 'custom'}<label><span class="text-sm text-gray-300">{translate($language, 'tg.rps')}</span><input type="number" min="1" max="1000" bind:value={trafficRPS} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label><label><span class="text-sm text-gray-300">{translate($language, 'tg.burst')}</span><input type="number" min="1" max="5000" bind:value={trafficBurst} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label><label><span class="text-sm text-gray-300">{translate($language, 'tg.connPerIp')}</span><input type="number" min="1" max="1000" bind:value={trafficConnections} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>{/if}
 				</div>
 				<div class="mt-5 rounded-lg border {trafficMode === 'observe' ? 'border-blue-800 bg-blue-950/30 text-blue-200' : 'border-yellow-700 bg-yellow-950/30 text-yellow-200'} p-4 text-sm">{enforcementWarning(trafficMode)}</div>
-				{#if trafficMode !== 'observe'}<label class="mt-4 flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/20 p-3 text-sm text-yellow-200"><input class="mt-1" type="checkbox" bind:checked={trafficConfirmed} /><span>I confirm that this origin-level profile may return HTTP 429 to excess requests and that upstream volumetric protection is separate.</span></label>{/if}
-				<div class="mt-5 flex flex-wrap gap-3"><button onclick={applyTrafficGuard} disabled={!selectedTrafficWebsite || busy !== '' || !!currentTaskId || (trafficMode !== 'observe' && (!trafficConfirmed || trafficObservation < 100))} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Validate & Apply</button><button onclick={resetTrafficObserve} disabled={!selectedTrafficWebsite || selectedTrafficProfile?.mode === 'observe' || busy !== '' || !!currentTaskId} class="rounded-lg border border-green-700 px-4 py-2 text-sm text-green-300 disabled:opacity-50">Return to Observe</button></div>
+				{#if trafficMode !== 'observe'}<label class="mt-4 flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/20 p-3 text-sm text-yellow-200"><input class="mt-1" type="checkbox" bind:checked={trafficConfirmed} /><span>{translate($language, 'tg.confirmEnforce')}</span></label>{/if}
+				<div class="mt-5 flex flex-wrap gap-3"><button onclick={applyTrafficGuard} disabled={!selectedTrafficWebsite || busy !== '' || !!currentTaskId || (trafficMode !== 'observe' && (!trafficConfirmed || trafficObservation < 100))} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{translate($language, 'sec.validateApply')}</button><button onclick={resetTrafficObserve} disabled={!selectedTrafficWebsite || selectedTrafficProfile?.mode === 'observe' || busy !== '' || !!currentTaskId} class="rounded-lg border border-green-700 px-4 py-2 text-sm text-green-300 disabled:opacity-50">{translate($language, 'tg.returnObserve')}</button></div>
 			</section>
 		</div>
 	{:else}
 		<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-			<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">Security events</h3><p class="mt-1 text-sm text-gray-400">Repeated evidence is grouped to keep this list actionable.</p></div><span class="text-sm text-gray-400">{events.length} shown</span></div>
-			{#if events.length === 0}<div class="mt-6 rounded-lg border border-gray-700 bg-gray-900/50 p-6 text-center text-sm text-gray-400">No security events have been observed.</div>{:else}<div class="mt-4 space-y-3">{#each events as event}<article class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><div class="flex flex-wrap items-center gap-2"><span class="rounded-full px-2 py-0.5 text-xs uppercase {event.severity === 'critical' ? 'bg-red-900 text-red-300' : event.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{event.severity}</span><span class="text-sm font-medium text-white">{event.category}</span><span class="text-xs text-gray-500">×{event.occurrence_count}</span></div><p class="mt-2 text-sm text-gray-300">{event.component} · {event.resource || 'server'}</p><p class="mt-1 text-sm text-gray-400">{event.recommended_action || 'Review the related component and evidence.'}</p><p class="mt-2 text-xs text-gray-500">Last observed {new Date(event.last_seen).toLocaleString()}</p></div><div class="flex flex-wrap gap-2">{#if event.status === 'open'}<button onclick={() => transitionEvent(event, 'acknowledged')} disabled={busy !== ''} class="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300">Acknowledge</button>{/if}{#if event.status === 'open' || event.status === 'acknowledged'}<button onclick={() => transitionEvent(event, 'resolved')} disabled={busy !== ''} class="rounded border border-green-700 px-2 py-1 text-xs text-green-300">Resolve</button><button onclick={() => transitionEvent(event, 'false_positive')} disabled={busy !== ''} class="rounded border border-gray-600 px-2 py-1 text-xs text-gray-400">False positive</button>{:else}<span class="text-xs capitalize text-gray-400">{event.status.replaceAll('_', ' ')}</span>{/if}</div></div></article>{/each}</div>{/if}
+			<div class="flex items-center justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'sec.events.title')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'sec.events.desc')}</p></div><span class="text-sm text-gray-400">{translate($language, 'sec.shownCount').replace('{count}', String(events.length))}</span></div>
+			{#if events.length === 0}<div class="mt-6 rounded-lg border border-gray-700 bg-gray-900/50 p-6 text-center text-sm text-gray-400">{translate($language, 'sec.events.none')}</div>{:else}<div class="mt-4 space-y-3">{#each events as event}<article class="rounded-lg border border-gray-700 bg-gray-900/60 p-4"><div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><div class="flex flex-wrap items-center gap-2"><span class="rounded-full px-2 py-0.5 text-xs uppercase {event.severity === 'critical' ? 'bg-red-900 text-red-300' : event.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{event.severity}</span><span class="text-sm font-medium text-white">{event.category}</span><span class="text-xs text-gray-500">×{event.occurrence_count}</span></div><p class="mt-2 text-sm text-gray-300">{event.component} · {event.resource || 'server'}</p><p class="mt-1 text-sm text-gray-400">{event.recommended_action || translate($language, 'sec.events.fallbackAction')}</p><p class="mt-2 text-xs text-gray-500">{translate($language, 'sec.events.lastSeen').replace('{time}', new Date(event.last_seen).toLocaleString())}</p></div><div class="flex flex-wrap gap-2">{#if event.status === 'open'}<button onclick={() => transitionEvent(event, 'acknowledged')} disabled={busy !== ''} class="rounded border border-gray-600 px-2 py-1 text-xs text-gray-300">{translate($language, 'sec.events.acknowledge')}</button>{/if}{#if event.status === 'open' || event.status === 'acknowledged'}<button onclick={() => transitionEvent(event, 'resolved')} disabled={busy !== ''} class="rounded border border-green-700 px-2 py-1 text-xs text-green-300">{translate($language, 'sec.events.resolve')}</button><button onclick={() => transitionEvent(event, 'false_positive')} disabled={busy !== ''} class="rounded border border-gray-600 px-2 py-1 text-xs text-gray-400">{translate($language, 'sec.falsePositive')}</button>{:else}<span class="text-xs capitalize text-gray-400">{event.status.replaceAll('_', ' ')}</span>{/if}</div></div></article>{/each}</div>{/if}
 		</section>
 	{/if}
 </div>

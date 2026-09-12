@@ -162,7 +162,7 @@
 	<div class="app-shell flex h-screen items-center justify-center">
 		<div class="flex flex-col items-center gap-4 text-sm text-gray-400">
 			<div class="h-8 w-8 rounded-full border-2 border-gray-700 border-t-blue-400 motion-safe:animate-spin"></div>
-			Loading your workspace...
+			{translate($language, 'nav.loading_workspace')}
 		</div>
 	</div>
 {:else if !$isAuthenticated}
@@ -174,7 +174,7 @@
 				type="button"
 				onclick={closeMobileSidebar}
 				class="fixed inset-0 z-30 cursor-default bg-black/60 backdrop-blur-sm lg:hidden"
-				aria-label="Close navigation"
+				aria-label={translate($language, 'nav.close_nav')}
 				tabindex="-1"
 			></button>
 		{/if}
@@ -185,7 +185,7 @@
 			class="sidebar-surface fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-white/5 transition-[transform,width] duration-200 lg:static lg:translate-x-0
 			{mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full'}
 			{sidebarOpen ? 'lg:w-60' : 'lg:w-16'}"
-			aria-label="Primary navigation"
+			aria-label={translate($language, 'nav.primary_nav')}
 			inert={isMobile && !mobileSidebarOpen ? true : undefined}
 		>
 			<div
@@ -199,7 +199,7 @@
 				{#if sidebarExpanded}
 					<div class="min-w-0">
 						<span class="block truncate text-base font-semibold tracking-tight text-white">Jenderal Panel</span>
-						<span class="block text-[9px] font-semibold uppercase tracking-[0.18em] text-blue-400">Control center</span>
+						<span class="block text-[9px] font-semibold uppercase tracking-[0.18em] text-blue-400">{translate($language, 'nav.control_center')}</span>
 					</div>
 				{/if}
 				<button
@@ -207,7 +207,7 @@
 					onclick={closeMobileSidebar}
 					bind:this={mobileCloseButton}
 					class="ml-auto cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-white/5 hover:text-white lg:hidden"
-					aria-label="Close navigation"
+					aria-label={translate($language, 'nav.close_nav')}
 				>
 					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
 						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -216,7 +216,9 @@
 				<button
 					onclick={() => (sidebarOpen = !sidebarOpen)}
 					class="{sidebarOpen ? 'ml-auto' : ''} hidden cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-white/5 hover:text-white lg:block"
-					aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+					aria-label={sidebarOpen
+						? translate($language, 'nav.collapse_sidebar')
+						: translate($language, 'nav.expand_sidebar')}
 				>
 					<svg
 						class="w-5 h-5"
@@ -321,7 +323,7 @@
 						</div>
 						<div class="min-w-0">
 							<div class="truncate text-sm font-medium text-gray-200">{$user.username}</div>
-							<div class="text-[10px] uppercase tracking-wider text-gray-400">Administrator</div>
+							<div class="text-[10px] uppercase tracking-wider text-gray-400">{translate($language, 'nav.administrator')}</div>
 						</div>
 					</div>
 				</div>
@@ -340,7 +342,7 @@
 						onclick={openMobileSidebar}
 						bind:this={mobileMenuButton}
 						class="cursor-pointer rounded-lg border border-white/8 bg-white/[0.035] p-2 text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white lg:hidden"
-						aria-label="Open navigation"
+						aria-label={translate($language, 'nav.open_nav')}
 						aria-expanded={mobileSidebarOpen}
 						aria-controls="primary-sidebar"
 					>
@@ -350,7 +352,7 @@
 					</button>
 					<span class="h-2.5 w-2.5 rounded-full bg-blue-400 shadow-[0_0_10px_rgba(45,212,191,0.55)]"></span>
 					<div>
-						<h1 class="text-sm font-semibold text-white">Server workspace</h1>
+						<h1 class="text-sm font-semibold text-white">{translate($language, 'nav.server_workspace')}</h1>
 						<p class="hidden text-[10px] uppercase tracking-[0.16em] text-gray-400 sm:block">Jenderal Panel</p>
 					</div>
 				</div>
@@ -360,7 +362,7 @@
 						onclick={handleLogout}
 						class="cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] px-3.5 py-2 text-xs font-medium text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white"
 					>
-						Logout
+						{translate($language, 'nav.logout')}
 					</button>
 				</div>
 			</header>

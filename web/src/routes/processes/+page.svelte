@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 
 	interface Process {
 		pid: number;
@@ -34,7 +35,7 @@ import { toast } from '$lib/stores/toast';
 			processes = (await api.get<Process[]>('/api/v1/processes')) || [];
 			error = '';
 		} catch (err) {
-			error = err instanceof Error ? err.message : 'Failed to load processes';
+			error = err instanceof Error ? err.message : translate($language, 'prc.loadFailed');
 		} finally {
 			loading = false;
 		}
@@ -62,10 +63,10 @@ import { toast } from '$lib/stores/toast';
 		killConfirm = null;
 		try {
 			await api.post(`/api/v1/processes/${proc.pid}/kill`, { signal });
-			toast.success(`Signal ${signal} sent to PID ${proc.pid}.`);
+			toast.success(translate($language, 'prc.toast.signalSent').replace('{signal}', signal).replace('{pid}', String(proc.pid)));
 			await loadProcesses();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : `Failed to kill process ${proc.pid}`);
+			toast.error(err instanceof Error ? err.message : translate($language, 'prc.toast.killFailed').replace('{pid}', String(proc.pid)));
 		}
 	}
 
@@ -85,10 +86,10 @@ import { toast } from '$lib/stores/toast';
 
 <div class="space-y-6">
 	<div class="flex items-center justify-between">
-		<h2 class="text-2xl font-bold text-white">Processes</h2>
+		<h2 class="text-2xl font-bold text-white">{translate($language, 'prc.title')}</h2>
 		<div class="flex items-center gap-3">
 			<div class="flex items-center gap-2">
-				<span class="text-sm text-gray-400">Sort by:</span>
+				<span class="text-sm text-gray-400">{translate($language, 'prc.sortBy')}</span>
 				<button
 					onclick={() => (sortBy = 'cpu')}
 					class="px-2.5 py-1 text-xs rounded transition-colors cursor-pointer {sortBy === 'cpu'
@@ -112,13 +113,13 @@ import { toast } from '$lib/stores/toast';
 					? 'bg-green-600 hover:bg-green-700 text-white'
 					: 'bg-gray-700 hover:bg-gray-600 text-gray-300'}"
 			>
-				{autoRefresh ? 'Auto-refresh ON' : 'Auto-refresh OFF'}
+				{autoRefresh ? translate($language, 'prc.autoRefreshOn') : translate($language, 'prc.autoRefreshOff')}
 			</button>
 			<button
 				onclick={loadProcesses}
 				class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"
 			>
-				Refresh
+				{translate($language, 'prc.refresh')}
 			</button>
 		</div>
 	</div>
@@ -126,7 +127,7 @@ import { toast } from '$lib/stores/toast';
 
 
 	{#if loading}
-		<div class="text-gray-400">Loading processes...</div>
+		<div class="text-gray-400">{translate($language, 'prc.loading')}</div>
 	{:else if error}
 		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
 	{:else}
@@ -136,11 +137,11 @@ import { toast } from '$lib/stores/toast';
 					<thead>
 						<tr class="border-b border-gray-700 bg-gray-800/80">
 							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">PID</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">User</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'prc.table.user')}</th>
 							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">CPU%</th>
 							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">RAM%</th>
-							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Command</th>
-							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">Actions</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'prc.table.command')}</th>
+							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'prc.table.actions')}</th>
 						</tr>
 					</thead>
 					<tbody class="divide-y divide-gray-700">
@@ -162,7 +163,7 @@ import { toast } from '$lib/stores/toast';
 										onclick={() => showKillDialog(proc)}
 										class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
 									>
-										Kill
+										{translate($language, 'prc.kill')}
 									</button>
 								</td>
 							</tr>
@@ -175,20 +176,20 @@ import { toast } from '$lib/stores/toast';
 		{#if killConfirm}
 			<div class="p-4 bg-gray-800 border border-gray-600 rounded-lg">
 				<p class="text-gray-300 text-sm mb-3">
-					Kill process <span class="font-mono text-white">{killConfirm.process.pid}</span>
+					{translate($language, 'prc.killConfirm.label')} <span class="font-mono text-white">{killConfirm.process.pid}</span>
 					(<span class="text-gray-400">{truncateCommand(killConfirm.process.command, 40)}</span>)?
 				</p>
 				<div class="flex items-center gap-3 mb-3">
-					<label for="kill-signal" class="text-xs text-gray-400 uppercase tracking-wider">Signal:</label>
+					<label for="kill-signal" class="text-xs text-gray-400 uppercase tracking-wider">{translate($language, 'prc.signal.label')}</label>
 					<select
 						id="kill-signal"
 						bind:value={killConfirm.signal}
 						class="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 					>
-						<option value="TERM">SIGTERM (Graceful)</option>
-						<option value="KILL">SIGKILL (Force)</option>
-						<option value="HUP">SIGHUP (Hangup)</option>
-						<option value="INT">SIGINT (Interrupt)</option>
+						<option value="TERM">{translate($language, 'prc.signal.term')}</option>
+						<option value="KILL">{translate($language, 'prc.signal.kill')}</option>
+						<option value="HUP">{translate($language, 'prc.signal.hup')}</option>
+						<option value="INT">{translate($language, 'prc.signal.int')}</option>
 					</select>
 				</div>
 				<div class="flex gap-2">
@@ -196,22 +197,22 @@ import { toast } from '$lib/stores/toast';
 						onclick={killProcess}
 						class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
 					>
-						Confirm Kill
+						{translate($language, 'prc.confirmKill')}
 					</button>
 					<button
 						onclick={() => (killConfirm = null)}
 						class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
 					>
-						Cancel
+						{translate($language, 'prc.cancel')}
 					</button>
 				</div>
 			</div>
 		{/if}
 
 		<div class="text-xs text-gray-500">
-			Showing {sortedProcesses.length} processes, sorted by {sortBy === 'cpu' ? 'CPU' : 'RAM'} usage
+			{translate($language, 'prc.footer').replace('{count}', String(sortedProcesses.length)).replace('{sort}', sortBy === 'cpu' ? 'CPU' : 'RAM')}
 			{#if autoRefresh}
-				&mdash; auto-refreshing every 5s
+				&mdash; {translate($language, 'prc.autoRefreshing')}
 			{/if}
 		</div>
 	{/if}

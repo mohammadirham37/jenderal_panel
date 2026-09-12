@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from '$lib/theme.js';
+	import { language, translate } from '$lib/stores/language';
 
 	let theme: 'dark' | 'light' = $state(
 		typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'
@@ -58,8 +59,8 @@
 	type="button"
 	onclick={toggleTheme}
 	class="theme-toggle cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] p-2 text-gray-300 transition hover:border-blue-400/30 hover:bg-blue-500/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-	aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-	title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+	aria-label={theme === 'dark' ? translate($language, 'common.switchToLight') : translate($language, 'common.switchToDark')}
+	title={theme === 'dark' ? translate($language, 'common.lightMode') : translate($language, 'common.darkMode')}
 >
 	{#if theme === 'dark'}
 		<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
