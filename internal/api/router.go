@@ -386,11 +386,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/octane/reload", websiteHandler.OctaneReload)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-				Post("/websites/{id}/octane/start", websiteHandler.OctaneAction)
-			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-				Post("/websites/{id}/octane/stop", websiteHandler.OctaneAction)
-			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-				Post("/websites/{id}/octane/restart", websiteHandler.OctaneAction)
+				Post("/websites/{id}/octane/{action}", websiteHandler.OctaneAction)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/octane/workers", websiteHandler.OctaneWorkers)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
@@ -418,11 +414,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/app", websiteHandler.SaveAppService)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-				Post("/websites/{id}/app/start", websiteHandler.AppAction)
-			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-				Post("/websites/{id}/app/stop", websiteHandler.AppAction)
-			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-				Post("/websites/{id}/app/restart", websiteHandler.AppAction)
+				Post("/websites/{id}/app/{action}", websiteHandler.AppAction)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/app/build", websiteHandler.AppBuild)
 
