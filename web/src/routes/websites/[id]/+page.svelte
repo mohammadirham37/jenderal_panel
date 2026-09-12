@@ -89,7 +89,7 @@ import { toast } from '$lib/stores/toast';
 		(t !== 'Queue' || website?.framework === 'laravel') &&
 		(t !== 'WP Toolkit' || website?.app_type === 'wordpress') &&
 		(t !== 'PHP Settings' || website?.app_type !== 'static') &&
-		(t !== 'App' || website?.app_type === 'node' || website?.app_type === 'go' || website?.app_type === 'python')
+		(t !== 'App' || website?.app_type === 'node' || website?.app_type === 'go' || website?.app_type === 'python' || website?.app_type === 'deno' || website?.app_type === 'bun')
 	));
 	$effect(() => {
 		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
@@ -101,7 +101,7 @@ import { toast } from '$lib/stores/toast';
 		if (website && activeTab === 'PHP Settings' && website.app_type === 'static') {
 			activeTab = 'Overview';
 		}
-		if (website && activeTab === 'App' && website.app_type !== 'node' && website.app_type !== 'go' && website.app_type !== 'python') {
+		if (website && activeTab === 'App' && ['node','go','python','deno','bun'].indexOf(website.app_type) === -1) {
 			activeTab = 'Overview';
 		}
 	});

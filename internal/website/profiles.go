@@ -114,6 +114,12 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 			Framework: "python", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
 			RelativeDocumentRoot: "public",
 		}, nil
+	case "deno", "bun":
+		return Profile{
+			Template: template, AppType: template, NginxProfile: "app-proxy",
+			Framework: "none", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
+			RelativeDocumentRoot: "public",
+		}, nil
 	case "go-build", "go-binary":
 		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
 			return Profile{}, model.NewValidationError("go apps do not use PHP")
@@ -288,7 +294,7 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 	if appType == "node" {
 		return "app-proxy"
 	}
-	if appType == "go" || appType == "python" {
+	if appType == "go" || appType == "python" || appType == "deno" || appType == "bun" {
 		return "app-proxy"
 	}
 	if appType == "static" {
@@ -386,6 +392,12 @@ func websiteProfileOptions() []ProfileOption {
 	// ASGI/WSGI server (gunicorn/uvicorn) from the virtualenv.
 	requests = append(requests,
 		CreateRequest{Template: "python", SetupMode: SetupConfigOnly},
+	)
+
+	// Deno and Bun are single-binary runtimes installed server-wide.
+	requests = append(requests,
+		CreateRequest{Template: "deno", SetupMode: SetupConfigOnly},
+		CreateRequest{Template: "bun", SetupMode: SetupConfigOnly},
 	)
 
 	// Laravel Octane runs on FrankenPHP (PHP 8.1+ embedded); Octane itself

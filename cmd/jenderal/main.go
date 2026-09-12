@@ -37,6 +37,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
+	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
@@ -258,6 +259,8 @@ func cmdServe() {
 	frankenphpSvc := frankenphp.NewService(exec, auditSvc)
 	goRuntimeSvc := goruntime.NewService(exec, auditSvc)
 	goRuntimeSvc.SetTaskRunner(tasks)
+	runtimeBinSvc := runtimebin.NewService(exec, auditSvc)
+	runtimeBinSvc.SetTaskRunner(tasks)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
@@ -356,6 +359,7 @@ func cmdServe() {
 		SSHServerSvc:    sshServerSvc,
 		FrankenphpSvc:   frankenphpSvc,
 		GoRuntimeSvc:    goRuntimeSvc,
+		RuntimeBinSvc:   runtimeBinSvc,
 		DB:              db,
 		StaticHandler:   staticHandler(),
 	})

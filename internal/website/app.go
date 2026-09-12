@@ -90,8 +90,8 @@ func (s *Service) GetAppService(ctx context.Context, websiteID string) (AppServi
 	if err != nil {
 		return AppServiceStatus{}, err
 	}
-	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" {
-		return AppServiceStatus{}, model.NewValidationError("the app service is only available for node, go, and python sites")
+	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" && w.AppType != "deno" && w.AppType != "bun" {
+		return AppServiceStatus{}, model.NewValidationError("the app service is only available for node, go, python, deno, and bun sites")
 	}
 
 	unit := appUnitName(w.ID)
@@ -121,6 +121,8 @@ func buildAppUnit(w model.Website, docroot string) (string, error) {
 		return buildBinaryAppUnit(w, docroot)
 	case "python":
 		return buildPythonAppUnit(w, docroot)
+	case "deno", "bun":
+		return buildBinaryAppUnit(w, docroot)
 	default:
 		return "", model.NewValidationError("unsupported app runtime: " + w.AppRuntime)
 	}
@@ -233,8 +235,8 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	if err != nil {
 		return AppServiceStatus{}, err
 	}
-	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" {
-		return AppServiceStatus{}, model.NewValidationError("the app service is only available for node, go, and python sites")
+	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" && w.AppType != "deno" && w.AppType != "bun" {
+		return AppServiceStatus{}, model.NewValidationError("the app service is only available for node, go, python, deno, and bun sites")
 	}
 
 	startCommand = strings.TrimSpace(startCommand)
@@ -338,8 +340,8 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 	if err != nil {
 		return "", err
 	}
-	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" {
-		return "", model.NewValidationError("the app service is only available for node, go, and python sites")
+	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" && w.AppType != "deno" && w.AppType != "bun" {
+		return "", model.NewValidationError("the app service is only available for node, go, python, deno, and bun sites")
 	}
 	if strings.TrimSpace(w.AppBuildCommand) == "" && w.AppType != "python" {
 		return "", model.NewValidationError("no build command configured")

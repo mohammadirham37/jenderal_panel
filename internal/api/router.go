@@ -28,6 +28,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
 	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
+	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
@@ -83,6 +84,7 @@ type Dependencies struct {
 	MalwareSvc      *malware.Service
 	MalwareRepo     *malware.Repository
 	PanelDomainSvc  *paneldomain.Service
+	RuntimeBinSvc   *runtimebin.Service
 	TrafficGuardSvc *trafficguard.Service
 	SecuritySetup   *security.SetupService
 	SSHAccountSvc   *sshaccount.Service
@@ -139,6 +141,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
 	trafficHandler := trafficguard.NewHandler(deps.TrafficGuardSvc, deps.Tasks, deps.AuditSvc)
 	panelDomainHandler := paneldomain.NewHandler(deps.PanelDomainSvc)
+	runtimeBinHandler := runtimebin.NewHandler(deps.RuntimeBinSvc)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -229,6 +232,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/goruntime", goRuntimeHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
 				Post("/goruntime/install", goRuntimeHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "services.view")).
+				Get("/runtimes", runtimeBinHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
+				Post("/runtimes/{runtime}/install", runtimeBinHandler.Install)
 
 			// Panel domain (admin)
 			r.With(auth.RequirePermission(deps.RBAC, "settings.view")).

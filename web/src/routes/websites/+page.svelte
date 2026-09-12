@@ -339,6 +339,8 @@ import { toast } from '$lib/stores/toast';
 								<option value="go-build">Go (build on server)</option>
 								<option value="go-binary">Go (prebuilt binary)</option>
 								<option value="python">Python (FastAPI/Flask/Django)</option>
+								<option value="deno">Deno</option>
+								<option value="bun">Bun</option>
 							</select>
 						</div>
 						{#if selection.template !== 'static'}
