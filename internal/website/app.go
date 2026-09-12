@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/goruntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
@@ -110,9 +111,22 @@ func (s *Service) GetAppService(ctx context.Context, websiteID string) (AppServi
 	}, nil
 }
 
-// appUnit renders the systemd unit for a node app service. The start command
-// runs through nvm-exec with the site's pinned Node version.
+// buildAppUnit renders the systemd unit for an app service, dispatching on
+// the site's runtime.
 func buildAppUnit(w model.Website, docroot string) (string, error) {
+	switch w.AppRuntime {
+	case "", "node":
+		return buildNodeAppUnit(w, docroot)
+	case "go", "go-binary":
+		return buildBinaryAppUnit(w, docroot)
+	default:
+		return "", model.NewValidationError("unsupported app runtime: " + w.AppRuntime)
+	}
+}
+
+// buildNodeAppUnit runs the start command through nvm-exec with the site's
+// pinned Node version.
+func buildNodeAppUnit(w model.Website, docroot string) (string, error) {
 	startParts := strings.Fields(w.AppStartCommand)
 	if len(startParts) == 0 {
 		return "", model.NewValidationError("start command is required")
@@ -146,6 +160,38 @@ WantedBy=multi-user.target
 `, nil
 }
 
+// buildBinaryAppUnit runs a self-contained executable (Go binary, deno
+// entrypoint, etc.) from the document root. Relative paths resolve against
+// the working directory.
+func buildBinaryAppUnit(w model.Website, docroot string) (string, error) {
+	start := strings.TrimSpace(w.AppStartCommand)
+	if start == "" {
+		return "", model.NewValidationError("start command is required")
+	}
+	exec := start
+	if strings.HasPrefix(exec, "./") {
+		exec = docroot + "/" + strings.TrimPrefix(exec, "./")
+	} else if !strings.ContainsAny(exec, "/") {
+		// A bare command runs from the working directory.
+		exec = docroot + "/" + exec
+	}
+
+	return `[Unit]
+Description=Jenderal App ` + w.Domain + `
+After=network.target
+
+[Service]
+User=` + w.WebUser + `
+WorkingDirectory=` + docroot + `
+ExecStart=` + exec + `
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, nil
+}
+
 // SaveAppService validates and stores the app configuration, (re)writes the
 // systemd unit, regenerates the nginx vhost (port), and restarts the service
 // when it was running.
@@ -160,11 +206,16 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 
 	startCommand = strings.TrimSpace(startCommand)
 	buildCommand = strings.TrimSpace(buildCommand)
-	if startCommand == "" {
-		return AppServiceStatus{}, model.NewValidationError("start command is required")
+	if w.AppRuntime == "" {
+		w.AppRuntime = "node"
 	}
-	if err := noderuntime.ValidateVersion(w.NodeVersion); err != nil {
-		return AppServiceStatus{}, fmt.Errorf("node runtime: %w", err)
+	if w.AppRuntime == "node" {
+		if err := noderuntime.ValidateVersion(w.NodeVersion); err != nil {
+			return AppServiceStatus{}, fmt.Errorf("node runtime: %w", err)
+		}
+	}
+	if _, err := buildAppStartArgv(w.AppRuntime, w.WebUser, w.DocumentRoot, startCommand); err != nil {
+		return AppServiceStatus{}, err
 	}
 
 	port := w.AppPort
@@ -267,10 +318,14 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 	return s.tasks.RunFuncWithOptions(
 		taskrunner.Options{Name: "App build — " + w.Domain, Module: "website", Timeout: 30 * time.Minute},
 		func(taskCtx context.Context, write func(string)) error {
-			script := "cd " + w.DocumentRoot + " && " + w.AppBuildCommand
-			args, err := noderuntime.ExecArgs(w.WebUser, w.NodeVersion, "/bin/bash", "-c", script)
-			if err != nil {
-				return err
+			args, buildErr := buildAppBuildArgv(w.AppRuntime, w.WebUser, w.DocumentRoot, w.AppBuildCommand)
+			if buildErr != nil {
+				return buildErr
+			}
+			if w.AppRuntime == "go" || w.AppRuntime == "go-binary" {
+				if err := s.goEnsureInstalled(taskCtx); err != nil {
+					return err
+				}
 			}
 			write("Running build: " + w.AppBuildCommand)
 			result, err := s.exec.RunSudo(taskCtx, "-u", args...)
@@ -289,6 +344,21 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 			write("App service restarted.")
 			return nil
 		}), nil
+}
+
+// goEnsureInstalled probes the server-wide Go toolchain and reports a
+// precise error when it is missing.
+func (s *Service) goEnsureInstalled(ctx context.Context) error {
+	result, err := s.exec.RunSudo(ctx, goruntime.GoBin, "version")
+	if err != nil {
+		return model.NewDomainError("GO_TOOLCHAIN_MISSING",
+			"the Go toolchain is not installed; an administrator must install it first (services page)", nil)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("GO_TOOLCHAIN_MISSING",
+			"the Go toolchain is not working: "+strings.TrimSpace(result.Stderr), nil)
+	}
+	return nil
 }
 
 // sortedAppPorts is a tiny helper for deterministic tests.

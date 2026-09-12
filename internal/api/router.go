@@ -22,6 +22,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/frankenphp"
+	"github.com/mohammadirham37/jenderal_panel/internal/goruntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
@@ -87,6 +88,7 @@ type Dependencies struct {
 	SSHAccountSvc   *sshaccount.Service
 	SSHServerSvc    *sshserver.Service
 	FrankenphpSvc   *frankenphp.Service
+	GoRuntimeSvc    *goruntime.Service
 	StaticHandler   http.Handler
 }
 
@@ -115,6 +117,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	sshKeyHandler := sshaccount.NewHandler(deps.SSHAccountSvc)
 	sshPortHandler := sshserver.NewHandler(deps.SSHServerSvc)
 	frankenphpHandler := frankenphp.NewHandler(deps.FrankenphpSvc)
+	goRuntimeHandler := goruntime.NewHandler(deps.GoRuntimeSvc)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc, deps.Tasks)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
 	deployHandler := deployment.NewHandler(deps.DeploymentSvc, deps.AuditSvc)
@@ -222,6 +225,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/frankenphp", frankenphpHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
 				Post("/frankenphp/install", frankenphpHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "services.view")).
+				Get("/goruntime", goRuntimeHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
+				Post("/goruntime/install", goRuntimeHandler.Install)
 
 			// Panel domain (admin)
 			r.With(auth.RequirePermission(deps.RBAC, "settings.view")).
@@ -472,8 +479,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Deployments
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.deploy")).
 				Post("/websites/{id}/deploy", deployHandler.Deploy)
-				r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
-					Put("/websites/{id}/deploy-webhook", websiteHandler.ConfigureDeployWebhook)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/deploy-webhook", websiteHandler.ConfigureDeployWebhook)
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).
 				Get("/websites/{id}/deployments", deployHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).

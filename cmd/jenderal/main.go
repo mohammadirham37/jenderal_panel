@@ -29,13 +29,14 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/filemanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/frankenphp"
+	"github.com/mohammadirham37/jenderal_panel/internal/goruntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
 	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/nginx"
-	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
 	"github.com/mohammadirham37/jenderal_panel/internal/nodejs"
 	"github.com/mohammadirham37/jenderal_panel/internal/notification"
+	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
@@ -255,6 +256,8 @@ func cmdServe() {
 	sshAccountSvc := sshaccount.NewService(db, exec, auditSvc)
 	sshServerSvc := sshserver.NewService(db, exec, auditSvc, cfg.Server.Port)
 	frankenphpSvc := frankenphp.NewService(exec, auditSvc)
+	goRuntimeSvc := goruntime.NewService(exec, auditSvc)
+	goRuntimeSvc.SetTaskRunner(tasks)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
@@ -352,6 +355,7 @@ func cmdServe() {
 		SSHAccountSvc:   sshAccountSvc,
 		SSHServerSvc:    sshServerSvc,
 		FrankenphpSvc:   frankenphpSvc,
+		GoRuntimeSvc:    goRuntimeSvc,
 		DB:              db,
 		StaticHandler:   staticHandler(),
 	})

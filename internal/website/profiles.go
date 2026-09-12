@@ -105,6 +105,15 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 			RelativeDocumentRoot: "public",
 			NodeVersion: req.NodeVersion,
 		}, nil
+	case "go-build", "go-binary":
+		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
+			return Profile{}, model.NewValidationError("go apps do not use PHP")
+		}
+		return Profile{
+			Template: template, AppType: "go", NginxProfile: "app-proxy",
+			Framework: "go", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
+			RelativeDocumentRoot: "public",
+		}, nil
 	case "wordpress":
 		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
 			return Profile{}, model.NewValidationError("unsupported PHP version for wordpress")
@@ -270,6 +279,9 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 	if appType == "node" {
 		return "app-proxy"
 	}
+	if appType == "go" {
+		return "app-proxy"
+	}
 	if appType == "static" {
 		return "static"
 	}
@@ -353,6 +365,13 @@ func websiteProfileOptions() []ProfileOption {
 	for _, mode := range []string{SetupConfigOnly} {
 		requests = append(requests, CreateRequest{Template: "node", NodeVersion: "22", SetupMode: mode})
 	}
+
+	// Go apps: build from source on the server (needs the Go toolchain
+	// installed) or run an uploaded prebuilt binary.
+	requests = append(requests,
+		CreateRequest{Template: "go-build", SetupMode: SetupConfigOnly},
+		CreateRequest{Template: "go-binary", SetupMode: SetupConfigOnly},
+	)
 
 	// Laravel Octane runs on FrankenPHP (PHP 8.1+ embedded); Octane itself
 	// supports Laravel 10+.

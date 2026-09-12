@@ -336,6 +336,8 @@ import { toast } from '$lib/stores/toast';
 								<option value="codeigniter4">CodeIgniter 4</option>
 								<option value="laravel">Laravel</option>
 								<option value="laravel-octane">Laravel Octane (FrankenPHP)</option>
+								<option value="go-build">Go (build on server)</option>
+								<option value="go-binary">Go (prebuilt binary)</option>
 							</select>
 						</div>
 						{#if selection.template !== 'static'}
