@@ -11,6 +11,7 @@
 	import WebsiteCronSection from '$lib/components/WebsiteCronSection.svelte';
 	import WebsiteWpToolkitSection from '$lib/components/WebsiteWpToolkitSection.svelte';
 	import WebsitePhpSettingsSection from '$lib/components/WebsitePhpSettingsSection.svelte';
+	import WebsiteAppSection from '$lib/components/WebsiteAppSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
@@ -28,6 +29,7 @@ import { toast } from '$lib/stores/toast';
 		id: string;
 		domain: string;
 		app_type: string;
+		node_version?: string;
 		php_version: string;
 		document_root: string;
 		web_user: string;
@@ -76,7 +78,7 @@ import { toast } from '$lib/stores/toast';
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'App', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
@@ -86,7 +88,8 @@ import { toast } from '$lib/stores/toast';
 	let tabs = $derived(allTabs.filter((t) =>
 		(t !== 'Queue' || website?.framework === 'laravel') &&
 		(t !== 'WP Toolkit' || website?.app_type === 'wordpress') &&
-		(t !== 'PHP Settings' || website?.app_type !== 'static')
+		(t !== 'PHP Settings' || website?.app_type !== 'static') &&
+		(t !== 'App' || website?.app_type === 'node')
 	));
 	$effect(() => {
 		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
@@ -96,6 +99,9 @@ import { toast } from '$lib/stores/toast';
 			activeTab = 'Overview';
 		}
 		if (website && activeTab === 'PHP Settings' && website.app_type === 'static') {
+			activeTab = 'Overview';
+		}
+		if (website && activeTab === 'App' && website.app_type !== 'node') {
 			activeTab = 'Overview';
 		}
 	});
@@ -1868,6 +1874,9 @@ import { toast } from '$lib/stores/toast';
 
 			{:else if activeTab === 'PHP Settings'}
 				<WebsitePhpSettingsSection websiteID={website.id} appType={website.app_type} />
+
+			{:else if activeTab === 'App'}
+				<WebsiteAppSection websiteID={website.id} domain={website.domain} nodeVersion={website.node_version} />
 
 			{:else if activeTab === 'WP Toolkit'}
 				<WebsiteWpToolkitSection websiteID={website.id} domain={website.domain} />

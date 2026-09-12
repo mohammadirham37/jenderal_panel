@@ -208,6 +208,62 @@ func (h *Handler) CheckHealthNow(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, hc)
 }
 
+// GetAppService handles GET /api/websites/{id}/app.
+func (h *Handler) GetAppService(w http.ResponseWriter, r *http.Request) {
+	status, err := h.svc.GetAppService(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, status)
+}
+
+// SaveAppService handles PUT /api/websites/{id}/app.
+func (h *Handler) SaveAppService(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		StartCommand string `json:"start_command"`
+		BuildCommand string `json:"build_command"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	status, err := h.svc.SaveAppService(r.Context(), id, req.StartCommand, req.BuildCommand)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "update_app_service", id, "updated app service config (port "+strconv.Itoa(status.Port)+")")
+	httputil.JSON(w, http.StatusOK, status)
+}
+
+// AppAction handles POST /api/websites/{id}/app/{action} for
+// start/stop/restart.
+func (h *Handler) AppAction(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	action := chi.URLParam(r, "action")
+	if err := h.svc.AppAction(r.Context(), id, action); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "app_"+action, id, action+" app service")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// AppBuild handles POST /api/websites/{id}/app/build and runs the build
+// command + service restart as a background task.
+func (h *Handler) AppBuild(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	taskID, err := h.svc.RunAppBuildTask(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "app_build", id, "started app build task")
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // WpStatus handles GET /api/websites/{id}/wp.
 func (h *Handler) WpStatus(w http.ResponseWriter, r *http.Request) {
 	status, err := h.svc.WpStatus(r.Context(), chi.URLParam(r, "id"))

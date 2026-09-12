@@ -27,6 +27,7 @@ type siteRecord struct {
 	Status           string
 	LogDir           string
 	Aliases          []string
+	AppPort          int
 }
 
 type activationRequest struct {
@@ -55,7 +56,7 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	var phpVersion, framework, frameworkVersion sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.status, w.web_user,
-		        w.framework, w.framework_version
+		        w.framework, w.framework_version, w.app_port
 		 FROM websites w
 		 JOIN domains d ON d.website_id = w.id
 		 WHERE w.id = ? AND d.name = ?`,
@@ -63,6 +64,7 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	).Scan(
 		&site.WebsiteID, &site.PrimaryDomain, &site.Domain, &site.DocumentRoot,
 		&phpVersion, &site.AppType, &site.Status, &webUser, &framework, &frameworkVersion,
+		&site.AppPort,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -155,6 +157,7 @@ func (s *Service) beginCertificateActivation(ctx context.Context, req activation
 		PHPVersion:        req.Site.PHPVersion,
 		AppType:           req.Site.AppType,
 		Profile:           websiteconfig.NginxProfileFor(req.Site.Framework, req.Site.FrameworkVersion, req.Site.AppType),
+		AppPort:           req.Site.AppPort,
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   req.RedirectDomains,
 	}

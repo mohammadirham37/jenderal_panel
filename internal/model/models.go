@@ -181,6 +181,10 @@ type Website struct {
 	OctaneWorkers      int       `json:"octane_workers"`
 	GitRepo            string    `json:"git_repo"`
 	GitBranch          string    `json:"git_branch"`
+	AppRuntime         string    `json:"app_runtime"`
+	AppPort            int       `json:"app_port"`
+	AppStartCommand    string    `json:"app_start_command"`
+	AppBuildCommand    string    `json:"app_build_command"`
 	DeployWebhookToken string    `json:"deploy_webhook_token,omitempty"`
 	CreatedBy          string    `json:"created_by"`
 	OwnerEmail         string    `json:"owner_email,omitempty"`

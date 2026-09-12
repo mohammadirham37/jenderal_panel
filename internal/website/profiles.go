@@ -91,6 +91,20 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 	switch template {
 	case "static":
 		return simpleProfile(req, template, "static", "none", "", "public", setupMode, false)
+	case "node":
+		if err := noderuntime.ValidateVersion(req.NodeVersion); err != nil {
+			return Profile{}, err
+		}
+		if req.FrontendStack != "" || req.InertiaAdapter != "" || req.FrameworkVersion != "" {
+			return Profile{}, model.NewValidationError("node apps do not support framework selections")
+		}
+		return Profile{
+			Template: template, AppType: "node", NginxProfile: "app-proxy",
+			Framework: "node", ProjectVariant: "empty",
+			SetupMode: SetupConfigOnly,
+			RelativeDocumentRoot: "public",
+			NodeVersion: req.NodeVersion,
+		}, nil
 	case "wordpress":
 		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
 			return Profile{}, model.NewValidationError("unsupported PHP version for wordpress")
@@ -253,6 +267,9 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 	if appType == "wordpress" {
 		return "wordpress"
 	}
+	if appType == "node" {
+		return "app-proxy"
+	}
 	if appType == "static" {
 		return "static"
 	}
@@ -264,7 +281,7 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 
 // ValidNginxProfiles lists the renderer profiles an operator may force for a
 // website. The empty string means "derive from the app type automatically".
-var ValidNginxProfiles = []string{"", "php", "static", "wordpress", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
+var ValidNginxProfiles = []string{"", "php", "static", "wordpress", "app-proxy", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
 
 // IsValidNginxProfile reports whether profile is an allowed override value.
 func IsValidNginxProfile(profile string) bool {
@@ -330,6 +347,12 @@ func websiteProfileOptions() []ProfileOption {
 		CreateRequest{Template: "wordpress", PHPVersion: "8.2", SetupMode: SetupConfigOnly},
 		CreateRequest{Template: "wordpress", PHPVersion: "8.2", SetupMode: SetupAutomatic},
 	)
+
+	// Node apps deploy their own code (git/upload); the panel provisions the
+	// runtime (NVM) and a reverse-proxy vhost with a loopback port.
+	for _, mode := range []string{SetupConfigOnly} {
+		requests = append(requests, CreateRequest{Template: "node", NodeVersion: "22", SetupMode: mode})
+	}
 
 	// Laravel Octane runs on FrankenPHP (PHP 8.1+ embedded); Octane itself
 	// supports Laravel 10+.

@@ -349,7 +349,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -462,7 +462,7 @@ func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Websi
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE web_user = ?`, webUser)
 
 	w, err := scanWebsite(row)
@@ -490,7 +490,7 @@ func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]mo
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
@@ -1094,6 +1094,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		RedirectDomains:   redirectDomains,
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 		OctanePort:        w.OctanePort,
+		AppPort:           w.AppPort,
 	}
 
 	content, err := RenderVhost(vhostData)
@@ -1292,7 +1293,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1321,7 +1322,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err

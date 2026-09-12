@@ -268,6 +268,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		IPv6:              p.ipv6Available(),
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 		OctanePort:        w.OctanePort,
+		AppPort:           w.AppPort,
 	}
 	if result, err := p.exec.RunSudo(ctx, "/usr/bin/install", "-d", "-m", "0755", "/etc/nginx/jenderal/security/sites"); err != nil || result.ExitCode != 0 {
 		p.fail(ctx, websiteID, "create security snippet directory failed")
@@ -711,6 +712,9 @@ type websiteRow struct {
 	NodeVersion      string
 	DocumentRoot     string
 	WebUser          string
+	AppPort          int
+	AppStartCommand  string
+	AppBuildCommand  string
 	Framework        string
 	FrameworkVersion string
 	FrontendStack    string
@@ -737,11 +741,11 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	err := p.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, octane_port, octane_workers
+		        nginx_profile, app_port, app_start_command, app_build_command, octane_port, octane_workers
 		 FROM websites WHERE id = ?`, id,
 	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser,
 		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.OctanePort, &w.OctaneWorkers)
+		&w.NginxProfile, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &w.OctanePort, &w.OctaneWorkers)
 	if err != nil {
 		return w, err
 	}

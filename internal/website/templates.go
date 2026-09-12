@@ -38,6 +38,9 @@ type VhostData struct {
 	// OctanePort is the loopback port of the site's Octane worker; it is
 	// required by the laravel-octane proxy profile.
 	OctanePort int
+	// AppPort is the loopback port of the site's app service (node/go/...);
+	// required by the app-proxy profile.
+	AppPort int
 }
 
 const DefaultACMEChallengeRoot = "/var/lib/jenderal/acme-challenges"
@@ -347,6 +350,19 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
 `, Location: `    location / {
         try_files $uri $uri/ /index.php?$query_string;
     }`, PHP: standardPHP, Hidden: standardHidden}
+	case "app-proxy":
+		if data.AppPort <= 0 {
+			return nginxProfileDirectives{Index: "index.html index.htm", Hidden: standardHidden}
+		}
+		suffix := nginxVarSanitizer.ReplaceAllString(data.Domain, "_")
+		mapVar := "$jenderal_app_" + suffix
+		upstream := "http://127.0.0.1:" + strconv.Itoa(data.AppPort)
+		location := "    location / {\n        try_files $uri $uri/ @app;\n    }\n\n    location @app {\n        proxy_pass " + upstream + ";\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection " + mapVar + ";\n        proxy_read_timeout 300s;\n        proxy_send_timeout 300s;\n    }"
+		return nginxProfileDirectives{Index: "index.html index.htm", Header: "map $http_upgrade " + mapVar + ` {
+    default upgrade;
+    ''      close;
+}
+`, Location: location, Hidden: standardHidden}
 	case "codeigniter3":
 		return nginxProfileDirectives{Index: "index.php index.html index.htm", Server: "    error_page 404 /index.php;\n", Location: `    location / {
         try_files $uri $uri/ /index.php?$query_string;

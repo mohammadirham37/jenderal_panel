@@ -397,6 +397,21 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/health/check", websiteHandler.CheckHealthNow)
 
+			// App service (node; website-scoped, ownership via scope
+			// middleware)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/app", websiteHandler.GetAppService)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/app", websiteHandler.SaveAppService)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/app/start", websiteHandler.AppAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/app/stop", websiteHandler.AppAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/app/restart", websiteHandler.AppAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/app/build", websiteHandler.AppBuild)
+
 			// WordPress toolkit (website-scoped; ownership handled by the
 			// scope middleware)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
