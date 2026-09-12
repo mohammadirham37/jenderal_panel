@@ -15,6 +15,10 @@ language.subscribe(val => {
 const translations: Record<Language, Record<string, string>> = {
     en: {
         'nav.dashboard': 'Dashboard',
+        'nav.guide': 'User Guide',
+        'guide.contents': 'Contents',
+        'guide.tip': 'Tip',
+        'guide.warning': 'Warning',
         'nav.websites': 'Websites',
         'nav.server': 'Server',
         'nav.services': 'Services',
@@ -101,6 +105,10 @@ const translations: Record<Language, Record<string, string>> = {
     },
     id: {
         'nav.dashboard': 'Dasbor',
+        'nav.guide': 'Panduan',
+        'guide.contents': 'Daftar Isi',
+        'guide.tip': 'Tips',
+        'guide.warning': 'Perhatian',
         'nav.websites': 'Situs Web',
         'nav.server': 'Server',
         'nav.services': 'Layanan',
