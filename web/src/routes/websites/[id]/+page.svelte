@@ -89,7 +89,7 @@ import { toast } from '$lib/stores/toast';
 		(t !== 'Queue' || website?.framework === 'laravel') &&
 		(t !== 'WP Toolkit' || website?.app_type === 'wordpress') &&
 		(t !== 'PHP Settings' || website?.app_type !== 'static') &&
-		(t !== 'App' || website?.app_type === 'node' || website?.app_type === 'go')
+		(t !== 'App' || website?.app_type === 'node' || website?.app_type === 'go' || website?.app_type === 'python')
 	));
 	$effect(() => {
 		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
@@ -101,7 +101,7 @@ import { toast } from '$lib/stores/toast';
 		if (website && activeTab === 'PHP Settings' && website.app_type === 'static') {
 			activeTab = 'Overview';
 		}
-		if (website && activeTab === 'App' && website.app_type !== 'node' && website.app_type !== 'go') {
+		if (website && activeTab === 'App' && website.app_type !== 'node' && website.app_type !== 'go' && website.app_type !== 'python') {
 			activeTab = 'Overview';
 		}
 	});
@@ -1876,7 +1876,7 @@ import { toast } from '$lib/stores/toast';
 				<WebsitePhpSettingsSection websiteID={website.id} appType={website.app_type} />
 
 			{:else if activeTab === 'App'}
-				<WebsiteAppSection websiteID={website.id} domain={website.domain} nodeVersion={website.node_version} />
+				<WebsiteAppSection websiteID={website.id} domain={website.domain} nodeVersion={website.node_version} runtime={website.app_type} />
 
 			{:else if activeTab === 'WP Toolkit'}
 				<WebsiteWpToolkitSection websiteID={website.id} domain={website.domain} />

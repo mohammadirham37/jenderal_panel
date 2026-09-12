@@ -1,10 +1,10 @@
 package website
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"

@@ -55,3 +55,50 @@ func TestAppProxyNginxProfile(t *testing.T) {
 		t.Errorf("websocket upgrade header missing: %q", d.Location)
 	}
 }
+
+func TestBuildPythonAppUnit(t *testing.T) {
+	w := model.Website{
+		ID: "site-2", Domain: "api.example.com", AppType: "python",
+		PHPVersion: "8.2", DocumentRoot: "/home/web_example_com/public",
+		WebUser: "web_example_com", AppStartCommand: "gunicorn -w 2 app:app",
+	}
+	unit, err := buildPythonAppUnit(w, w.DocumentRoot)
+	if err != nil {
+		t.Fatalf("buildPythonAppUnit: %v", err)
+	}
+	for _, want := range []string{
+		`Environment="PATH=/home/web_example_com/venv/bin:/usr/local/bin:/usr/bin:/bin"`,
+		"WorkingDirectory=/home/web_example_com/public",
+		"exec gunicorn -w 2 app:app",
+		"Restart=always",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("python unit missing %q:\n%s", want, unit)
+		}
+	}
+}
+
+func TestBuildAppBuildArgvPython(t *testing.T) {
+	args, err := buildAppBuildArgv("python", "web_example_com", "/home/web_example_com/public", "")
+	if err != nil {
+		t.Fatalf("buildAppBuildArgv: %v", err)
+	}
+	script := args[2]
+	for _, want := range []string{
+		"python3 -m venv '/home/web_example_com/venv'",
+		"pip install --no-input -r requirements.txt",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("python build script missing %q: %s", want, script)
+		}
+	}
+
+	// A user build command runs after dependency installation.
+	args, err = buildAppBuildArgv("python", "web_example_com", "/home/web_example_com/public", "python manage.py collectstatic --noinput")
+	if err != nil {
+		t.Fatalf("buildAppBuildArgv with build: %v", err)
+	}
+	if !strings.Contains(args[2], "python manage.py collectstatic --noinput") {
+		t.Errorf("user build command missing: %s", args[2])
+	}
+}

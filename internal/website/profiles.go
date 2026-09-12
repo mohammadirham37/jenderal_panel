@@ -101,9 +101,18 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 		return Profile{
 			Template: template, AppType: "node", NginxProfile: "app-proxy",
 			Framework: "node", ProjectVariant: "empty",
-			SetupMode: SetupConfigOnly,
+			SetupMode:            SetupConfigOnly,
 			RelativeDocumentRoot: "public",
-			NodeVersion: req.NodeVersion,
+			NodeVersion:          req.NodeVersion,
+		}, nil
+	case "python":
+		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
+			return Profile{}, model.NewValidationError("python apps do not use PHP")
+		}
+		return Profile{
+			Template: template, AppType: "python", NginxProfile: "app-proxy",
+			Framework: "python", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
+			RelativeDocumentRoot: "public",
 		}, nil
 	case "go-build", "go-binary":
 		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
@@ -279,7 +288,7 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 	if appType == "node" {
 		return "app-proxy"
 	}
-	if appType == "go" {
+	if appType == "go" || appType == "python" {
 		return "app-proxy"
 	}
 	if appType == "static" {
@@ -371,6 +380,12 @@ func websiteProfileOptions() []ProfileOption {
 	requests = append(requests,
 		CreateRequest{Template: "go-build", SetupMode: SetupConfigOnly},
 		CreateRequest{Template: "go-binary", SetupMode: SetupConfigOnly},
+	)
+
+	// Python apps: venv is created on first deploy; start command runs the
+	// ASGI/WSGI server (gunicorn/uvicorn) from the virtualenv.
+	requests = append(requests,
+		CreateRequest{Template: "python", SetupMode: SetupConfigOnly},
 	)
 
 	// Laravel Octane runs on FrankenPHP (PHP 8.1+ embedded); Octane itself

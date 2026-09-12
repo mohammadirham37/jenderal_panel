@@ -18,9 +18,10 @@
 		websiteID: string;
 		domain?: string;
 		nodeVersion?: string;
+		runtime?: string;
 	}
 
-	let { websiteID, domain = '', nodeVersion = '' }: Props = $props();
+	let { websiteID, domain = '', nodeVersion = '', runtime = 'node' }: Props = $props();
 
 	let status = $state<AppStatus | null>(null);
 	let loading = $state(false);
@@ -192,7 +193,13 @@
 					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="app-start">Start command</label>
 					<input id="app-start" type="text" bind:value={startCommand} placeholder="npm run start"
 						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
-					<p class="mt-1 text-[10px] text-gray-500">Runs via nvm-exec with Node {nodeVersion || 'default'} from the site directory.</p>
+					<p class="mt-1 text-[10px] text-gray-500">
+				{#if runtime === 'python'}
+					Start command runs with the site virtualenv on PATH (created on first build; deps from requirements.txt).
+				{:else}
+					Runs via nvm-exec with Node {nodeVersion || 'default'} from the site directory.
+				{/if}
+			</p>
 				</div>
 				<div>
 					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="app-build">Build command (optional)</label>

@@ -90,8 +90,8 @@ func (s *Service) GetAppService(ctx context.Context, websiteID string) (AppServi
 	if err != nil {
 		return AppServiceStatus{}, err
 	}
-	if w.AppType != "node" {
-		return AppServiceStatus{}, model.NewValidationError("the app service is only available for Node.js sites")
+	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" {
+		return AppServiceStatus{}, model.NewValidationError("the app service is only available for node, go, and python sites")
 	}
 
 	unit := appUnitName(w.ID)
@@ -119,6 +119,8 @@ func buildAppUnit(w model.Website, docroot string) (string, error) {
 		return buildNodeAppUnit(w, docroot)
 	case "go", "go-binary":
 		return buildBinaryAppUnit(w, docroot)
+	case "python":
+		return buildPythonAppUnit(w, docroot)
 	default:
 		return "", model.NewValidationError("unsupported app runtime: " + w.AppRuntime)
 	}
@@ -152,6 +154,37 @@ After=network.target
 User=` + w.WebUser + `
 WorkingDirectory=` + docroot + `
 ExecStart=` + strings.Join(execArgv, " ") + `
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+`, nil
+}
+
+// buildPythonAppUnit runs the start command with the site's virtualenv on
+// PATH (created by the build task), so venv tools resolve without absolute
+// paths. The start command runs under exec through bash.
+func buildPythonAppUnit(w model.Website, docroot string) (string, error) {
+	start := strings.TrimSpace(w.AppStartCommand)
+	if start == "" {
+		return "", model.NewValidationError("start command is required")
+	}
+	if strings.ContainsAny(start, "\r\n") {
+		return "", model.NewValidationError("start command must be a single line")
+	}
+	home := "/home/" + w.WebUser
+	venvBin := home + "/venv/bin"
+
+	return `[Unit]
+Description=Jenderal App ` + w.Domain + `
+After=network.target
+
+[Service]
+User=` + w.WebUser + `
+WorkingDirectory=` + docroot + `
+Environment="PATH=` + venvBin + `:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/bin/bash -c 'exec ` + start + `'
 Restart=always
 RestartSec=5
 
@@ -200,8 +233,8 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	if err != nil {
 		return AppServiceStatus{}, err
 	}
-	if w.AppType != "node" {
-		return AppServiceStatus{}, model.NewValidationError("the app service is only available for Node.js sites")
+	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" {
+		return AppServiceStatus{}, model.NewValidationError("the app service is only available for node, go, and python sites")
 	}
 
 	startCommand = strings.TrimSpace(startCommand)
@@ -209,7 +242,7 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	if w.AppRuntime == "" {
 		w.AppRuntime = "node"
 	}
-	if w.AppRuntime == "node" {
+	if w.AppRuntime == "node" && w.NodeVersion != "" {
 		if err := noderuntime.ValidateVersion(w.NodeVersion); err != nil {
 			return AppServiceStatus{}, fmt.Errorf("node runtime: %w", err)
 		}
@@ -305,10 +338,10 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 	if err != nil {
 		return "", err
 	}
-	if w.AppType != "node" {
-		return "", model.NewValidationError("the app service is only available for Node.js sites")
+	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" {
+		return "", model.NewValidationError("the app service is only available for node, go, and python sites")
 	}
-	if strings.TrimSpace(w.AppBuildCommand) == "" {
+	if strings.TrimSpace(w.AppBuildCommand) == "" && w.AppType != "python" {
 		return "", model.NewValidationError("no build command configured")
 	}
 	if s.tasks == nil {
