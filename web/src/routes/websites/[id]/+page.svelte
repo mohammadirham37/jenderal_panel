@@ -166,6 +166,7 @@ import { toast } from '$lib/stores/toast';
 		state?: string;
 		sub_state?: string;
 		recent_logs?: string[];
+		served_by?: string;
 	}
 	let octane = $state<OctaneStatus | null>(null);
 	let octaneLoading = $state(false);
@@ -1431,6 +1432,9 @@ import { toast } from '$lib/stores/toast';
 								<div class="flex flex-wrap gap-4 text-sm text-gray-400 mb-4">
 									<span>{translate($language, 'wd.port')} <span class="text-gray-200 font-mono">127.0.0.1:{octane.port}</span></span>
 									<span>{translate($language, 'wd.octane.unit')} <span class="text-gray-200 font-mono">{octane.unit}</span></span>
+									{#if octane.running && octane.served_by}
+										<span>{translate($language, 'wd.octane.served_by')} <span class="font-medium text-green-300">{octane.served_by} (FrankenPHP)</span> ✓</span>
+									{/if}
 									{#if octane.frankenphp_version}
 										<span>FrankenPHP: <span class="text-gray-200">v{octane.frankenphp_version}</span></span>
 									{/if}

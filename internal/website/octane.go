@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -61,6 +62,7 @@ type OctaneStatus struct {
 	State             string   `json:"state,omitempty"`
 	SubState          string   `json:"sub_state,omitempty"`
 	RecentLogs        []string `json:"recent_logs,omitempty"`
+	ServedBy          string   `json:"served_by,omitempty"`
 }
 
 // octaneUnitName returns the systemd unit name for a website ID.
@@ -563,6 +565,13 @@ func (s *Service) OctaneStatus(ctx context.Context, id string) (OctaneStatus, er
 		if !status.Running && (status.State == "failed" || status.State == "") {
 			status.RecentLogs = s.octaneUnitLogs(ctx, status.Unit, 15)
 		}
+		if status.Running {
+			// Through Nginx the browser only ever sees Nginx's own Server
+			// header; hitting the Octane port directly reveals the actual
+			// upstream (FrankenPHP answers as Caddy) — visible proof the
+			// site is being served by Octane.
+			status.ServedBy = probeOctaneServedBy(ctx, w.OctanePort, w.Domain)
+		}
 	}
 	if version, ok := frankenphpInstalled(ctx, s.exec); ok {
 		status.FrankenPHPVersion = version
@@ -625,4 +634,22 @@ func (s *Service) octaneUnitLogs(ctx context.Context, unit string, n int) []stri
 		logs = logs[len(logs)-n:]
 	}
 	return logs
+}
+
+// probeOctaneServedBy sends a HEAD request straight to the Octane port and
+// returns the upstream's Server header (FrankenPHP is Caddy-based, so it
+// answers "Caddy"). Empty when the probe is inconclusive.
+func probeOctaneServedBy(ctx context.Context, port int, domain string) string {
+	client := &http.Client{Timeout: 3 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, fmt.Sprintf("http://127.0.0.1:%d/", port), nil)
+	if err != nil {
+		return ""
+	}
+	req.Host = domain
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	return resp.Header.Get("Server")
 }

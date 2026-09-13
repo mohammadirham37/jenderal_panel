@@ -330,6 +330,7 @@ const en = {
 	'wd.bm.help.tools_text': 'The panel benchmark uses the same methodology as wrk/ab. From the server you can cross-check (install wrk with: apt install wrk):',
 	'wd.bm.help.app_only': 'app-only, bypasses Nginx (Octane port)',
 	'wd.bm.note': 'Tip: run once with Octane enabled and once with it disabled, then compare requests/sec — a large difference confirms your traffic is served by Octane/FrankenPHP.',
+	'wd.octane.served_by': 'Served by',
 	'wd.octane.failed': 'Start failed',
 	'wd.octane.unit_logs': 'Recent unit logs (why the last start failed)',
 } as const;
@@ -661,6 +662,7 @@ const id: Record<keyof typeof en, string> = {
 	'wd.bm.help.tools_text': 'Benchmark panel memakai metodologi yang sama dengan wrk/ab. Dari server Anda bisa membandingkan (pasang wrk dengan: apt install wrk):',
 	'wd.bm.help.app_only': 'hanya aplikasi, lewati Nginx (port Octane)',
 	'wd.bm.note': 'Tips: jalankan sekali dengan Octane aktif dan sekali setelah dinonaktifkan, lalu bandingkan permintaan/detik — selisih yang besar menandakan trafik Anda benar-benar dilayani Octane/FrankenPHP.',
+	'wd.octane.served_by': 'Dilayani oleh',
 	'wd.octane.failed': 'Start gagal',
 	'wd.octane.unit_logs': 'Log unit terakhir (alasan start gagal)',
 };

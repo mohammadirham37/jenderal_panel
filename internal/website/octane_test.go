@@ -2,6 +2,9 @@ package website
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -316,5 +319,23 @@ func TestStartOctaneTaskPreparesStartsAndVerifies(t *testing.T) {
 			t.Fatal("start task did not finish in time")
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func TestProbeOctaneServedBy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Server", "Caddy")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	port := server.URL[len("http://127.0.0.1:"):]
+	portNum := 0
+	fmt.Sscanf(port, "%d", &portNum)
+	if got := probeOctaneServedBy(context.Background(), portNum, "octane.example.com"); got != "Caddy" {
+		t.Fatalf("served by = %q, want Caddy", got)
+	}
+	if got := probeOctaneServedBy(context.Background(), 1, "octane.example.com"); got != "" {
+		t.Fatalf("served by for dead port = %q, want empty", got)
 	}
 }
