@@ -1480,6 +1480,7 @@ import { toast } from '$lib/stores/toast';
 										class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-200 text-sm rounded transition-colors cursor-pointer"
 									>{translate($language, 'wd.octane.save_workers')}</button>
 								</div>
+								<p class="mt-2 text-xs text-gray-500">{translate($language, 'wd.octane.workers_hint')}</p>
 							{:else}
 								<p class="text-sm text-gray-400 mb-3">
 									{translate($language, 'wd.octane.desc')}<code class="text-gray-300 font-mono">laravel/octane</code>{translate($language, 'wd.octane.desc_tail')}
