@@ -53,6 +53,14 @@ func setupTestDB(t *testing.T) *sql.DB {
 		,node_version TEXT NOT NULL DEFAULT '24'
 		,nginx_profile TEXT NOT NULL DEFAULT ''
 		,created_by TEXT NOT NULL DEFAULT ''
+		,git_repo TEXT NOT NULL DEFAULT ''
+		,git_branch TEXT NOT NULL DEFAULT 'main'
+		,git_provider TEXT NOT NULL DEFAULT ''
+		,deploy_webhook_secret TEXT NOT NULL DEFAULT ''
+		,app_runtime TEXT NOT NULL DEFAULT ''
+		,app_port INTEGER NOT NULL DEFAULT 0
+		,app_start_command TEXT NOT NULL DEFAULT ''
+		,app_build_command TEXT NOT NULL DEFAULT ''
 		,octane_enabled INTEGER NOT NULL DEFAULT 0
 		,octane_port INTEGER NOT NULL DEFAULT 0
 		,octane_workers INTEGER NOT NULL DEFAULT 4

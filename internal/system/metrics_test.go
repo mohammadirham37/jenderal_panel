@@ -235,9 +235,10 @@ func TestCollect(t *testing.T) {
 	mc := NewMetricsCollector(db, cfg)
 
 	m := mc.collect()
-	// On non-Linux (macOS dev) all stub readers return zeros.
-	if m.CPU != 0 {
-		t.Errorf("collect().CPU = %v, want 0 (stub)", m.CPU)
+	// On non-Linux (macOS dev) the stub readers return zeros; on a real Linux
+	// host gopsutil reports actual usage. Both must stay within [0, 100].
+	if m.CPU < 0 || m.CPU > 100 {
+		t.Errorf("collect().CPU = %v, want within [0, 100]", m.CPU)
 	}
 	if m.Timestamp.IsZero() {
 		t.Error("collect().Timestamp should not be zero")

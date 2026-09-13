@@ -300,12 +300,12 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		 nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_port, octane_workers, created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
 		w.NodeVersion,
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
 		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,
-		w.NginxProfile, w.OctanePort, w.OctaneWorkers,
+		w.NginxProfile, w.GitRepo, w.GitBranch, w.DeployWebhookToken, w.OctanePort, w.OctaneWorkers,
 		req.CreatedBy, nowStr, nowStr,
 	)
 	if err != nil {
