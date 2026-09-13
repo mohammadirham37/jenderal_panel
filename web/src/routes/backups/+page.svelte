@@ -88,6 +88,7 @@ import { language, translate } from '$lib/stores/language';
 	let importType = $state('website');
 	let importTarget = $state('');
 	let importing = $state(false);
+	let pickersError = $state('');
 	let showScheduleForm = $state(false);
 	let scheduleType = $state('website');
 	let scheduleTarget = $state('');
@@ -219,6 +220,12 @@ import { language, translate } from '$lib/stores/language';
 		} finally {
 			loadingBackups = false;
 		}
+		// A backup still running means its task progress should survive a
+		// page refresh — re-attach the task id from the row.
+		if (!createTaskId) {
+			const running = backups.find((b) => (b.status === 'running' || b.status === 'pending') && b.task_id);
+			if (running) createTaskId = running.task_id!;
+		}
 	}
 
 	async function loadStats() {
@@ -241,12 +248,14 @@ import { language, translate } from '$lib/stores/language';
 	}
 
 	async function loadPickers() {
+		let failed = false;
 		try {
 			websites = ((await api.get<WebsiteLite[]>('/websites')) || []).map((w) => ({ id: w.id, domain: w.domain }));
-		} catch { websites = []; }
+		} catch { websites = []; failed = true; }
 		try {
 			databases = ((await api.get<DatabaseLite[]>('/databases')) || []).filter((d) => d.engine !== 'redis');
-		} catch { databases = []; }
+		} catch { databases = []; failed = true; }
+		pickersError = failed ? translate($language, 'bk.pickersFailed') : '';
 	}
 
 	// ── Actions ────────────────────────────────────────────────────
@@ -582,6 +591,12 @@ import { language, translate } from '$lib/stores/language';
 						</select>
 					</div>
 				{/if}
+				{#if pickersError}
+					<p class="text-xs text-red-400">
+						{pickersError}
+						<button type="button" onclick={loadPickers} class="cursor-pointer underline">{translate($language, 'bk.retryLoad')}</button>
+					</p>
+				{/if}
 				<button
 					type="button"
 					onclick={createBackup}
@@ -637,6 +652,12 @@ import { language, translate } from '$lib/stores/language';
 					</button>
 				</div>
 			</div>
+			{#if pickersError}
+				<p class="text-xs text-red-400">
+					{pickersError}
+					<button type="button" onclick={loadPickers} class="cursor-pointer underline">{translate($language, 'bk.retryLoad')}</button>
+				</p>
+			{/if}
 			<p class="mt-2 text-xs text-gray-500">{translate($language, 'bk.importHint')}</p>
 		</div>
 		{/if}

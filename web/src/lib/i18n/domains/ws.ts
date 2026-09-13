@@ -333,6 +333,7 @@ const en = {
 	'wd.bm.help.app_only': 'app-only, bypasses Nginx (Octane port)',
 	'wd.bm.note': 'Tip: run once with Octane enabled and once with it disabled, then compare requests/sec — a large difference confirms your traffic is served by Octane/FrankenPHP.',
 	'wd.octane.workers_hint': 'Recommended: 1–2× the server\'s CPU cores. More workers only help when requests wait on I/O, and each worker costs RAM.',
+	'wd.octane.served_by': 'Served by',
 	'wd.octane.failed': 'Start failed',
 	'wd.octane.unit_logs': 'Recent unit logs (why the last start failed)',
 } as const;
@@ -667,6 +668,7 @@ const id: Record<keyof typeof en, string> = {
 	'wd.bm.help.app_only': 'hanya aplikasi, lewati Nginx (port Octane)',
 	'wd.bm.note': 'Tips: jalankan sekali dengan Octane aktif dan sekali setelah dinonaktifkan, lalu bandingkan permintaan/detik — selisih yang besar menandakan trafik Anda benar-benar dilayani Octane/FrankenPHP.',
 	'wd.octane.workers_hint': 'Disarankan: 1–2× jumlah core CPU server. Worker lebih banyak hanya membantu saat request menunggu I/O, dan tiap worker menghabiskan RAM.',
+	'wd.octane.served_by': 'Dilayani oleh',
 	'wd.octane.failed': 'Start gagal',
 	'wd.octane.unit_logs': 'Log unit terakhir (alasan start gagal)',
 };

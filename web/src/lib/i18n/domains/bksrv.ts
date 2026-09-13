@@ -191,6 +191,8 @@ const en = {
 	'bk.importDone': 'Backup imported. You can restore it from the list.',
 	'bk.importFailed': 'Failed to import backup',
 	'bk.importHint': 'Pick the archive you downloaded from this panel and its backup type. Website and database imports need a target so restore knows where it belongs.',
+	'bk.pickersFailed': 'Failed to load the website/database lists.',
+	'bk.retryLoad': 'Retry',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -382,6 +384,8 @@ const id: Record<keyof typeof en, string> = {
 	'bk.importDone': 'Cadangan berhasil diimpor. Bisa dipulihkan dari daftar.',
 	'bk.importFailed': 'Gagal mengimpor cadangan',
 	'bk.importHint': 'Pilih arsip yang pernah diunduh dari panel ini beserta jenis cadangannya. Impor jenis Website dan Database butuh target agar restore tahu tempatnya.',
+	'bk.pickersFailed': 'Gagal memuat daftar situs/database.',
+	'bk.retryLoad': 'Coba lagi',
 };
 
 export const dict = { en, id };
