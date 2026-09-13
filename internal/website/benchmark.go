@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -305,38 +304,4 @@ func (s *Service) BenchmarkWebsite(ctx context.Context, id string, opts Benchmar
 			return nil
 		},
 	), nil
-}
-
-// octaneUnitState queries systemd for the unit's fine-grained state, e.g.
-// "active running", "failed auto-restart", "inactive dead". Best effort:
-// returns empty strings when systemd cannot be reached.
-func (s *Service) octaneUnitState(ctx context.Context, unit string) (string, string) {
-	result, err := s.exec.Run(ctx, "systemctl", "show", unit,
-		"--property=ActiveState", "--property=SubState", "--value")
-	if err != nil || result == nil || result.ExitCode != 0 {
-		return "", ""
-	}
-	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
-	state, sub := "", ""
-	if len(lines) > 0 {
-		state = strings.TrimSpace(lines[0])
-	}
-	if len(lines) > 1 {
-		sub = strings.TrimSpace(lines[1])
-	}
-	return state, sub
-}
-
-// octaneUnitLogs returns the unit's last journal lines (root-side, since
-// system unit logs are not readable by unprivileged users).
-func (s *Service) octaneUnitLogs(ctx context.Context, unit string, n int) []string {
-	result, err := s.exec.RunSudo(ctx, "journalctl", "-u", unit, "-n", fmt.Sprintf("%d", n), "--no-pager", "-o", "cat")
-	if err != nil || result == nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) == "" {
-		return nil
-	}
-	logs := strings.Split(strings.TrimRight(result.Stdout, "\n"), "\n")
-	if len(logs) > n {
-		logs = logs[len(logs)-n:]
-	}
-	return logs
 }

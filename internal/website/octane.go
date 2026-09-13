@@ -420,12 +420,10 @@ func (s *Service) OctaneAction(ctx context.Context, id, action string) error {
 		return fmt.Errorf("%s octane: %w", action, err)
 	}
 	if action == "start" || action == "restart" {
-		// Give the worker a moment, then verify it survived: a fast crash
-		// (port already in use, missing worker script, PHP error) would
-		// otherwise look like a successful start.
-		time.Sleep(1500 * time.Millisecond)
-		result, err := s.exec.Run(ctx, "systemctl", "is-active", "--quiet", octaneUnitName(w.ID))
-		if err != nil || result == nil || result.ExitCode != 0 {
+		// Verify the worker survived: a fast crash (port already in use,
+		// missing worker script, PHP error) would otherwise look like a
+		// successful start. Poll — FrankenPHP can take seconds to boot.
+		if err := s.waitForOctaneActive(ctx, octaneUnitName(w.ID), 20*time.Second); err != nil {
 			return fmt.Errorf("%s octane: unit did not stay active — check the Octane card for recent unit logs", action)
 		}
 	}
@@ -530,12 +528,10 @@ func (s *Service) StartOctaneTask(ctx context.Context, id string) (string, error
 			if err := execSudoOK(taskCtx, s.exec, "systemctl", "start", unit); err != nil {
 				return fmt.Errorf("start octane: %w", err)
 			}
-			time.Sleep(1500 * time.Millisecond)
-			active, err := s.exec.Run(taskCtx, "systemctl", "is-active", "--quiet", unit)
-			if err != nil || active == nil || active.ExitCode != 0 {
-			if logs := s.octaneUnitLogs(taskCtx, unit, 15); len(logs) > 0 {
-				write(strings.Join(logs, "\n"))
-			}
+			if err := s.waitForOctaneActive(taskCtx, unit, 20*time.Second); err != nil {
+				if logs := s.octaneUnitLogs(taskCtx, unit, 15); len(logs) > 0 {
+					write(strings.Join(logs, "\n"))
+				}
 				return fmt.Errorf("octane unit did not stay active — see the logs above")
 			}
 			write("Octane is running.")
@@ -572,4 +568,61 @@ func (s *Service) OctaneStatus(ctx context.Context, id string) (OctaneStatus, er
 		status.FrankenPHPVersion = version
 	}
 	return status, nil
+}
+
+// waitForOctaneActive polls until the unit reports active, the budget runs
+// out, or the unit settles in a failed state. FrankenPHP workers can take
+// several seconds to boot, so a single immediate check gives false failures.
+func (s *Service) waitForOctaneActive(ctx context.Context, unit string, budget time.Duration) error {
+	deadline := time.Now().Add(budget)
+	for {
+		result, err := s.exec.Run(ctx, "systemctl", "is-active", "--quiet", unit)
+		if err == nil && result != nil && result.ExitCode == 0 {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if state, _ := s.octaneUnitState(ctx, unit); state == "failed" {
+			return fmt.Errorf("unit entered failed state")
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("unit did not become active within %s", budget)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// octaneUnitState queries systemd for the unit's fine-grained state, e.g.
+// "active running", "failed auto-restart", "inactive dead". Best effort:
+// returns empty strings when systemd cannot be reached.
+func (s *Service) octaneUnitState(ctx context.Context, unit string) (string, string) {
+	result, err := s.exec.Run(ctx, "systemctl", "show", unit,
+		"--property=ActiveState", "--property=SubState", "--value")
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return "", ""
+	}
+	lines := strings.Split(strings.TrimSpace(result.Stdout), "\n")
+	state, sub := "", ""
+	if len(lines) > 0 {
+		state = strings.TrimSpace(lines[0])
+	}
+	if len(lines) > 1 {
+		sub = strings.TrimSpace(lines[1])
+	}
+	return state, sub
+}
+
+// octaneUnitLogs returns the unit's last journal lines (root-side, since
+// system unit logs are not readable by unprivileged users).
+func (s *Service) octaneUnitLogs(ctx context.Context, unit string, n int) []string {
+	result, err := s.exec.RunSudo(ctx, "journalctl", "-u", unit, "-n", fmt.Sprintf("%d", n), "--no-pager", "-o", "cat")
+	if err != nil || result == nil || result.ExitCode != 0 || strings.TrimSpace(result.Stdout) == "" {
+		return nil
+	}
+	logs := strings.Split(strings.TrimRight(result.Stdout, "\n"), "\n")
+	if len(logs) > n {
+		logs = logs[len(logs)-n:]
+	}
+	return logs
 }
