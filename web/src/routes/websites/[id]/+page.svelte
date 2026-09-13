@@ -282,7 +282,21 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
-	async function octaneAction(action: 'start' | 'stop' | 'restart') {
+	async function startOctane() {
+		if (!website || octaneBusy || octaneTaskId) return;
+		octaneBusy = true;
+
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/octane/start`, {});
+			octaneTaskId = result.task_id || '';
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.octane.start_failed'));
+			octaneBusy = false;
+		}
+		// octaneBusy stays true while the task runs; onComplete clears it.
+	}
+
+	async function octaneAction(action: 'stop' | 'restart') {
 		if (!website || octaneBusy) return;
 		octaneBusy = true;
 
@@ -290,7 +304,7 @@ import { toast } from '$lib/stores/toast';
 			await api.post(`/api/v1/websites/${website.id}/octane/${action}`);
 			await loadOctaneStatus();
 		} catch (err) {
-			const failedKeys = { start: 'wd.octane.start_failed', stop: 'wd.octane.stop_failed', restart: 'wd.octane.restart_failed' } as const;
+			const failedKeys = { stop: 'wd.octane.stop_failed', restart: 'wd.octane.restart_failed' } as const;
 			toast.error(err instanceof Error ? err.message : translate($language, failedKeys[action]));
 		} finally {
 			octaneBusy = false;
@@ -1418,8 +1432,8 @@ import { toast } from '$lib/stores/toast';
 								</div>
 								<div class="flex flex-wrap items-center gap-2">
 									<button
-										onclick={() => octaneAction('start')}
-										disabled={octaneBusy || octane.running}
+										onclick={startOctane}
+										disabled={octaneBusy || octane.running || !!octaneTaskId}
 										class="px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
 									>{translate($language, 'wd.start')}</button>
 									<button
@@ -1481,7 +1495,7 @@ import { toast } from '$lib/stores/toast';
 							<TaskProgress
 								bind:taskId={octaneTaskId}
 								storageKey="octane-task-{website.id}"
-								onComplete={() => { octaneTaskId = ''; void loadOctaneStatus(); void loadWebsite(); }}
+								onComplete={() => { octaneTaskId = ''; octaneBusy = false; void loadOctaneStatus(); void loadWebsite(); }}
 							/>
 						</div>
 					{/if}

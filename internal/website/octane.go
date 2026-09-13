@@ -12,6 +12,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // execSudoOK runs a command with sudo and converts a non-zero exit into an
@@ -332,11 +333,13 @@ func (s *Service) EnableOctane(ctx context.Context, id string) (string, error) {
 	return taskID, nil
 }
 
-// octaneEnableScript renders the root-side install script for EnableOctane.
-// The website identity fields come from validated database rows.
-func octaneEnableScript(w model.Website, projectRoot string) string {
+// octanePrepareScript renders the idempotent root-side script that makes the
+// app ready for Octane: installs laravel/octane when missing, registers its
+// service provider, then runs octane:install. The explicit package:discover
+// matters — composer --no-scripts skips post-autoload-dump discovery, and
+// without it artisan does not know the "octane" namespace at all.
+func octanePrepareScript(w model.Website, projectRoot string) string {
 	php := "/usr/bin/php" + w.PHPVersion
-	unit := octaneUnitName(w.ID)
 	return fmt.Sprintf(`set -eu
 export HOME='/home/%[1]s'
 cd '%[2]s'
@@ -344,12 +347,20 @@ if ! sudo -u '%[1]s' /usr/local/bin/composer show laravel/octane --no-ansi --wor
   echo "=== Installing laravel/octane via Composer ==="
   sudo -u '%[1]s' /usr/local/bin/composer require laravel/octane --no-interaction --no-scripts --working-dir='%[2]s'
 fi
+echo "=== Registering the Octane service provider ==="
+sudo -u '%[1]s' %[3]s '%[2]s/artisan' package:discover --ansi
 echo "=== Running octane:install ==="
 sudo -u '%[1]s' %[3]s '%[2]s/artisan' octane:install --server=frankenphp --no-interaction
 sudo -u '%[1]s' %[3]s '%[2]s/artisan' config:clear --no-interaction || true
-echo "=== Starting %[4]s ==="
-systemctl start '%[4]s'
-`, w.WebUser, projectRoot, php, unit)
+`, w.WebUser, projectRoot, php)
+}
+
+// octaneEnableScript prepares the app and starts the unit (used by Enable).
+func octaneEnableScript(w model.Website, projectRoot string) string {
+	unit := octaneUnitName(w.ID)
+	return octanePrepareScript(w, projectRoot) + fmt.Sprintf(`echo "=== Starting %[1]s ==="
+systemctl start '%[1]s'
+`, unit)
 }
 
 // DisableOctane switches a site back to PHP-FPM serving: the Octane unit is
@@ -477,6 +488,60 @@ func (s *Service) SetOctaneWorkers(ctx context.Context, id string, workers int) 
 		}
 	}
 	return s.Get(ctx, id)
+}
+
+// StartOctaneTask prepares the app (installs laravel/octane and registers
+// its provider when missing, runs octane:install) and starts the unit inside
+// a background task, verifying it stays up. Re-running it heals a site whose
+// earlier Octane preparation failed halfway.
+func (s *Service) StartOctaneTask(ctx context.Context, id string) (string, error) {
+	w, err := s.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if !w.OctaneEnabled {
+		return "", model.NewValidationError("Octane is not enabled for this website")
+	}
+	projectRoot, _, _, err := octanePaths(w)
+	if err != nil {
+		return "", err
+	}
+	tr := s.taskRunner()
+	if tr == nil {
+		return "", fmt.Errorf("task runner not available")
+	}
+	unit := octaneUnitName(w.ID)
+	return tr.RunFuncWithOptions(
+		taskrunner.Options{Name: "Start Octane — " + w.Domain, Module: "website", Timeout: 15 * time.Minute},
+		func(taskCtx context.Context, write func(string)) error {
+			write("Preparing the application for Octane…")
+			result, err := s.exec.RunSudo(taskCtx, "bash", "-c", octanePrepareScript(w, projectRoot))
+			if result != nil && result.Stdout != "" {
+				write(strings.TrimSpace(result.Stdout))
+			}
+			if err != nil {
+				return fmt.Errorf("prepare octane: %w", err)
+			}
+			if result.ExitCode != 0 {
+				return fmt.Errorf("prepare octane failed with exit status %d", result.ExitCode)
+			}
+
+			write("Starting " + unit + "…")
+			if err := execSudoOK(taskCtx, s.exec, "systemctl", "start", unit); err != nil {
+				return fmt.Errorf("start octane: %w", err)
+			}
+			time.Sleep(1500 * time.Millisecond)
+			active, err := s.exec.Run(taskCtx, "systemctl", "is-active", "--quiet", unit)
+			if err != nil || active == nil || active.ExitCode != 0 {
+			if logs := s.octaneUnitLogs(taskCtx, unit, 15); len(logs) > 0 {
+				write(strings.Join(logs, "\n"))
+			}
+				return fmt.Errorf("octane unit did not stay active — see the logs above")
+			}
+			write("Octane is running.")
+			return nil
+		},
+	), nil
 }
 
 // OctaneStatus reports the runtime state of a site's Octane server.

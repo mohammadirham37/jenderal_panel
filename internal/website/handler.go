@@ -338,6 +338,19 @@ func (h *Handler) OctaneEnable(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// OctaneStart handles POST /api/websites/{id}/octane/start and returns the
+// background task that prepares the app and starts the Octane server (202).
+func (h *Handler) OctaneStart(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	taskID, err := h.svc.StartOctaneTask(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "octane_start", id, "starting Laravel Octane")
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // OctaneDisable handles POST /api/websites/{id}/octane/disable.
 func (h *Handler) OctaneDisable(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

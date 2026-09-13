@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
@@ -235,5 +237,84 @@ func TestOctaneUnitStateAndLogsParsing(t *testing.T) {
 	logs := svc.octaneUnitLogs(context.Background(), "jenderal-octane-x.service", 15)
 	if len(logs) != 3 || logs[0] != "line-one" || logs[2] != "line-three" {
 		t.Fatalf("logs = %#v", logs)
+	}
+}
+
+func TestOctanePrepareScriptRegistersProvider(t *testing.T) {
+	script := octanePrepareScript(model.Website{WebUser: "web_x", PHPVersion: "8.3"}, "/home/web_x/app")
+	if !strings.Contains(script, "package:discover") {
+		t.Fatal("prepare script must run package:discover — without it artisan does not know the octane namespace")
+	}
+	if !strings.Contains(script, "--no-scripts") {
+		t.Fatal("composer require should keep --no-scripts (discovery is run explicitly)")
+	}
+	if !strings.Contains(script, "octane:install") || strings.Contains(script, "systemctl start") {
+		t.Fatal("prepare script must run octane:install and must not start the unit")
+	}
+}
+
+func TestStartOctaneTaskPreparesStartsAndVerifies(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var prepared bool
+	var started bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "systemctl" && args[0] == "is-active" {
+				if !prepared || !started {
+					t.Fatalf("is-active probed before prepare(%v)/start(%v)", prepared, started)
+				}
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			// Default success: Create() probes the PHP binary on the way in.
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "bash" {
+				prepared = true
+				return &executor.Result{ExitCode: 0, Stdout: "ok"}, nil
+			}
+			if name == "systemctl" && args[0] == "start" {
+				started = true
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+	svc.SetTaskRunner(taskrunner.New())
+
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "octane.example.com", Template: "laravel", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET octane_enabled = 1, octane_port = 8101 WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	taskID, err := svc.StartOctaneTask(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("StartOctaneTask() error = %v", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		task, ok := svc.taskRunner().Get(taskID)
+		if !ok {
+			time.Sleep(25 * time.Millisecond)
+			continue
+		}
+		if task.Status == "completed" {
+			break
+		}
+		if task.Status == "failed" {
+			t.Fatalf("start task failed: %s\noutput: %s", task.Error, task.Output)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("start task did not finish in time")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }

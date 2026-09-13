@@ -25,6 +25,7 @@ func TestWebsiteOperationRoutesRegistered(t *testing.T) {
 		http.MethodPost + " /api/v1/websites/{id}/benchmark":       false,
 		http.MethodPost + " /api/v1/websites/{id}/octane/enable":   false,
 		http.MethodPost + " /api/v1/websites/{id}/octane/reload":   false,
+		http.MethodPost + " /api/v1/websites/{id}/octane/start":    false,
 		http.MethodPost + " /api/v1/websites/{id}/octane/{action}": false,
 		http.MethodGet + " /api/v1/ssl":                            false,
 		http.MethodPost + " /api/v1/cron-jobs":                     false,

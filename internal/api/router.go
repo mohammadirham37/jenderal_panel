@@ -384,6 +384,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/octane/disable", websiteHandler.OctaneDisable)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/octane/start", websiteHandler.OctaneStart)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/octane/reload", websiteHandler.OctaneReload)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/octane/{action}", websiteHandler.OctaneAction)
