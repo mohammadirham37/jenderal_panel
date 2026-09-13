@@ -606,7 +606,7 @@ import { language, translate } from '$lib/stores/language';
 									{translate($language, 'wl.manage')}
 								</a>
 								{#if website.status === 'active' && website.framework === 'laravel' && website.setup_mode === 'auto-install'}
-									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>{translate($language, 'wl.repair')}</button>
+									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>{translate($language, 'wl.repair')}</button>
 								{/if}
 								{#if website.status === 'failed'}
 									<button onclick={() => retryWebsite(website.id)} class="cursor-pointer rounded-md border border-yellow-600/50 bg-yellow-600/20 px-2.5 py-1.5 text-xs font-medium text-yellow-300 transition hover:bg-yellow-600/30">
@@ -614,7 +614,7 @@ import { language, translate } from '$lib/stores/language';
 									</button>
 								{/if}
 								{#if website.status === 'active'}
-									<button onclick={() => suspendWebsite(website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600">
+									<button onclick={() => suspendWebsite(website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600">
 										{translate($language, 'wl.suspend')}
 									</button>
 								{/if}
