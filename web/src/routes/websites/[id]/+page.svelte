@@ -79,7 +79,7 @@ import { toast } from '$lib/stores/toast';
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'App', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'App', 'Benchmark', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
 	// Display labels are translated; the values in `allTabs` stay English (used in URLs and logic).
 	const tabKeys: Record<Tab, string> = {
@@ -89,6 +89,7 @@ import { toast } from '$lib/stores/toast';
 		Commands: 'wd.tab.commands',
 		'PHP Settings': 'wd.tab.php_settings',
 		App: 'wd.tab.app',
+		Benchmark: 'wd.tab.benchmark',
 		'WP Toolkit': 'wd.tab.wp_toolkit',
 		'Cron Jobs': 'wd.tab.cron',
 		Files: 'wd.tab.files',
@@ -162,6 +163,9 @@ import { toast } from '$lib/stores/toast';
 		workers: number;
 		unit: string;
 		frankenphp_version: string;
+		state?: string;
+		sub_state?: string;
+		recent_logs?: string[];
 	}
 	let octane = $state<OctaneStatus | null>(null);
 	let octaneLoading = $state(false);
@@ -170,6 +174,68 @@ import { toast } from '$lib/stores/toast';
 	let octaneWorkersChoice = $state('4');
 	let octaneInitialized = $state(false);
 	let canManageServices = $derived(hasPermission($permissions, 'services.manage'));
+
+	// ─── Benchmark ────────────────────────────────────────────────────
+	interface BenchmarkLatency {
+		avg: number; min: number; p50: number; p90: number; p95: number; p99: number; max: number;
+	}
+	interface BenchmarkResult {
+		target: string;
+		duration_seconds: number;
+		total_requests: number;
+		ok_requests: number;
+		failed_requests: number;
+		requests_per_second: number;
+		status_counts: Record<string, number>;
+		latency_ms: BenchmarkLatency;
+		errors?: Record<string, number>;
+	}
+	const RESULT_MARKER = '##RESULT_JSON## ';
+	let benchmarkTaskId = $state('');
+	let benchmarkStarting = $state(false);
+	let benchmarkResult = $state<BenchmarkResult | null>(null);
+	let benchmarkDuration = $state(10);
+	let benchmarkConcurrency = $state(10);
+
+	async function startBenchmark() {
+		if (!website || benchmarkStarting || benchmarkTaskId) return;
+		benchmarkStarting = true;
+		benchmarkResult = null;
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/benchmark`, {
+				duration_seconds: benchmarkDuration,
+				concurrency: benchmarkConcurrency,
+				path: '/'
+			});
+			benchmarkTaskId = result.task_id || '';
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.bm.start_failed'));
+		} finally {
+			benchmarkStarting = false;
+		}
+	}
+
+	async function loadBenchmarkResult() {
+		if (!benchmarkTaskId) return;
+		try {
+			const task = await api.get<{ status: string; output: string }>(`/api/v1/tasks/${benchmarkTaskId}`);
+			if (task.status === 'completed' && task.output) {
+				const marker = task.output.indexOf(RESULT_MARKER);
+				if (marker !== -1) {
+					benchmarkResult = JSON.parse(task.output.slice(marker + RESULT_MARKER.length));
+				}
+			}
+		} catch {
+			// Task not fetched this round; TaskProgress keeps showing state.
+		}
+	}
+
+	$effect(() => {
+		if (activeTab === 'Benchmark' && benchmarkTaskId) {
+			void loadBenchmarkResult();
+		}
+	});
+
 
 	async function loadOctaneStatus() {
 		if (!website) return;
@@ -1324,14 +1390,21 @@ import { toast } from '$lib/stores/toast';
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 							<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 								<h3 class="text-lg font-semibold text-white">Laravel Octane (FrankenPHP)</h3>
-								{#if octane?.enabled}
-									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium {octane.running ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'}">
-										{octane.running ? translate($language, 'wd.running') : translate($language, 'wd.stopped')}
-									</span>
-								{:else}
-									<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400">{translate($language, 'wd.disabled')}</span>
-								{/if}
+							{#if octane?.enabled}
+								<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium {octane.running ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'}">
+									{octane.running ? translate($language, 'wd.running') : translate($language, 'wd.stopped')}{#if !octane.running && octane.state} · {octane.state}/{octane.sub_state}{/if}
+								</span>
+							{:else}
+								<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400">{translate($language, 'wd.disabled')}</span>
+							{/if}
+						</div>
+
+						{#if octane?.enabled && !octane.running && octane.recent_logs?.length}
+							<div class="mb-4 rounded-lg border border-red-700/60 bg-red-950/40 p-3">
+								<p class="mb-1 text-xs font-semibold uppercase tracking-wider text-red-300">{translate($language, 'wd.octane.unit_logs')}</p>
+								<pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-red-200">{octane.recent_logs.join('\n')}</pre>
 							</div>
+						{/if}
 
 							{#if octaneLoading}
 								<div class="text-gray-400 text-sm">{translate($language, 'wd.octane.loading')}</div>
@@ -1877,6 +1950,115 @@ import { toast } from '$lib/stores/toast';
 							setTimeout(() => window.location.reload(), 800);
 						}}
 					/>
+				</div>
+
+			<!-- ============================================================ -->
+			<!-- BENCHMARK TAB                                                 -->
+			<!-- ============================================================ -->
+			{:else if activeTab === 'Benchmark'}
+				<div class="space-y-6">
+					<section class="rounded-xl border border-gray-700 bg-gray-800 p-5 space-y-4">
+						<div>
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.bm.title')}</h3>
+							<p class="mt-1 text-sm text-gray-400">{translate($language, 'wd.bm.subtitle')}</p>
+						</div>
+						<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+							<div>
+								<label for="bm-duration" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wd.bm.duration')}</label>
+								<select id="bm-duration" bind:value={benchmarkDuration} class="w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-white">
+									<option value={5}>5</option>
+									<option value={10}>10</option>
+									<option value={30}>30</option>
+									<option value={60}>60</option>
+								</select>
+							</div>
+							<div>
+								<label for="bm-concurrency" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wd.bm.concurrency')}</label>
+								<select id="bm-concurrency" bind:value={benchmarkConcurrency} class="w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-white">
+									<option value={5}>5</option>
+									<option value={10}>10</option>
+									<option value={25}>25</option>
+									<option value={50}>50</option>
+								</select>
+							</div>
+							<div class="flex items-end">
+								<button
+									onclick={startBenchmark}
+									disabled={benchmarkStarting || !!benchmarkTaskId}
+									class="w-full cursor-pointer rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+								>
+									{benchmarkStarting ? translate($language, 'wd.bm.starting') : translate($language, 'wd.bm.run')}
+								</button>
+							</div>
+						</div>
+						<p class="text-xs text-gray-500">{translate($language, 'wd.bm.note')}</p>
+					</section>
+
+					{#if benchmarkTaskId}
+						<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+							<h3 class="mb-3 text-lg font-semibold text-white">{translate($language, 'wd.bm.progress')}</h3>
+							<TaskProgress bind:taskId={benchmarkTaskId} onComplete={() => { void loadBenchmarkResult(); }} />
+						</section>
+					{/if}
+
+					{#if benchmarkResult}
+						<section class="space-y-4">
+							<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+								<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+									<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'wd.bm.rps')}</p>
+									<p class="mt-1 text-xl font-bold text-white">{benchmarkResult.requests_per_second.toFixed(0)}</p>
+								</div>
+								<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+									<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'wd.bm.total')}</p>
+									<p class="mt-1 text-xl font-bold text-white">{benchmarkResult.total_requests}</p>
+								</div>
+								<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+									<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'wd.bm.ok')}</p>
+									<p class="mt-1 text-xl font-bold text-green-400">{benchmarkResult.ok_requests}</p>
+								</div>
+								<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+									<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'wd.bm.failed')}</p>
+									<p class="mt-1 text-xl font-bold {benchmarkResult.failed_requests > 0 ? 'text-red-400' : 'text-white'}">{benchmarkResult.failed_requests}</p>
+								</div>
+							</div>
+
+							<div class="overflow-x-auto rounded-xl border border-gray-700">
+								<table class="w-full text-left text-sm">
+									<thead class="bg-gray-700/40 text-xs uppercase tracking-wider text-gray-400">
+										<tr>
+											<th class="px-4 py-2.5">{translate($language, 'wd.bm.avg')}</th>
+											<th class="px-4 py-2.5">{translate($language, 'wd.bm.min')}</th>
+											<th class="px-4 py-2.5">p50</th>
+											<th class="px-4 py-2.5">p90</th>
+											<th class="px-4 py-2.5">p95</th>
+											<th class="px-4 py-2.5">p99</th>
+											<th class="px-4 py-2.5">{translate($language, 'wd.bm.max')}</th>
+										</tr>
+									</thead>
+									<tbody>
+										<tr>
+											<td class="px-4 py-2.5 text-white">{benchmarkResult.latency_ms.avg.toFixed(1)}</td>
+											<td class="px-4 py-2.5 text-gray-300">{benchmarkResult.latency_ms.min.toFixed(1)}</td>
+											<td class="px-4 py-2.5 text-gray-300">{benchmarkResult.latency_ms.p50.toFixed(1)}</td>
+											<td class="px-4 py-2.5 text-gray-300">{benchmarkResult.latency_ms.p90.toFixed(1)}</td>
+											<td class="px-4 py-2.5 text-gray-300">{benchmarkResult.latency_ms.p95.toFixed(1)}</td>
+											<td class="px-4 py-2.5 text-gray-300">{benchmarkResult.latency_ms.p99.toFixed(1)}</td>
+											<td class="px-4 py-2.5 text-gray-300">{benchmarkResult.latency_ms.max.toFixed(1)}</td>
+										</tr>
+									</tbody>
+								</table>
+							</div>
+
+							<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+								<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'wd.bm.statuses')}</p>
+								<div class="mt-2 flex flex-wrap gap-2">
+									{#each Object.entries(benchmarkResult.status_counts) as [status, count]}
+										<span class="rounded-full bg-gray-700/60 px-2.5 py-0.5 text-xs text-gray-200">{status}: {count}</span>
+									{/each}
+								</div>
+							</div>
+						</section>
+					{/if}
 				</div>
 
 			<!-- ============================================================ -->

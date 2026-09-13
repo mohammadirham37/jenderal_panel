@@ -207,3 +207,33 @@ func presetsContain(presets []CommandPreset, command string) bool {
 	}
 	return false
 }
+
+func TestOctaneUnitStateAndLogsParsing(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "systemctl" && args[0] == "show" {
+				return &executor.Result{ExitCode: 0, Stdout: "failed\nauto-restart\n"}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "journalctl" {
+				return &executor.Result{ExitCode: 0, Stdout: "line-one\nline-two\nline-three\n"}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	state, sub := svc.octaneUnitState(context.Background(), "jenderal-octane-x.service")
+	if state != "failed" || sub != "auto-restart" {
+		t.Fatalf("state = %q/%q, want failed/auto-restart", state, sub)
+	}
+
+	logs := svc.octaneUnitLogs(context.Background(), "jenderal-octane-x.service", 15)
+	if len(logs) != 3 || logs[0] != "line-one" || logs[2] != "line-three" {
+		t.Fatalf("logs = %#v", logs)
+	}
+}

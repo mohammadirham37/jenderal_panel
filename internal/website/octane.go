@@ -50,13 +50,16 @@ var octaneUnitNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // OctaneStatus is the API view of a website's Octane runtime.
 type OctaneStatus struct {
-	Enabled           bool   `json:"enabled"`
-	Running           bool   `json:"running"`
-	Port              int    `json:"port"`
-	AdminPort         int    `json:"admin_port"`
-	Workers           int    `json:"workers"`
-	Unit              string `json:"unit"`
-	FrankenPHPVersion string `json:"frankenphp_version"`
+	Enabled           bool     `json:"enabled"`
+	Running           bool     `json:"running"`
+	Port              int      `json:"port"`
+	AdminPort         int      `json:"admin_port"`
+	Workers           int      `json:"workers"`
+	Unit              string   `json:"unit"`
+	FrankenPHPVersion string   `json:"frankenphp_version"`
+	State             string   `json:"state,omitempty"`
+	SubState          string   `json:"sub_state,omitempty"`
+	RecentLogs        []string `json:"recent_logs,omitempty"`
 }
 
 // octaneUnitName returns the systemd unit name for a website ID.
@@ -405,6 +408,16 @@ func (s *Service) OctaneAction(ctx context.Context, id, action string) error {
 	if err := s.runSudoOK(ctx, "systemctl", action, octaneUnitName(w.ID)); err != nil {
 		return fmt.Errorf("%s octane: %w", action, err)
 	}
+	if action == "start" || action == "restart" {
+		// Give the worker a moment, then verify it survived: a fast crash
+		// (port already in use, missing worker script, PHP error) would
+		// otherwise look like a successful start.
+		time.Sleep(1500 * time.Millisecond)
+		result, err := s.exec.Run(ctx, "systemctl", "is-active", "--quiet", octaneUnitName(w.ID))
+		if err != nil || result == nil || result.ExitCode != 0 {
+			return fmt.Errorf("%s octane: unit did not stay active — check the Octane card for recent unit logs", action)
+		}
+	}
 	return nil
 }
 
@@ -482,6 +495,13 @@ func (s *Service) OctaneStatus(ctx context.Context, id string) (OctaneStatus, er
 		status.Unit = octaneUnitName(w.ID)
 		result, err := s.exec.Run(ctx, "systemctl", "is-active", "--quiet", status.Unit)
 		status.Running = err == nil && result != nil && result.ExitCode == 0
+		status.State, status.SubState = s.octaneUnitState(ctx, status.Unit)
+		// When the unit is not active, the journal says why (crash, port in
+		// use, missing worker script, …) — surface it instead of a bare
+		// "stopped" badge.
+		if !status.Running {
+			status.RecentLogs = s.octaneUnitLogs(ctx, status.Unit, 15)
+		}
 	}
 	if version, ok := frankenphpInstalled(ctx, s.exec); ok {
 		status.FrankenPHPVersion = version

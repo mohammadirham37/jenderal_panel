@@ -289,7 +289,29 @@ const en = {
 	'wd.domains.added': 'Domain "{name}" added.',
 	'wd.domains.add_failed': 'Failed to add domain',
 	'wd.domains.removed': 'Domain removed.',
-	'wd.domains.remove_failed': 'Failed to remove domain'
+	'wd.domains.remove_failed': 'Failed to remove domain',
+
+	// Benchmark tab
+	'wd.tab.benchmark': 'Benchmark',
+	'wd.bm.title': 'Website benchmark',
+	'wd.bm.subtitle': 'Load test through the local Nginx chain (Host header + TLS SNI) — measures the real serving path, including Octane/FrankenPHP when enabled.',
+	'wd.bm.duration': 'Duration (seconds)',
+	'wd.bm.concurrency': 'Concurrent clients',
+	'wd.bm.run': 'Run benchmark',
+	'wd.bm.starting': 'Starting…',
+	'wd.bm.start_failed': 'Failed to start benchmark',
+	'wd.bm.progress': 'Progress',
+	'wd.bm.rps': 'Requests/sec',
+	'wd.bm.total': 'Total requests',
+	'wd.bm.ok': 'Successful',
+	'wd.bm.failed': 'Failed',
+	'wd.bm.latency': 'Latency (ms)',
+	'wd.bm.avg': 'Avg',
+	'wd.bm.min': 'Min',
+	'wd.bm.max': 'Max',
+	'wd.bm.statuses': 'HTTP status breakdown',
+	'wd.bm.note': 'Tip: run once with Octane enabled and once with it disabled, then compare requests/sec — a large difference confirms your traffic is served by Octane/FrankenPHP.',
+	'wd.octane.unit_logs': 'Recent unit logs (why it stopped)',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -300,6 +322,7 @@ const id: Record<keyof typeof en, string> = {
 	'wd.tab.commands': 'Perintah',
 	'wd.tab.php_settings': 'Pengaturan PHP',
 	'wd.tab.app': 'App',
+	'wd.tab.benchmark': 'Benchmark',
 	'wd.tab.wp_toolkit': 'WP Toolkit',
 	'wd.tab.cron': 'Cron Job',
 	'wd.tab.files': 'File',
@@ -579,7 +602,28 @@ const id: Record<keyof typeof en, string> = {
 	'wd.domains.added': 'Domain "{name}" ditambahkan.',
 	'wd.domains.add_failed': 'Gagal menambahkan domain',
 	'wd.domains.removed': 'Domain dihapus.',
-	'wd.domains.remove_failed': 'Gagal menghapus domain'
+	'wd.domains.remove_failed': 'Gagal menghapus domain',
+	// Benchmark tab
+	'wd.bm.title': 'Benchmark situs web',
+	'wd.bm.subtitle': 'Uji beban melalui rantai Nginx lokal (Host header + TLS SNI) — mengukur jalur penyajian yang sebenarnya, termasuk Octane/FrankenPHP saat aktif.',
+	'wd.bm.duration': 'Durasi (detik)',
+	'wd.bm.concurrency': 'Klien paralel',
+	'wd.bm.run': 'Jalankan benchmark',
+	'wd.bm.starting': 'Memulai…',
+	'wd.bm.start_failed': 'Gagal memulai benchmark',
+	'wd.bm.progress': 'Progres',
+	'wd.bm.rps': 'Permintaan/detik',
+	'wd.bm.total': 'Total permintaan',
+	'wd.bm.ok': 'Berhasil',
+	'wd.bm.failed': 'Gagal',
+	'wd.bm.latency': 'Latensi (ms)',
+	'wd.bm.avg': 'Rata-rata',
+	'wd.bm.min': 'Min',
+	'wd.bm.max': 'Maks',
+	'wd.bm.statuses': 'Rincian status HTTP',
+	'wd.bm.note': 'Tips: jalankan sekali dengan Octane aktif dan sekali setelah dinonaktifkan, lalu bandingkan permintaan/detik — selisih yang besar menandakan trafik Anda benar-benar dilayani Octane/FrankenPHP.',
+	'wd.octane.unit_logs': 'Log unit terakhir (alasan berhenti)',
 };
+
 
 export const dict = { en, id };
