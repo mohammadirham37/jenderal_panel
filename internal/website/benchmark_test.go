@@ -125,3 +125,18 @@ func TestBenchmarkWebsiteRunsAndWritesResultJSON(t *testing.T) {
 		t.Fatalf("status counts = %#v", res.StatusCounts)
 	}
 }
+
+func TestValidateBenchmarkPath(t *testing.T) {
+	valid := []string{"/", "/login", "/api/items?page=1&sort=desc", "/benchmark/simple", "/a%20b"}
+	for _, p := range valid {
+		if err := validateBenchmarkPath(p); err != nil {
+			t.Errorf("validateBenchmarkPath(%q) = %v, want nil", p, err)
+		}
+	}
+	invalid := []string{"", strings.Repeat("/a", 300), "/a b", "/x\r\nHost: evil", "/a<b>"}
+	for _, p := range invalid {
+		if err := validateBenchmarkPath(p); err == nil {
+			t.Errorf("validateBenchmarkPath(%q) = nil, want error", p)
+		}
+	}
+}

@@ -83,10 +83,28 @@ func normalizeBenchmarkOptions(opts BenchmarkOptions) BenchmarkOptions {
 	return opts
 }
 
+// validateBenchmarkPath rejects paths that could corrupt the request line.
+// The target is always this site via the local Nginx listener; the user may
+// pick any path (and query string) on it.
+func validateBenchmarkPath(path string) error {
+	if path == "" {
+		return model.NewValidationError("benchmark path is required")
+	}
+	if len(path) > 512 {
+		return model.NewValidationError("benchmark path is too long (max 512 characters)")
+	}
+	for _, r := range path {
+		if r <= 0x20 || r == 0x7f || r == '"' || r == '\\' || r == '<' || r == '>' {
+			return model.NewValidationError("benchmark path contains invalid characters")
+		}
+	}
+	return nil
+}
+
 // benchmarkClient builds an HTTP client pinned to the local Nginx listener
 // with the site's Host header and TLS SNI, so traffic never leaves the box
 // and DNS/CDN do not skew the numbers.
-func benchmarkClient(w model.Website) (*http.Client, *http.Request, error) {
+func benchmarkClient(w model.Website, path string) (*http.Client, *http.Request, error) {
 	client := &http.Client{
 		Timeout: benchmarkRequestTimeout,
 		Transport: &http.Transport{
@@ -109,13 +127,13 @@ func benchmarkClient(w model.Website) (*http.Client, *http.Request, error) {
 			ServerName: w.Domain,
 			MinVersion: tls.VersionTLS12,
 		}
-		rawURL = "https://" + w.Domain
+		rawURL = "https://" + w.Domain + path
 	} else {
 		dialer := &net.Dialer{Timeout: 5 * time.Second}
 		client.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
 			return dialer.DialContext(ctx, network, "127.0.0.1:80")
 		}
-		rawURL = "http://" + w.Domain
+		rawURL = "http://" + w.Domain + path
 	}
 
 	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
@@ -293,7 +311,10 @@ func (s *Service) BenchmarkWebsite(ctx context.Context, id string, opts Benchmar
 		return "", err
 	}
 	opts = normalizeBenchmarkOptions(opts)
-	client, template, err := benchmarkClient(w)
+	if err := validateBenchmarkPath(opts.Path); err != nil {
+		return "", err
+	}
+	client, template, err := benchmarkClient(w, opts.Path)
 	if err != nil {
 		return "", fmt.Errorf("prepare benchmark: %w", err)
 	}

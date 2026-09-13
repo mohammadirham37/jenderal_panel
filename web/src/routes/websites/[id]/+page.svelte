@@ -197,6 +197,7 @@ import { toast } from '$lib/stores/toast';
 	let benchmarkResult = $state<BenchmarkResult | null>(null);
 	let benchmarkDuration = $state(10);
 	let benchmarkConcurrency = $state(10);
+	let benchmarkPath = $state('/');
 	let showBenchmarkHelp = $state(false);
 
 	async function startBenchmark() {
@@ -207,7 +208,7 @@ import { toast } from '$lib/stores/toast';
 			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/benchmark`, {
 				duration_seconds: benchmarkDuration,
 				concurrency: benchmarkConcurrency,
-				path: '/'
+				path: benchmarkPath.trim() || '/'
 			});
 			benchmarkTaskId = result.task_id || '';
 		} catch (err) {
@@ -1996,7 +1997,7 @@ import { toast } from '$lib/stores/toast';
 								{translate($language, 'wd.bm.help.open')}
 							</button>
 						</div>
-						<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
 							<div>
 								<label for="bm-duration" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wd.bm.duration')}</label>
 								<select id="bm-duration" bind:value={benchmarkDuration} class="w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-white">
@@ -2014,6 +2015,16 @@ import { toast } from '$lib/stores/toast';
 									<option value={25}>25</option>
 									<option value={50}>50</option>
 								</select>
+							</div>
+							<div>
+								<label for="bm-path" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wd.bm.path')}</label>
+								<input
+									id="bm-path"
+									type="text"
+									bind:value={benchmarkPath}
+									placeholder={translate($language, 'wd.bm.path_example')}
+									class="w-full rounded border border-gray-600 bg-gray-700 px-3 py-2 font-mono text-sm text-white placeholder:text-gray-500"
+								/>
 							</div>
 							<div class="flex items-end">
 								<button
