@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -316,8 +317,20 @@ func (s *Service) BenchmarkWebsite(ctx context.Context, id string, opts Benchmar
 			write(fmt.Sprintf("Load: %d concurrent clients for %ds", opts.Concurrency, opts.DurationSeconds))
 
 			res := runBenchmark(taskCtx, client, template, opts.Concurrency, time.Duration(opts.DurationSeconds)*time.Second, benchmarkWarmup, write)
+			res.Target = scheme + "://" + w.Domain + opts.Path
 
 			write(benchmarkSummary(res))
+			// A redirect target measures the redirect only, not a rendered
+			// page — say so, or the numbers get compared unfairly.
+			var redirects int64
+			for status, count := range res.StatusCounts {
+				if strings.HasPrefix(status, "3") {
+					redirects += count
+				}
+			}
+			if res.TotalRequests > 0 && redirects*2 >= res.TotalRequests {
+				write("NOTE: most responses were redirects (3xx). You are benchmarking the redirect, not a rendered page — point the benchmark at a URL that returns 200 for a fair comparison.")
+			}
 			if payload, err := json.Marshal(res); err == nil {
 				write("##RESULT_JSON## " + string(payload))
 			}
