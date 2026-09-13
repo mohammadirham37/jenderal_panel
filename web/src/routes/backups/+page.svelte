@@ -447,7 +447,7 @@ import { language, translate } from '$lib/stores/language';
 			<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
 				<div>
 					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-type">{translate($language, 'bk.labelType')}</label>
-					<select id="sched-type" bind:value={scheduleType} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
+					<select id="sched-type" bind:value={scheduleType} onchange={() => (scheduleTarget = '')} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
 						{#each backupTypes as t}<option value={t}>{t}</option>{/each}
 					</select>
 				</div>
@@ -512,7 +512,7 @@ import { language, translate } from '$lib/stores/language';
 			<div class="flex flex-wrap items-end gap-3">
 				<div>
 					<label for="backup-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.createType')}</label>
-					<select id="backup-type" bind:value={createType} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
+					<select id="backup-type" bind:value={createType} onchange={() => (createTarget = '')} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
 						{#each backupTypes as t}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
 					</select>
 				</div>
@@ -521,13 +521,18 @@ import { language, translate } from '$lib/stores/language';
 						<label for="backup-target" class="mb-1 block text-sm text-gray-400">
 							{createType === 'website' ? translate($language, 'bk.createDomain') : translate($language, 'bk.createDatabase')}
 						</label>
-						<input
+						<select
 							id="backup-target"
-							type="text"
 							bind:value={createTarget}
-							placeholder={createType === 'website' ? 'example.com' : 'my_database'}
-							class="w-56 rounded border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200"
-						/>
+							class="w-56 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+						>
+							<option value="" disabled>{translate($language, 'bk.selectPlaceholder')}</option>
+							{#if createType === 'website'}
+								{#each websites as w (w.id)}<option value={w.domain}>{w.domain}</option>{/each}
+							{:else}
+								{#each databases as d (d.id)}<option value={d.name}>{d.name}</option>{/each}
+							{/if}
+						</select>
 					</div>
 				{/if}
 				<button
