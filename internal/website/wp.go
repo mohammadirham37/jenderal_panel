@@ -131,11 +131,12 @@ func (s *Service) WpRunTask(ctx context.Context, websiteID, action string) (stri
 		return "", err
 	}
 
-	if s.tasks == nil {
+	tr := s.taskRunner()
+	if tr == nil {
 		return "", fmt.Errorf("task runner not available")
 	}
 
 	full := append([]string{wpCtx.php, wpCtx.phar, "--path=" + wpCtx.path}, wpArgs...)
 	taskArgs := append([]string{"-u", w.WebUser, "--"}, full...)
-	return s.tasks.Run("WP "+action+" — "+w.Domain, "sudo", taskArgs...), nil
+	return tr.Run("WP "+action+" — "+w.Domain, "sudo", taskArgs...), nil
 }

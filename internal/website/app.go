@@ -346,11 +346,12 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 	if strings.TrimSpace(w.AppBuildCommand) == "" && w.AppType != "python" {
 		return "", model.NewValidationError("no build command configured")
 	}
-	if s.tasks == nil {
+	tr := s.taskRunner()
+	if tr == nil {
 		return "", fmt.Errorf("task runner not available")
 	}
 
-	return s.tasks.RunFuncWithOptions(
+	return tr.RunFuncWithOptions(
 		taskrunner.Options{Name: "App build — " + w.Domain, Module: "website", Timeout: 30 * time.Minute},
 		func(taskCtx context.Context, write func(string)) error {
 			args, buildErr := buildAppBuildArgv(w.AppRuntime, w.WebUser, w.DocumentRoot, w.AppBuildCommand)
