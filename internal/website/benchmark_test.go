@@ -50,7 +50,7 @@ func TestRunBenchmarkAgainstLocalServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	res := runBenchmark(ctx, client, req, 4, 300*time.Millisecond, func(string) {})
+	res := runBenchmark(ctx, client, req, 4, 300*time.Millisecond, 0, func(string) {})
 
 	if res.TotalRequests == 0 {
 		t.Fatal("no requests were recorded")

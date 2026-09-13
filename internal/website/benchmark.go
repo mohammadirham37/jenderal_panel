@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"sort"
@@ -24,6 +25,10 @@ const (
 	benchmarkMaxConcurrency     = 64
 	benchmarkRequestTimeout     = 15 * time.Second
 	benchmarkMaxErrorSamples    = 5
+	// Warmup is unscored: it opens the TLS connections and lets OPcache and
+	// the app boot caches settle, so measured windows are comparable.
+	benchmarkWarmup             = time.Second
+	benchmarkMaxBodyDrain       = 1 << 20
 )
 
 type BenchmarkOptions struct {
@@ -120,17 +125,25 @@ func benchmarkClient(w model.Website) (*http.Client, *http.Request, error) {
 }
 
 // runBenchmark drives concurrent GET requests until the deadline expires or
-// ctx is canceled, and aggregates status codes and latencies.
-func runBenchmark(ctx context.Context, client *http.Client, template *http.Request, concurrency int, duration time.Duration, progress func(string)) *benchmarkResult {
+// ctx is canceled, and aggregates status codes and latencies. An unscored
+// warmup window runs first so measured numbers start from a steady state.
+func runBenchmark(ctx context.Context, client *http.Client, template *http.Request, concurrency int, duration, warmup time.Duration, progress func(string)) *benchmarkResult {
 	result := &benchmarkResult{
 		StatusCounts: make(map[string]int64),
 		Errors:       make(map[string]int64),
 	}
 	var mu sync.Mutex
 	latencies := []float64{}
-	start := time.Now()
-	deadline := start.Add(duration)
-	nextProgress := start.Add(2 * time.Second)
+	measureStart := time.Now().Add(warmup)
+	deadline := measureStart.Add(duration)
+	nextProgress := measureStart.Add(2 * time.Second)
+	drain := func(resp *http.Response) {
+		// Drain the body (bounded) so the connection returns to the
+		// keep-alive pool — an undrained body forces a fresh TCP+TLS
+		// handshake for the next request and skews the numbers.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, benchmarkMaxBodyDrain))
+		resp.Body.Close()
+	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
@@ -154,6 +167,9 @@ func runBenchmark(ctx context.Context, client *http.Client, template *http.Reque
 				elapsed := float64(time.Since(reqStart).Microseconds()) / 1000.0
 				if err != nil {
 					cancel()
+					if time.Now().Before(measureStart) {
+						continue // warmup: unscored
+					}
 					mu.Lock()
 					result.FailedRequests++
 					result.TotalRequests++
@@ -166,16 +182,12 @@ func runBenchmark(ctx context.Context, client *http.Client, template *http.Reque
 					mu.Unlock()
 					continue
 				}
-				// Drain a bounded amount of the body so keep-alive is reused.
-				buf := make([]byte, 32*1024)
-				for n := 0; n < 2; n++ {
-					if _, err := resp.Body.Read(buf); err != nil {
-						break
-					}
-				}
-				resp.Body.Close()
+				drain(resp)
 				cancel()
 
+				if time.Now().Before(measureStart) {
+					continue // warmup: unscored
+				}
 				mu.Lock()
 				result.TotalRequests++
 				if resp.StatusCode < 400 {
@@ -190,6 +202,14 @@ func runBenchmark(ctx context.Context, client *http.Client, template *http.Reque
 				mu.Unlock()
 			}
 		}()
+	}
+
+	if warmup > 0 {
+		progress("Warming up connections and caches…")
+		select {
+		case <-ctx.Done():
+		case <-time.After(warmup):
+		}
 	}
 
 	// Emit progress lines while the workers run. Uses a local copy so the
@@ -208,13 +228,13 @@ func runBenchmark(ctx context.Context, client *http.Client, template *http.Reque
 			break
 		}
 		mu.Lock()
-		line := fmt.Sprintf("… %d requests, ~%.0f req/s", result.TotalRequests, float64(result.TotalRequests)/time.Since(start).Seconds())
+		line := fmt.Sprintf("… %d requests, ~%.0f req/s", result.TotalRequests, float64(result.TotalRequests)/time.Since(measureStart).Seconds())
 		mu.Unlock()
 		progress(line)
 	}
 	wg.Wait()
 
-	elapsed := time.Since(start).Seconds()
+	elapsed := time.Since(measureStart).Seconds()
 	mu.Lock()
 	defer mu.Unlock()
 	result.DurationSeconds = elapsed
@@ -295,7 +315,7 @@ func (s *Service) BenchmarkWebsite(ctx context.Context, id string, opts Benchmar
 			write(fmt.Sprintf("Target: %s://%s%s (local Nginx, Host: %s)", scheme, w.Domain, opts.Path, w.Domain))
 			write(fmt.Sprintf("Load: %d concurrent clients for %ds", opts.Concurrency, opts.DurationSeconds))
 
-			res := runBenchmark(taskCtx, client, template, opts.Concurrency, time.Duration(opts.DurationSeconds)*time.Second, write)
+			res := runBenchmark(taskCtx, client, template, opts.Concurrency, time.Duration(opts.DurationSeconds)*time.Second, benchmarkWarmup, write)
 
 			write(benchmarkSummary(res))
 			if payload, err := json.Marshal(res); err == nil {

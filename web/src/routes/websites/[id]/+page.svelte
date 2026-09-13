@@ -196,6 +196,7 @@ import { toast } from '$lib/stores/toast';
 	let benchmarkResult = $state<BenchmarkResult | null>(null);
 	let benchmarkDuration = $state(10);
 	let benchmarkConcurrency = $state(10);
+	let showBenchmarkHelp = $state(false);
 
 	async function startBenchmark() {
 		if (!website || benchmarkStarting || benchmarkTaskId) return;
@@ -1976,9 +1977,20 @@ import { toast } from '$lib/stores/toast';
 			{:else if activeTab === 'Benchmark'}
 				<div class="space-y-6">
 					<section class="rounded-xl border border-gray-700 bg-gray-800 p-5 space-y-4">
-						<div>
-							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.bm.title')}</h3>
-							<p class="mt-1 text-sm text-gray-400">{translate($language, 'wd.bm.subtitle')}</p>
+						<div class="flex flex-wrap items-start justify-between gap-2">
+							<div>
+								<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.bm.title')}</h3>
+								<p class="mt-1 text-sm text-gray-400">{translate($language, 'wd.bm.subtitle')}</p>
+							</div>
+							<button
+								onclick={() => (showBenchmarkHelp = true)}
+								class="flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg border border-gray-600 bg-gray-700/50 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:border-blue-400/30 hover:text-white"
+							>
+								<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+								</svg>
+								{translate($language, 'wd.bm.help.open')}
+							</button>
 						</div>
 						<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 							<div>
@@ -2076,6 +2088,65 @@ import { toast } from '$lib/stores/toast';
 								</div>
 							</div>
 						</section>
+					{/if}
+
+					{#if showBenchmarkHelp}
+						<div
+							class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+							role="dialog"
+							aria-modal="true"
+							tabindex="-1"
+							onclick={(e) => { if (e.target === e.currentTarget) showBenchmarkHelp = false; }}
+							onkeydown={(e) => { if (e.key === 'Escape' || e.key === 'Esc') { showBenchmarkHelp = false; } }}
+						>
+							<div class="max-h-[85vh] w-full max-w-2xl space-y-4 overflow-y-auto rounded-xl border border-gray-700 bg-gray-800 p-6">
+								<div class="flex items-start justify-between gap-3">
+									<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.bm.help.title')}</h3>
+									<button
+										onclick={() => (showBenchmarkHelp = false)}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-white/5 hover:text-white"
+										aria-label={translate($language, 'wd.bm.help.close')}
+									>
+										<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+										</svg>
+									</button>
+								</div>
+
+								<div>
+									<h4 class="text-sm font-semibold text-blue-300">{translate($language, 'wd.bm.help.what')}</h4>
+									<p class="mt-1 text-sm leading-relaxed text-gray-300">{translate($language, 'wd.bm.help.what_text')}</p>
+								</div>
+
+								<div>
+									<h4 class="text-sm font-semibold text-blue-300">{translate($language, 'wd.bm.help.workflow')}</h4>
+									<ol class="mt-1 list-decimal space-y-1 pl-5 text-sm leading-relaxed text-gray-300">
+										<li>{translate($language, 'wd.bm.help.wf1')}</li>
+										<li>{translate($language, 'wd.bm.help.wf2')}</li>
+										<li>{translate($language, 'wd.bm.help.wf3')}</li>
+										<li>{translate($language, 'wd.bm.help.wf4')}</li>
+									</ol>
+								</div>
+
+								<div>
+									<h4 class="text-sm font-semibold text-blue-300">{translate($language, 'wd.bm.help.reading')}</h4>
+									<p class="mt-1 text-sm leading-relaxed text-gray-300">{translate($language, 'wd.bm.help.reading_text')}</p>
+								</div>
+
+								<div>
+									<h4 class="text-sm font-semibold text-blue-300">{translate($language, 'wd.bm.help.caveat')}</h4>
+									<p class="mt-1 text-sm leading-relaxed text-gray-300">{translate($language, 'wd.bm.help.caveat_text')}</p>
+								</div>
+
+								<div>
+									<h4 class="text-sm font-semibold text-blue-300">{translate($language, 'wd.bm.help.tools')}</h4>
+									<p class="mt-1 text-sm leading-relaxed text-gray-300">{translate($language, 'wd.bm.help.tools_text')}</p>
+									<pre class="mt-2 overflow-x-auto rounded-lg bg-gray-900/70 p-3 font-mono text-xs text-gray-300">wrk -t2 -c50 -d15s --latency https://{website?.domain ?? 'domain-anda.com'}/
+wrk -t2 -c50 -d15s http://127.0.0.1:{octane?.port ?? 8100}/   <span class="text-gray-500"># {translate($language, 'wd.bm.help.app_only')}</span>
+ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
+								</div>
+							</div>
+						</div>
 					{/if}
 				</div>
 
