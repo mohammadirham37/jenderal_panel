@@ -158,3 +158,20 @@ System clock synchronized: yes
 		t.Errorf("parseTimezone() = %q, want %q", got, "Asia/Jakarta")
 	}
 }
+
+func TestParseCPUCores(t *testing.T) {
+	lscpu := `Architecture:             x86_64
+CPU(s):                   2
+  Vendor ID:               GenuineIntel
+Model name:               Intel(R) Xeon(R) CPU E5-2680 v4
+Thread(s) per core:       1`
+	if got := parseCPUCores(lscpu); got != 2 {
+		t.Fatalf("parseCPUCores = %d, want 2", got)
+	}
+	if got := parseCPUCores("CPU(s): 16\nModel name: test"); got != 16 {
+		t.Fatalf("parseCPUCores = %d, want 16", got)
+	}
+	if got := parseCPUCores("no cpu info here"); got != 0 {
+		t.Fatalf("parseCPUCores = %d, want 0 for missing data", got)
+	}
+}

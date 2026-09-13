@@ -51,6 +51,7 @@ func (i *Info) Get(ctx context.Context) (model.ServerInfo, error) {
 	cpuRes, err := i.exec.Run(ctx, "lscpu")
 	if err == nil {
 		info.CPU = parseCPUModel(cpuRes.Stdout)
+		info.CPUCores = parseCPUCores(cpuRes.Stdout)
 	}
 
 	// RAM info
@@ -147,6 +148,19 @@ func parseCPUModel(content string) string {
 		}
 	}
 	return ""
+}
+
+// parseCPUCores extracts the logical core count ("CPU(s):") from lscpu output.
+func parseCPUCores(content string) int {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "CPU(s):") {
+			var n int
+			if _, err := fmt.Sscanf(strings.TrimSpace(strings.TrimPrefix(line, "CPU(s):")), "%d", &n); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // parseRAMTotal extracts total RAM from free -h output.
