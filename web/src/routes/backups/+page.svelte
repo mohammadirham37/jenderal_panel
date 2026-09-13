@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
@@ -83,6 +83,11 @@ import { language, translate } from '$lib/stores/language';
 	let loadingSchedules = $state(true);
 	let scheduleError = $state('');
 
+	let showImportForm = $state(false);
+	let importFile = $state<File | null>(null);
+	let importType = $state('website');
+	let importTarget = $state('');
+	let importing = $state(false);
 	let showScheduleForm = $state(false);
 	let scheduleType = $state('website');
 	let scheduleTarget = $state('');
@@ -245,6 +250,40 @@ import { language, translate } from '$lib/stores/language';
 	}
 
 	// ── Actions ────────────────────────────────────────────────────
+	async function importBackup() {
+		if (importing || !importFile) return;
+		importing = true;
+		try {
+			const fd = new FormData();
+			fd.append('file', importFile);
+			fd.append('type', importType);
+			if (importTarget) fd.append('target', importTarget);
+			const res = await fetch('/api/v1/backups/import', {
+				method: 'POST',
+				headers: { 'X-CSRF-Token': getCSRFToken() },
+				credentials: 'include',
+				body: fd
+			});
+			if (!res.ok) {
+				let msg = `HTTP ${res.status}`;
+				try {
+					const j = await res.json();
+					if (j?.error?.message) msg = j.error.message;
+				} catch {}
+				throw new Error(msg);
+			}
+			flash(translate($language, 'bk.importDone'));
+			showImportForm = false;
+			importFile = null;
+			await loadBackups();
+			await loadStats();
+		} catch (err) {
+			flash(err instanceof Error ? err.message : translate($language, 'bk.importFailed'), true);
+		} finally {
+			importing = false;
+		}
+	}
+
 	async function createBackup() {
 		if (creatingBackup) return;
 		creatingBackup = true;
@@ -398,6 +437,13 @@ import { language, translate } from '$lib/stores/language';
 			</button>
 			<button
 				type="button"
+				onclick={() => (showImportForm = !showImportForm)}
+				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
+			>
+				{showImportForm ? translate($language, 'bk.importClose') : translate($language, 'bk.importBackup')}
+			</button>
+			<button
+				type="button"
 				onclick={() => (showScheduleForm = !showScheduleForm)}
 				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
 			>
@@ -509,6 +555,7 @@ import { language, translate } from '$lib/stores/language';
 	{#if activeTab === 'backups'}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 			<h3 class="mb-4 text-lg font-semibold text-white">{translate($language, 'bk.createTitle')}</h3>
+
 			<div class="flex flex-wrap items-end gap-3">
 				<div>
 					<label for="backup-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.createType')}</label>
@@ -545,6 +592,55 @@ import { language, translate } from '$lib/stores/language';
 				</button>
 			</div>
 		</div>
+
+		{#if showImportForm}
+		<div class="rounded-xl border border-blue-500/30 bg-blue-500/5 p-5">
+			<h3 class="mb-4 text-lg font-semibold text-white">{translate($language, 'bk.importTitle')}</h3>
+			<div class="flex flex-wrap items-end gap-3">
+				<div>
+					<label for="import-file" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.importFile')}</label>
+					<input
+						id="import-file"
+						type="file"
+						accept=".tar.gz,.tgz,.gz,.sql"
+						onchange={(e) => (importFile = e.currentTarget.files?.[0] ?? null)}
+						class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 file:mr-3 file:cursor-pointer file:rounded file:border-0 file:bg-gray-700 file:px-3 file:py-1.5 file:text-xs file:text-gray-200"
+					/>
+				</div>
+				<div>
+					<label for="import-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.importType')}</label>
+					<select id="import-type" bind:value={importType} onchange={() => (importTarget = '')} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
+						{#each backupTypes as t}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
+					</select>
+				</div>
+				{#if importType === 'website' || importType === 'database'}
+					<div>
+						<label for="import-target" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.labelTarget')}</label>
+						<select id="import-target" bind:value={importTarget} class="w-56 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
+							<option value="" disabled>{translate($language, 'bk.selectPlaceholder')}</option>
+							{#if importType === 'website'}
+								{#each websites as w (w.id)}<option value={w.domain}>{w.domain}</option>{/each}
+							{:else}
+								{#each databases as d (d.id)}<option value={d.name}>{d.name}</option>{/each}
+							{/if}
+						</select>
+					</div>
+				{/if}
+				<div class="flex items-end">
+					<button
+						type="button"
+						onclick={importBackup}
+						disabled={importing || !importFile || ((importType === 'website' || importType === 'database') && !importTarget)}
+						class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+					>
+						{importing ? translate($language, 'bk.importing') : translate($language, 'bk.importUpload')}
+					</button>
+				</div>
+			</div>
+			<p class="mt-2 text-xs text-gray-500">{translate($language, 'bk.importHint')}</p>
+		</div>
+		{/if}
+
 
 		<div class="rounded-xl border border-gray-700 bg-gray-800">
 			<!-- Filters -->

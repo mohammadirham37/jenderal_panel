@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	"github.com/go-chi/chi/v5"
@@ -262,4 +264,30 @@ func (h *Handler) DisableSchedule(w http.ResponseWriter, r *http.Request) {
 
 	h.logAction(r, "disable_backup_schedule", id, "disabled backup schedule")
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ImportBackup handles POST /api/backups/import — registers an uploaded
+// archive (a previously downloaded backup) as a completed manual backup.
+func (h *Handler) ImportBackup(w http.ResponseWriter, r *http.Request) {
+	const maxUpload = 20 << 30 // 20GB ceiling; imports stream to disk
+	r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		httputil.HandleError(w, model.NewValidationError("invalid multipart upload (file too large or malformed)"))
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		httputil.HandleError(w, model.NewValidationError("file field is required"))
+		return
+	}
+	defer file.Close()
+
+	b, size, err := h.svc.ImportBackup(r.Context(), callerFromContext(r),
+		r.FormValue("type"), r.FormValue("target"), hdr.Filename, file)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "backup_import", b.ID, fmt.Sprintf("imported %s backup %s (%d bytes)", b.Type, filepath.Base(b.Path), size))
+	httputil.JSON(w, http.StatusCreated, b)
 }

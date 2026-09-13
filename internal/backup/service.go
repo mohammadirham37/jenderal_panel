@@ -1,11 +1,13 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -1153,4 +1155,103 @@ func generatePath(localDir, backupType, target string) string {
 	default:
 		return filepath.Join(localDir, backupType, fmt.Sprintf("%s_%s.tar.gz", timestamp, safeName))
 	}
+}
+
+// ImportBackup registers an externally downloaded backup archive: the file
+// is streamed into the local backup directory and recorded as a completed
+// manual backup that restores like any other. Website/database imports
+// require a target so the restore path can map them.
+func (s *Service) ImportBackup(ctx context.Context, caller Caller, backupType, target, filename string, r io.Reader) (model.Backup, int64, error) {
+	switch backupType {
+	case "website", "database", "config", "full":
+	default:
+		return model.Backup{}, 0, model.NewValidationError("type must be website, database, config, or full")
+	}
+	if (backupType == "website" || backupType == "database") && strings.TrimSpace(target) == "" {
+		return model.Backup{}, 0, model.NewValidationError("target is required for website and database imports")
+	}
+	if err := s.authorizeTarget(ctx, caller, backupType, target); err != nil {
+		return model.Backup{}, 0, err
+	}
+
+	base := filepath.Base(strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/"))
+	base = strings.NewReplacer(" ", "_").Replace(base)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = "imported-backup.tar.gz"
+	}
+	if len(base) > 128 {
+		base = base[len(base)-128:]
+	}
+
+	// Sniff the payload: archive types must be gzip; database dumps may be
+	// plain SQL or gzip.
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(io.LimitReader(r, 512), head)
+	head = head[:n]
+	gzipMagic := len(head) >= 2 && head[0] == 0x1f && head[1] == 0x8b
+	if backupType != "database" && !gzipMagic {
+		return model.Backup{}, 0, model.NewValidationError("backup file must be a .tar.gz archive")
+	}
+	body := io.MultiReader(bytes.NewReader(head), r)
+
+	now := time.Now().UTC()
+	nowStr := now.Format(time.RFC3339)
+	id := ulid.Make().String()
+	importDir := filepath.Join(s.localDir, "imported")
+	dest := filepath.Join(importDir, id+"-"+base)
+
+	if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", importDir); err != nil {
+		return model.Backup{}, 0, fmt.Errorf("create import directory: %w", err)
+	}
+
+	tmp, err := os.CreateTemp("", "jenderal-import-")
+	if err != nil {
+		return model.Backup{}, 0, fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}()
+
+	count, err := io.Copy(tmp, body)
+	if err != nil {
+		return model.Backup{}, 0, fmt.Errorf("write uploaded file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return model.Backup{}, 0, fmt.Errorf("save uploaded file: %w", err)
+	}
+	if res, err := s.exec.RunSudo(ctx, "mv", tmpName, dest); err != nil {
+		return model.Backup{}, 0, fmt.Errorf("move uploaded file into place: %w", err)
+	} else if res.ExitCode != 0 {
+		return model.Backup{}, 0, fmt.Errorf("move uploaded file into place: %s", strings.TrimSpace(res.Stderr))
+	}
+	if res, err := s.exec.RunSudo(ctx, "chmod", "0644", dest); err != nil {
+		return model.Backup{}, 0, fmt.Errorf("chmod uploaded file: %w", err)
+	} else if res.ExitCode != 0 {
+		return model.Backup{}, 0, fmt.Errorf("chmod uploaded file: %s", strings.TrimSpace(res.Stderr))
+	}
+
+	b := model.Backup{
+		ID:        id,
+		Type:      backupType,
+		Target:    target,
+		Storage:   "local",
+		Path:      dest,
+		SizeBytes: count,
+		Status:    "completed",
+		Kind:      KindManual,
+		CreatedBy: caller.UserID,
+		CreatedAt: now,
+	}
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO backups (id, type, target, storage, path, size_bytes, status, error_msg, kind, created_by, created_at, started_at, finished_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		b.ID, b.Type, nullableString(b.Target), b.Storage, b.Path, b.SizeBytes, b.Status,
+		nullableString(b.ErrorMsg), b.Kind, b.CreatedBy, nowStr, nowStr, nowStr,
+	)
+	if err != nil {
+		return model.Backup{}, 0, fmt.Errorf("insert imported backup: %w", err)
+	}
+	return b, count, nil
 }

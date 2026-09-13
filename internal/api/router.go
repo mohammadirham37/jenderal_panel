@@ -683,6 +683,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Backups
 			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
 				Post("/backups", backupHandler.CreateBackup)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Post("/backups/import", backupHandler.ImportBackup)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
 				Get("/backups", backupHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).

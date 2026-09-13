@@ -180,6 +180,17 @@ const en = {
 	'bk.createDomain': 'Domain',
 	'bk.createDatabase': 'Database name',
 	'bk.createNow': 'Create backup',
+	// Import
+	'bk.importBackup': 'Import backup',
+	'bk.importClose': 'Close import form',
+	'bk.importTitle': 'Import a downloaded backup',
+	'bk.importFile': 'Backup file',
+	'bk.importType': 'Backup type',
+	'bk.importing': 'Uploading…',
+	'bk.importUpload': 'Upload & import',
+	'bk.importDone': 'Backup imported. You can restore it from the list.',
+	'bk.importFailed': 'Failed to import backup',
+	'bk.importHint': 'Pick the archive you downloaded from this panel and its backup type. Website and database imports need a target so restore knows where it belongs.',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -360,6 +371,17 @@ const id: Record<keyof typeof en, string> = {
 	'bk.createDomain': 'Domain',
 	'bk.createDatabase': 'Nama database',
 	'bk.createNow': 'Buat cadangan',
+	// Import
+	'bk.importBackup': 'Impor cadangan',
+	'bk.importClose': 'Tutup form impor',
+	'bk.importTitle': 'Impor cadangan yang pernah diunduh',
+	'bk.importFile': 'File cadangan',
+	'bk.importType': 'Jenis cadangan',
+	'bk.importing': 'Mengunggah…',
+	'bk.importUpload': 'Unggah & impor',
+	'bk.importDone': 'Cadangan berhasil diimpor. Bisa dipulihkan dari daftar.',
+	'bk.importFailed': 'Gagal mengimpor cadangan',
+	'bk.importHint': 'Pilih arsip yang pernah diunduh dari panel ini beserta jenis cadangannya. Impor jenis Website dan Database butuh target agar restore tahu tempatnya.',
 };
 
 export const dict = { en, id };

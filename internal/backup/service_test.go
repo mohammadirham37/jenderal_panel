@@ -1,8 +1,11 @@
 package backup
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -414,6 +417,9 @@ func TestGeneratePath(t *testing.T) {
 // were silently skipped, producing a ~384KB archive).
 func TestBackupFullIncludesAllWebsites(t *testing.T) {
 	db := setupTestDB(t)
+	// One connection only: :memory: SQLite gives every new connection a
+	// fresh empty database, which flakes multi-statement tests under load.
+	db.SetMaxOpenConns(1)
 	seedBackupTargets(t, db)
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := db.Exec(`INSERT INTO websites (id, domain, document_root, web_user, created_at, updated_at, created_by)
@@ -442,8 +448,24 @@ func TestBackupFullIncludesAllWebsites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-	if err := svc.executeBackup(context.Background(), b, func(string) {}); err != nil {
-		t.Fatalf("executeBackup() error = %v", err)
+	// Without a task runner CreateBackup executes on a background goroutine;
+	// wait for it instead of running a second concurrent backup here.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := svc.Get(context.Background(), b.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status == "completed" {
+			break
+		}
+		if got.Status == "failed" {
+			t.Fatalf("full backup failed: %s", got.ErrorMsg)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("full backup did not finish in time")
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 	if manifestJSON == "" {
 		t.Fatal("manifest was never written")
@@ -452,5 +474,50 @@ func TestBackupFullIncludesAllWebsites(t *testing.T) {
 		if !strings.Contains(manifestJSON, want) {
 			t.Fatalf("manifest missing %q:\n%s", want, manifestJSON)
 		}
+	}
+}
+
+func TestImportBackup(t *testing.T) {
+	db := setupTestDB(t)
+	db.SetMaxOpenConns(1)
+	seedBackupTargets(t, db)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+
+	// Gzip payload for a config import.
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	zw.Write([]byte("fake archive"))
+	zw.Close()
+
+	wantSize := int64(buf.Len())
+	b, size, err := svc.ImportBackup(context.Background(), SystemCaller, "config", "", "panel-backup.tar.gz", &buf)
+	if err != nil {
+		t.Fatalf("ImportBackup() error = %v", err)
+	}
+	if size != wantSize {
+		t.Fatalf("size = %d, want %d", size, wantSize)
+	}
+	got, err := svc.Get(context.Background(), b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "completed" || got.Storage != "local" || got.SizeBytes != wantSize {
+		t.Fatalf("imported backup = %#v", got)
+	}
+	if filepath.Base(got.Path) != b.ID+"-panel-backup.tar.gz" {
+		t.Fatalf("path = %q", got.Path)
+	}
+
+	// Website imports require a target.
+	if _, _, err := svc.ImportBackup(context.Background(), SystemCaller, "website", "", "site.tar.gz", bytes.NewReader([]byte{0x1f, 0x8b})); err == nil {
+		t.Fatal("website import without target should fail")
+	}
+	if _, _, err := svc.ImportBackup(context.Background(), SystemCaller, "website", "example.com", "site.tar.gz", bytes.NewReader([]byte{0x1f, 0x8b})); err != nil {
+		t.Fatalf("website import with target: %v", err)
+	}
+
+	// Non-gzip archive types are rejected.
+	if _, _, err := svc.ImportBackup(context.Background(), SystemCaller, "config", "", "not-an-archive.txt", strings.NewReader("plain text")); err == nil {
+		t.Fatal("non-gzip config import should fail")
 	}
 }
