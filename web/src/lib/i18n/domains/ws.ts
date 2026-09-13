@@ -311,7 +311,8 @@ const en = {
 	'wd.bm.max': 'Max',
 	'wd.bm.statuses': 'HTTP status breakdown',
 	'wd.bm.note': 'Tip: run once with Octane enabled and once with it disabled, then compare requests/sec — a large difference confirms your traffic is served by Octane/FrankenPHP.',
-	'wd.octane.unit_logs': 'Recent unit logs (why it stopped)',
+	'wd.octane.failed': 'Start failed',
+	'wd.octane.unit_logs': 'Recent unit logs (why the last start failed)',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -622,7 +623,8 @@ const id: Record<keyof typeof en, string> = {
 	'wd.bm.max': 'Maks',
 	'wd.bm.statuses': 'Rincian status HTTP',
 	'wd.bm.note': 'Tips: jalankan sekali dengan Octane aktif dan sekali setelah dinonaktifkan, lalu bandingkan permintaan/detik — selisih yang besar menandakan trafik Anda benar-benar dilayani Octane/FrankenPHP.',
-	'wd.octane.unit_logs': 'Log unit terakhir (alasan berhenti)',
+	'wd.octane.failed': 'Start gagal',
+	'wd.octane.unit_logs': 'Log unit terakhir (alasan start gagal)',
 };
 
 

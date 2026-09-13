@@ -557,10 +557,10 @@ func (s *Service) OctaneStatus(ctx context.Context, id string) (OctaneStatus, er
 		result, err := s.exec.Run(ctx, "systemctl", "is-active", "--quiet", status.Unit)
 		status.Running = err == nil && result != nil && result.ExitCode == 0
 		status.State, status.SubState = s.octaneUnitState(ctx, status.Unit)
-		// When the unit is not active, the journal says why (crash, port in
-		// use, missing worker script, …) — surface it instead of a bare
-		// "stopped" badge.
-		if !status.Running {
+		// Journal context is failure diagnostics: a deliberate Stop settles
+		// in inactive/dead and needs no "why did it stop" noise, while a
+		// crashed start/restart ends in failed.
+		if !status.Running && (status.State == "failed" || status.State == "") {
 			status.RecentLogs = s.octaneUnitLogs(ctx, status.Unit, 15)
 		}
 	}

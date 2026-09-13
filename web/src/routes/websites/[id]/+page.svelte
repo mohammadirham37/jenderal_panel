@@ -1405,15 +1405,19 @@ import { toast } from '$lib/stores/toast';
 							<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 								<h3 class="text-lg font-semibold text-white">Laravel Octane (FrankenPHP)</h3>
 							{#if octane?.enabled}
-								<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium {octane.running ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'}">
-									{octane.running ? translate($language, 'wd.running') : translate($language, 'wd.stopped')}{#if !octane.running && octane.state} · {octane.state}/{octane.sub_state}{/if}
+								<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium {octane.running ? 'bg-green-900 text-green-300' : octane.state === 'failed' ? 'bg-red-900 text-red-300' : 'bg-gray-700 text-gray-400'}">
+									{octane.running
+										? translate($language, 'wd.running')
+										: octane.state === 'failed'
+											? translate($language, 'wd.octane.failed')
+											: translate($language, 'wd.stopped')}{#if !octane.running && octane.state && octane.state !== 'inactive'} · {octane.state}/{octane.sub_state}{/if}
 								</span>
 							{:else}
 								<span class="inline-block px-2.5 py-0.5 rounded text-xs font-medium bg-gray-700 text-gray-400">{translate($language, 'wd.disabled')}</span>
 							{/if}
 						</div>
 
-						{#if octane?.enabled && !octane.running && octane.recent_logs?.length}
+						{#if octane?.enabled && !octane.running && (octane.state === 'failed' || !octane.state) && octane.recent_logs?.length}
 							<div class="mb-4 rounded-lg border border-red-700/60 bg-red-950/40 p-3">
 								<p class="mb-1 text-xs font-semibold uppercase tracking-wider text-red-300">{translate($language, 'wd.octane.unit_logs')}</p>
 								<pre class="max-h-48 overflow-auto whitespace-pre-wrap break-all font-mono text-xs text-red-200">{octane.recent_logs.join('\n')}</pre>
