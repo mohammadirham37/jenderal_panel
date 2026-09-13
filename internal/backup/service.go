@@ -368,15 +368,34 @@ func (s *Service) backupFull(ctx context.Context, b model.Backup, write func(str
 	manifest.Components = append(manifest.Components,
 		manifestComponent{Kind: "config", Path: "config.tar.gz"})
 
+	// Websites: the chosen site for a targeted (safety) backup, or every
+	// managed website for a true "full" backup.
+	var sites []string
 	if b.Target != "" {
-		sitePath := filepath.Join(staging, "website.tar.gz")
-		wb := model.Backup{Path: sitePath, Target: b.Target}
-		write("Backing up website " + b.Target + "…")
+		sites = []string{b.Target}
+	} else {
+		siteRows, err := s.db.QueryContext(ctx, `SELECT domain FROM websites ORDER BY domain`)
+		if err != nil {
+			return fmt.Errorf("list websites: %w", err)
+		}
+		for siteRows.Next() {
+			var domain string
+			if err := siteRows.Scan(&domain); err == nil {
+				sites = append(sites, domain)
+			}
+		}
+		siteRows.Close()
+	}
+	sanitize := strings.NewReplacer("/", "_", " ", "_", ":", "_")
+	for _, domain := range sites {
+		sitePath := filepath.Join(staging, "website_"+sanitize.Replace(domain)+".tar.gz")
+		wb := model.Backup{Path: sitePath, Target: domain}
+		write("Backing up website " + domain + "…")
 		if err := s.backupWebsite(ctx, wb); err != nil {
-			return fmt.Errorf("full backup website: %w", err)
+			return fmt.Errorf("full backup website %s: %w", domain, err)
 		}
 		manifest.Components = append(manifest.Components,
-			manifestComponent{Kind: "websites", Path: "website.tar.gz", Target: b.Target})
+			manifestComponent{Kind: "websites", Path: filepath.Base(sitePath), Target: domain})
 	}
 
 	// All managed relational databases.

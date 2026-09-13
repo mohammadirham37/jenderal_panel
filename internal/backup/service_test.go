@@ -3,6 +3,7 @@ package backup
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
@@ -405,5 +406,51 @@ func TestGeneratePath(t *testing.T) {
 	}
 	if len(path) < 10 {
 		t.Error("path seems too short")
+	}
+}
+
+// A "full" backup with no target must include EVERY managed website — not
+// just the panel config and database dumps (regression: two Laravel sites
+// were silently skipped, producing a ~384KB archive).
+func TestBackupFullIncludesAllWebsites(t *testing.T) {
+	db := setupTestDB(t)
+	seedBackupTargets(t, db)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO websites (id, domain, document_root, web_user, created_at, updated_at, created_by)
+		VALUES ('web-002', 'zeta.example.com', '/home/web_zeta_example_com/public', 'web_zeta_example_com', ?, ?, '')`, now, now); err != nil {
+		t.Fatalf("seed second website: %v", err)
+	}
+
+	var manifestJSON string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			if name == "tee" && len(args) > 0 && strings.HasSuffix(args[0], "manifest.json") {
+				manifestJSON = input
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil, "/tmp/test-backups")
+
+	b, err := svc.CreateBackup(context.Background(), SystemCaller, "full", "")
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := svc.executeBackup(context.Background(), b, func(string) {}); err != nil {
+		t.Fatalf("executeBackup() error = %v", err)
+	}
+	if manifestJSON == "" {
+		t.Fatal("manifest was never written")
+	}
+	for _, want := range []string{"example.com", "zeta.example.com", "website_example.com.tar.gz", "website_zeta.example.com.tar.gz", "config.tar.gz", "mydb"} {
+		if !strings.Contains(manifestJSON, want) {
+			t.Fatalf("manifest missing %q:\n%s", want, manifestJSON)
+		}
 	}
 }
