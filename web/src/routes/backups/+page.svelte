@@ -507,6 +507,40 @@ import { language, translate } from '$lib/stores/language';
 	</div>
 
 	{#if activeTab === 'backups'}
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+			<h3 class="mb-4 text-lg font-semibold text-white">{translate($language, 'bk.createTitle')}</h3>
+			<div class="flex flex-wrap items-end gap-3">
+				<div>
+					<label for="backup-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.createType')}</label>
+					<select id="backup-type" bind:value={createType} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
+						{#each backupTypes as t}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
+					</select>
+				</div>
+				{#if needsTarget(createType)}
+					<div>
+						<label for="backup-target" class="mb-1 block text-sm text-gray-400">
+							{createType === 'website' ? translate($language, 'bk.createDomain') : translate($language, 'bk.createDatabase')}
+						</label>
+						<input
+							id="backup-target"
+							type="text"
+							bind:value={createTarget}
+							placeholder={createType === 'website' ? 'example.com' : 'my_database'}
+							class="w-56 rounded border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200"
+						/>
+					</div>
+				{/if}
+				<button
+					type="button"
+					onclick={createBackup}
+					disabled={creatingBackup || (needsTarget(createType) && !createTarget.trim())}
+					class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+				>
+					{creatingBackup ? translate($language, 'bk.creating') : translate($language, 'bk.createNow')}
+				</button>
+			</div>
+		</div>
+
 		<div class="rounded-xl border border-gray-700 bg-gray-800">
 			<!-- Filters -->
 			<div class="flex flex-wrap items-center gap-2 border-b border-gray-700 px-4 py-3">

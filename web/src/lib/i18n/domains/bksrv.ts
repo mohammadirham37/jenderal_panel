@@ -172,7 +172,14 @@ const en = {
 	'srv.errorFinalize': 'Failed to finalize SSH port change',
 	'srv.confirmCancelChange': 'Cancel the pending SSH port change and restore the old port?',
 	'srv.msgCancelled': 'SSH port change cancelled.',
-	'srv.errorCancel': 'Failed to cancel SSH port change'
+	'srv.errorCancel': 'Failed to cancel SSH port change',
+
+	// Create backup card
+	'bk.createTitle': 'Create backup',
+	'bk.createType': 'Type',
+	'bk.createDomain': 'Domain',
+	'bk.createDatabase': 'Database name',
+	'bk.createNow': 'Create backup',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -345,7 +352,14 @@ const id: Record<keyof typeof en, string> = {
 	'srv.errorFinalize': 'Gagal memfinalisasi perubahan port SSH',
 	'srv.confirmCancelChange': 'Batalkan perubahan port SSH yang tertunda dan kembalikan port lama?',
 	'srv.msgCancelled': 'Perubahan port SSH dibatalkan.',
-	'srv.errorCancel': 'Gagal membatalkan perubahan port SSH'
+	'srv.errorCancel': 'Gagal membatalkan perubahan port SSH',
+
+	// Create backup card
+	'bk.createTitle': 'Buat cadangan',
+	'bk.createType': 'Jenis',
+	'bk.createDomain': 'Domain',
+	'bk.createDatabase': 'Nama database',
+	'bk.createNow': 'Buat cadangan',
 };
 
 export const dict = { en, id };
