@@ -1,6 +1,9 @@
 package website
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -738,4 +741,30 @@ func parseLines(r *http.Request) int {
 		}
 	}
 	return 100
+}
+
+// Benchmark handles POST /api/websites/{id}/benchmark and starts a background
+// load test against the site's local Nginx chain. It returns 202 with the
+// task ID; results land in the task output as a ##RESULT_JSON## line.
+func (h *Handler) Benchmark(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var opts BenchmarkOptions
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+	if err != nil {
+		httputil.HandleError(w, model.NewValidationError("invalid request body"))
+		return
+	}
+	if len(bytes.TrimSpace(body)) > 0 {
+		if err := json.Unmarshal(body, &opts); err != nil {
+			httputil.HandleError(w, model.NewValidationError("invalid JSON body"))
+			return
+		}
+	}
+	taskID, err := h.svc.BenchmarkWebsite(r.Context(), id, opts)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website_benchmark", id, "started a website load test")
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }

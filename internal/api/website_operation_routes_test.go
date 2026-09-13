@@ -22,6 +22,7 @@ func TestWebsiteOperationRoutesRegistered(t *testing.T) {
 		http.MethodGet + " /api/v1/websites/{id}/queue-workers":    false,
 		http.MethodPost + " /api/v1/websites/{id}/queue-workers":   false,
 		http.MethodPost + " /api/v1/websites/{id}/app/{action}":    false,
+		http.MethodPost + " /api/v1/websites/{id}/benchmark":       false,
 		http.MethodPost + " /api/v1/websites/{id}/octane/enable":   false,
 		http.MethodPost + " /api/v1/websites/{id}/octane/reload":   false,
 		http.MethodPost + " /api/v1/websites/{id}/octane/{action}": false,

@@ -416,6 +416,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/app/{action}", websiteHandler.AppAction)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/benchmark", websiteHandler.Benchmark)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/app/build", websiteHandler.AppBuild)
 
 			// WordPress toolkit (website-scoped; ownership handled by the
