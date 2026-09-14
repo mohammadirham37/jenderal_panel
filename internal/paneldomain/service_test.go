@@ -6,7 +6,7 @@ import (
 )
 
 func TestRenderHTTPVhost(t *testing.T) {
-	out := renderHTTPVhost("panel.example.com", "/var/lib/jenderal/acme-challenges")
+	out := renderHTTPVhost("panel.example.com", "/var/lib/jenderal/acme-challenges", "http://127.0.0.1:8443")
 	for _, want := range []string{
 		"server_name panel.example.com",
 		"proxy_pass http://127.0.0.1:8443",
@@ -20,7 +20,7 @@ func TestRenderHTTPVhost(t *testing.T) {
 }
 
 func TestRenderTLSVhost(t *testing.T) {
-	out := renderTLSVhost("panel.example.com", "/certs/panel.crt", "/certs/panel.key", "/webroot")
+	out := renderTLSVhost("panel.example.com", "http://127.0.0.1:8443", "/certs/panel.crt", "/certs/panel.key", "/webroot")
 	for _, want := range []string{
 		"listen 443 ssl",
 		"ssl_certificate /certs/panel.crt",
@@ -31,6 +31,28 @@ func TestRenderTLSVhost(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("tls vhost missing %q", want)
 		}
+	}
+}
+
+func TestRenderVhostsHTTPSUpstream(t *testing.T) {
+	const upstream = "https://127.0.0.1:8443"
+	httpOut := renderHTTPVhost("panel.example.com", "/webroot", upstream)
+	if !strings.Contains(httpOut, "proxy_pass "+upstream) {
+		t.Errorf("http vhost missing https upstream: %q", httpOut)
+	}
+	tlsOut := renderTLSVhost("panel.example.com", upstream, "/c.pem", "/k.pem", "/webroot")
+	if !strings.Contains(tlsOut, "proxy_pass "+upstream) {
+		t.Errorf("tls vhost missing https upstream: %q", tlsOut)
+	}
+	// The panel's self-signed certificate would fail nginx verification.
+	for _, out := range []string{httpOut, tlsOut} {
+		if !strings.Contains(out, "proxy_ssl_verify off") {
+			t.Errorf("vhost missing proxy_ssl_verify off for https upstream: %q", out)
+		}
+	}
+	// Plain-HTTP upstreams must not carry the verification bypass.
+	if strings.Contains(renderHTTPVhost("panel.example.com", "/w", "http://127.0.0.1:8443"), "proxy_ssl_verify") {
+		t.Error("http upstream must not set proxy_ssl_verify")
 	}
 }
 

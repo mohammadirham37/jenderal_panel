@@ -266,6 +266,12 @@ func cmdServe() {
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
 	panelDomainSvc := paneldomain.NewService(db, exec, auditSvc)
+	if cfg.Server.TLS.Enabled {
+		// The panel serves TLS on the upstream port (self-signed), so the
+		// vhosts must proxy over HTTPS to avoid "400 Bad Request" from the
+		// TLS listener.
+		panelDomainSvc.SetUpstreamScheme("https")
+	}
 	panelDomainSvc.SetTaskRunner(tasks)
 	healthChecker := website.NewHealthChecker(websiteSvc, func(message string) {
 		if err := notifSvc.SendAll(context.Background(), message); err != nil {

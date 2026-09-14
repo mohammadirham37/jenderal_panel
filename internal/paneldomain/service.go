@@ -27,8 +27,10 @@ import (
 )
 
 const (
-	// Upstream is the local panel address the vhost proxies to. The panel
-	// listens on plain HTTP here by default.
+	// Upstream is the local panel address the vhost proxies to. The installer
+	// serves the panel with TLS on this port (self-signed certificate), so
+	// the proxy scheme is chosen from the panel config at startup via
+	// SetUpstreamScheme — defaulting to plain HTTP only when TLS is off.
 	Upstream = "127.0.0.1:8443"
 
 	// certDir holds the panel domain certificate and key.
@@ -59,10 +61,11 @@ type Status struct {
 
 // Service manages the panel domain vhost, certificate, and renewal.
 type Service struct {
-	db    *sql.DB
-	exec  executor.CommandExecutor
-	audit *audit.Service
-	tasks *taskrunner.Runner
+	db             *sql.DB
+	exec           executor.CommandExecutor
+	audit          *audit.Service
+	tasks          *taskrunner.Runner
+	upstreamScheme string
 }
 
 // NewService creates a new paneldomain Service.
@@ -72,6 +75,18 @@ func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Servi
 
 // SetTaskRunner wires the task runner so setup/renew run as visible tasks.
 func (s *Service) SetTaskRunner(tr *taskrunner.Runner) { s.tasks = tr }
+
+// SetUpstreamScheme sets how nginx reaches the panel upstream: "https" when
+// the panel itself serves TLS on the upstream port (the installer's default,
+// with a self-signed certificate), "http" otherwise.
+func (s *Service) SetUpstreamScheme(scheme string) { s.upstreamScheme = scheme }
+
+func (s *Service) upstreamURL() string {
+	if s.upstreamScheme == "https" {
+		return "https://" + Upstream
+	}
+	return "http://" + Upstream
+}
 
 func vhostAvailablePath(domain string) string {
 	return "/etc/nginx/sites-available/jenderal-panel-" + domain + vhostSuffix
@@ -173,9 +188,19 @@ func acmeLocation(webroot string) string {
     }`
 }
 
+// proxyTLSVerifyOff disables upstream certificate verification when nginx
+// proxies over HTTPS — the panel's certificate is self-signed, so verifying
+// it would break every request.
+func proxyTLSVerifyOff(upstream string) string {
+	if strings.HasPrefix(upstream, "https://") {
+		return "        proxy_ssl_verify off;\n"
+	}
+	return ""
+}
+
 // renderHTTPVhost renders the port-80 vhost: ACME challenges plus a plain
 // proxy so the domain works even before the certificate exists.
-func renderHTTPVhost(domain, webroot string) string {
+func renderHTTPVhost(domain, webroot, upstream string) string {
 	mapVar := "$jenderal_ws_" + wsVarSanitizer.ReplaceAllString(domain, "_")
 	return `# Managed by Jenderal Panel (panel domain)
 map $http_upgrade ` + mapVar + ` {
@@ -190,9 +215,9 @@ server {
 ` + acmeLocation(webroot) + `
 
     location / {
-        proxy_pass http://` + Upstream + `;
+        proxy_pass ` + upstream + `;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+` + proxyTLSVerifyOff(upstream) + `        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header Upgrade $http_upgrade;
@@ -204,7 +229,7 @@ server {
 }
 
 // renderTLSVhost renders the HTTPS vhost with websocket-aware proxying.
-func renderTLSVhost(domain, certPath, keyPath, webroot string) string {
+func renderTLSVhost(domain, upstream, certPath, keyPath, webroot string) string {
 	mapVar := "$jenderal_ws_" + wsVarSanitizer.ReplaceAllString(domain, "_") + "_wss"
 	return `# Managed by Jenderal Panel (panel domain)
 map $http_upgrade ` + mapVar + ` {
@@ -223,9 +248,9 @@ server {
 ` + acmeLocation(webroot) + `
 
     location / {
-        proxy_pass http://` + Upstream + `;
+        proxy_pass ` + upstream + `;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+` + proxyTLSVerifyOff(upstream) + `        proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
@@ -363,10 +388,11 @@ func (s *Service) Setup(ctx context.Context, domain, email string) (string, erro
 func (s *Service) setup(ctx context.Context, domain, email string, write func(string)) error {
 	webroot := acmeWebroot
 	vhostPath := vhostAvailablePath(domain)
+	upstream := s.upstreamURL()
 
 	// 1. HTTP vhost (ACME + proxy), tested and reloaded.
 	write("Writing HTTP vhost…")
-	if err := s.writeVhostTested(ctx, vhostPath, renderHTTPVhost(domain, webroot)); err != nil {
+	if err := s.writeVhostTested(ctx, vhostPath, renderHTTPVhost(domain, webroot, upstream)); err != nil {
 		return err
 	}
 	if err := s.enableVhost(ctx, domain); err != nil {
@@ -399,7 +425,7 @@ func (s *Service) setup(ctx context.Context, domain, email string, write func(st
 
 	// 3. HTTPS vhost.
 	write("Writing HTTPS vhost…")
-	if err := s.writeVhostTested(ctx, vhostPath, renderTLSVhost(domain, certFile, keyFile, webroot)); err != nil {
+	if err := s.writeVhostTested(ctx, vhostPath, renderTLSVhost(domain, upstream, certFile, keyFile, webroot)); err != nil {
 		return err
 	}
 	if err := s.reloadNginx(ctx); err != nil {
