@@ -42,7 +42,7 @@ func TestAppProxyNginxProfile(t *testing.T) {
 	data := VhostData{Domain: "app.example.com", Profile: "app-proxy", AppPort: 8200}
 	d := directivesFor(data)
 
-	if !strings.Contains(d.Header, "$jenderal_app_app_example_com") {
+	if !strings.Contains(d.Header, "$jenderal_app_app_example_com_ws") {
 		t.Errorf("ws map variable missing: %q", d.Header)
 	}
 	if !strings.Contains(d.Location, "proxy_pass http://127.0.0.1:8200;") {
@@ -53,6 +53,37 @@ func TestAppProxyNginxProfile(t *testing.T) {
 	}
 	if !strings.Contains(d.Location, "Upgrade $http_upgrade") {
 		t.Errorf("websocket upgrade header missing: %q", d.Location)
+	}
+}
+
+// The HTTP and TLS vhosts of one app site load in the same nginx http
+// context; an identically named upgrade map in both files is a config error
+// that stops nginx from starting at all.
+func TestAppProxyVhostHTTPAndTLSUseDistinctWebsocketMaps(t *testing.T) {
+	data := VhostData{Domain: "app.example.com", Profile: "app-proxy", AppPort: 8200}
+
+	httpVhost, err := RenderVhost(data)
+	if err != nil {
+		t.Fatalf("RenderVhost: %v", err)
+	}
+	if !strings.Contains(httpVhost, "$jenderal_app_app_example_com_ws {") {
+		t.Errorf("HTTP vhost must use the _ws map name:\n%s", httpVhost)
+	}
+
+	tlsVhost, err := RenderTLSVhost(TLSVhostData{
+		VhostData:       data,
+		TLSDomain:       "app.example.com",
+		CertificatePath: "/etc/jenderal/ssl/app.example.com/fullchain.pem",
+		PrivateKeyPath:  "/etc/jenderal/ssl/app.example.com/privkey.pem",
+	})
+	if err != nil {
+		t.Fatalf("RenderTLSVhost: %v", err)
+	}
+	if !strings.Contains(tlsVhost, "$jenderal_app_app_example_com_wss {") {
+		t.Errorf("TLS vhost must use its own _wss map name:\n%s", tlsVhost)
+	}
+	if strings.Contains(tlsVhost, "$jenderal_app_app_example_com_ws ") {
+		t.Error("TLS and HTTP vhosts must not share the app upgrade map variable")
 	}
 }
 
