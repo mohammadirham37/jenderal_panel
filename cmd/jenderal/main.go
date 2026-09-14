@@ -360,6 +360,7 @@ func cmdServe() {
 		FrankenphpSvc:   frankenphpSvc,
 		GoRuntimeSvc:    goRuntimeSvc,
 		RuntimeBinSvc:   runtimeBinSvc,
+		PanelDomainSvc:  panelDomainSvc,
 		DB:              db,
 		StaticHandler:   staticHandler(),
 	})
