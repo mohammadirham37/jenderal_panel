@@ -215,6 +215,21 @@ func TestRealPsqlErrorsFiltersVersionNoise(t *testing.T) {
 	}
 }
 
+func TestRestorePrivilegeHint(t *testing.T) {
+	withHint := "ERROR:  permission denied for database vapedist"
+	if got := restorePrivilegeHint(withHint); got == "" {
+		t.Error("permission denied for database must produce a hint")
+	}
+	withHint2 := "ERROR:  must be owner of schema public"
+	if got := restorePrivilegeHint(withHint2); got == "" {
+		t.Error("must be owner of schema must produce a hint")
+	}
+	unrelated := "ERROR:  relation \"bed.t_hutang\" does not exist"
+	if got := restorePrivilegeHint(unrelated); got != "" {
+		t.Errorf("unrelated errors must not produce a hint, got %q", got)
+	}
+}
+
 func TestManageRestoreFailsWhenStatementsError(t *testing.T) {
 	token := manageSessions.put(&manageSession{
 		Engine: "postgresql", Username: "u", Password: "p",

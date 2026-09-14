@@ -148,10 +148,21 @@ func (s *Service) ManageRestore(ctx context.Context, token, database string, dum
 	// nothing must not look successful: surface the real errors from stderr.
 	if session.Engine == "postgresql" {
 		if msg := realPsqlErrors(stderrBuf.String()); msg != "" {
-			return model.NewDomainError("DB_RESTORE_FAILED", msg, nil)
+			return model.NewDomainError("DB_RESTORE_FAILED", msg+restorePrivilegeHint(msg), nil)
 		}
 	}
 	return nil
+}
+
+// restorePrivilegeHint appends actionable guidance for the most common
+// restore failure: the database user lacking ownership/CREATE rights on the
+// target database, so the dump's schema and tables cannot be created.
+func restorePrivilegeHint(msg string) string {
+	if !strings.Contains(msg, "permission denied for database") &&
+		!strings.Contains(msg, "must be owner of schema") {
+		return ""
+	}
+	return "\n\nHint: grant the database user ownership of this database from the Databases page (Grant Privileges), then retry the restore."
 }
 
 // benignPsqlNoiseRe matches error output that never affects the applied
