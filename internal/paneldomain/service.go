@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -239,6 +240,26 @@ server {
 
 // ─── Nginx helpers ────────────────────────────────────────────────
 
+// writeSudoFile creates the file's parent directory and writes content via
+// tee as root, surfacing a non-zero exit code (the executor reports it in
+// Result instead of returning an error, so tee failures are otherwise silent).
+func (s *Service) writeSudoFile(ctx context.Context, path, content string) error {
+	dir := filepath.Dir(path)
+	if result, err := s.exec.RunSudo(ctx, "mkdir", "-p", dir); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	} else if result.ExitCode != 0 {
+		return fmt.Errorf("create %s: %s", dir, strings.TrimSpace(result.Stderr))
+	}
+	result, err := s.exec.RunSudoWithInput(ctx, content, "tee", path)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("write %s: %s", path, strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
 // writeVhostTested writes content to the vhost path, runs nginx -t, and
 // restores the previous file when the test fails.
 func (s *Service) writeVhostTested(ctx context.Context, path, content string) error {
@@ -246,7 +267,7 @@ func (s *Service) writeVhostTested(ctx context.Context, path, content string) er
 	if result, err := s.exec.RunSudo(ctx, "cat", path); err == nil && result.ExitCode == 0 {
 		previous = result.Stdout
 	}
-	if _, err := s.exec.RunSudoWithInput(ctx, content, "tee", path); err != nil {
+	if err := s.writeSudoFile(ctx, path, content); err != nil {
 		return fmt.Errorf("write vhost: %w", err)
 	}
 	if err := s.testAndRestoreNginx(ctx, path, previous); err != nil {
@@ -276,7 +297,7 @@ func (s *Service) testAndRestoreNginx(ctx context.Context, restoredPath, fallbac
 	}
 	if result.ExitCode != 0 {
 		if fallbackContent != "" {
-			_, _ = s.exec.RunSudoWithInput(ctx, fallbackContent, "tee", restoredPath)
+			_ = s.writeSudoFile(ctx, restoredPath, fallbackContent)
 		} else {
 			_, _ = s.exec.RunSudo(ctx, "rm", "-f", restoredPath)
 		}
@@ -368,11 +389,11 @@ func (s *Service) setup(ctx context.Context, domain, email string, write func(st
 		return fmt.Errorf("obtain certificate: %w", err)
 	}
 
-	if _, err := s.exec.RunSudoWithInput(ctx, string(certPEM), "tee", certFile); err != nil {
-		return fmt.Errorf("write certificate: %w", err)
+	if err := s.writeSudoFile(ctx, certFile, string(certPEM)); err != nil {
+		return err
 	}
-	if _, err := s.exec.RunSudoWithInput(ctx, string(keyPEM), "tee", keyFile); err != nil {
-		return fmt.Errorf("write certificate key: %w", err)
+	if err := s.writeSudoFile(ctx, keyFile, string(keyPEM)); err != nil {
+		return err
 	}
 	_, _ = s.exec.RunSudo(ctx, "chmod", "0600", keyFile)
 
@@ -435,11 +456,11 @@ func (s *Service) Renew(ctx context.Context) (string, error) {
 			if err != nil {
 				return fmt.Errorf("obtain certificate: %w", err)
 			}
-			if _, err := s.exec.RunSudoWithInput(taskCtx, string(certPEM), "tee", certFile); err != nil {
-				return fmt.Errorf("write certificate: %w", err)
+			if err := s.writeSudoFile(taskCtx, certFile, string(certPEM)); err != nil {
+				return err
 			}
-			if _, err := s.exec.RunSudoWithInput(taskCtx, string(keyPEM), "tee", keyFile); err != nil {
-				return fmt.Errorf("write certificate key: %w", err)
+			if err := s.writeSudoFile(taskCtx, keyFile, string(keyPEM)); err != nil {
+				return err
 			}
 			if err := s.reloadNginx(taskCtx); err != nil {
 				return err
