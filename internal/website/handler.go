@@ -564,6 +564,34 @@ func (h *Handler) SetNginxProfile(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SetForceHTTPS handles PUT /api/websites/{id}/force-https.
+func (h *Handler) SetForceHTTPS(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := httputil.DecodeJSON(r, &body); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	site, err := h.svc.SetForceHTTPS(r.Context(), id, body.Enabled)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	state := "off"
+	if site.ForceHTTPS {
+		state = "on"
+	}
+	h.logAction(r, "set_website_force_https", id, "force https "+state)
+	httputil.JSON(w, http.StatusOK, map[string]any{
+		"status":      "ok",
+		"force_https": site.ForceHTTPS,
+	})
+}
+
 // AddDomain handles POST /api/websites/{id}/domains.
 func (h *Handler) AddDomain(w http.ResponseWriter, r *http.Request) {
 	websiteID := chi.URLParam(r, "id")

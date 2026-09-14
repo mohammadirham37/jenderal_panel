@@ -167,6 +167,7 @@ type Website struct {
 	Status             string    `json:"status"`
 	ErrorMessage       string    `json:"error_message"`
 	SSLEnabled         bool      `json:"ssl_enabled"`
+	ForceHTTPS         bool      `json:"force_https"`
 	Framework          string    `json:"framework"`
 	FrameworkVersion   string    `json:"framework_version"`
 	FrontendStack      string    `json:"frontend_stack"`

@@ -28,6 +28,7 @@ type siteRecord struct {
 	LogDir           string
 	Aliases          []string
 	AppPort          int
+	ForceHTTPS       bool
 }
 
 type activationRequest struct {
@@ -54,9 +55,10 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	var site siteRecord
 	var webUser string
 	var phpVersion, framework, frameworkVersion sql.NullString
+	var forceHTTPS int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.status, w.web_user,
-		        w.framework, w.framework_version, w.app_port
+		        w.framework, w.framework_version, w.app_port, w.force_https
 		 FROM websites w
 		 JOIN domains d ON d.website_id = w.id
 		 WHERE w.id = ? AND d.name = ?`,
@@ -64,7 +66,7 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	).Scan(
 		&site.WebsiteID, &site.PrimaryDomain, &site.Domain, &site.DocumentRoot,
 		&phpVersion, &site.AppType, &site.Status, &webUser, &framework, &frameworkVersion,
-		&site.AppPort,
+		&site.AppPort, &forceHTTPS,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -76,6 +78,7 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	site.Framework = framework.String
 	site.FrameworkVersion = frameworkVersion.String
 	site.LogDir = "/home/" + webUser + "/logs"
+	site.ForceHTTPS = forceHTTPS == 1
 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT name FROM domains WHERE website_id = ? AND type != 'primary' ORDER BY created_at ASC`,
@@ -160,6 +163,7 @@ func (s *Service) beginCertificateActivation(ctx context.Context, req activation
 		AppPort:           req.Site.AppPort,
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   req.RedirectDomains,
+		ForceHTTPS:        req.Site.ForceHTTPS,
 	}
 	httpConfig, err := websiteconfig.RenderVhost(base)
 	if err != nil {
@@ -231,6 +235,7 @@ func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectD
 		Profile:           websiteconfig.NginxProfileFor(site.Framework, site.FrameworkVersion, site.AppType),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
+		ForceHTTPS:        site.ForceHTTPS,
 	})
 	if err != nil {
 		return fmt.Errorf("render HTTP configuration: %w", err)

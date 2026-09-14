@@ -25,6 +25,7 @@
 		id: string;
 		domain: string;
 		status: string;
+		force_https?: boolean;
 		domains?: { name: string; type?: string }[];
 	}
 
@@ -35,6 +36,10 @@
 	let loading = $state(false);
 	let error = $state('');
 	let actionInProgress = $state(false);
+
+	// Force HTTPS redirect toggle (backend default is on).
+	let forceHTTPS = $state(true);
+	let hasActiveCert = $derived(certificates.some((c) => c.status === 'active'));
 
 	// Install form
 	let showIssueForm = $state(false);
@@ -256,6 +261,19 @@
 		}
 	}
 
+	async function toggleForceHTTPS() {
+		if (!website) return;
+		const next = !forceHTTPS;
+		forceHTTPS = next;
+		try {
+			await api.put(`/api/v1/websites/${website.id}/force-https`, { enabled: next });
+			toast.success(translate($language, next ? 'wss.forceHttpsOn' : 'wss.forceHttpsOff'));
+		} catch (err) {
+			forceHTTPS = !next;
+			toast.error(err instanceof Error ? err.message : translate($language, 'wss.errForceHttps'));
+		}
+	}
+
 	function openIssueForm() {
 		installMode = 'letsencrypt';
 		issueDomain = issueDomains[0] || '';
@@ -283,6 +301,7 @@
 	}
 
 	$effect(() => {
+		forceHTTPS = website?.force_https ?? true;
 		void loadCertificates(website?.id ?? '');
 	});
 
@@ -391,6 +410,29 @@
 					class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 				>
 					{issuing ? translate($language, 'wss.installing') : translate($language, 'wss.installEnable')}
+				</button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Force HTTPS -->
+	{#if hasActiveCert}
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+			<div class="flex items-start justify-between gap-4">
+				<div>
+					<h4 class="text-sm font-semibold text-white">{translate($language, 'wss.forceHttps')}</h4>
+					<p class="text-xs text-gray-400 mt-1">{translate($language, 'wss.forceHttpsDesc')}</p>
+				</div>
+				<button
+					onclick={toggleForceHTTPS}
+					role="switch"
+					aria-checked={forceHTTPS}
+					aria-label={translate($language, 'wss.forceHttps')}
+					class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none {forceHTTPS ? 'bg-green-600' : 'bg-gray-600'}"
+				>
+					<span
+						class="pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 {forceHTTPS ? 'translate-x-4' : 'translate-x-0'}"
+					></span>
 				</button>
 			</div>
 		</div>

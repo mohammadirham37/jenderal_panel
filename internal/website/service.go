@@ -347,7 +347,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
-		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
+		        status, error_message, ssl_enabled, force_https, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
@@ -460,7 +460,7 @@ func (s *Service) OwnerUsername(ctx context.Context, userID string) (string, err
 func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Website, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
-		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
+		        status, error_message, ssl_enabled, force_https, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites WHERE web_user = ?`, webUser)
@@ -488,7 +488,7 @@ func (s *Service) ListByOwner(ctx context.Context, userID string) ([]model.Websi
 func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]model.Website, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
-		        status, error_message, ssl_enabled, framework, framework_version, frontend_stack,
+		        status, error_message, ssl_enabled, force_https, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
 		 FROM websites`+where+` ORDER BY created_at DESC`, args...)
@@ -1092,6 +1092,7 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		Profile:           NginxProfileForWebsite(w),
 		IPv6:              s.ipv6Available(),
 		RedirectDomains:   redirectDomains,
+		ForceHTTPS:        w.ForceHTTPS,
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 		OctanePort:        w.OctanePort,
 		AppPort:           w.AppPort,
@@ -1128,6 +1129,29 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
 	return nil
+}
+
+// SetForceHTTPS toggles the HTTP→HTTPS redirect for certified domains and
+// regenerates the HTTP vhost accordingly. With the flag off, certified
+// domains keep serving plain HTTP; visitors opt into HTTPS themselves.
+func (s *Service) SetForceHTTPS(ctx context.Context, websiteID string, enabled bool) (model.Website, error) {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return model.Website{}, err
+	}
+
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE websites SET force_https = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(enabled), time.Now().UTC().Format(time.RFC3339), websiteID,
+	); err != nil {
+		return model.Website{}, fmt.Errorf("set force https: %w", err)
+	}
+
+	w.ForceHTTPS = enabled
+	if err := s.regenerateConfig(ctx, w, ""); err != nil {
+		return model.Website{}, fmt.Errorf("regenerate vhost: %w", err)
+	}
+	return w, nil
 }
 
 func (s *Service) activeSSLDomains(ctx context.Context, websiteID string) ([]string, error) {
@@ -1285,13 +1309,13 @@ type scanner interface {
 func scanWebsite(row *sql.Row) (model.Website, error) {
 	var w model.Website
 	var phpVersion, errorMessage, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
-	var sslEnabled, octaneEnabled int
+	var sslEnabled, forceHTTPS, octaneEnabled int
 	var createdStr, updatedStr string
 
 	err := row.Scan(
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
-		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
+		&sslEnabled, &forceHTTPS, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
 		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
@@ -1303,6 +1327,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 	w.ErrorMessage = errorMessage.String
 	assignProfileFields(&w, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog)
 	w.SSLEnabled = sslEnabled == 1
+	w.ForceHTTPS = forceHTTPS == 1
 	w.OctaneEnabled = octaneEnabled == 1
 	w.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	w.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
@@ -1314,13 +1339,13 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 	var w model.Website
 	var phpVersion, errorMessage, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
-	var sslEnabled, octaneEnabled int
+	var sslEnabled, forceHTTPS, octaneEnabled int
 	var createdStr, updatedStr string
 
 	err := rows.Scan(
 		&w.ID, &w.Domain, &w.AppType, &phpVersion,
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
-		&sslEnabled, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
+		&sslEnabled, &forceHTTPS, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
 		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
 	)
@@ -1332,6 +1357,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 	w.ErrorMessage = errorMessage.String
 	assignProfileFields(&w, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog)
 	w.SSLEnabled = sslEnabled == 1
+	w.ForceHTTPS = forceHTTPS == 1
 	w.OctaneEnabled = octaneEnabled == 1
 	w.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 	w.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)

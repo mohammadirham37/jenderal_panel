@@ -282,6 +282,67 @@ func TestSetNginxProfileValidatesAndPersistsOverride(t *testing.T) {
 	}
 }
 
+func TestSetForceHTTPSPersistsAndRegeneratesVhost(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var rendered string
+	mockResult := func() (*executor.Result, error) { return &executor.Result{ExitCode: 0}, nil }
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) { return mockResult() },
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "cp" && len(args) >= 2 && strings.Contains(args[0], "jenderal_website_regen_") {
+				if raw, readErr := os.ReadFile(args[0]); readErr == nil {
+					rendered = string(raw)
+				}
+			}
+			return mockResult()
+		},
+	}
+	svc := NewService(db, mock, nil)
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "secure.example.com", Template: "php", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO ssl_certificates (id, website_id, domain, status, created_at, updated_at)
+		VALUES ('cert-1', ?, 'secure.example.com', 'active', '2026-01-01', '2026-01-01')`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := svc.SetForceHTTPS(context.Background(), created.ID, false)
+	if err != nil {
+		t.Fatalf("SetForceHTTPS(off) error = %v", err)
+	}
+	if updated.ForceHTTPS {
+		t.Error("ForceHTTPS should be off after toggling off")
+	}
+	if rendered == "" {
+		t.Fatal("regeneration did not write a vhost config")
+	}
+	if strings.Contains(rendered, "return 301 https://") {
+		t.Errorf("vhost must not redirect with force https off:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "server_name secure.example.com;") {
+		t.Errorf("certified domain must stay on the application vhost when force https is off:\n%s", rendered)
+	}
+
+	persisted, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if persisted.ForceHTTPS {
+		t.Error("ForceHTTPS must persist as off in the database")
+	}
+
+	if _, err := svc.SetForceHTTPS(context.Background(), created.ID, true); err != nil {
+		t.Fatalf("SetForceHTTPS(on) error = %v", err)
+	}
+	if !strings.Contains(rendered, "return 301 https://$host$request_uri;") {
+		t.Errorf("vhost must redirect certified domains with force https on:\n%s", rendered)
+	}
+}
+
 func TestListCompletesWithSingleSQLiteConnection(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

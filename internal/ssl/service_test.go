@@ -42,6 +42,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		status        TEXT NOT NULL DEFAULT 'pending',
 		error_message TEXT,
 		ssl_enabled   INTEGER NOT NULL DEFAULT 0,
+		force_https   INTEGER NOT NULL DEFAULT 1,
 		framework TEXT NOT NULL DEFAULT 'none',
 		framework_version TEXT NOT NULL DEFAULT '',
 		frontend_stack TEXT NOT NULL DEFAULT '',

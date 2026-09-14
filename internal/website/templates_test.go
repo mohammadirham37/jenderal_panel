@@ -207,6 +207,7 @@ func TestRenderVhost_SeparatesHTTPSRedirectDomains(t *testing.T) {
 		LogDir:          "/var/log/example",
 		AppType:         "static",
 		RedirectDomains: []string{"www.example.com"},
+		ForceHTTPS:      true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -216,6 +217,35 @@ func TestRenderVhost_SeparatesHTTPSRedirectDomains(t *testing.T) {
 		"server_name www.example.com;",
 		"location ^~ /.well-known/acme-challenge/",
 		"return 301 https://$host$request_uri;",
+	}
+	for _, check := range checks {
+		if !strings.Contains(output, check) {
+			t.Errorf("missing %q:\n%s", check, output)
+		}
+	}
+}
+
+// With ForceHTTPS off, a certified domain keeps serving plain HTTP: the
+// application vhost must keep the domain and drop the redirect server.
+func TestRenderVhost_ForceHTTPSOffServesHTTP(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:          "example.com",
+		Aliases:         "www.example.com api.example.com",
+		DocumentRoot:    "/srv/example",
+		LogDir:          "/var/log/example",
+		AppType:         "static",
+		RedirectDomains: []string{"www.example.com"},
+		ForceHTTPS:      false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output, "return 301 https://") {
+		t.Errorf("force-https-off vhost must not redirect:\n%s", output)
+	}
+	checks := []string{
+		"server_name example.com www.example.com api.example.com;",
+		"location ^~ /.well-known/acme-challenge/",
 	}
 	for _, check := range checks {
 		if !strings.Contains(output, check) {

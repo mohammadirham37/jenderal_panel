@@ -85,6 +85,7 @@ func TestActivateCertificateRendersIPv4AndRedirect(t *testing.T) {
 		AppType:       "static",
 		LogDir:        "/home/web_example/logs",
 		Aliases:       []string{"www.example.com"},
+		ForceHTTPS:    true,
 	}
 	err := svc.activateCertificate(context.Background(), activationRequest{
 		Site:            site,

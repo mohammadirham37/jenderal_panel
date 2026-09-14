@@ -41,6 +41,10 @@ type VhostData struct {
 	// AppPort is the loopback port of the site's app service (node/go/...);
 	// required by the app-proxy profile.
 	AppPort int
+	// ForceHTTPS redirects certified domains from HTTP to HTTPS. When off,
+	// RedirectDomains is ignored and certified domains keep serving plain
+	// HTTP; visitors opt into HTTPS themselves.
+	ForceHTTPS bool
 }
 
 const DefaultACMEChallengeRoot = "/var/lib/jenderal/acme-challenges"
@@ -479,6 +483,12 @@ type httpVhostData struct {
 func prepareHTTPVhostData(data VhostData) httpVhostData {
 	if data.ACMEChallengeRoot == "" {
 		data.ACMEChallengeRoot = data.DocumentRoot
+	}
+	if !data.ForceHTTPS {
+		// Certificates exist but the site opted out of the redirect; keep
+		// every domain on the application vhost. The per-vhost ACME
+		// location keeps HTTP-01 renewals working over plain HTTP.
+		data.RedirectDomains = nil
 	}
 	allDomains := uniqueDomains(append([]string{data.Domain}, strings.Fields(data.Aliases)...))
 	known := make(map[string]struct{}, len(allDomains))
