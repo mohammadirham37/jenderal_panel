@@ -70,12 +70,16 @@ func TestRunBenchmarkAgainstLocalServer(t *testing.T) {
 }
 
 func TestBenchmarkWebsiteRunsAndWritesResultJSON(t *testing.T) {
-	// A stand-in upstream: the benchmark client always dials 127.0.0.1:80 for
-	// non-SSL sites, so a plain local HTTP server receives the load.
+	// The benchmark dials benchmarkHTTPAddr for non-SSL sites; point it at a
+	// local httptest server so the end-to-end path is hermetic on any machine.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
+
+	originalAddr := benchmarkHTTPAddr
+	benchmarkHTTPAddr = strings.TrimPrefix(server.URL, "http://")
+	t.Cleanup(func() { benchmarkHTTPAddr = originalAddr })
 
 	db := setupTestDB(t)
 	defer db.Close()

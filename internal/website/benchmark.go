@@ -32,6 +32,13 @@ const (
 	benchmarkMaxBodyDrain = 1 << 20
 )
 
+// Local listener addresses the benchmark dials (never the public DNS).
+// Tests override these to point the load at an in-process server.
+var (
+	benchmarkHTTPAddr  = "127.0.0.1:80"
+	benchmarkHTTPSAddr = "127.0.0.1:443"
+)
+
 type BenchmarkOptions struct {
 	DurationSeconds int    `json:"duration_seconds"`
 	Concurrency     int    `json:"concurrency"`
@@ -121,7 +128,7 @@ func benchmarkClient(w model.Website, path string) (*http.Client, *http.Request,
 	if w.SSLEnabled {
 		dialer := &net.Dialer{Timeout: 5 * time.Second}
 		client.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, "127.0.0.1:443")
+			return dialer.DialContext(ctx, network, benchmarkHTTPSAddr)
 		}
 		client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{
 			ServerName: w.Domain,
@@ -131,7 +138,7 @@ func benchmarkClient(w model.Website, path string) (*http.Client, *http.Request,
 	} else {
 		dialer := &net.Dialer{Timeout: 5 * time.Second}
 		client.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
-			return dialer.DialContext(ctx, network, "127.0.0.1:80")
+			return dialer.DialContext(ctx, network, benchmarkHTTPAddr)
 		}
 		rawURL = "http://" + w.Domain + path
 	}
