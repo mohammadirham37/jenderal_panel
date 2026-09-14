@@ -205,6 +205,10 @@ func (f fakeExecutor) RunSudoStream(context.Context, io.Writer, string, ...strin
 	return 0, errors.New("unexpected RunSudoStream")
 }
 
+func (f fakeExecutor) RunSudoStreamSplit(context.Context, io.Writer, io.Writer, string, ...string) (int, error) {
+	return 0, errors.New("unexpected RunSudoStreamSplit")
+}
+
 func (f fakeExecutor) RunSudoWithInputStream(context.Context, io.Reader, io.Writer, string, ...string) (int, error) {
 	return 0, errors.New("unexpected RunSudoWithInputStream")
 }

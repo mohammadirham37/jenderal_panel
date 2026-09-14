@@ -164,6 +164,10 @@ func (f *fakeSSHExecutor) RunSudoStream(ctx context.Context, w io.Writer, name s
 	return 0, nil
 }
 
+func (f *fakeSSHExecutor) RunSudoStreamSplit(context.Context, io.Writer, io.Writer, string, ...string) (int, error) {
+	return 0, nil
+}
+
 func (f *fakeSSHExecutor) RunSudoWithInputStream(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
 	return 0, nil
 }
