@@ -83,3 +83,65 @@ func (s *Service) RestoreDatabase(ctx context.Context, id string, dump io.Reader
 	}
 	return nil
 }
+
+// ManageRestore replaces the contents of one of the management session's
+// databases with the given dump (plain or gzipped SQL, auto-detected by
+// magic bytes). It runs with the session's own credentials, so only
+// databases the database user can write to are affected and the engine's
+// permission errors surface as-is.
+func (s *Service) ManageRestore(ctx context.Context, token, database string, dump io.Reader) error {
+	session, err := s.manageSessionFor(token)
+	if err != nil {
+		return err
+	}
+	if err := validateIdentifier(database); err != nil {
+		return err
+	}
+	switch session.Engine {
+	case "mysql", "postgresql":
+	default:
+		return model.NewValidationError("restore is available for mysql and postgresql only")
+	}
+
+	// Peek the first bytes for the gzip magic number without consuming them.
+	br := bufio.NewReader(dump)
+	head, err := br.Peek(2)
+	if err != nil {
+		if err == io.EOF {
+			return model.NewValidationError("dump file is empty")
+		}
+		return fmt.Errorf("read dump: %w", err)
+	}
+
+	var in io.Reader = br
+	if dbdump.IsGzip(head) {
+		zr, err := gzip.NewReader(br)
+		if err != nil {
+			return model.NewValidationError("dump file is not valid gzip: " + err.Error())
+		}
+		defer zr.Close()
+		in = zr
+	}
+
+	var bin string
+	var args []string
+	switch session.Engine {
+	case "mysql":
+		bin = "mysql"
+		args = []string{"--user=" + session.Username, "--password=" + session.Password, "--database=" + database}
+	case "postgresql":
+		bin = "psql"
+		args = []string{pgConnInfo(session.Username, session.Password, database)}
+	}
+
+	var stderrBuf bytes.Buffer
+	exit, err := s.exec.RunSudoWithInputStream(ctx, in, &stderrBuf, bin, args...)
+	if err != nil {
+		return fmt.Errorf("database restore: %w", err)
+	}
+	if exit != 0 {
+		return model.NewDomainError("DB_RESTORE_FAILED",
+			strings.TrimSpace(stderrBuf.String()), nil)
+	}
+	return nil
+}

@@ -612,3 +612,44 @@ func (h *Handler) ManageEmptyTable(w http.ResponseWriter, r *http.Request) {
 	})
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// ManageRestore handles POST /databases/manage/{token}/restore. Expects a
+// multipart form with a "database" field and a "file" field holding a plain
+// or gzipped SQL dump; the dump replaces the current contents of the
+// selected database using the management session's credentials.
+func (h *Handler) ManageRestore(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreBytes)
+	if err := r.ParseMultipartForm(maxRestoreBytes); err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
+				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 512 MB limit")
+			return
+		}
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "missing dump file")
+		return
+	}
+	defer file.Close()
+	database := r.FormValue("database")
+
+	if err := h.svc.ManageRestore(r.Context(), manageTokenFromRequest(r), database, file); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	panelUser, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: panelUser.ID,
+		Action: "db_manage_restore",
+		Module: "dbmanager",
+		Target: database,
+		Detail: "restored from " + header.Filename,
+		IP:     r.RemoteAddr,
+	})
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}

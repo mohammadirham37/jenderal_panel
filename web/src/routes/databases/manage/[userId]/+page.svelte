@@ -91,6 +91,12 @@
 	let toastMsg = $state('');
 	let toastError = $state('');
 
+	// Restore
+	let restoreFileInput: HTMLInputElement | undefined = $state();
+	let restoreFile = $state<File | null>(null);
+	let restoreBusy = $state(false);
+	let restoreConfirmOpen = $state(false);
+
 	let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
 	// ─── Helpers ──────────────────────────────────────────────────────
@@ -306,6 +312,48 @@
 		}
 	}
 
+	function pickRestoreFile(e: Event) {
+		const el = e.currentTarget as HTMLInputElement;
+		restoreFile = el.files?.[0] ?? null;
+		el.value = '';
+	}
+
+	async function doRestore() {
+		if (!restoreFile || !selectedDb || restoreBusy) return;
+		restoreBusy = true;
+		try {
+			const formData = new FormData();
+			formData.append('file', restoreFile);
+			formData.append('database', selectedDb);
+			const res = await fetch(`/api/v1/databases/manage/${token}/restore`, {
+				method: 'POST',
+				headers: { 'X-DB-Manage-Token': token, 'X-CSRF-Token': getCSRFToken() },
+				credentials: 'include',
+				body: formData
+			});
+			const json = await res.json().catch(() => null);
+			if (!res.ok) {
+				const code = json?.error?.code || '';
+				if (code === 'MANAGE_SESSION_EXPIRED' || res.status === 401) {
+					lockSession(true);
+					throw new Error(json?.error?.message || translate($language, 'dbm.session_expired'));
+				}
+				throw new Error(json?.error?.message || translate($language, 'dbm.request_failed_http').replace('{code}', String(res.status)));
+			}
+			toast(translate($language, 'dbm.restored').replace('{db}', selectedDb));
+			restoreConfirmOpen = false;
+			restoreFile = null;
+			selectedTable = '';
+			structure = [];
+			browse = null;
+			await loadTables();
+		} catch (err) {
+			toast(err instanceof Error ? err.message : translate($language, 'dbm.restore_failed'), true);
+		} finally {
+			restoreBusy = false;
+		}
+	}
+
 	function formatSize(bytes: number): string {
 		if (!bytes || bytes <= 0) return '—';
 		const units = ['B', 'KB', 'MB', 'GB'];
@@ -455,6 +503,33 @@
 					</svg>
 					{translate($language, 'dbm.sql_console')}
 				</button>
+
+				<div class="mt-2.5 border-t border-white/5 pt-2.5">
+					<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.restore')}</span>
+					<input type="file" bind:this={restoreFileInput} onchange={pickRestoreFile} accept=".sql,.gz,.gzip" class="hidden" />
+					<button
+						type="button"
+						onclick={() => restoreFileInput?.click()}
+						title={restoreFile?.name}
+						class="w-full cursor-pointer truncate rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-left text-xs text-gray-300 transition hover:border-blue-500 focus:outline-none"
+					>
+						{restoreFile ? restoreFile.name : translate($language, 'dbm.choose_dump')}
+					</button>
+					{#if restoreFile}
+						<button
+							type="button"
+							onclick={() => (restoreConfirmOpen = true)}
+							disabled={!selectedDb}
+							title={!selectedDb ? translate($language, 'dbm.no_database') : ''}
+							class="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-green-600 px-3 py-2 text-xs font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
+						>
+							<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M8.25 9L4.5 12m0 0l3.75 3M4.5 12h9m4.5 4.5V9.75a4.5 4.5 0 00-4.5-4.5H9" />
+							</svg>
+							{translate($language, 'dbm.restore_into').replace('{db}', selectedDb)}
+						</button>
+					{/if}
+				</div>
 			</div>
 
 			<div class="px-3 py-2.5">
@@ -770,6 +845,33 @@
 						class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
 					>
 						{confirmBusy ? translate($language, 'dbm.working') : confirmAction === 'drop' ? translate($language, 'dbm.drop_table') : translate($language, 'dbm.empty_table')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Restore confirmation -->
+	{#if restoreConfirmOpen}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={translate($language, 'dbm.restore')}>
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">
+					{translate($language, 'dbm.restore_into').replace('{db}', selectedDb)}?
+				</h4>
+				<p class="mt-2 text-sm text-gray-400">
+					{translate($language, 'dbm.restore_warning')}
+					{translate($language, 'dbm.restore_cannot_undo')}
+				</p>
+				<p class="mt-2 truncate rounded bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-300">{restoreFile?.name}</p>
+				<div class="mt-4 flex justify-end gap-2">
+					<button type="button" onclick={() => (restoreConfirmOpen = false)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'db.cancel')}</button>
+					<button
+						type="button"
+						onclick={doRestore}
+						disabled={restoreBusy}
+						class="cursor-pointer rounded-lg bg-green-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
+					>
+						{restoreBusy ? translate($language, 'dbm.working') : translate($language, 'dbm.restore')}
 					</button>
 				</div>
 			</div>

@@ -633,6 +633,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/databases/manage/{token}/drop-table", dbHandler.ManageDropTable)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/manage/{token}/empty-table", dbHandler.ManageEmptyTable)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/restore", dbHandler.ManageRestore)
 
 			// Docker
 			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).
