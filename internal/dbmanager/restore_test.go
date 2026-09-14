@@ -192,3 +192,58 @@ func TestManageRestoreReportsEngineErrors(t *testing.T) {
 		t.Fatalf("engine stderr must surface, got %v", err)
 	}
 }
+
+func TestRealPsqlErrorsFiltersVersionNoise(t *testing.T) {
+	if got := realPsqlErrors(""); got != "" {
+		t.Errorf("empty stderr = %q, want empty", got)
+	}
+	// A PG18 dump restored onto an older server: unknown meta-command and a
+	// missing SET parameter never affect the applied data.
+	benign := "psql:<stdin>:5: invalid command \\restrict\n" +
+		"psql:<stdin>:13: ERROR:  unrecognized configuration parameter \"transaction_timeout\"\n"
+	if got := realPsqlErrors(benign); got != "" {
+		t.Errorf("benign noise must not fail the restore, got %q", got)
+	}
+	// Real errors must be surfaced.
+	real := benign + "psql:<stdin>:85: ERROR:  permission denied for schema bed\n"
+	got := realPsqlErrors(real)
+	if got == "" || !strings.Contains(got, "permission denied for schema bed") {
+		t.Errorf("real error must surface, got %q", got)
+	}
+	if strings.Contains(got, "invalid command") || strings.Contains(got, "transaction_timeout") {
+		t.Errorf("benign noise must be filtered out, got %q", got)
+	}
+}
+
+func TestManageRestoreFailsWhenStatementsError(t *testing.T) {
+	token := manageSessions.put(&manageSession{
+		Engine: "postgresql", Username: "u", Password: "p",
+	})
+	defer manageSessions.drop(token)
+
+	var benignOnly = "psql:<stdin>:5: invalid command \\restrict\n" +
+		"psql:<stdin>:13: ERROR:  unrecognized configuration parameter \"transaction_timeout\"\n"
+	var withReal = benignOnly + "psql:<stdin>:85: ERROR:  permission denied for schema bed\n"
+
+	calls := 0
+	mock := &executor.MockExecutor{
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			calls++
+			if calls == 1 {
+				stderrW.Write([]byte(benignOnly))
+				return 0, nil
+			}
+			stderrW.Write([]byte(withReal))
+			return 0, nil
+		},
+	}
+	svc := NewService(nil, mock, nil)
+
+	if err := svc.ManageRestore(context.Background(), token, "vapedist", strings.NewReader("SELECT 1;")); err != nil {
+		t.Fatalf("benign-only stderr must not fail the restore: %v", err)
+	}
+	err := svc.ManageRestore(context.Background(), token, "vapedist", strings.NewReader("SELECT 1;"))
+	if err == nil || !strings.Contains(err.Error(), "permission denied for schema bed") {
+		t.Fatalf("real stderr errors must fail the restore, got %v", err)
+	}
+}

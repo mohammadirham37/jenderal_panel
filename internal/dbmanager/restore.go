@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/dbdump"
@@ -143,5 +144,43 @@ func (s *Service) ManageRestore(ctx context.Context, token, database string, dum
 		return model.NewDomainError("DB_RESTORE_FAILED",
 			strings.TrimSpace(stderrBuf.String()), nil)
 	}
+	// psql exits 0 even when statements fail, so a restore that applied
+	// nothing must not look successful: surface the real errors from stderr.
+	if session.Engine == "postgresql" {
+		if msg := realPsqlErrors(stderrBuf.String()); msg != "" {
+			return model.NewDomainError("DB_RESTORE_FAILED", msg, nil)
+		}
+	}
 	return nil
+}
+
+// benignPsqlNoiseRe matches error output that never affects the applied
+// data: psql meta-commands from a newer client (\restrict) and SETs of
+// server parameters the target version does not have. Dumps taken on
+// newer PostgreSQL versions hit both when restored onto older ones.
+var benignPsqlNoiseRe = regexp.MustCompile(`invalid command \\|unrecognized configuration parameter`)
+
+// realPsqlErrors extracts actionable errors from psql stderr, or "" when
+// only benign version-compat noise occurred.
+func realPsqlErrors(stderr string) string {
+	if !strings.Contains(stderr, "ERROR") && !strings.Contains(stderr, "invalid command") {
+		return ""
+	}
+	var kept []string
+	for _, line := range strings.Split(stderr, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || benignPsqlNoiseRe.MatchString(trimmed) {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	const maxLen = 2000
+	msg := strings.Join(kept, "\n")
+	if len(msg) > maxLen {
+		msg = msg[:maxLen] + "…"
+	}
+	return msg
 }
