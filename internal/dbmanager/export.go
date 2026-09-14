@@ -1,6 +1,7 @@
 package dbmanager
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -83,24 +84,30 @@ func (s *Service) PrepareExportDatabase(ctx context.Context, id, format string) 
 		return nil, fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
-	_ = tmp.Close()
 
-	// Parameterised redirect: the database and path travel as positional
-	// shell parameters.
-	bin, args, err := dbdump.DumpToFileCommand(engineName, name, tmpPath)
+	// Stream the dump straight from the engine into the temp file the panel
+	// process owns. A shell redirect here would make the writing identity
+	// depend on how sudo runs the script, which can silently differ from the
+	// file owner and fail the redirect with permission denied.
+	bin, args, err := dbdump.DumpCommand(engineName, name)
 	if err != nil {
 		os.Remove(tmpPath)
 		return nil, err
 	}
-	result, err := s.exec.RunSudo(ctx, bin, args...)
-	if err != nil {
+	var stderrBuf bytes.Buffer
+	exit, streamErr := s.exec.RunSudoStreamSplit(ctx, tmp, &stderrBuf, bin, args...)
+	tmp.Close()
+	if streamErr != nil {
 		os.Remove(tmpPath)
-		return nil, fmt.Errorf("database dump: %w", err)
+		return nil, fmt.Errorf("database dump: %w", streamErr)
 	}
-	if result.ExitCode != 0 {
+	if exit != 0 {
 		os.Remove(tmpPath)
-		return nil, model.NewDomainError("DB_DUMP_FAILED",
-			strings.TrimSpace(result.Stderr), nil)
+		detail := strings.TrimSpace(stderrBuf.String())
+		if detail == "" {
+			detail = fmt.Sprintf("exit status %d", exit)
+		}
+		return nil, model.NewDomainError("DB_DUMP_FAILED", detail, nil)
 	}
 
 	filename := fmt.Sprintf("%s-%s%s", name,

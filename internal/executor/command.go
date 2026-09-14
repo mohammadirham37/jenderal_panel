@@ -23,6 +23,7 @@ type CommandExecutor interface {
 	RunSudo(ctx context.Context, name string, args ...string) (*Result, error)
 	RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error)
 	RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
+	RunSudoStreamSplit(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error)
 	RunSudoWithInputStream(ctx context.Context, stdin io.Reader, stderr io.Writer, name string, args ...string) (int, error)
 }
 
@@ -118,6 +119,14 @@ func (e *Executor) RunSudoStream(ctx context.Context, w io.Writer, name string, 
 	return e.stream(ctx, w, nil, nil, "/usr/bin/sudo", sudoArgs...)
 }
 
+// RunSudoStreamSplit executes the command as root with stdout streaming to
+// stdoutW and stderr to stderrW separately, without buffering them whole in
+// memory. It returns the process exit code.
+func (e *Executor) RunSudoStreamSplit(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error) {
+	sudoArgs := append([]string{name}, args...)
+	return e.stream(ctx, stdoutW, stderrW, nil, "/usr/bin/sudo", sudoArgs...)
+}
+
 // RunSudoWithInputStream executes the command as root with stdin streamed
 // from reader, avoiding buffering the whole input in memory; stderr streams
 // to stderrW for error reporting. It returns the process exit code.
@@ -173,6 +182,7 @@ type MockExecutor struct {
 	RunSudoFunc                func(ctx context.Context, name string, args ...string) (*Result, error)
 	RunSudoWithInputFunc       func(ctx context.Context, input, name string, args ...string) (*Result, error)
 	RunSudoStreamFunc          func(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
+	RunSudoStreamSplitFunc     func(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error)
 	RunSudoWithInputStreamFunc func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error)
 }
 
@@ -203,6 +213,14 @@ func (m *MockExecutor) RunSudoWithInputStream(ctx context.Context, stdin io.Read
 func (m *MockExecutor) RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
 	if m.RunSudoStreamFunc != nil {
 		return m.RunSudoStreamFunc(ctx, w, name, args...)
+	}
+	return 0, nil
+}
+
+// RunSudoStreamSplit delegates to RunSudoStreamSplitFunc.
+func (m *MockExecutor) RunSudoStreamSplit(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error) {
+	if m.RunSudoStreamSplitFunc != nil {
+		return m.RunSudoStreamSplitFunc(ctx, stdoutW, stderrW, name, args...)
 	}
 	return 0, nil
 }
