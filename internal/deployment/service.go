@@ -211,6 +211,18 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 			return
 		}
 	} else {
+		// A fresh clone needs an empty target: leftover files from a
+		// previous install make `git clone` refuse to run. Clear the
+		// project root first so the user does not have to delete the files
+		// by hand through the file manager.
+		res, err = s.exec.Run(ctx, "test", "-e", projectRoot)
+		if err == nil && res.ExitCode == 0 {
+			res, err = s.exec.RunSudo(ctx, "rm", "-rf", projectRoot)
+			if !appendLog("clear existing project files", res, err) {
+				s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
+				return
+			}
+		}
 		shellCmd := fmt.Sprintf("%sgit clone %s %s", gitSSHCmd, repo, projectRoot)
 		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
 		if !appendLog("git clone", res, err) {

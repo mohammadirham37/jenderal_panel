@@ -1969,10 +1969,13 @@ import { toast } from '$lib/stores/toast';
 					<TaskProgress
 						bind:taskId={commandTaskId}
 						storageKey="cmd-task-{website.id}"
-						onComplete={() => {
-							// Give the Completed badge a moment, then reload so every
-							// section reflects the post-command state.
-							setTimeout(() => window.location.reload(), 800);
+						onComplete={(task) => {
+							// Reload only on success so every section reflects the
+							// post-command state. On failure the output stays put so
+							// the error can be read; the user dismisses it by hand.
+							if (task?.status === 'completed') {
+								setTimeout(() => window.location.reload(), 800);
+							}
 						}}
 					/>
 				</div>

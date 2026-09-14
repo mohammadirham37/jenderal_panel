@@ -100,3 +100,124 @@ func TestFindDirWithMarkerDetectsGitDirectory(t *testing.T) {
 		t.Fatalf("probed %d candidates (%v), want 2", len(probed), probed)
 	}
 }
+
+// A virtual filesystem for hasProjectFile/findDirWithFile probes: the keys
+// are "test -e/-f" paths that answer "exists".
+func setupProbeExecutor(existing map[string]bool) *executor.MockExecutor {
+	return &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" && len(args) == 2 && (args[0] == "-e" || args[0] == "-f") {
+				if existing[args[1]] {
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			if name == "cat" && len(args) == 1 && strings.HasSuffix(args[0], "/.nvm/alias/default") {
+				return &executor.Result{ExitCode: 0, Stdout: "22\n"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+}
+
+func TestBuildInitialSetupScriptComposesConditionalChain(t *testing.T) {
+	existing := map[string]bool{
+		"/home/web_example/app/composer.json": true,
+		"/home/web_example/app/artisan":       true,
+		"/home/web_example/app/package.json":  true,
+		"/home/web_example/app/.env.example":  true,
+		"/home/web_example/app/.env":          true,
+	}
+	svc := NewService(nil, setupProbeExecutor(existing), nil)
+	w := model.Website{WebUser: "web_example", DocumentRoot: "/home/web_example/app/public"}
+
+	script, err := svc.buildInitialSetupScript(context.Background(), w)
+	if err != nil {
+		t.Fatalf("buildInitialSetupScript() error = %v", err)
+	}
+	if !strings.HasPrefix(script, "cd /home/web_example/app && ") {
+		t.Errorf("chain must run in the composer project root, got %q", script)
+	}
+	for _, want := range []string{
+		"composer install --no-interaction",
+		"php artisan key:generate --force",
+		"nvm-exec npm install",
+		"nvm-exec npm run build",
+		"NODE_VERSION=22",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("chain missing %q:\n%s", want, script)
+		}
+	}
+	// .env already exists: the copy step must be skipped.
+	if strings.Contains(script, "cp .env.example") {
+		t.Errorf("chain must not overwrite an existing .env:\n%s", script)
+	}
+}
+
+func TestBuildInitialSetupScriptIncludesEnvCopyWhenMissing(t *testing.T) {
+	existing := map[string]bool{
+		"/home/web_example/app/composer.json": true,
+		"/home/web_example/app/.env.example":  true,
+	}
+	svc := NewService(nil, setupProbeExecutor(existing), nil)
+	w := model.Website{WebUser: "web_example", DocumentRoot: "/home/web_example/app/public"}
+
+	script, err := svc.buildInitialSetupScript(context.Background(), w)
+	if err != nil {
+		t.Fatalf("buildInitialSetupScript() error = %v", err)
+	}
+	if !strings.Contains(script, "cp .env.example .env") {
+		t.Errorf("chain must bootstrap .env when it is missing:\n%s", script)
+	}
+	if strings.Contains(script, "npm") {
+		t.Errorf("no package.json: npm steps must be skipped:\n%s", script)
+	}
+}
+
+func TestInitialSetupPresetOnlyWhileComposerNotInstalled(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	probeSvc := NewService(db, setupProbeExecutor(nil), nil)
+	created, err := probeSvc.Create(context.Background(), CreateRequest{
+		Domain: "setup.example.com", Template: "laravel", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	appRoot := "/home/" + created.WebUser + "/app"
+
+	existing := map[string]bool{appRoot + "/composer.json": true}
+	svc := NewService(db, setupProbeExecutor(existing), nil)
+
+	presets, err := svc.GetCommandPresets(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetCommandPresets() error = %v", err)
+	}
+	found := false
+	for _, p := range presets {
+		if p.Label == InitialSetupCommand {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("initial setup preset must be offered before composer install, got %+v", presets)
+	}
+
+	// Once vendor/autoload.php exists the one-click chain is hidden and the
+	// individual presets take over.
+	existing[appRoot+"/vendor/autoload.php"] = true
+	presets, err = svc.GetCommandPresets(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetCommandPresets() after install error = %v", err)
+	}
+	for _, p := range presets {
+		if p.Label == InitialSetupCommand {
+			t.Errorf("initial setup preset must disappear once composer install ran, got %+v", presets)
+		}
+	}
+}

@@ -20,6 +20,12 @@ type CommandPreset struct {
 	Danger   bool   `json:"danger"`
 }
 
+// InitialSetupCommand is the one-click first-install chain for Laravel
+// projects: composer install, .env bootstrap, key generation, then the
+// frontend build. It is only offered while composer dependencies have not
+// been installed yet.
+const InitialSetupCommand = "initial setup"
+
 // allowedCommands maps human-readable command labels to the actual argument
 // slices that will be executed. Only commands present in this map may be run.
 var allowedCommands = map[string][]string{
@@ -75,13 +81,35 @@ func (s *Service) taskRunner() *taskrunner.Runner {
 }
 
 // GetCommandPresets returns the list of predefined commands available for a
-// website based on its framework.
+// website based on its framework. The one-click initial setup chain is only
+// included while composer dependencies are not installed yet; afterwards the
+// individual presets cover updates.
 func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]CommandPreset, error) {
 	w, err := s.Get(ctx, websiteID)
 	if err != nil {
 		return nil, err
 	}
-	return commandPresetsFor(w), nil
+	presets := commandPresetsFor(w)
+	if w.Framework == "laravel" && s.composerInstalled(ctx, w) {
+		filtered := presets[:0]
+		for _, p := range presets {
+			if p.Label != InitialSetupCommand {
+				filtered = append(filtered, p)
+			}
+		}
+		presets = filtered
+	}
+	return presets, nil
+}
+
+// composerInstalled reports whether the project's composer dependencies are
+// installed (vendor/autoload.php exists in the composer.json directory).
+func (s *Service) composerInstalled(ctx context.Context, w model.Website) bool {
+	root := s.findDirWithFile(ctx, w, "composer.json")
+	if root == "" {
+		return false
+	}
+	return s.hasProjectFile(ctx, root, "vendor/autoload.php")
 }
 
 // commandPresetsFor builds the preset list offered for a website.
@@ -108,6 +136,7 @@ func commandPresetsFor(w model.Website) []CommandPreset {
 	// Laravel .env card on the same tab, so it is not listed as a preset here.
 	if framework == "laravel" {
 		presets = append(presets,
+			CommandPreset{Label: InitialSetupCommand, Command: InitialSetupCommand, Category: "laravel", Danger: false},
 			CommandPreset{Label: "php artisan key:generate", Command: "php artisan key:generate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate", Command: "php artisan migrate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate:fresh", Command: "php artisan migrate:fresh", Category: "artisan", Danger: true},
@@ -256,6 +285,9 @@ func (s *Service) hasProjectFile(ctx context.Context, workDir, name string) bool
 // background. The command must be present in the allowedCommands map. Returns
 // the background task ID.
 func (s *Service) RunCommand(ctx context.Context, websiteID string, command string) (string, error) {
+	if command == InitialSetupCommand {
+		return s.runInitialSetup(ctx, websiteID)
+	}
 	args, ok := allowedCommands[command]
 	if !ok {
 		return "", model.NewValidationError("command not allowed: " + command)
@@ -294,4 +326,79 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 	)
 
 	return taskID, nil
+}
+
+// runInitialSetup runs the first-install chain as a single background task:
+// composer install, .env bootstrap, key:generate, npm install, npm run build.
+func (s *Service) runInitialSetup(ctx context.Context, websiteID string) (string, error) {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return "", err
+	}
+	tr := s.taskRunner()
+	if tr == nil {
+		return "", fmt.Errorf("task runner not available")
+	}
+
+	shellCmd, err := s.buildInitialSetupScript(ctx, w)
+	if err != nil {
+		return "", err
+	}
+
+	taskID := tr.Run(
+		InitialSetupCommand+" ("+w.Domain+")",
+		"sudo", "-u", w.WebUser, "bash", "-c", shellCmd,
+	)
+	return taskID, nil
+}
+
+// buildInitialSetupScript assembles the && chain the initial setup runs.
+// Each step runs only when its input file exists (and .env is only created
+// when missing), the npm steps go through the website's NVM runtime, and the
+// chain stops at the first failing step just like the && chain it replaces.
+func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website) (string, error) {
+	workDir := w.DocumentRoot
+	if dir := s.findDirWithFile(ctx, w, "composer.json"); dir != "" {
+		workDir = dir
+	}
+
+	var steps []string
+	if s.hasProjectFile(ctx, workDir, "composer.json") {
+		steps = append(steps, "echo '==> composer install' && composer install --no-interaction")
+	}
+	if s.hasProjectFile(ctx, workDir, ".env.example") && !s.hasProjectFile(ctx, workDir, ".env") {
+		steps = append(steps, "echo '==> cp .env.example .env' && cp .env.example .env")
+	}
+	if s.hasProjectFile(ctx, workDir, "artisan") {
+		steps = append(steps, "echo '==> php artisan key:generate' && php artisan key:generate --force")
+	}
+	if s.hasProjectFile(ctx, workDir, "package.json") {
+		steps = append(steps,
+			"echo '==> npm install' && "+s.nvmWrappedCommand(ctx, w, workDir, "npm install"),
+			"echo '==> npm run build' && "+s.nvmWrappedCommand(ctx, w, workDir, "npm run build"),
+		)
+	}
+	if len(steps) == 0 {
+		return "", model.NewValidationError("nothing to set up: no composer.json, artisan, or package.json found in the project")
+	}
+	return "cd " + workDir + " && " + strings.Join(steps, " && "), nil
+}
+
+// nvmWrappedCommand returns a shell fragment running command through the
+// website's NVM runtime, with an actionable error when the runtime is
+// missing. Mirrors buildCommandScript's non-.nvmrc path.
+func (s *Service) nvmWrappedCommand(ctx context.Context, w model.Website, workDir, command string) string {
+	nodeVersion := ""
+	if !s.hasProjectFile(ctx, workDir, ".nvmrc") {
+		nodeVersion = s.nvmDefaultVersion(ctx, w)
+	}
+	nvmDir := "/home/" + w.WebUser + "/.nvm"
+	env := ""
+	if nodeVersion != "" {
+		env = " NODE_VERSION=" + nodeVersion
+	}
+	return fmt.Sprintf(
+		"if [ -x %[1]s/nvm-exec ]; then NVM_DIR=%[2]s%[3]s %[2]s/nvm-exec %[4]s; else echo \"Node.js runtime is not installed for this website — install it from the website detail page first\"; exit 127; fi",
+		nvmDir, nvmDir, env, command,
+	)
 }

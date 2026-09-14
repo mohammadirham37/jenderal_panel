@@ -3,6 +3,8 @@ package deployment
 import (
 	"context"
 	"database/sql"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -87,6 +89,70 @@ func TestDeploy_CreatesRecord(t *testing.T) {
 	}
 	if got.Status != "pending" {
 		t.Errorf("expected DB status pending, got %s", got.Status)
+	}
+}
+
+// A fresh clone must wipe leftover files in the project root first: git
+// refuses to clone into a non-empty directory, which previously forced users
+// to delete the files by hand.
+func TestDeployClearsExistingProjectRootBeforeClone(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+
+	var mu sync.Mutex
+	var sudoCalls [][]string
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" && len(args) == 2 {
+				// .git absent (fresh clone), deploy key absent, project root
+				// present, no composer.json/artisan.
+				if args[0] == "-e" && args[1] == "/home/web_example/app" {
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			mu.Lock()
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			mu.Unlock()
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+	}
+	svc := NewService(db, exec, auditSvc)
+
+	websiteID := insertWebsite(t, db, "example.com", "web_example", "/home/web_example/app/public")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	// Process the queue entry synchronously.
+	svc.deploy(context.Background(), d.ID)
+
+	mu.Lock()
+	defer mu.Unlock()
+	rmIdx, cloneIdx := -1, -1
+	for i, call := range sudoCalls {
+		if call[0] == "rm" && len(call) >= 3 && call[1] == "-rf" && call[2] == "/home/web_example/app" {
+			rmIdx = i
+		}
+		if cloneIdx == -1 && call[0] == "su" {
+			for _, a := range call {
+				if strings.Contains(a, "git clone") {
+					cloneIdx = i
+				}
+			}
+		}
+	}
+	if rmIdx == -1 {
+		t.Fatalf("expected rm -rf of the project root, got: %v", sudoCalls)
+	}
+	if cloneIdx == -1 {
+		t.Fatalf("expected the git clone to still run, got: %v", sudoCalls)
+	}
+	if rmIdx > cloneIdx {
+		t.Errorf("wipe must happen before the clone: rm at %d, clone at %d", rmIdx, cloneIdx)
 	}
 }
 

@@ -57,6 +57,11 @@ import { language, translate } from '$lib/stores/language';
 	// Delete confirmation
 	let pendingDelete = $state<FileEntry | null>(null);
 
+	// Bulk selection
+	let selectedNames = $state<string[]>([]);
+	let pendingBulkDelete = $state(false);
+	let bulkDeleting = $state(false);
+
 	let fm = $derived(createFileManagerAPI(api, website.id));
 
 	let editDirty = $derived(editFileSaved !== editFileContent);
@@ -79,6 +84,8 @@ import { language, translate } from '$lib/stores/language';
 		const dirs = files.filter((f) => f.is_dir).length;
 		return { dirs, files: files.length - dirs };
 	});
+
+	let allSelected = $derived(visibleFiles.length > 0 && visibleFiles.every((f) => selectedNames.includes(f.name)));
 
 	// ─── Helpers ──────────────────────────────────────────────────────
 
@@ -156,6 +163,16 @@ import { language, translate } from '$lib/stores/language';
 		else { sortKey = key; sortAsc = true; }
 	}
 
+	function toggleSelect(name: string) {
+		if (selectedNames.includes(name)) selectedNames = selectedNames.filter((n) => n !== name);
+		else selectedNames = [...selectedNames, name];
+	}
+
+	function toggleSelectAll() {
+		if (allSelected) selectedNames = [];
+		else selectedNames = visibleFiles.map((f) => f.name);
+	}
+
 	// ─── API ──────────────────────────────────────────────────────────
 
 	async function loadFiles(path?: string) {
@@ -169,6 +186,7 @@ import { language, translate } from '$lib/stores/language';
 			files = data || [];
 			currentPath = requested;
 			search = '';
+			selectedNames = [];
 		} catch (err) {
 			filesError = err instanceof Error ? err.message : translate($language, 'wsf.errLoad');
 		} finally {
@@ -224,6 +242,31 @@ import { language, translate } from '$lib/stores/language';
 		} catch (err) {
 			fail(err, translate($language, 'wsf.errDelete'));
 		}
+	}
+
+	async function confirmBulkDelete() {
+		if (bulkDeleting || selectedNames.length === 0) return;
+		bulkDeleting = true;
+		const targets = [...selectedNames];
+		let done = 0;
+		let failures = 0;
+		for (const name of targets) {
+			try {
+				await fm.remove(joinPath(name));
+				done++;
+			} catch {
+				failures++;
+			}
+		}
+		bulkDeleting = false;
+		pendingBulkDelete = false;
+		selectedNames = [];
+		if (failures === 0) {
+			flash(translate($language, 'wsf.bulkDeleted').replace('{count}', String(done)));
+		} else {
+			toast.error(translate($language, 'wsf.bulkPartial').replace('{done}', String(done)).replace('{failed}', String(failures)));
+		}
+		await loadFiles(currentPath);
 	}
 
 	async function createEntry() {
@@ -460,6 +503,20 @@ import { language, translate } from '$lib/stores/language';
 				</form>
 			{/if}
 
+			{#if selectedNames.length > 0}
+				<div class="flex flex-wrap items-center gap-2 border-b border-gray-700 bg-red-950/30 px-4 py-2.5">
+					<span class="text-xs font-semibold text-red-300">{translate($language, 'wsf.selectedCount').replace('{count}', String(selectedNames.length))}</span>
+					<button
+						onclick={() => (pendingBulkDelete = true)}
+						class="cursor-pointer rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-700"
+					>{translate($language, 'wsf.deleteSelected')}</button>
+					<button
+						onclick={() => (selectedNames = [])}
+						class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
+					>{translate($language, 'wsf.clearSelection')}</button>
+				</div>
+			{/if}
+
 			<!-- ─── File list ─────────────────────────────────────────── -->
 			{#if filesError}
 				<div class="px-4 py-6 text-center text-sm text-red-400">{filesError}</div>
@@ -476,6 +533,13 @@ import { language, translate } from '$lib/stores/language';
 			{:else}
 				<!-- Sort header -->
 				<div class="flex items-center gap-3 border-b border-gray-700 px-4 py-2 text-[11px] font-medium uppercase tracking-wider text-gray-500">
+					<input
+						type="checkbox"
+						checked={allSelected}
+						onchange={toggleSelectAll}
+						aria-label={translate($language, 'wsf.selectAll')}
+						class="h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500"
+					/>
 					<button onclick={() => toggleSort('name')} class="flex flex-1 cursor-pointer items-center gap-1 text-left hover:text-gray-300">
 						{translate($language, 'wsf.name')}
 						{#if sortKey === 'name'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
@@ -506,6 +570,13 @@ import { language, translate } from '$lib/stores/language';
 
 					{#each visibleFiles as entry (entry.path)}
 						<div class="group flex items-center gap-3 px-4 py-2.5 transition hover:bg-gray-750">
+							<input
+								type="checkbox"
+								checked={selectedNames.includes(entry.name)}
+								onchange={() => toggleSelect(entry.name)}
+								aria-label={translate($language, 'wsf.selectItem').replace('{name}', entry.name)}
+								class="h-3.5 w-3.5 shrink-0 cursor-pointer rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500"
+							/>
 							<span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gray-900/70 text-[9px] font-bold {fileIcon(entry).cls}">
 								{fileIcon(entry).label}
 							</span>
@@ -599,6 +670,23 @@ import { language, translate } from '$lib/stores/language';
 				<div class="mt-4 flex justify-end gap-2">
 					<button onclick={() => (pendingDelete = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
 					<button onclick={confirmDelete} class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700">{translate($language, 'wsf.delete')}</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Bulk delete confirmation -->
+	{#if pendingBulkDelete}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={translate($language, 'wsf.bulkDeleteTitle').replace('{count}', String(selectedNames.length))}>
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">{translate($language, 'wsf.bulkDeleteTitle').replace('{count}', String(selectedNames.length))}</h4>
+				<p class="mt-2 text-sm text-gray-400">
+					{translate($language, 'wsf.bulkDeleteBody')}
+					{translate($language, 'wsf.cannotUndo')}
+				</p>
+				<div class="mt-4 flex justify-end gap-2">
+					<button onclick={() => (pendingBulkDelete = false)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
+					<button onclick={confirmBulkDelete} disabled={bulkDeleting} class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'wsf.delete')}</button>
 				</div>
 			</div>
 		</div>
