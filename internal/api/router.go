@@ -439,6 +439,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
 				Post("/php/{version}/install", phpHandler.Install)
 			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/reinstall", phpHandler.Reinstall)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
 				Post("/php/{version}/uninstall", phpHandler.Uninstall)
 			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
 				Post("/php/{version}/restart", phpHandler.Restart)

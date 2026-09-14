@@ -330,3 +330,47 @@ func TestParseFPMStatus(t *testing.T) {
 		})
 	}
 }
+
+func TestReinstallCommandsRepairSequence(t *testing.T) {
+	cmds := (&Service{}).reinstallCommands("8.3")
+
+	joined := make([]string, len(cmds))
+	for i, c := range cmds {
+		joined[i] = strings.Join(c, " ")
+	}
+	all := strings.Join(joined, "\n")
+
+	// The repair sequence must clear package breakage first.
+	if !strings.Contains(joined[0], "systemctl stop php8.3-fpm") || !strings.Contains(joined[0], "|| true") {
+		t.Errorf("first step must stop FPM best-effort, got %q", joined[0])
+	}
+	if joined[1] != "dpkg --configure -a" {
+		t.Errorf("second step must repair dpkg state, got %q", joined[1])
+	}
+	if !strings.Contains(all, "install -f -y") {
+		t.Errorf("broken dependencies must be fixed, got:\n%s", all)
+	}
+	// The package install must be a forced reinstall of the full set.
+	var reinstallStep string
+	for _, j := range joined {
+		if strings.Contains(j, "--reinstall") {
+			reinstallStep = j
+		}
+	}
+	if reinstallStep == "" {
+		t.Fatalf("no --reinstall step found:\n%s", all)
+	}
+	for _, pkg := range []string{"php8.3-fpm", "php8.3-cli", "php8.3-common"} {
+		if !strings.Contains(reinstallStep, pkg) {
+			t.Errorf("reinstall step missing %s: %q", pkg, reinstallStep)
+		}
+	}
+	// The final restart doubles as the health check and must come last.
+	last := joined[len(joined)-1]
+	if last != "systemctl restart php8.3-fpm" {
+		t.Errorf("last step = %q, want the FPM restart", last)
+	}
+	if !strings.Contains(all, "systemctl enable php8.3-fpm") {
+		t.Errorf("service must be re-enabled, got:\n%s", all)
+	}
+}

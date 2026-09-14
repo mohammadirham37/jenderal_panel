@@ -64,6 +64,19 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
+	async function reinstallPhp(version: string) {
+		currentTaskId = '';
+		actionInProgress = `reinstall-${version}`;
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/php/${version}/reinstall`);
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'phpv.toast.reinstallStarted').replace('{version}', version));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.toast.reinstallFailed').replace('{version}', version));
+			actionInProgress = null;
+		}
+	}
+
 	function onTaskComplete() {
 		actionInProgress = null;
 		loadPhp();
@@ -196,6 +209,15 @@ import { toast } from '$lib/stores/toast';
 									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
 								>
 									{actionInProgress === `restart-${php.version}` ? translate($language, 'phpv.restarting') : translate($language, 'phpv.restart')}
+								</button>
+							{:else}
+								<button
+									onclick={() => reinstallPhp(php.version)}
+									disabled={operationInProgress}
+									title={translate($language, 'phpv.reinstallHint')}
+									class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+								>
+									{actionInProgress === `reinstall-${php.version}` ? translate($language, 'phpv.reinstalling') : translate($language, 'phpv.reinstall')}
 								</button>
 							{/if}
 

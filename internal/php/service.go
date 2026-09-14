@@ -147,34 +147,37 @@ func (s *Service) Install(ctx context.Context, version string) error {
 	return nil
 }
 
-func (s *Service) installCommands(version string) [][]string {
-	aptTimeouts := []string{
+func aptTimeoutArgs() []string {
+	return []string{
 		"-o", "Acquire::Retries=2",
 		"-o", "Acquire::http::Timeout=30",
 		"-o", "Acquire::https::Timeout=30",
 	}
-	updateArgs := append([]string{"update", "-qq"}, aptTimeouts...)
-	installArgs := []string{
-		"install", "-y", "-o", "DPkg::Lock::Timeout=120",
+}
+
+func phpPackages(version string) []string {
+	return []string{
+		"php" + version + "-fpm",
+		"php" + version + "-cli",
+		"php" + version + "-common",
+		"php" + version + "-mysql",
+		"php" + version + "-sqlite3",
+		"php" + version + "-pgsql",
+		"php" + version + "-mbstring",
+		"php" + version + "-xml",
+		"php" + version + "-curl",
+		"php" + version + "-zip",
+		"php" + version + "-gd",
+		"php" + version + "-intl",
+		"php" + version + "-bcmath",
 	}
-	installArgs = append(installArgs, aptTimeouts...)
-	installArgs = append(installArgs,
-		"php"+version+"-fpm",
-		"php"+version+"-cli",
-		"php"+version+"-common",
-		"php"+version+"-mysql",
-		"php"+version+"-sqlite3",
-		"php"+version+"-pgsql",
-		"php"+version+"-mbstring",
-		"php"+version+"-xml",
-		"php"+version+"-curl",
-		"php"+version+"-zip",
-		"php"+version+"-gd",
-		"php"+version+"-intl",
-		"php"+version+"-bcmath",
-	)
-	dependencyArgs := []string{"install", "-y", "-o", "DPkg::Lock::Timeout=120"}
-	dependencyArgs = append(dependencyArgs, aptTimeouts...)
+}
+
+func (s *Service) installCommands(version string) [][]string {
+	updateArgs := append([]string{"update", "-qq"}, aptTimeoutArgs()...)
+	installArgs := append([]string{"install", "-y", "-o", "DPkg::Lock::Timeout=120"}, aptTimeoutArgs()...)
+	installArgs = append(installArgs, phpPackages(version)...)
+	dependencyArgs := append([]string{"install", "-y", "-o", "DPkg::Lock::Timeout=120"}, aptTimeoutArgs()...)
 	dependencyArgs = append(dependencyArgs, "ca-certificates", "curl", "gnupg")
 
 	return [][]string{
@@ -183,6 +186,34 @@ func (s *Service) installCommands(version string) [][]string {
 		{"bash", "-c", phpRepositorySetupScript},
 		append([]string{"apt-get"}, updateArgs...),
 		append([]string{"apt-get"}, installArgs...),
+	}
+}
+
+// reinstallCommands builds the repair sequence for a PHP version whose FPM
+// service cannot start: clear interrupted dpkg state and broken
+// dependencies, self-heal the package repository, force-re-download the
+// packages, then bring the service back. The final restart doubles as the
+// health check — if the service still cannot run, the task fails visibly
+// with the service's own error output.
+func (s *Service) reinstallCommands(version string) [][]string {
+	fpm := "php" + version + "-fpm"
+	updateArgs := append([]string{"update", "-qq"}, aptTimeoutArgs()...)
+	reinstallArgs := append([]string{"install", "--reinstall", "-y", "-o", "DPkg::Lock::Timeout=120"}, aptTimeoutArgs()...)
+	reinstallArgs = append(reinstallArgs, phpPackages(version)...)
+	fixDepsArgs := append([]string{"install", "-f", "-y", "-o", "DPkg::Lock::Timeout=120"}, aptTimeoutArgs()...)
+
+	return [][]string{
+		// Best effort: the service may be dead already or its unit missing.
+		{"bash", "-c", "systemctl stop " + fpm + " 2>/dev/null || true"},
+		// A half-configured package is the usual reason FPM will not start.
+		{"dpkg", "--configure", "-a"},
+		append([]string{"apt-get"}, fixDepsArgs...),
+		append([]string{"apt-get"}, updateArgs...),
+		{"bash", "-c", phpRepositorySetupScript},
+		append([]string{"apt-get"}, updateArgs...),
+		append([]string{"apt-get"}, reinstallArgs...),
+		{"systemctl", "enable", fpm},
+		{"systemctl", "restart", fpm},
 	}
 }
 

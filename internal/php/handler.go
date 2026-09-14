@@ -60,6 +60,22 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// Reinstall repairs a PHP version whose FPM service cannot start: it clears
+// package breakage, force-reinstalls the packages, and restarts the service
+// — all as one background task.
+func (h *Handler) Reinstall(w http.ResponseWriter, r *http.Request) {
+	version := chi.URLParam(r, "version")
+	if err := h.svc.validateVersion(version); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	taskID := h.tasks.RunMultiple("Reinstall PHP "+version, h.svc.reinstallCommands(version))
+
+	h.logAction(r, "reinstall_php", "php"+version, "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // Uninstall removes the specified PHP version.
 func (h *Handler) Uninstall(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
