@@ -23,14 +23,22 @@ func TestRenderTLSVhost(t *testing.T) {
 	out := renderTLSVhost("panel.example.com", "http://127.0.0.1:8443", "/certs/panel.crt", "/certs/panel.key", "/webroot")
 	for _, want := range []string{
 		"listen 443 ssl",
+		"listen 80",
+		"server_name panel.example.com",
 		"ssl_certificate /certs/panel.crt",
 		"ssl_certificate_key /certs/panel.key",
 		"proxy_pass http://127.0.0.1:8443",
+		"/webroot",
 		"$jenderal_ws_panel_example_com_wss",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("tls vhost missing %q", want)
 		}
+	}
+	// The final vhost must keep the port-80 ACME listener so renewals do not
+	// fall onto some other site's default server.
+	if strings.Count(out, "server {") != 2 {
+		t.Errorf("tls vhost must carry the :80 and :443 servers, got %d", strings.Count(out, "server {"))
 	}
 }
 

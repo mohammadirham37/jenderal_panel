@@ -228,13 +228,34 @@ server {
 `
 }
 
-// renderTLSVhost renders the HTTPS vhost with websocket-aware proxying.
+// renderTLSVhost renders the final vhost: the port-80 server (ACME +
+// plain proxy so renewals keep working) plus the HTTPS server. One file
+// must carry both — a TLS-only vhost would strand HTTP-01 renewals on the
+// default port-80 server of whichever site claims it.
 func renderTLSVhost(domain, upstream, certPath, keyPath, webroot string) string {
 	mapVar := "$jenderal_ws_" + wsVarSanitizer.ReplaceAllString(domain, "_") + "_wss"
 	return `# Managed by Jenderal Panel (panel domain)
 map $http_upgrade ` + mapVar + ` {
     default upgrade;
     ''      close;
+}
+
+server {
+    listen 80;
+    server_name ` + domain + `;
+
+` + acmeLocation(webroot) + `
+
+    location / {
+        proxy_pass ` + upstream + `;
+        proxy_http_version 1.1;
+` + proxyTLSVerifyOff(upstream) + `        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection ` + mapVar + `;
+        proxy_read_timeout 300s;
+    }
 }
 
 server {
@@ -411,17 +432,25 @@ func (s *Service) setup(ctx context.Context, domain, email string, write func(st
 	}
 	lego := ssl.NewLegoClient(email, "/var/lib/jenderal/acme")
 	certPEM, keyPEM, err := lego.ObtainCertificate(domain, webroot)
-	if err != nil {
+	if err != nil && !existingCertValidFor(domain) {
 		return fmt.Errorf("obtain certificate: %w", err)
 	}
+	keptExisting := err != nil
 
-	if err := s.writeSudoFile(ctx, certFile, string(certPEM)); err != nil {
-		return err
+	if keptExisting {
+		// A re-setup must not strip a working HTTPS vhost because a new
+		// certificate could not be obtained: finish with the certificate
+		// already on disk; the renewal sweep will retry later.
+		write("Could not obtain a new certificate (" + strings.TrimSpace(err.Error()) + "); keeping the existing one…")
+	} else {
+		if err := s.writeSudoFile(ctx, certFile, string(certPEM)); err != nil {
+			return err
+		}
+		if err := s.writeSudoFile(ctx, keyFile, string(keyPEM)); err != nil {
+			return err
+		}
+		_, _ = s.exec.RunSudo(ctx, "chmod", "0600", keyFile)
 	}
-	if err := s.writeSudoFile(ctx, keyFile, string(keyPEM)); err != nil {
-		return err
-	}
-	_, _ = s.exec.RunSudo(ctx, "chmod", "0600", keyFile)
 
 	// 3. HTTPS vhost.
 	write("Writing HTTPS vhost…")
@@ -434,6 +463,27 @@ func (s *Service) setup(ctx context.Context, domain, email string, write func(st
 
 	write("Panel domain ready: https://" + domain)
 	return nil
+}
+
+// existingCertValidFor reports whether a certificate already installed at
+// certFile is still current and covers the domain (from an earlier setup).
+func existingCertValidFor(domain string) bool {
+	data, err := os.ReadFile(certFile)
+	if err != nil {
+		return false
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return false
+	}
+	if time.Now().After(leaf.NotAfter) {
+		return false
+	}
+	return leaf.VerifyHostname(domain) == nil
 }
 
 // Disable removes the panel domain vhost and marks the feature off. The
