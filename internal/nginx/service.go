@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -130,6 +132,171 @@ func (s *Service) systemctlAction(ctx context.Context, action string) error {
 		return fmt.Errorf("%s nginx: %s", action, strings.TrimSpace(result.Stderr))
 	}
 	return nil
+}
+
+// PortHolder identifies a process listening on one of the web ports.
+type PortHolder struct {
+	PID  int    `json:"pid"`
+	Name string `json:"name"`
+	Port int    `json:"port"`
+}
+
+// PortConflictReport is the outcome of the fix-port-conflict action.
+type PortConflictReport struct {
+	// Holders lists the processes still listening on ports 80/443 after the
+	// fix attempt: empty when the conflict is resolved, otherwise the
+	// non-nginx services the user must handle themselves.
+	Holders []PortHolder `json:"holders"`
+	// Killed holds the nginx PIDs the panel terminated.
+	Killed []int `json:"killed"`
+	// Outcome is "fixed" (orphaned nginx holders were cleared and the
+	// service started), "no_conflict" (ports were already free and the
+	// service start was attempted), or "foreign_process" (a non-nginx
+	// process holds the port; nothing was killed and nginx was not started).
+	Outcome string `json:"outcome"`
+}
+
+// ssProcessRe extracts users:(("name",pid=N,...)) groups from ss output.
+var ssProcessRe = regexp.MustCompile(`\("([^"]*)",pid=(\d+)`)
+
+// FixPortConflict resolves nginx startup failures caused by "Address
+// already in use": leftover nginx processes holding ports 80/443 are
+// terminated and the service is started again. Processes other than nginx
+// are never killed; they are reported back so the user can decide.
+func (s *Service) FixPortConflict(ctx context.Context) (*PortConflictReport, error) {
+	report := &PortConflictReport{}
+
+	holders, err := s.webPortHolders(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var nginxPIDs []int
+	seen := make(map[int]bool)
+	for _, h := range holders {
+		if h.Name == "nginx" && !seen[h.PID] {
+			seen[h.PID] = true
+			nginxPIDs = append(nginxPIDs, h.PID)
+		}
+	}
+
+	if len(nginxPIDs) > 0 {
+		// systemd's state may be stale; ask it to stop first, then clear
+		// whatever still holds the ports.
+		_, _ = s.exec.RunSudo(ctx, "systemctl", "stop", "nginx")
+		for _, pid := range nginxPIDs {
+			_, _ = s.exec.RunSudo(ctx, "kill", "-TERM", strconv.Itoa(pid))
+		}
+		if !s.waitForNginxPortsFree(ctx, 5*time.Second) {
+			for _, pid := range nginxPIDs {
+				_, _ = s.exec.RunSudo(ctx, "kill", "-KILL", strconv.Itoa(pid))
+			}
+			s.waitForNginxPortsFree(ctx, 2*time.Second)
+		}
+		report.Killed = nginxPIDs
+	}
+
+	remaining, err := s.webPortHolders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	report.Holders = remaining
+	for _, h := range remaining {
+		if h.Name != "nginx" {
+			report.Outcome = "foreign_process"
+			return report, nil
+		}
+	}
+	if len(remaining) > 0 {
+		return nil, fmt.Errorf("nginx processes still hold ports 80/443 after cleanup")
+	}
+
+	if err := s.Start(ctx); err != nil {
+		return nil, err
+	}
+	if len(report.Killed) > 0 {
+		report.Outcome = "fixed"
+	} else {
+		report.Outcome = "no_conflict"
+	}
+	return report, nil
+}
+
+// webPortHolders lists the processes listening on ports 80 and 443.
+func (s *Service) webPortHolders(ctx context.Context) ([]PortHolder, error) {
+	result, err := s.exec.RunSudo(ctx, "ss", "-tlnpH")
+	if err != nil {
+		return nil, fmt.Errorf("list listening sockets: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return nil, fmt.Errorf("list listening sockets: %s", strings.TrimSpace(result.Stderr))
+	}
+
+	var holders []PortHolder
+	seen := make(map[PortHolder]bool)
+	for _, line := range strings.Split(result.Stdout, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 4 || fields[0] != "LISTEN" {
+			continue
+		}
+		local := fields[3]
+		idx := strings.LastIndex(local, ":")
+		if idx < 0 {
+			continue
+		}
+		port, err := strconv.Atoi(local[idx+1:])
+		if err != nil || (port != 80 && port != 443) {
+			continue
+		}
+		matches := ssProcessRe.FindAllStringSubmatch(line, -1)
+		if len(matches) == 0 {
+			// No process information available; surface it as an unknown
+			// holder so it is never silently ignored.
+			h := PortHolder{Port: port}
+			if !seen[h] {
+				seen[h] = true
+				holders = append(holders, h)
+			}
+			continue
+		}
+		for _, m := range matches {
+			pid, _ := strconv.Atoi(m[2])
+			h := PortHolder{PID: pid, Name: m[1], Port: port}
+			if !seen[h] {
+				seen[h] = true
+				holders = append(holders, h)
+			}
+		}
+	}
+	return holders, nil
+}
+
+// waitForNginxPortsFree polls until no nginx process holds ports 80/443.
+func (s *Service) waitForNginxPortsFree(ctx context.Context, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		holders, err := s.webPortHolders(ctx)
+		if err == nil {
+			busy := false
+			for _, h := range holders {
+				if h.Name == "nginx" {
+					busy = true
+					break
+				}
+			}
+			if !busy {
+				return true
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
 }
 
 // TestConfig tests the Nginx configuration. Returns whether the config is

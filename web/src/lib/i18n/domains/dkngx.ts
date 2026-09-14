@@ -226,6 +226,14 @@ const en = {
 	'ngx.siteDeleted': 'Site "{name}" deleted.',
 	'ngx.deleteSiteFailed': 'Failed to delete site',
 
+	// ── Nginx: fix port conflict ───────────────────────────────────
+	'ngx.fixPortConflict': 'Fix Port Conflict',
+	'ngx.fixingPort': 'Fixing…',
+	'ngx.fixDone': 'Port conflict resolved: Nginx processes cleared and service started.',
+	'ngx.fixNoConflict': 'Ports 80/443 were not occupied; Nginx start was attempted.',
+	'ngx.fixForeign': 'Ports 80/443 are held by another process: {process}. Stop that service first, then retry.',
+	'ngx.fixFailed': 'Failed to fix the port conflict',
+
 	// ── Nginx: nginx-config.js parser messages ─────────────────────
 	'ngx.missingBlock': 'Missing {ctx} block.',
 	'ngx.invalidValue': 'Invalid {key} value.',
@@ -454,6 +462,14 @@ const id: Record<keyof typeof en, string> = {
 	'ngx.saveSiteConfigFailed': 'Gagal menyimpan konfigurasi situs',
 	'ngx.siteDeleted': 'Situs "{name}" dihapus.',
 	'ngx.deleteSiteFailed': 'Gagal menghapus situs',
+
+	// ── Nginx: perbaikan konflik port ─────────────────────────────
+	'ngx.fixPortConflict': 'Perbaiki Konflik Port',
+	'ngx.fixingPort': 'Memperbaiki…',
+	'ngx.fixDone': 'Konflik port diselesaikan: proses Nginx dibersihkan dan service dijalankan.',
+	'ngx.fixNoConflict': 'Port 80/443 tidak sedang dipakai; Nginx dicoba dijalankan.',
+	'ngx.fixForeign': 'Port 80/443 digunakan proses lain: {process}. Hentikan service tersebut terlebih dahulu, lalu coba lagi.',
+	'ngx.fixFailed': 'Gagal memperbaiki konflik port',
 
 	// ── Nginx: pesan parser nginx-config.js ────────────────────────
 	'ngx.missingBlock': 'Blok {ctx} tidak ditemukan.',

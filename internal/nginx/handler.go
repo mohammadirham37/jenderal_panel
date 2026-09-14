@@ -95,6 +95,25 @@ func (h *Handler) Reload(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// FixPortConflict clears leftover nginx processes holding ports 80/443 and
+// starts the service.
+func (h *Handler) FixPortConflict(w http.ResponseWriter, r *http.Request) {
+	report, err := h.svc.FixPortConflict(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	detail := "outcome=" + report.Outcome
+	if len(report.Killed) > 0 {
+		detail += ", killed pids " + strconv.Itoa(report.Killed[0])
+		for _, pid := range report.Killed[1:] {
+			detail += "," + strconv.Itoa(pid)
+		}
+	}
+	h.logAction(r, "fix_nginx_port_conflict", "nginx", detail)
+	httputil.JSON(w, http.StatusOK, report)
+}
+
 // TestConfig tests the Nginx configuration.
 func (h *Handler) TestConfig(w http.ResponseWriter, r *http.Request) {
 	valid, output, err := h.svc.TestConfig(r.Context())

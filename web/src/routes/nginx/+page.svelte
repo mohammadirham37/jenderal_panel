@@ -77,6 +77,20 @@ import { language, translate } from '$lib/stores/language';
 	let testResult = $state('');
 	let testResultOk = $state(false);
 
+	// Fix port conflict result
+	interface PortHolder {
+		pid: number;
+		name: string;
+		port: number;
+	}
+	interface PortConflictReport {
+		holders: PortHolder[];
+		killed: number[];
+		outcome: 'fixed' | 'no_conflict' | 'foreign_process';
+	}
+	let fixResult = $state('');
+	let fixResultOk = $state(false);
+
 	// Log tab
 	let logTab = $state<'access' | 'error'>('access');
 
@@ -168,6 +182,36 @@ import { language, translate } from '$lib/stores/language';
 			testResultOk = false;
 		} finally {
 			actionInProgress = null;
+		}
+	}
+
+	function formatHolders(holders: PortHolder[]): string {
+		return holders
+			.map((h) => `${h.name || '?'}${h.pid ? ` (pid ${h.pid})` : ''} :${h.port}`)
+			.join(', ');
+	}
+
+	async function fixPortConflict() {
+		fixResult = '';
+		fixResultOk = false;
+		actionInProgress = 'fix';
+		try {
+			const data = await api.post<PortConflictReport>('/api/v1/nginx/fix-port-conflict');
+			if (data.outcome === 'fixed') {
+				fixResultOk = true;
+				fixResult = translate($language, 'ngx.fixDone');
+			} else if (data.outcome === 'no_conflict') {
+				fixResultOk = true;
+				fixResult = translate($language, 'ngx.fixNoConflict');
+			} else {
+				fixResult = translate($language, 'ngx.fixForeign').replace('{process}', formatHolders(data.holders || []));
+			}
+		} catch (err) {
+			fixResult = err instanceof Error ? err.message : translate($language, 'ngx.fixFailed');
+			fixResultOk = false;
+		} finally {
+			actionInProgress = null;
+			await loadStatus();
 		}
 	}
 
@@ -302,6 +346,13 @@ import { language, translate } from '$lib/stores/language';
 					>
 						{actionInProgress === 'test' ? translate($language, 'ngx.testing') : translate($language, 'ngx.testConfig')}
 					</button>
+					<button
+						onclick={fixPortConflict}
+						disabled={actionInProgress !== null}
+						class="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
+					>
+						{actionInProgress === 'fix' ? translate($language, 'ngx.fixingPort') : translate($language, 'ngx.fixPortConflict')}
+					</button>
 				{/if}
 			</div>
 
@@ -309,6 +360,13 @@ import { language, translate } from '$lib/stores/language';
 				<div class="mt-3 p-3 rounded-lg text-sm {testResultOk ? 'bg-green-900/50 border border-green-700 text-green-300' : 'bg-red-900/50 border border-red-700 text-red-300'}">
 					<pre class="whitespace-pre-wrap font-mono text-xs">{testResult}</pre>
 					<button onclick={() => (testResult = '')} class="mt-1 text-xs hover:underline cursor-pointer">{translate($language, 'ngx.dismiss')}</button>
+				</div>
+			{/if}
+
+			{#if fixResult}
+				<div class="mt-3 p-3 rounded-lg text-sm {fixResultOk ? 'bg-green-900/50 border border-green-700 text-green-300' : 'bg-yellow-900/50 border border-yellow-700 text-yellow-300'}">
+					{fixResult}
+					<button onclick={() => (fixResult = '')} class="ml-2 text-xs hover:underline cursor-pointer">{translate($language, 'ngx.dismiss')}</button>
 				</div>
 			{/if}
 		</div>

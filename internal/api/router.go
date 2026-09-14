@@ -273,6 +273,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
 				Post("/nginx/reload", nginxHandler.Reload)
 			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
+				Post("/nginx/fix-port-conflict", nginxHandler.FixPortConflict)
+			r.With(auth.RequirePermission(deps.RBAC, "nginx.manage")).
 				Post("/nginx/test", nginxHandler.TestConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "nginx.view")).
 				Get("/nginx/config", nginxHandler.GetConfig)

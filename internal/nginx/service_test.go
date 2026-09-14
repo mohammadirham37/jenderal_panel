@@ -224,6 +224,150 @@ func TestListSites(t *testing.T) {
 	}
 }
 
+func TestFixPortConflictKillsOrphanedNginx(t *testing.T) {
+	portsHeld := true
+	var kills []string
+	started := false
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch name {
+			case "ss":
+				if !portsHeld {
+					return mockResult("", "", 0), nil
+				}
+				out := "LISTEN 0    511          0.0.0.0:80        0.0.0.0:*    users:((\"nginx\",pid=1200,fd=6))\n" +
+					"LISTEN 0    511             [::]:80           [::]:*    users:((\"nginx\",pid=1200,fd=7))\n" +
+					"LISTEN 0    128          0.0.0.0:8080      0.0.0.0:*    users:((\"java\",pid=99,fd=50))\n"
+				return mockResult(out, "", 0), nil
+			case "kill":
+				kills = append(kills, args...)
+				portsHeld = false
+				return mockResult("", "", 0), nil
+			case "systemctl":
+				if len(args) == 2 && args[0] == "start" {
+					started = true
+				}
+				return mockResult("", "", 0), nil
+			default:
+				return mockResult("", "", 0), nil
+			}
+		},
+	}
+
+	report, err := NewService(mock, nil).FixPortConflict(context.Background())
+	if err != nil {
+		t.Fatalf("FixPortConflict() error = %v", err)
+	}
+	if report.Outcome != "fixed" {
+		t.Errorf("outcome = %q, want fixed", report.Outcome)
+	}
+	if len(report.Killed) != 1 || report.Killed[0] != 1200 {
+		t.Errorf("killed = %v, want [1200]", report.Killed)
+	}
+	foundTERM := false
+	for i, a := range kills {
+		if a == "-TERM" && i+1 < len(kills) && kills[i+1] == "1200" {
+			foundTERM = true
+		}
+	}
+	if !foundTERM {
+		t.Errorf("expected a graceful kill -TERM 1200, got %v", kills)
+	}
+	if !started {
+		t.Error("nginx must be started after clearing the port holders")
+	}
+	if len(report.Holders) != 0 {
+		t.Errorf("holders = %v, want empty", report.Holders)
+	}
+}
+
+func TestFixPortConflictReportsForeignProcessWithoutKilling(t *testing.T) {
+	out := "LISTEN 0    511          0.0.0.0:80        0.0.0.0:*    users:((\"apache2\",pid=77,fd=4))\n"
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "kill" {
+				t.Errorf("must not kill a foreign process, got kill %v", args)
+			}
+			if name == "ss" {
+				return mockResult(out, "", 0), nil
+			}
+			return mockResult("", "", 0), nil
+		},
+	}
+
+	report, err := NewService(mock, nil).FixPortConflict(context.Background())
+	if err != nil {
+		t.Fatalf("FixPortConflict() error = %v", err)
+	}
+	if report.Outcome != "foreign_process" {
+		t.Errorf("outcome = %q, want foreign_process", report.Outcome)
+	}
+	if len(report.Killed) != 0 {
+		t.Errorf("killed = %v, want empty", report.Killed)
+	}
+	if len(report.Holders) != 1 || report.Holders[0].Name != "apache2" || report.Holders[0].PID != 77 || report.Holders[0].Port != 80 {
+		t.Errorf("holders = %v, want apache2 pid 77 on port 80", report.Holders)
+	}
+}
+
+func TestFixPortConflictWithoutConflictStartsNginx(t *testing.T) {
+	started := false
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "kill" {
+				t.Errorf("nothing holds the ports; must not kill, got kill %v", args)
+			}
+			if name == "ss" {
+				return mockResult("", "", 0), nil
+			}
+			if name == "systemctl" && len(args) == 2 && args[0] == "start" {
+				started = true
+			}
+			return mockResult("", "", 0), nil
+		},
+	}
+
+	report, err := NewService(mock, nil).FixPortConflict(context.Background())
+	if err != nil {
+		t.Fatalf("FixPortConflict() error = %v", err)
+	}
+	if report.Outcome != "no_conflict" {
+		t.Errorf("outcome = %q, want no_conflict", report.Outcome)
+	}
+	if !started {
+		t.Error("nginx must still be started when the ports are free")
+	}
+}
+
+func TestWebPortHoldersParsesSSOutput(t *testing.T) {
+	out := "LISTEN 0    511          0.0.0.0:80        0.0.0.0:*    users:((\"nginx\",pid=1200,fd=6))\n" +
+		"LISTEN 0    511       [::]:443           [::]:*    users:((\"nginx\",pid=1200,fd=7),(\"nginx\",pid=1201,fd=7))\n" +
+		"LISTEN 0    4096     127.0.0.1:8443        0.0.0.0:*    users:((\"jenderal\",pid=500,fd=3))\n" +
+		"LISTEN 0    128       0.0.0.0:22          0.0.0.0:*\n"
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return mockResult(out, "", 0), nil
+		},
+	}
+	holders, err := NewService(mock, nil).webPortHolders(context.Background())
+	if err != nil {
+		t.Fatalf("webPortHolders() error = %v", err)
+	}
+	want := []PortHolder{
+		{PID: 1200, Name: "nginx", Port: 80},
+		{PID: 1200, Name: "nginx", Port: 443},
+		{PID: 1201, Name: "nginx", Port: 443},
+	}
+	if len(holders) != len(want) {
+		t.Fatalf("holders = %v, want %v", holders, want)
+	}
+	for i, h := range holders {
+		if h != want[i] {
+			t.Errorf("holders[%d] = %+v, want %+v", i, h, want[i])
+		}
+	}
+}
+
 func TestParseVersion(t *testing.T) {
 	tests := []struct {
 		input    string
