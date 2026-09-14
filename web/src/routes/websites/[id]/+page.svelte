@@ -420,7 +420,7 @@ import { toast } from '$lib/stores/toast';
 	async function loadPanelUsers() {
 		if (!canManageUsers || panelUsers.length > 0) return;
 		try {
-			panelUsers = await api.get<{ id: string; email: string }[]>('/users');
+			panelUsers = await api.get<{ id: string; email: string }[]>('/api/v1/users');
 		} catch {
 			panelUsers = [];
 		}
@@ -432,7 +432,7 @@ import { toast } from '$lib/stores/toast';
 		transferMsg = '';
 		transferError = '';
 		try {
-			const updated = await api.post<{ owner_email?: string }>(`/websites/${website.id}/owner`, {
+			const updated = await api.post<{ owner_email?: string }>(`/api/v1/websites/${website.id}/owner`, {
 				user_id: transferTarget
 			});
 			website = { ...website, created_by: transferTarget, owner_email: updated.owner_email };

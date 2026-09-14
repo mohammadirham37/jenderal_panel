@@ -250,10 +250,10 @@ import { language, translate } from '$lib/stores/language';
 	async function loadPickers() {
 		let failed = false;
 		try {
-			websites = ((await api.get<WebsiteLite[]>('/websites')) || []).map((w) => ({ id: w.id, domain: w.domain }));
+			websites = ((await api.get<WebsiteLite[]>('/api/v1/websites')) || []).map((w) => ({ id: w.id, domain: w.domain }));
 		} catch { websites = []; failed = true; }
 		try {
-			databases = ((await api.get<DatabaseLite[]>('/databases')) || []).filter((d) => d.engine !== 'redis');
+			databases = ((await api.get<DatabaseLite[]>('/api/v1/databases')) || []).filter((d) => d.engine !== 'redis');
 		} catch { databases = []; failed = true; }
 		pickersError = failed ? translate($language, 'bk.pickersFailed') : '';
 	}
