@@ -212,15 +212,30 @@ func (p *PostgreSQLEngine) ListUsers(ctx context.Context) ([]string, error) {
 	return users, nil
 }
 
-// GrantPrivileges grants all privileges on a database to a user.
+// GrantPrivileges grants all privileges on a database to a user. The user
+// also becomes the database owner: since PostgreSQL 15 the public schema no
+// longer grants CREATE to PUBLIC, so a plain GRANT ALL ON DATABASE leaves
+// application migrations failing with "permission denied for schema public".
+// On modern versions the public schema is owned by pg_database_owner, which
+// maps to the database owner; the explicit schema grant additionally covers
+// databases where it is not (restored dumps, older clusters).
 func (p *PostgreSQLEngine) GrantPrivileges(ctx context.Context, username, database string) error {
-	stmt := fmt.Sprintf("GRANT ALL ON DATABASE %s TO %s", database, username)
-	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", stmt)
+	ownerStmt := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", database, username)
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", ownerStmt)
 	if err != nil {
 		return fmt.Errorf("postgresql grant privileges: %w", err)
 	}
 	if result.ExitCode != 0 {
 		return model.NewDomainError("POSTGRESQL_ERROR", "failed to grant privileges: "+result.Stderr, nil)
+	}
+
+	schemaStmt := fmt.Sprintf("GRANT ALL ON SCHEMA public TO %s", username)
+	result, err = p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-d", database, "-c", schemaStmt)
+	if err != nil {
+		return fmt.Errorf("postgresql grant schema privileges: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("POSTGRESQL_ERROR", "failed to grant schema privileges: "+result.Stderr, nil)
 	}
 	return nil
 }
