@@ -250,10 +250,16 @@ func (s *Service) ManageTables(ctx context.Context, token, database string) ([]M
 			"SELECT TABLE_NAME, COALESCE(TABLE_ROWS,0), COALESCE(DATA_LENGTH+INDEX_LENGTH,0), COALESCE(TABLE_COMMENT,''), COALESCE(ENGINE,'') "+
 				"FROM information_schema.TABLES WHERE TABLE_SCHEMA = "+sqlString(database)+" ORDER BY TABLE_NAME")
 	case "postgresql":
+		// Dumps regularly contain partitioned tables and user schemas other
+		// than public; listing only ordinary public tables would hide them
+		// after a restore. Non-public tables travel as "schema.table" names.
 		result, err = s.runPostgres(ctx, session, database,
-			"SELECT c.relname, GREATEST(c.reltuples,0)::bigint, COALESCE(pg_total_relation_size(c.oid),0), COALESCE(obj_description(c.oid),''), '' "+
+			"SELECT CASE WHEN n.nspname = 'public' THEN c.relname ELSE n.nspname || '.' || c.relname END, "+
+				"GREATEST(c.reltuples,0)::bigint, COALESCE(pg_total_relation_size(c.oid),0), COALESCE(obj_description(c.oid),''), '' "+
 				"FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "+
-				"WHERE n.nspname = 'public' AND c.relkind = 'r' ORDER BY c.relname")
+				"WHERE c.relkind IN ('r','p') "+
+				"AND n.nspname NOT LIKE 'pg\\_%' AND n.nspname <> 'information_schema' "+
+				"ORDER BY n.nspname, c.relname")
 	default:
 		return nil, model.NewValidationError("unsupported engine")
 	}
@@ -305,6 +311,12 @@ func (s *Service) ManageStructure(ctx context.Context, token, database, table st
 	}
 
 	var result *executor.Result
+	pgSchema, pgTable := "public", table
+	if session.Engine == "postgresql" {
+		if schema, name, ok := splitQualifiedTable(table); ok {
+			pgSchema, pgTable = schema, name
+		}
+	}
 	switch session.Engine {
 	case "mysql":
 		result, err = s.runMySQL(ctx, session, database, "SHOW FULL COLUMNS FROM "+quoteMySQL(table))
@@ -323,7 +335,7 @@ func (s *Service) ManageStructure(ctx context.Context, token, database, table st
 			              AND tc.table_name = c.table_name AND k.column_name = c.column_name)
 			           THEN 'PRI' ELSE '' END
 			FROM information_schema.columns c
-			WHERE c.table_schema = 'public' AND c.table_name = `+sqlString(table)+`
+			WHERE c.table_schema = `+sqlString(pgSchema)+` AND c.table_name = `+sqlString(pgTable)+`
 			ORDER BY c.ordinal_position`)
 	default:
 		return nil, model.NewValidationError("unsupported engine")
@@ -623,7 +635,7 @@ func (s *Service) ManageDropTable(ctx context.Context, token, database, table st
 	case "mysql":
 		_, err = s.runMySQL(ctx, session, database, "DROP TABLE "+quoteMySQL(table))
 	case "postgresql":
-		_, err = s.runPostgres(ctx, session, database, "DROP TABLE public."+quotePG(table))
+		_, err = s.runPostgres(ctx, session, database, "DROP TABLE "+s.quoteTable(session.Engine, database, table))
 	default:
 		err = model.NewValidationError("unsupported engine")
 	}
@@ -647,7 +659,7 @@ func (s *Service) ManageEmptyTable(ctx context.Context, token, database, table s
 	case "mysql":
 		_, err = s.runMySQL(ctx, session, database, "TRUNCATE TABLE "+quoteMySQL(table))
 	case "postgresql":
-		_, err = s.runPostgres(ctx, session, database, "TRUNCATE public."+quotePG(table))
+		_, err = s.runPostgres(ctx, session, database, "TRUNCATE "+s.quoteTable(session.Engine, database, table))
 	default:
 		err = model.NewValidationError("unsupported engine")
 	}
@@ -712,10 +724,23 @@ func (s *Service) quoteTable(engine, database, table string) string {
 	if engine == "postgresql" {
 		// PostgreSQL rejects cross-database references, so the table can
 		// only be schema-qualified; the connection already targets the
-		// right database.
+		// right database. A "schema.table" listing name selects its own
+		// schema, everything else lives in public.
+		if schema, name, ok := splitQualifiedTable(table); ok {
+			return quotePG(schema) + "." + quotePG(name)
+		}
 		return "public." + quotePG(table)
 	}
 	return quoteMySQL(database) + "." + quoteMySQL(table)
+}
+
+// splitQualifiedTable splits a "schema.table" listing name. ok is false when
+// the name carries no schema part.
+func splitQualifiedTable(table string) (schema, name string, ok bool) {
+	if idx := strings.Index(table, "."); idx > 0 {
+		return table[:idx], table[idx+1:], true
+	}
+	return "", table, false
 }
 
 func quoteMySQL(name string) string {

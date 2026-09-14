@@ -243,6 +243,84 @@ func TestQuoteTable(t *testing.T) {
 	if got := svc.quoteTable("postgresql", "app_db", "orders"); got != `public."orders"` {
 		t.Errorf("postgresql quoteTable = %q, want public.\"orders\"", got)
 	}
+	// Listing names of the form "schema.table" select their own schema.
+	if got := svc.quoteTable("postgresql", "app_db", "app.users"); got != `"app"."users"` {
+		t.Errorf("qualified quoteTable = %q, want \"app\".\"users\"", got)
+	}
+}
+
+func TestSplitQualifiedTable(t *testing.T) {
+	schema, name, ok := splitQualifiedTable("app.users")
+	if !ok || schema != "app" || name != "users" {
+		t.Errorf("splitQualifiedTable(\"app.users\") = %q, %q, %v", schema, name, ok)
+	}
+	schema, name, ok = splitQualifiedTable("users")
+	if ok || name != "users" {
+		t.Errorf("splitQualifiedTable(\"users\") = %q, %q, %v; want ok=false", schema, name, ok)
+	}
+}
+
+func TestManageTablesPostgresCoversSchemasAndPartitionedTables(t *testing.T) {
+	var captured string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			for i, arg := range args {
+				if arg == "--command" && i+1 < len(args) {
+					captured = args[i+1]
+				}
+			}
+			return okResult("case,greatest,coalesce,coalesce,''\n" +
+				"users,0,16384,,\n" +
+				"analytics.events,0,4096,,\n"), nil
+		},
+	}
+	svc := &Service{exec: mock}
+	token := newManageSession("postgresql")
+	defer manageSessions.drop(token)
+
+	tables, err := svc.ManageTables(context.Background(), token, "app_db")
+	if err != nil {
+		t.Fatalf("ManageTables: %v", err)
+	}
+	for _, want := range []string{"relkind IN ('r','p')", "NOT LIKE 'pg", "information_schema"} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("listing statement missing %q:\n%s", want, captured)
+		}
+	}
+	if len(tables) != 2 {
+		t.Fatalf("tables = %d, want 2", len(tables))
+	}
+	if tables[0].Name != "users" {
+		t.Errorf("public table name = %q, want bare \"users\"", tables[0].Name)
+	}
+	if tables[1].Name != "analytics.events" {
+		t.Errorf("foreign-schema table name = %q, want \"analytics.events\"", tables[1].Name)
+	}
+}
+
+func TestManageStructurePostgresResolvesQualifiedSchema(t *testing.T) {
+	var captured string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			for i, arg := range args {
+				if arg == "--command" && i+1 < len(args) {
+					captured = args[i+1]
+				}
+			}
+			return okResult("column_name,data_type,is_nullable,column_default,\n" +
+				"email,character varying(190),YES,,\n"), nil
+		},
+	}
+	svc := &Service{exec: mock}
+	token := newManageSession("postgresql")
+	defer manageSessions.drop(token)
+
+	if _, err := svc.ManageStructure(context.Background(), token, "app_db", "analytics.events"); err != nil {
+		t.Fatalf("ManageStructure: %v", err)
+	}
+	if !strings.Contains(captured, "table_schema = 'analytics'") || !strings.Contains(captured, "table_name = 'events'") {
+		t.Errorf("structure query must resolve the qualified schema, got:\n%s", captured)
+	}
 }
 
 func TestManageSessionTTLExpiry(t *testing.T) {
