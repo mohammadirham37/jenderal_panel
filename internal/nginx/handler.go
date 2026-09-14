@@ -110,6 +110,9 @@ func (h *Handler) FixPortConflict(w http.ResponseWriter, r *http.Request) {
 			detail += "," + strconv.Itoa(pid)
 		}
 	}
+	for _, name := range report.Stopped {
+		detail += ", stopped and disabled " + name
+	}
 	h.logAction(r, "fix_nginx_port_conflict", "nginx", detail)
 	httputil.JSON(w, http.StatusOK, report)
 }

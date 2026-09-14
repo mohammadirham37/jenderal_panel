@@ -86,6 +86,7 @@ import { language, translate } from '$lib/stores/language';
 	interface PortConflictReport {
 		holders: PortHolder[];
 		killed: number[];
+		stopped: string[];
 		outcome: 'fixed' | 'no_conflict' | 'foreign_process';
 	}
 	let fixResult = $state('');
@@ -199,7 +200,11 @@ import { language, translate } from '$lib/stores/language';
 			const data = await api.post<PortConflictReport>('/api/v1/nginx/fix-port-conflict');
 			if (data.outcome === 'fixed') {
 				fixResultOk = true;
-				fixResult = translate($language, 'ngx.fixDone');
+				if (data.stopped && data.stopped.length > 0) {
+					fixResult = translate($language, 'ngx.fixDoneStopped').replace('{service}', data.stopped.join(', '));
+				} else {
+					fixResult = translate($language, 'ngx.fixDone');
+				}
 			} else if (data.outcome === 'no_conflict') {
 				fixResultOk = true;
 				fixResult = translate($language, 'ngx.fixNoConflict');

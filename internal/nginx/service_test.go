@@ -281,12 +281,78 @@ func TestFixPortConflictKillsOrphanedNginx(t *testing.T) {
 	}
 }
 
+func TestFixPortConflictStopsAndDisablesApache(t *testing.T) {
+	apacheRunning := true
+	var systemctlCalls [][2]string
+	started := false
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch name {
+			case "ss":
+				if !apacheRunning {
+					return mockResult("", "", 0), nil
+				}
+				out := "LISTEN 0    511          0.0.0.0:80        0.0.0.0:*    users:((\"apache2\",pid=77,fd=4))\n" +
+					"LISTEN 0    511             [::]:80           [::]:*    users:((\"apache2\",pid=77,fd=5))\n"
+				return mockResult(out, "", 0), nil
+			case "systemctl":
+				if len(args) == 2 {
+					systemctlCalls = append(systemctlCalls, [2]string{args[0], args[1]})
+					if args[0] == "stop" && args[1] == "apache2" {
+						apacheRunning = false
+					}
+					if args[0] == "start" && args[1] == "nginx" {
+						started = true
+					}
+				}
+				return mockResult("", "", 0), nil
+			case "kill":
+				t.Errorf("apache must be stopped via systemd, not killed: kill %v", args)
+				return mockResult("", "", 0), nil
+			default:
+				return mockResult("", "", 0), nil
+			}
+		},
+	}
+
+	report, err := NewService(mock, nil).FixPortConflict(context.Background())
+	if err != nil {
+		t.Fatalf("FixPortConflict() error = %v", err)
+	}
+	if report.Outcome != "fixed" {
+		t.Errorf("outcome = %q, want fixed", report.Outcome)
+	}
+	if len(report.Stopped) != 1 || report.Stopped[0] != "apache2" {
+		t.Errorf("stopped = %v, want [apache2]", report.Stopped)
+	}
+	if len(report.Killed) != 0 {
+		t.Errorf("killed = %v, want empty", report.Killed)
+	}
+	for _, want := range [][2]string{{"stop", "apache2"}, {"disable", "apache2"}} {
+		found := false
+		for _, call := range systemctlCalls {
+			if call == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing systemctl %s %s", want[0], want[1])
+		}
+	}
+	if !started {
+		t.Error("nginx must be started after freeing the ports")
+	}
+}
+
 func TestFixPortConflictReportsForeignProcessWithoutKilling(t *testing.T) {
-	out := "LISTEN 0    511          0.0.0.0:80        0.0.0.0:*    users:((\"apache2\",pid=77,fd=4))\n"
+	out := "LISTEN 0    511          0.0.0.0:80        0.0.0.0:*    users:((\"caddy\",pid=77,fd=4))\n"
 	mock := &executor.MockExecutor{
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			if name == "kill" {
 				t.Errorf("must not kill a foreign process, got kill %v", args)
+			}
+			if name == "systemctl" && args[0] != "start" {
+				t.Errorf("must not stop a foreign process via systemd, got systemctl %v", args)
 			}
 			if name == "ss" {
 				return mockResult(out, "", 0), nil
@@ -305,8 +371,11 @@ func TestFixPortConflictReportsForeignProcessWithoutKilling(t *testing.T) {
 	if len(report.Killed) != 0 {
 		t.Errorf("killed = %v, want empty", report.Killed)
 	}
-	if len(report.Holders) != 1 || report.Holders[0].Name != "apache2" || report.Holders[0].PID != 77 || report.Holders[0].Port != 80 {
-		t.Errorf("holders = %v, want apache2 pid 77 on port 80", report.Holders)
+	if len(report.Stopped) != 0 {
+		t.Errorf("stopped = %v, want empty", report.Stopped)
+	}
+	if len(report.Holders) != 1 || report.Holders[0].Name != "caddy" || report.Holders[0].PID != 77 || report.Holders[0].Port != 80 {
+		t.Errorf("holders = %v, want caddy pid 77 on port 80", report.Holders)
 	}
 }
 

@@ -145,30 +145,75 @@ type PortHolder struct {
 type PortConflictReport struct {
 	// Holders lists the processes still listening on ports 80/443 after the
 	// fix attempt: empty when the conflict is resolved, otherwise the
-	// non-nginx services the user must handle themselves.
+	// services the user must handle themselves.
 	Holders []PortHolder `json:"holders"`
 	// Killed holds the nginx PIDs the panel terminated.
 	Killed []int `json:"killed"`
-	// Outcome is "fixed" (orphaned nginx holders were cleared and the
+	// Stopped holds the conflicting web servers the panel stopped and
+	// disabled via systemd (currently apache2), freeing the ports.
+	Stopped []string `json:"stopped"`
+	// Outcome is "fixed" (conflicting services were cleared and the
 	// service started), "no_conflict" (ports were already free and the
-	// service start was attempted), or "foreign_process" (a non-nginx
-	// process holds the port; nothing was killed and nginx was not started).
+	// service start was attempted), or "foreign_process" (an unsupported
+	// process holds the port; nothing was killed and nginx was not
+	// started).
 	Outcome string `json:"outcome"`
+}
+
+// stoppableWebServers are foreign web servers the fix action may stop and
+// disable through systemd when they occupy ports 80/443. They are never
+// killed outright and never uninstalled; anything else is only reported.
+var stoppableWebServers = map[string]bool{
+	"apache2": true, // Debian/Ubuntu
+	"httpd":   true, // RHEL-family name of the same server
 }
 
 // ssProcessRe extracts users:(("name",pid=N,...)) groups from ss output.
 var ssProcessRe = regexp.MustCompile(`\("([^"]*)",pid=(\d+)`)
 
 // FixPortConflict resolves nginx startup failures caused by "Address
-// already in use": leftover nginx processes holding ports 80/443 are
-// terminated and the service is started again. Processes other than nginx
-// are never killed; they are reported back so the user can decide.
+// already in use". Known conflicting web servers (apache2) are stopped and
+// disabled through systemd, leftover nginx processes holding ports 80/443
+// are terminated, and the service is started again. Processes outside that
+// list are never touched; they are reported back so the user can decide.
 func (s *Service) FixPortConflict(ctx context.Context) (*PortConflictReport, error) {
 	report := &PortConflictReport{}
 
 	holders, err := s.webPortHolders(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	// Stop and disable known conflicting web servers, then re-check: only
+	// count them as stopped if the ports were actually released.
+	var candidates []string
+	seenSvc := make(map[string]bool)
+	for _, h := range holders {
+		if stoppableWebServers[h.Name] && !seenSvc[h.Name] {
+			seenSvc[h.Name] = true
+			candidates = append(candidates, h.Name)
+		}
+	}
+	if len(candidates) > 0 {
+		for _, name := range candidates {
+			_, _ = s.exec.RunSudo(ctx, "systemctl", "stop", name)
+			_, _ = s.exec.RunSudo(ctx, "systemctl", "disable", name)
+		}
+		holders, err = s.webPortHolders(ctx)
+		if err != nil {
+			return nil, err
+		}
+		stillRunning := make(map[string]bool)
+		for _, h := range holders {
+			if stoppableWebServers[h.Name] {
+				stillRunning[h.Name] = true
+			}
+		}
+		for _, name := range candidates {
+			if !stillRunning[name] {
+				report.Stopped = append(report.Stopped, name)
+			}
+		}
 	}
 
 	var nginxPIDs []int
@@ -214,7 +259,7 @@ func (s *Service) FixPortConflict(ctx context.Context) (*PortConflictReport, err
 	if err := s.Start(ctx); err != nil {
 		return nil, err
 	}
-	if len(report.Killed) > 0 {
+	if len(report.Killed) > 0 || len(report.Stopped) > 0 {
 		report.Outcome = "fixed"
 	} else {
 		report.Outcome = "no_conflict"
