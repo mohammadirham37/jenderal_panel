@@ -28,8 +28,8 @@ const (
 	benchmarkMaxErrorSamples    = 5
 	// Warmup is unscored: it opens the TLS connections and lets OPcache and
 	// the app boot caches settle, so measured windows are comparable.
-	benchmarkWarmup             = time.Second
-	benchmarkMaxBodyDrain       = 1 << 20
+	benchmarkWarmup       = time.Second
+	benchmarkMaxBodyDrain = 1 << 20
 )
 
 type BenchmarkOptions struct {
