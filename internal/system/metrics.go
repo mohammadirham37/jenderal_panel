@@ -61,10 +61,10 @@ func (mc *MetricsCollector) Start(ctx context.Context) {
 				}
 				_ = mc.store(ctx, latest)
 				lastStored = latest
-		case <-cleanupTicker.C:
-			mc.cleanup(ctx)
+			case <-cleanupTicker.C:
+				mc.cleanup(ctx)
+			}
 		}
-	}
 	}()
 }
 
@@ -215,4 +215,3 @@ func (rb *ringBuffer) All() []model.ServerMetrics {
 	}
 	return result
 }
-

@@ -185,7 +185,7 @@ func sha256Hex(data []byte) string {
 }
 
 const (
-	amzDateFormat  = "20060102T150405Z"
+	amzDateFormat   = "20060102T150405Z"
 	scopeDateFormat = "20060102"
 )
 

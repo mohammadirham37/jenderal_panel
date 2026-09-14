@@ -1,8 +1,8 @@
 package deployment
 
 import (
-	"crypto/subtle"
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"fmt"
 	"strings"

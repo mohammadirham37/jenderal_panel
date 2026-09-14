@@ -136,7 +136,7 @@ func TestStoreAndGetRecent(t *testing.T) {
 	// Store 3 metrics.
 	for i := 0; i < 3; i++ {
 		m := model.ServerMetrics{
-			CPU:       float64(i + 1) * 10,
+			CPU:       float64(i+1) * 10,
 			RAMUsed:   uint64(i+1) * 1024,
 			RAMTotal:  8192,
 			SwapUsed:  0,

@@ -9,7 +9,7 @@ import (
 )
 
 type Response struct {
-	Data any  `json:"data,omitempty"`
+	Data any   `json:"data,omitempty"`
 	Meta *Meta `json:"meta,omitempty"`
 }
 

@@ -59,8 +59,8 @@ func TestTOTPEnableAndVerify(t *testing.T) {
 	// Generate a valid code from the secret.
 	code, err := totp.GenerateCodeCustom(secret, time.Now().UTC(), totp.ValidateOpts{
 		Period:    30,
-		Skew:     1,
-		Digits:   otp.DigitsSix,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
 		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {
@@ -85,8 +85,8 @@ func TestTOTPEnableAndVerify(t *testing.T) {
 	// Verify with a freshly generated code.
 	code2, err := totp.GenerateCodeCustom(secret, time.Now().UTC(), totp.ValidateOpts{
 		Period:    30,
-		Skew:     1,
-		Digits:   otp.DigitsSix,
+		Skew:      1,
+		Digits:    otp.DigitsSix,
 		Algorithm: otp.AlgorithmSHA1,
 	})
 	if err != nil {

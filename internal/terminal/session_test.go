@@ -147,8 +147,13 @@ func TestPersistentShellRoundTrip(t *testing.T) {
 		cwd  string
 	}, 16)
 	parser := &outputParser{
-		onChunk:    func(chunk string) { chunks <- chunk },
-		onComplete: func(exit int, cwd string) { completions <- struct { exit int; cwd string }{exit, cwd} },
+		onChunk: func(chunk string) { chunks <- chunk },
+		onComplete: func(exit int, cwd string) {
+			completions <- struct {
+				exit int
+				cwd  string
+			}{exit, cwd}
+		},
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -219,7 +224,7 @@ func marker(exit int, cwd string) string {
 }
 
 type parserRecorder struct {
-	chunks    []string
+	chunks      []string
 	completions []struct {
 		exit int
 		cwd  string

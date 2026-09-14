@@ -32,8 +32,8 @@ WantedBy=multi-user.target
 
 // QueueWorkerRequest holds the parameters for creating a queue worker.
 type QueueWorkerRequest struct {
-	WebsiteID string `json:"website_id"`
-	Command   string `json:"command"`
+	WebsiteID  string `json:"website_id"`
+	Command    string `json:"command"`
 	NumWorkers int    `json:"num_workers"`
 }
 

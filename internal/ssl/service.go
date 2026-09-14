@@ -61,8 +61,8 @@ func (s *Service) Issue(ctx context.Context, websiteID, domain string) (model.SS
 // certificate for the site's domain issued through the Cloudflare DNS
 // provider using an API token.
 type ChallengeOptions struct {
-	Wildcard    bool   `json:"wildcard"`
-	DNSProvider string `json:"dns_provider,omitempty"`
+	Wildcard      bool   `json:"wildcard"`
+	DNSProvider   string `json:"dns_provider,omitempty"`
 	DNSCredential string `json:"dns_credential,omitempty"`
 }
 

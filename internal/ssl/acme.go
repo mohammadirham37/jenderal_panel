@@ -332,9 +332,9 @@ func isAlreadyRevokedError(err error) bool {
 
 // MockACMEClient is a test double for ACMEClient.
 type MockACMEClient struct {
-	ObtainFunc  func(domain, webroot string) ([]byte, []byte, error)
+	ObtainFunc    func(domain, webroot string) ([]byte, []byte, error)
 	DNSObtainFunc func(domains []string, dnsProvider, dnsCredential string) ([]byte, []byte, error)
-	RevokeFunc  func(certPEM []byte) error
+	RevokeFunc    func(certPEM []byte) error
 }
 
 // ObtainCertificate delegates to ObtainFunc.
