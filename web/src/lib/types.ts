@@ -43,6 +43,8 @@ export interface LoginResponse {
 	user: User;
 	permissions: Permission[];
 	csrf_token: string;
+	/** Present instead of user/session when the account has 2FA enabled and no code was supplied. */
+	requires_totp?: boolean;
 }
 
 export interface ServerInfo {

@@ -10,9 +10,21 @@ export const authError = writable('');
 
 const authRequestOptions = { timeoutMs: 15_000 };
 
-export async function login(username: string, password: string): Promise<void> {
+/** Thrown when the account has 2FA enabled and login needs a TOTP code. */
+export class TotpRequiredError extends Error {
+	constructor() {
+		super('totp required');
+		this.name = 'TotpRequiredError';
+	}
+}
+
+export async function login(username: string, password: string, totpCode = ''): Promise<void> {
 	authError.set('');
-	const data = await api.post<LoginResponse>('/api/v1/auth/login', { username, password }, authRequestOptions);
+	const data = await api.post<LoginResponse>('/api/v1/auth/login', { username, password, totp_code: totpCode }, authRequestOptions);
+	if (data.requires_totp) {
+		// The server created no session; the caller must collect the code.
+		throw new TotpRequiredError();
+	}
 	setCSRFToken(data.csrf_token);
 	user.set(data.user);
 	permissions.set(data.permissions || []);

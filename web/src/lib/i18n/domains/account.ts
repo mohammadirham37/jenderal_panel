@@ -27,6 +27,14 @@ const en = {
 	'lg.signingIn': 'Signing in...',
 	'lg.loginFailed': 'Login failed',
 	'lg.protectedAccess': 'Protected administrative access',
+	'lg.totpTitle': 'Two-factor authentication',
+	'lg.totpHeading': 'Verify it’s you',
+	'lg.totpDesc': 'Enter the 6-digit code from your authenticator app.',
+	'lg.totpCode': 'Authentication code',
+	'lg.totpCodePlaceholder': '000000',
+	'lg.verify': 'Verify',
+	'lg.verifying': 'Verifying...',
+	'lg.useAnotherAccount': 'Use a different account',
 
 	// ─── Update page ──────────────────────────────────────────────
 	'upd.title': 'Update Panel',
@@ -190,6 +198,14 @@ const id: Record<keyof typeof en, string> = {
 	'lg.signingIn': 'Sedang masuk...',
 	'lg.loginFailed': 'Gagal masuk',
 	'lg.protectedAccess': 'Akses administratif yang terlindungi',
+	'lg.totpTitle': 'Autentikasi dua faktor',
+	'lg.totpHeading': 'Verifikasi identitas Anda',
+	'lg.totpDesc': 'Masukkan kode 6 digit dari aplikasi authenticator Anda.',
+	'lg.totpCode': 'Kode autentikasi',
+	'lg.totpCodePlaceholder': '000000',
+	'lg.verify': 'Verifikasi',
+	'lg.verifying': 'Sedang memverifikasi...',
+	'lg.useAnotherAccount': 'Gunakan akun lain',
 
 	// ─── Update page ──────────────────────────────────────────────
 	'upd.title': 'Pembaruan Panel',

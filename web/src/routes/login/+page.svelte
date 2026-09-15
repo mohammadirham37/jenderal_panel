@@ -2,15 +2,22 @@
 	import { goto } from '$app/navigation';
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
-	import { login, isAuthenticated, authError } from '$lib/stores/auth';
+	import { login, isAuthenticated, authError, TotpRequiredError } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import { onMount } from 'svelte';
 
 	let username = $state('');
 	let password = $state('');
+	let totpCode = $state('');
+	let totpRequired = $state(false);
+	let totpInput = $state<HTMLInputElement | null>(null);
 	let error = $state('');
 	let submitting = $state(false);
 	let visibleError = $derived(error || $authError);
+
+	$effect(() => {
+		if (totpRequired) totpInput?.focus();
+	});
 
 	onMount(() => {
 		if ($isAuthenticated) {
@@ -24,13 +31,26 @@
 		submitting = true;
 
 		try {
-			await login(username, password);
+			await login(username, password, totpRequired ? totpCode.trim() : '');
+			totpRequired = false;
 			goto('/dashboard');
 		} catch (err) {
-			error = err instanceof Error ? err.message : translate($language, 'lg.loginFailed');
+			if (err instanceof TotpRequiredError) {
+				// Credentials accepted; the server waits for the 6-digit code.
+				totpRequired = true;
+				error = '';
+			} else {
+				error = err instanceof Error ? err.message : translate($language, 'lg.loginFailed');
+			}
 		} finally {
 			submitting = false;
 		}
+	}
+
+	function backToCredentials() {
+		totpRequired = false;
+		totpCode = '';
+		error = '';
 	}
 </script>
 
@@ -99,9 +119,15 @@
 					</div>
 				</div>
 
-				<p class="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">{translate($language, 'lg.secureAccess')}</p>
-				<h1 class="mt-3 text-3xl font-semibold tracking-tight text-white">{translate($language, 'lg.welcomeBack')}</h1>
-				<p class="mt-2 text-sm leading-6 text-gray-400">{translate($language, 'lg.signInToContinue')}</p>
+				{#if totpRequired}
+					<p class="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">{translate($language, 'lg.totpTitle')}</p>
+					<h1 class="mt-3 text-3xl font-semibold tracking-tight text-white">{translate($language, 'lg.totpHeading')}</h1>
+					<p class="mt-2 text-sm leading-6 text-gray-400">{translate($language, 'lg.totpDesc')}</p>
+				{:else}
+					<p class="text-xs font-semibold uppercase tracking-[0.2em] text-blue-400">{translate($language, 'lg.secureAccess')}</p>
+					<h1 class="mt-3 text-3xl font-semibold tracking-tight text-white">{translate($language, 'lg.welcomeBack')}</h1>
+					<p class="mt-2 text-sm leading-6 text-gray-400">{translate($language, 'lg.signInToContinue')}</p>
+				{/if}
 
 				{#if visibleError}
 					<div id="login-error" role="alert" class="mt-6 rounded-xl border border-red-700/80 bg-red-900/40 p-3.5 text-sm text-red-300">
@@ -109,7 +135,44 @@
 					</div>
 				{/if}
 
-				<form onsubmit={handleSubmit} aria-describedby={visibleError ? 'login-error' : undefined} class="mt-8 space-y-5">
+				{#if totpRequired}
+					<form onsubmit={handleSubmit} aria-describedby={visibleError ? 'login-error' : undefined} class="mt-8 space-y-5">
+						<div>
+							<label for="totp-code" class="mb-2 block text-sm font-medium text-gray-300">
+								{translate($language, 'lg.totpCode')}
+							</label>
+							<input
+								id="totp-code"
+								type="text"
+								bind:value={totpCode}
+								bind:this={totpInput}
+								required
+								inputmode="numeric"
+								pattern="[0-9]{6}"
+								maxlength={6}
+								autocomplete="one-time-code"
+								class="w-full rounded-xl border border-gray-700 bg-gray-950/70 px-4 py-3 text-center font-mono text-lg tracking-[0.4em] text-white outline-none transition placeholder:text-gray-400 hover:border-gray-600 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+								placeholder={translate($language, 'lg.totpCodePlaceholder')}
+							/>
+						</div>
+
+						<button
+							type="submit"
+							disabled={submitting || totpCode.trim().length !== 6}
+							class="group flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 font-semibold text-white shadow-lg shadow-blue-950/40 transition hover:bg-blue-700 hover:shadow-blue-900/40 disabled:cursor-not-allowed disabled:bg-blue-800 disabled:text-blue-200"
+						>
+							{submitting ? translate($language, 'lg.verifying') : translate($language, 'lg.verify')}
+						</button>
+					</form>
+					<button
+						type="button"
+						onclick={backToCredentials}
+						class="mt-4 w-full cursor-pointer text-center text-xs text-gray-400 transition hover:text-gray-200"
+					>
+						{translate($language, 'lg.useAnotherAccount')}
+					</button>
+				{:else}
+					<form onsubmit={handleSubmit} aria-describedby={visibleError ? 'login-error' : undefined} class="mt-8 space-y-5">
 					<div>
 						<label for="username" class="mb-2 block text-sm font-medium text-gray-300">
 							{translate($language, 'lg.username')}
@@ -152,7 +215,8 @@
 							</svg>
 						{/if}
 					</button>
-				</form>
+					</form>
+				{/if}
 
 				<p class="mt-8 text-center text-xs text-gray-400">{translate($language, 'lg.protectedAccess')}</p>
 			</div>
