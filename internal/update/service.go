@@ -22,6 +22,10 @@ const (
 	repoURL      = "https://github.com/mohammadirham37/jenderal_panel.git"
 	sourceDir    = "/opt/jenderal/source"
 	httpTimeout  = 30 * time.Second
+
+	// restartScriptSuffix marks an installed binary whose self-update has
+	// scheduled a verified service restart that has not completed yet.
+	restartScriptSuffix = ".restart-update.sh"
 )
 
 type Service struct {
@@ -117,10 +121,6 @@ func (s *Service) Update(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("get executable path: %w", err)
 	}
-	replacementPath := execPath + ".new"
-	backupPath := execPath + ".bak"
-	restartScriptPath := execPath + ".restart-update.sh"
-	rollbackPath := execPath + ".rollback"
 
 	s.updateMu.Lock()
 	defer s.updateMu.Unlock()
@@ -130,14 +130,38 @@ func (s *Service) Update(ctx context.Context) (string, error) {
 		}
 		s.updateTask = ""
 	}
-	if _, err := os.Stat(restartScriptPath); err == nil {
+	if _, err := os.Stat(execPath + restartScriptSuffix); err == nil {
 		return "", model.NewValidationError("a panel update restart is still in progress")
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("check update restart state: %w", err)
 	}
 
+	taskID := s.tasks.Run("Update Jenderal Panel", "bash", "-c", UpdateScript(execPath))
+	s.updateTask = taskID
+
+	return taskID, nil
+}
+
+// RestartPending reports whether a prior self-update has scheduled a verified
+// service restart for the given binary path that has not completed yet.
+func RestartPending(execPath string) bool {
+	_, err := os.Stat(execPath + restartScriptSuffix)
+	return err == nil
+}
+
+// UpdateScript renders the one-shot self-update — pull source, rebuild the
+// frontend, embed and compile the binary, replace it atomically, and schedule
+// a verified service restart with rollback. It is shared by the web update
+// task and the `jenderal update` SSH command; every path derives from the
+// installed binary location.
+func UpdateScript(execPath string) string {
+	replacementPath := execPath + ".new"
+	backupPath := execPath + ".bak"
+	restartScriptPath := execPath + restartScriptSuffix
+	rollbackPath := execPath + ".rollback"
+
 	// Single bash script for entire update — avoids PATH/env issues between steps
-	script := fmt.Sprintf(`#!/bin/bash
+	return fmt.Sprintf(`#!/bin/bash
 set -e
 export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 
@@ -248,9 +272,4 @@ echo ">>> Update complete! Service restart scheduled."
 		rollbackPath, execPath,
 		restartScriptPath,
 	)
-
-	taskID := s.tasks.Run("Update Jenderal Panel", "bash", "-c", script)
-	s.updateTask = taskID
-
-	return taskID, nil
 }

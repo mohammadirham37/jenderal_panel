@@ -82,6 +82,8 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println("Jenderal Panel restarted successfully.")
+	case "update":
+		cmdUpdate()
 	default:
 		printUsage()
 		os.Exit(1)
@@ -97,6 +99,7 @@ Usage:
   jenderal admin create       Create admin user
   jenderal version            Print version
   jenderal restart            Restart the systemd service (requires root)
+  jenderal update             Pull latest source, rebuild, and restart (requires root)
 `, buildVersion())
 }
 
@@ -133,6 +136,40 @@ func restartService(euid int, run systemCommandRunner) error {
 	}
 
 	return nil
+}
+
+// cmdUpdate runs the same self-update flow as the panel's Update page,
+// synchronously in the terminal: pull latest source, rebuild, replace the
+// binary, and schedule a verified service restart. Built for SSH recovery
+// when the web UI is unreachable.
+func cmdUpdate() {
+	if os.Geteuid() != 0 {
+		fmt.Fprintln(os.Stderr, "root privileges required; run: sudo /opt/jenderal/jenderal update")
+		os.Exit(1)
+	}
+
+	execPath, err := os.Executable()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "locate executable: %v\n", err)
+		os.Exit(1)
+	}
+	if update.RestartPending(execPath) {
+		fmt.Fprintln(os.Stderr, "a previous update's service restart is still in progress; wait for the panel to come back, then retry")
+		os.Exit(1)
+	}
+
+	fmt.Printf("Updating Jenderal Panel %s -> latest main\n", buildVersion())
+	cmd := exec.Command("bash", "-c", update.UpdateScript(execPath))
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
+		}
+		fmt.Fprintf(os.Stderr, "run update: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Service restart scheduled; the panel returns in a few seconds (check: sudo systemctl status jenderal).")
 }
 
 func buildVersion() string {

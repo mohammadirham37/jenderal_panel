@@ -27,7 +27,7 @@ cd web && npm test              # frontend node --test suites
 
 ## Deployment
 
-After work is pushed to `main`, deploy by clicking **Update** on the panel's Update page (`/update`) — it pulls the latest code, rebuilds, backs up, swaps the binary, and restarts the systemd service. Do NOT `git pull` or build manually on the server.
+After work is pushed to `main`, deploy by clicking **Update** on the panel's Update page (`/update`) — it pulls the latest code, rebuilds, backs up, swaps the binary, and restarts the systemd service. Do NOT `git pull` or build manually on the server. When the web UI is unreachable, the same flow runs over SSH: `sudo /opt/jenderal/jenderal update`.
 
 ## Architecture rules
 
