@@ -52,6 +52,12 @@
 		totpCode = '';
 		error = '';
 	}
+
+	// Accept pasted codes like "471 503" or "471-503" by stripping everything
+	// that is not a digit; validation happens server-side.
+	function sanitizeTotpCode() {
+		totpCode = totpCode.replace(/\D/g, '').slice(0, 6);
+	}
 </script>
 
 <div class="login-shell flex min-h-screen items-center px-4 py-8 sm:px-6 lg:px-8">
@@ -146,9 +152,8 @@
 								type="text"
 								bind:value={totpCode}
 								bind:this={totpInput}
-								required
+								oninput={sanitizeTotpCode}
 								inputmode="numeric"
-								pattern="[0-9]{6}"
 								maxlength={6}
 								autocomplete="one-time-code"
 								class="w-full rounded-xl border border-gray-700 bg-gray-950/70 px-4 py-3 text-center font-mono text-lg tracking-[0.4em] text-white outline-none transition placeholder:text-gray-400 hover:border-gray-600 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
