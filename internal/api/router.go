@@ -771,6 +771,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/notifications/channels/{id}/test", notifHandler.TestChannel)
 
 			// TOTP
+			r.Get("/auth/totp/status", authHandler.TOTPStatus)
 			r.Post("/auth/totp/setup", authHandler.TOTPSetup)
 			r.Post("/auth/totp/enable", authHandler.TOTPEnable)
 			r.Post("/auth/totp/disable", authHandler.TOTPDisable)

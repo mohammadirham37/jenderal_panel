@@ -259,7 +259,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 	async function loadTotpStatus() {
 		totpLoading = true;
 		try {
-			const data = await api.get<{ enabled: boolean }>('/api/v1/settings/2fa/status');
+			const data = await api.get<{ enabled: boolean }>('/api/v1/auth/totp/status');
 			totpEnabled = data.enabled;
 		} catch {
 			// If endpoint doesn't exist, assume not enabled
@@ -273,8 +273,8 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 		totpMsg = '';
 		totpError = '';
 		try {
-			const data = await api.post<{ qr_url: string }>('/api/v1/settings/2fa/setup');
-			totpSetupUrl = data.qr_url;
+			const data = await api.post<{ url: string }>('/api/v1/auth/totp/setup');
+			totpSetupUrl = data.url;
 			showTotpSetup = true;
 		} catch (err) {
 			totpError = err instanceof Error ? err.message : translate($language, 'set.totp.setupFailed');
@@ -289,7 +289,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 			return;
 		}
 		try {
-			await api.post('/api/v1/settings/2fa/enable', { code: totpCode });
+			await api.post('/api/v1/auth/totp/enable', { code: totpCode });
 			totpMsg = translate($language, 'set.totp.enabledMsg');
 			totpEnabled = true;
 			showTotpSetup = false;
@@ -305,7 +305,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 		totpMsg = '';
 		totpError = '';
 		try {
-			await api.post('/api/v1/settings/2fa/disable');
+			await api.post('/api/v1/auth/totp/disable');
 			totpMsg = translate($language, 'set.totp.disabledMsg');
 			totpEnabled = false;
 		} catch (err) {

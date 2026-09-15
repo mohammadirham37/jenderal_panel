@@ -204,6 +204,23 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// TOTPStatus reports whether TOTP is enabled for the authenticated user.
+func (h *Handler) TOTPStatus(w http.ResponseWriter, r *http.Request) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+
+	enabled, err := h.auth.IsTOTPEnabled(r.Context(), user.ID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	httputil.JSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
+}
+
 // TOTPSetup initiates TOTP enrolment for the authenticated user.
 func (h *Handler) TOTPSetup(w http.ResponseWriter, r *http.Request) {
 	user, ok := UserFromContext(r.Context())
