@@ -5,7 +5,8 @@
 	import { user as authUser } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 import { toast } from '$lib/stores/toast';
-import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import QRCode from 'qrcode';
 
 	let settings = $state<Setting[]>([]);
 	let loading = $state(true);
@@ -19,6 +20,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 	let totpEnabled = $state(false);
 	let totpLoading = $state(true);
 	let totpSetupUrl = $state('');
+	let totpQrDataUrl = $state('');
 	let totpCode = $state('');
 	let totpMsg = $state('');
 	let totpError = $state('');
@@ -275,6 +277,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 		try {
 			const data = await api.post<{ url: string }>('/api/v1/auth/totp/setup');
 			totpSetupUrl = data.url;
+			totpQrDataUrl = await QRCode.toDataURL(data.url, { margin: 1, width: 200 });
 			showTotpSetup = true;
 		} catch (err) {
 			totpError = err instanceof Error ? err.message : translate($language, 'set.totp.setupFailed');
@@ -295,6 +298,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 			showTotpSetup = false;
 			totpCode = '';
 			totpSetupUrl = '';
+			totpQrDataUrl = '';
 		} catch (err) {
 			totpError = err instanceof Error ? err.message : translate($language, 'set.totp.enableFailed');
 		}
@@ -587,9 +591,14 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 			{#if showTotpSetup}
 				<div class="space-y-3">
 					<p class="text-sm text-gray-300">{translate($language, 'set.totp.scanQr')}</p>
+				<div class="space-y-3">
+					{#if totpQrDataUrl}
+						<img src={totpQrDataUrl} alt="TOTP QR code" class="mx-auto w-48 h-48 rounded-lg bg-white p-2" />
+					{/if}
 					<div class="p-3 bg-gray-900 rounded-lg">
 						<p class="text-xs text-gray-400 font-mono break-all">{totpSetupUrl}</p>
 					</div>
+				</div>
 					<div class="flex items-end gap-3">
 						<div>
 							<label for="totp-code" class="block text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'set.totp.codeLabel')}</label>
@@ -605,7 +614,7 @@ import TaskProgress from '$lib/components/TaskProgress.svelte';
 						<button onclick={enableTotp} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
 							{translate($language, 'set.totp.enable2fa')}
 						</button>
-						<button onclick={() => { showTotpSetup = false; totpSetupUrl = ''; totpCode = ''; }} class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer">
+						<button onclick={() => { showTotpSetup = false; totpSetupUrl = ''; totpQrDataUrl = ''; totpCode = ''; }} class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer">
 							{translate($language, 'set.totp.cancel')}
 						</button>
 					</div>
