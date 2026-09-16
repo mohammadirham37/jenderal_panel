@@ -20,6 +20,12 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
+// sshAccountGranter is the sshaccount capability the provisioner needs: keep
+// the owning panel user's Linux SSH account in sync with the sites it owns.
+type sshAccountGranter interface {
+	SyncOwnedWebsites(ctx context.Context, userID string) error
+}
+
 // Provisioner handles background provisioning of websites.
 type Provisioner struct {
 	db            *sql.DB
@@ -30,6 +36,13 @@ type Provisioner struct {
 	mutations     *siteops.Coordinator
 	installer     *Installer
 	runtime       *noderuntime.Service
+	sshAccounts   sshAccountGranter
+}
+
+// SetSSHAccounts wires the SSH account service so provisioning completion can
+// grant the owning panel user's Linux account access to the new site.
+func (p *Provisioner) SetSSHAccounts(svc sshAccountGranter) {
+	p.sshAccounts = svc
 }
 
 // NewProvisioner creates a new Provisioner with a buffered queue channel.
@@ -405,7 +418,21 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	// Step 4: active
 	_ = p.updateStatus(ctx, websiteID, "active", "")
 	_ = p.updateProgress(ctx, websiteID, "active", "")
+	p.grantOwnerSSHAccess(ctx, w)
 	p.logAudit(ctx, "website_provisioned", websiteID, "provisioned website "+w.Domain)
+}
+
+// grantOwnerSSHAccess best-effort grants the owning panel user's Linux SSH
+// account access to the freshly provisioned site. The site home is created
+// 0710, so an account provisioned before the site existed could never cd into
+// it without this grant. Failures are logged without failing the site.
+func (p *Provisioner) grantOwnerSSHAccess(ctx context.Context, w websiteRow) {
+	if p.sshAccounts == nil || w.CreatedBy == "" {
+		return
+	}
+	if err := p.sshAccounts.SyncOwnedWebsites(ctx, w.CreatedBy); err != nil {
+		p.logAudit(ctx, "ssh_grant_error", w.ID, "sync owner SSH access: "+err.Error())
+	}
 }
 
 // setupOctane writes the site's Caddyfile and systemd unit and enables the
@@ -712,6 +739,7 @@ type websiteRow struct {
 	NodeVersion      string
 	DocumentRoot     string
 	WebUser          string
+	CreatedBy        string
 	AppPort          int
 	AppStartCommand  string
 	AppBuildCommand  string
@@ -739,11 +767,11 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	var w websiteRow
 	var phpVersion, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	err := p.db.QueryRowContext(ctx,
-		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
+		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user, created_by,
 		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		        nginx_profile, app_port, app_start_command, app_build_command, octane_port, octane_workers
 		 FROM websites WHERE id = ?`, id,
-	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser,
+	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.CreatedBy,
 		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog,
 		&w.NginxProfile, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &w.OctanePort, &w.OctaneWorkers)
 	if err != nil {

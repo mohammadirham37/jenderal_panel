@@ -629,3 +629,35 @@ func TestProvision_NginxFail(t *testing.T) {
 		t.Errorf("expected error_message to contain 'nginx config test failed', got %q", errMsg)
 	}
 }
+
+type fakeSSHAccountGranter struct {
+	calls []string
+}
+
+func (f *fakeSSHAccountGranter) SyncOwnedWebsites(_ context.Context, userID string) error {
+	f.calls = append(f.calls, userID)
+	return nil
+}
+
+func TestGrantOwnerSSHAccessOnlyForOwnedSites(t *testing.T) {
+	fake := &fakeSSHAccountGranter{}
+	p := NewProvisioner(nil, nil, nil)
+	p.SetSSHAccounts(fake)
+
+	p.grantOwnerSSHAccess(context.Background(), websiteRow{ID: "w-1", CreatedBy: "user-1"})
+	if len(fake.calls) != 1 || fake.calls[0] != "user-1" {
+		t.Fatalf("calls = %v, want one sync for user-1", fake.calls)
+	}
+
+	fake.calls = nil
+	p.grantOwnerSSHAccess(context.Background(), websiteRow{ID: "w-2", CreatedBy: ""})
+	if len(fake.calls) != 0 {
+		t.Errorf("legacy sites without an owner must not sync, calls = %v", fake.calls)
+	}
+
+	p.sshAccounts = nil
+	p.grantOwnerSSHAccess(context.Background(), websiteRow{ID: "w-3", CreatedBy: "user-1"})
+	if len(fake.calls) != 0 {
+		t.Errorf("nil SSH wiring must not sync, calls = %v", fake.calls)
+	}
+}
