@@ -377,6 +377,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/upload-deploy", websiteHandler.UploadDeploy)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/repair-ssh-access", websiteHandler.RepairSSHAccess)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/repair-layout", websiteHandler.RepairLayout)
 
 			// Laravel Octane (website-scoped; ownership handled by the scope

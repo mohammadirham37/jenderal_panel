@@ -400,6 +400,7 @@ import { toast } from '$lib/stores/toast';
 	let uploadDeployTaskId = $state('');
 	let uploadingDeploy = $state(false);
 	let repairingLayout = $state(false);
+	let repairingSSHAccess = $state(false);
 
 	let deployments = $state<DeploymentEntry[]>([]);
 	let deploymentsLoading = $state(false);
@@ -830,7 +831,7 @@ import { toast } from '$lib/stores/toast';
 		if (!website) return;
 		if (!confirm(translate($language, 'wd.deploy.repair_confirm'))) return;
 		repairingLayout = true;
-		
+
 		try {
 			const data = await api.post<{ output: string }>(`/api/v1/websites/${website.id}/repair-layout`, {});
 			toast.success(data.output || translate($language, 'wd.deploy.repair_done'));
@@ -838,6 +839,20 @@ import { toast } from '$lib/stores/toast';
 			toast.error(err instanceof Error ? err.message : translate($language, 'wd.deploy.repair_failed'));
 		} finally {
 			repairingLayout = false;
+		}
+	}
+
+	async function repairSSHAccess() {
+		if (!website || repairingSSHAccess) return;
+		repairingSSHAccess = true;
+
+		try {
+			await api.post(`/api/v1/websites/${website.id}/repair-ssh-access`, {});
+			toast.success(translate($language, 'wd.ssh.repair_done'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.ssh.repair_failed'));
+		} finally {
+			repairingSSHAccess = false;
 		}
 	}
 
@@ -1445,6 +1460,25 @@ import { toast } from '$lib/stores/toast';
 								</div>
 							<TaskProgress bind:taskId={nodeRuntimeTaskId} storageKey="nodejs-task-{website.id}" onComplete={() => { nodeRuntimeTaskId = ''; void loadNodeRuntime(); }} />
 						{/if}
+					</div>
+
+					<!-- SSH Access -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<div class="flex flex-wrap items-center justify-between gap-3">
+							<div class="min-w-0">
+								<h3 class="text-lg font-semibold text-white mb-1">{translate($language, 'wd.ssh.title')}</h3>
+								<p class="text-sm text-gray-400">{translate($language, 'wd.ssh.hint')}</p>
+							</div>
+							{#if canUpdateWebsite}
+								<button
+									onclick={repairSSHAccess}
+									disabled={repairingSSHAccess}
+									class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+								>
+									{repairingSSHAccess ? translate($language, 'wd.ssh.repairing') : translate($language, 'wd.ssh.repair')}
+								</button>
+							{/if}
+						</div>
 					</div>
 
 					<!-- Laravel Octane (FrankenPHP) -->

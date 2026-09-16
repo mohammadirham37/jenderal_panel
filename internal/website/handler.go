@@ -139,6 +139,25 @@ func (h *Handler) TransferOwnership(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, website)
 }
 
+// RepairSSHAccess re-applies the owning panel user's SSH account access to
+// the website (group membership plus ACLs). Website-scoped: the scope
+// middleware already enforced ownership. It is a no-op when the owner has no
+// SSH account or Linux account.
+func (h *Handler) RepairSSHAccess(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if h.ssh == nil {
+		httputil.HandleError(w, model.NewDomainError("SSH_UNAVAILABLE",
+			"SSH account management is not wired up", nil))
+		return
+	}
+	if err := h.ssh.GrantWebsiteOwner(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "repair_website_ssh_access", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // GetPhpSettings handles GET /api/websites/{id}/php-settings.
 func (h *Handler) GetPhpSettings(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.svc.GetPhpSettings(r.Context(), chi.URLParam(r, "id"))

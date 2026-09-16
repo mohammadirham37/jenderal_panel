@@ -261,6 +261,40 @@ func (s *Service) Delete(ctx context.Context, userID string) error {
 	return nil
 }
 
+// ReconcileAll re-syncs website access for every panel user with SSH enabled.
+// It runs at panel startup so sites provisioned after an account existed — or
+// grants lost on older installs — converge without manual action.
+func (s *Service) ReconcileAll(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM users WHERE ssh_enabled = 1`)
+	if err != nil {
+		return fmt.Errorf("list ssh-enabled users: %w", err)
+	}
+	var userIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan ssh-enabled users: %w", err)
+		}
+		userIDs = append(userIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("read ssh-enabled users: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close ssh-enabled users: %w", err)
+	}
+
+	var failures []error
+	for _, id := range userIDs {
+		if err := s.SyncOwnedWebsites(ctx, id); err != nil {
+			failures = append(failures, fmt.Errorf("user %s: %w", id, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
 // SyncOwnedWebsites grants the account access to every website currently
 // owned by the panel user. Safe to run repeatedly.
 func (s *Service) SyncOwnedWebsites(ctx context.Context, userID string) error {
@@ -302,6 +336,56 @@ func (s *Service) SyncOwnedWebsites(ctx context.Context, userID string) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// GrantWebsiteOwner grants the owning panel user's Linux account access to a
+// single website (group membership plus ACLs). Safe to run repeatedly; it is
+// a no-op when the site has no owner, the owner has no SSH account, or the
+// Linux account is missing.
+func (s *Service) GrantWebsiteOwner(ctx context.Context, websiteID string) error {
+	var ownerID, webUser string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT created_by, web_user FROM websites WHERE id = ?`, websiteID,
+	).Scan(&ownerID, &webUser)
+	if err == sql.ErrNoRows {
+		return model.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("load website: %w", err)
+	}
+	if ownerID == "" {
+		return model.NewValidationError("website has no owning panel user")
+	}
+	if !webUserRegex.MatchString(webUser) {
+		return model.NewValidationError("unsafe website user name")
+	}
+	u, err := s.loadUser(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+	if !u.SSHEnabled {
+		return nil
+	}
+	if !ValidateUsername(u.Username) {
+		return nil
+	}
+	exists, err := s.accountExists(ctx, u.Username)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	if err := s.GrantWebsite(ctx, u.Username, webUser); err != nil {
+		return err
+	}
+	_ = s.audit.Log(ctx, audit.LogEntry{
+		Action: "ssh_account_website_grant",
+		Module: "ssh",
+		Target: websiteID,
+		Detail: "granted " + u.Username + " access to " + webUser,
+	})
 	return nil
 }
 
