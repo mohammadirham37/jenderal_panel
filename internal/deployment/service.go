@@ -180,11 +180,16 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		return true
 	}
 
+	// Every file probe below runs as root: site homes are 0710 owned by the
+	// web user, so the panel account cannot stat inside them. A plain probe
+	// would silently report "missing" and skip the deploy-key setup, the
+	// pre-clone wipe, composer, and the artisan steps.
+
 	// Check for deploy key and set GIT_SSH_COMMAND if exists.
 	homeDir := "/home/" + webUser
 	deployKeyPath := homeDir + "/.ssh/deploy_key"
 	gitSSHCmd := ""
-	res, err := s.exec.Run(ctx, "test", "-f", deployKeyPath)
+	res, err := s.exec.RunSudo(ctx, "test", "-f", deployKeyPath)
 	if err == nil && res.ExitCode == 0 {
 		gitSSHCmd = fmt.Sprintf("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null' ", deployKeyPath)
 		appendLog("deploy key found", nil, nil)
@@ -199,7 +204,7 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Step 1: Check if .git dir exists in the project root.
-	res, err = s.exec.Run(ctx, "test", "-d", projectRoot+"/.git")
+	res, err = s.exec.RunSudo(ctx, "test", "-d", projectRoot+"/.git")
 	gitExists := err == nil && res.ExitCode == 0
 
 	// Step 2/3: Clone or pull (run as web_user via sudo -u).
@@ -215,7 +220,7 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		// previous install make `git clone` refuse to run. Clear the
 		// project root first so the user does not have to delete the files
 		// by hand through the file manager.
-		res, err = s.exec.Run(ctx, "test", "-e", projectRoot)
+		res, err = s.exec.RunSudo(ctx, "test", "-e", projectRoot)
 		if err == nil && res.ExitCode == 0 {
 			res, err = s.exec.RunSudo(ctx, "rm", "-rf", projectRoot)
 			if !appendLog("clear existing project files", res, err) {
@@ -248,7 +253,7 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	appendLog("git rev-parse", res, err)
 
 	// Step 5: Check if composer.json exists and run composer install.
-	res, err = s.exec.Run(ctx, "test", "-f", projectRoot+"/composer.json")
+	res, err = s.exec.RunSudo(ctx, "test", "-f", projectRoot+"/composer.json")
 	if err == nil && res.ExitCode == 0 {
 		shellCmd := fmt.Sprintf("cd %s && composer install --no-dev --no-interaction", projectRoot)
 		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
@@ -259,7 +264,7 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Step 6: Check if artisan exists and run Laravel commands.
-	res, err = s.exec.Run(ctx, "test", "-f", projectRoot+"/artisan")
+	res, err = s.exec.RunSudo(ctx, "test", "-f", projectRoot+"/artisan")
 	if err == nil && res.ExitCode == 0 {
 		artisanCmds := []struct {
 			label, cmd string

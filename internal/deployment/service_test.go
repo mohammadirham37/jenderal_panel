@@ -103,13 +103,11 @@ func TestDeployClearsExistingProjectRootBeforeClone(t *testing.T) {
 	var sudoCalls [][]string
 	exec := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			if name == "test" && len(args) == 2 {
-				// .git absent (fresh clone), deploy key absent, project root
-				// present, no composer.json/artisan.
-				if args[0] == "-e" && args[1] == "/home/web_example/app" {
-					return &executor.Result{ExitCode: 0}, nil
-				}
-				return &executor.Result{ExitCode: 1}, nil
+			if name == "test" {
+				// Site homes are 0710 web_user, so the panel account cannot
+				// stat inside them; a plain probe reports "missing" on the
+				// server even when the directory exists.
+				t.Error("file probes must run as root via RunSudo, not via Run")
 			}
 			return &executor.Result{ExitCode: 0}, nil
 		},
@@ -117,6 +115,14 @@ func TestDeployClearsExistingProjectRootBeforeClone(t *testing.T) {
 			mu.Lock()
 			sudoCalls = append(sudoCalls, append([]string{name}, args...))
 			mu.Unlock()
+			if name == "test" {
+				// .git absent (fresh clone), deploy key absent, project root
+				// present, no composer.json/artisan.
+				if args[0] == "-e" && args[1] == "/home/web_example/app" {
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
 			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
 		},
 	}
@@ -153,6 +159,67 @@ func TestDeployClearsExistingProjectRootBeforeClone(t *testing.T) {
 	}
 	if rmIdx > cloneIdx {
 		t.Errorf("wipe must happen before the clone: rm at %d, clone at %d", rmIdx, cloneIdx)
+	}
+}
+
+// An existing repository must take the pull path: re-cloning on every deploy
+// would discard anything not committed, and the root-run probe is what makes
+// the .git check reliable inside a 0710 site home.
+func TestDeployPullsWhenGitRepoExists(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+
+	var mu sync.Mutex
+	var sudoCalls [][]string
+	exec := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			mu.Lock()
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			mu.Unlock()
+			if name == "test" {
+				if args[0] == "-d" && args[1] == "/home/web_example/app/.git" {
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+	}
+	svc := NewService(db, exec, auditSvc)
+
+	websiteID := insertWebsite(t, db, "example.com", "web_example", "/home/web_example/app/public")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	mu.Lock()
+	defer mu.Unlock()
+	pulled, cloned, wiped := false, false, false
+	for _, call := range sudoCalls {
+		if call[0] == "rm" {
+			wiped = true
+		}
+		if call[0] == "su" {
+			for _, a := range call {
+				if strings.Contains(a, "git pull") {
+					pulled = true
+				}
+				if strings.Contains(a, "git clone") {
+					cloned = true
+				}
+			}
+		}
+	}
+	if !pulled {
+		t.Errorf("expected the git pull path, got: %v", sudoCalls)
+	}
+	if cloned {
+		t.Errorf("an existing repository must not be re-cloned")
+	}
+	if wiped {
+		t.Errorf("the pull path must not wipe the project root")
 	}
 }
 
