@@ -59,7 +59,6 @@
 			key: 'nav.group.security',
 			items: [
 				{ href: '/security', permission: 'security.view', labelKey: 'nav.security_center', icon: 'shield' },
-				{ href: '/firewall', permission: 'firewall.view', labelKey: 'nav.firewall', icon: 'shield' },
 				{ href: '/users', permission: 'users.view', labelKey: 'nav.users', icon: 'users' },
 				{ href: '/alerts', permission: 'alerts.view', labelKey: 'nav.alerts', icon: 'bell' },
 				{ href: '/notifications', permission: 'notifications.view', labelKey: 'nav.notifications', icon: 'megaphone' },
