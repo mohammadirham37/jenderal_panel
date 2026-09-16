@@ -837,3 +837,56 @@ func TestUpdateDocumentRoot(t *testing.T) {
 }
 
 func strPtr(v string) *string { return &v }
+
+type fakeTLSRegen struct{ ids []string }
+
+func (f *fakeTLSRegen) RegenerateTLSVhost(_ context.Context, id string) error {
+	f.ids = append(f.ids, id)
+	return nil
+}
+
+func TestUpdateDocumentRootRegeneratesTLSVhost(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" && args[0] == "-d" && args[1] == "/home/web_tls_example_com/missing" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+	tlsRegen := &fakeTLSRegen{}
+	svc.SetTLSVhostRegenerator(tlsRegen)
+
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "tls.example.com", Template: "php", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{
+		DocumentRoot: strPtr("/home/web_tls_example_com/site"),
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if len(tlsRegen.ids) != 1 || tlsRegen.ids[0] != created.ID {
+		t.Fatalf("TLS vhost regen calls = %v, want one for %s", tlsRegen.ids, created.ID)
+	}
+
+	// A rejected update must not touch the TLS vhost either.
+	before := len(tlsRegen.ids)
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{
+		DocumentRoot: strPtr("/home/web_tls_example_com/missing"),
+	}); err == nil {
+		t.Fatal("expected rejection of a missing document root")
+	}
+	if len(tlsRegen.ids) != before {
+		t.Error("TLS vhost must not be regenerated for a rejected update")
+	}
+}

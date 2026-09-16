@@ -306,6 +306,7 @@ func cmdServe() {
 	websiteSvc.SetTaskRunner(tasks)
 	provisioner.SetSSHAccounts(sshAccountSvc)
 	deploySvc.SetSSHAccounts(sshAccountSvc)
+	websiteSvc.SetTLSVhostRegenerator(sslSvc)
 	panelDomainSvc := paneldomain.NewService(db, exec, auditSvc)
 	if cfg.Server.TLS.Enabled {
 		// The panel serves TLS on the upstream port (self-signed), so the

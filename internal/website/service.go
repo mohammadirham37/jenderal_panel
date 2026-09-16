@@ -62,6 +62,7 @@ type Service struct {
 	ipv6Available func() bool
 	mutations     *siteops.Coordinator
 	tasks         *taskrunner.Runner
+	tlsRegen      tlsVhostRegenerator
 }
 
 // NewService creates a new website management service.
@@ -1312,9 +1313,32 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		return fmt.Errorf("write vhost config: %s", strings.TrimSpace(result.Stderr))
 	}
 
+	// The TLS vhost embeds the document root too; re-render it so HTTPS
+	// follows the HTTP vhost to the new root. A regeneration failure
+	// surfaces to the caller so the admin knows HTTPS is still on the old
+	// root.
+	if s.tlsRegen != nil {
+		if err := s.tlsRegen.RegenerateTLSVhost(ctx, w.ID); err != nil {
+			return fmt.Errorf("regenerate TLS vhost: %w", err)
+		}
+	}
+
 	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
 	return nil
+}
+
+// tlsVhostRegenerator is the ssl capability the website service needs when
+// the vhost is regenerated: the TLS vhost embeds the document root, so it
+// must be re-rendered alongside the HTTP vhost.
+type tlsVhostRegenerator interface {
+	RegenerateTLSVhost(ctx context.Context, websiteID string) error
+}
+
+// SetTLSVhostRegenerator wires the SSL service so document-root changes also
+// regenerate the HTTPS vhost.
+func (s *Service) SetTLSVhostRegenerator(regen tlsVhostRegenerator) {
+	s.tlsRegen = regen
 }
 
 // SetForceHTTPS toggles the HTTP→HTTPS redirect for certified domains and
