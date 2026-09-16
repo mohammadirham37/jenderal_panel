@@ -2,8 +2,11 @@ package php
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -153,6 +156,172 @@ func aptTimeoutArgs() []string {
 		"-o", "Acquire::http::Timeout=30",
 		"-o", "Acquire::https::Timeout=30",
 	}
+}
+
+// extensionNameRegex constrains extension names accepted for enable, disable,
+// and install: lowercase alphanumerics and underscores, as used by
+// phpenmod/phpdismod and the phpX.Y-<name> apt packages.
+var extensionNameRegex = regexp.MustCompile(`^[a-z0-9_]+$`)
+
+// ExtensionStatus groups one PHP version's extensions by state.
+type ExtensionStatus struct {
+	Enabled   []string `json:"enabled"`
+	Disabled  []string `json:"disabled"`
+	Available []string `json:"available"`
+}
+
+// Extensions reports a PHP version's extensions: enabled (installed and
+// loaded), disabled (installed but not loaded), and available (extension
+// packages apt can still install).
+func (s *Service) Extensions(ctx context.Context, version string) (ExtensionStatus, error) {
+	status := ExtensionStatus{Enabled: []string{}, Disabled: []string{}, Available: []string{}}
+	if err := s.validateVersion(version); err != nil {
+		return status, err
+	}
+	if !s.IsInstalled(ctx, version) {
+		return status, model.NewValidationError("php " + version + " is not installed")
+	}
+
+	loaded := map[string]bool{}
+	modules, err := s.exec.Run(ctx, "/usr/bin/php"+version, "-m")
+	if err != nil {
+		return status, fmt.Errorf("list loaded extensions: %w", err)
+	}
+	if modules == nil || modules.ExitCode != 0 {
+		return status, fmt.Errorf("list loaded extensions: %s", strings.TrimSpace(modules.Stderr))
+	}
+	for _, line := range strings.Split(modules.Stdout, "\n") {
+		if name := strings.TrimSpace(line); name != "" {
+			loaded[name] = true
+		}
+	}
+
+	modsDir := "/etc/php/" + version + "/mods-available"
+	if listing, err := s.exec.Run(ctx, "/bin/ls", "-1", modsDir); err == nil && listing != nil && listing.ExitCode == 0 {
+		for _, line := range strings.Split(listing.Stdout, "\n") {
+			name := strings.TrimSuffix(strings.TrimSpace(line), ".ini")
+			if name == "" || !extensionNameRegex.MatchString(name) {
+				continue
+			}
+			if loaded[name] {
+				status.Enabled = append(status.Enabled, name)
+			} else {
+				status.Disabled = append(status.Disabled, name)
+			}
+		}
+	}
+	// The opcache ini is named "opcache.ini" but the module reports itself as
+	// "Zend OPcache" in php -m; treat it as enabled in either spelling.
+	for i, name := range status.Disabled {
+		if name == "opcache" && loaded["Zend OPcache"] {
+			status.Enabled = append(status.Enabled, name)
+			status.Disabled = append(status.Disabled[:i], status.Disabled[i+1:]...)
+			break
+		}
+	}
+
+	installed := map[string]bool{}
+	if dpkg, err := s.exec.Run(ctx, "/usr/bin/dpkg-query", "-W", "-f=${binary:Package}\n", "php"+version+"-*"); err == nil && dpkg != nil && dpkg.ExitCode == 0 {
+		for _, line := range strings.Split(dpkg.Stdout, "\n") {
+			if pkg := strings.TrimSpace(line); pkg != "" {
+				installed[pkg] = true
+			}
+		}
+	}
+	if candidates, err := s.exec.Run(ctx, "/usr/bin/apt-cache", "pkgnames", "php"+version+"-"); err == nil && candidates != nil && candidates.ExitCode == 0 {
+		seen := map[string]bool{}
+		for _, line := range strings.Split(candidates.Stdout, "\n") {
+			pkg := strings.TrimSpace(line)
+			if !strings.HasPrefix(pkg, "php"+version+"-") {
+				continue
+			}
+			name := strings.TrimPrefix(pkg, "php"+version+"-")
+			if !extensionNameRegex.MatchString(name) || installed[pkg] || seen[name] {
+				continue
+			}
+			seen[name] = true
+			status.Available = append(status.Available, name)
+		}
+	}
+	sort.Strings(status.Enabled)
+	sort.Strings(status.Disabled)
+	sort.Strings(status.Available)
+	return status, nil
+}
+
+// EnableExtension loads an installed extension for the version and reloads
+// PHP-FPM so websites pick it up.
+func (s *Service) EnableExtension(ctx context.Context, version, ext string) error {
+	if err := s.validateExtension(version, ext); err != nil {
+		return err
+	}
+	if err := s.runSudoOK(ctx, "/usr/sbin/phpenmod", "-v", version, ext); err != nil {
+		return fmt.Errorf("enable extension %s: %w", ext, err)
+	}
+	return s.reloadFPMIfActive(ctx, version)
+}
+
+// DisableExtension unloads an extension for the version and reloads PHP-FPM.
+func (s *Service) DisableExtension(ctx context.Context, version, ext string) error {
+	if err := s.validateExtension(version, ext); err != nil {
+		return err
+	}
+	if err := s.runSudoOK(ctx, "/usr/sbin/phpdismod", "-v", version, ext); err != nil {
+		return fmt.Errorf("disable extension %s: %w", ext, err)
+	}
+	return s.reloadFPMIfActive(ctx, version)
+}
+
+// installExtensionCommands builds the apt steps for installing an extension
+// package; phpenmod runs afterwards because package postinst scripts only
+// enable extensions for the SAPIs registered at install time.
+func (s *Service) installExtensionCommands(version, ext string) [][]string {
+	updateArgs := append([]string{"update", "-qq"}, aptTimeoutArgs()...)
+	installArgs := append([]string{"install", "-y", "-o", "DPkg::Lock::Timeout=120"}, aptTimeoutArgs()...)
+	installArgs = append(installArgs, "php"+version+"-"+ext)
+	return [][]string{
+		append([]string{"apt-get"}, updateArgs...),
+		append([]string{"apt-get"}, installArgs...),
+		{"/usr/sbin/phpenmod", "-v", version, ext},
+	}
+}
+
+func (s *Service) validateExtension(version, ext string) error {
+	if err := s.validateVersion(version); err != nil {
+		return err
+	}
+	if !extensionNameRegex.MatchString(ext) {
+		return model.NewValidationError("invalid extension name")
+	}
+	return nil
+}
+
+func (s *Service) runSudoOK(ctx context.Context, name string, args ...string) error {
+	result, err := s.exec.RunSudo(ctx, name, args...)
+	if err != nil {
+		return err
+	}
+	if result == nil {
+		return errors.New("executor returned no result")
+	}
+	if result.ExitCode != 0 {
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = fmt.Sprintf("exit status %d", result.ExitCode)
+		}
+		return fmt.Errorf("%s: %s", name, detail)
+	}
+	return nil
+}
+
+// reloadFPMIfActive reloads the FPM service so running workers pick up the
+// new extension set; an inactive service has nothing to reload.
+func (s *Service) reloadFPMIfActive(ctx context.Context, version string) error {
+	active, err := s.exec.Run(ctx, "/usr/bin/systemctl", "is-active", "--quiet", "php"+version+"-fpm")
+	if err != nil || active == nil || active.ExitCode != 0 {
+		return nil
+	}
+	return s.systemctlAction(ctx, "reload", version)
 }
 
 func phpPackages(version string) []string {

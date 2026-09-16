@@ -374,3 +374,71 @@ func TestReinstallCommandsRepairSequence(t *testing.T) {
 		t.Errorf("service must be re-enabled, got:\n%s", all)
 	}
 }
+
+func TestExtensionsCategorizesEnabledDisabledAvailable(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch {
+			case name == "/usr/bin/php8.3" && len(args) == 1 && args[0] == "-m":
+				return mockResult("Core\ncurl\nzip\nZend OPcache\nstandard\n", "", 0), nil
+			case name == "/bin/ls" && len(args) == 2:
+				return mockResult("curl.ini\nzip.ini\ngd.ini\nopcache.ini\nsqlite3.ini\n", "", 0), nil
+			case name == "/usr/bin/dpkg-query":
+				return mockResult("php8.3-cli\nphp8.3-common\nphp8.3-curl\nphp8.3-zip\nphp8.3-gd\nphp8.3-opcache\nphp8.3-sqlite3\n", "", 0), nil
+			case name == "/usr/bin/apt-cache":
+				return mockResult("php8.3-xdebug\nphp8.3-apcu\nphp8.3-cli\nphp8.3-imagick\n", "", 0), nil
+			}
+			return mockResult("", "", 0), nil
+		},
+	}
+
+	svc := NewService(exec, nil)
+	status, err := svc.Extensions(context.Background(), "8.3")
+	if err != nil {
+		t.Fatalf("Extensions: %v", err)
+	}
+
+	if got, want := strings.Join(status.Enabled, ","), "curl,opcache,zip"; got != want {
+		t.Errorf("enabled = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(status.Disabled, ","), "gd,sqlite3"; got != want {
+		t.Errorf("disabled = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(status.Available, ","), "apcu,imagick,xdebug"; got != want {
+		t.Errorf("available = %q, want %q", got, want)
+	}
+}
+
+func TestExtensionsRejectsUnknownVersionAndBadNames(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return mockResult("", "", 0), nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return mockResult("", "", 0), nil
+		},
+	}
+	svc := NewService(exec, nil)
+
+	if _, err := svc.Extensions(context.Background(), "7.4"); err == nil {
+		t.Error("expected unknown version rejection")
+	}
+	if err := svc.EnableExtension(context.Background(), "8.3", "Zip;rm"); err == nil {
+		t.Error("expected invalid extension name rejection")
+	}
+	if err := svc.DisableExtension(context.Background(), "8.3", "zip"); err != nil {
+		t.Errorf("DisableExtension with a succeeding executor = %v, want nil", err)
+	}
+
+	cmds := svc.installExtensionCommands("8.3", "xdebug")
+	joined := make([]string, len(cmds))
+	for i, cmd := range cmds {
+		joined[i] = strings.Join(cmd, " ")
+	}
+	all := strings.Join(joined, "\n")
+	for _, want := range []string{"apt-get update -qq", "install -y", "php8.3-xdebug", "phpenmod -v 8.3 xdebug"} {
+		if !strings.Contains(all, want) {
+			t.Errorf("install commands missing %q:\n%s", want, all)
+		}
+	}
+}

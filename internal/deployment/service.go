@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -21,16 +22,35 @@ type Service struct {
 	exec  executor.CommandExecutor
 	audit *audit.Service
 	queue chan string
+
+	// runners tracks the cancel func of each running deployment so a stuck
+	// run can be stopped from the UI.
+	mu          sync.Mutex
+	runners     map[string]context.CancelFunc
+	sshAccounts sshAccountSyncer
 }
 
 // NewService creates a new deployment service with a buffered work queue.
 func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service) *Service {
 	return &Service{
-		db:    db,
-		exec:  exec,
-		audit: auditSvc,
-		queue: make(chan string, 100),
+		db:      db,
+		exec:    exec,
+		audit:   auditSvc,
+		queue:   make(chan string, 100),
+		runners: make(map[string]context.CancelFunc),
 	}
+}
+
+// sshAccountSyncer is the sshaccount capability deployments need: refresh
+// the owner's site access after a deploy rewrote the project files.
+type sshAccountSyncer interface {
+	SyncOwnedWebsites(ctx context.Context, userID string) error
+}
+
+// SetSSHAccounts wires the SSH account service so finished deployments can
+// re-apply the owning panel user's site access.
+func (s *Service) SetSSHAccounts(svc sshAccountSyncer) {
+	s.sshAccounts = svc
 }
 
 // Start launches a background goroutine that processes queued deployments.
@@ -131,11 +151,11 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Load website information.
-	var webUser, docRoot string
+	var webUser, docRoot, ownerID string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT web_user, document_root FROM websites WHERE id = ?`,
+		`SELECT web_user, document_root, created_by FROM websites WHERE id = ?`,
 		d.WebsiteID,
-	).Scan(&webUser, &docRoot)
+	).Scan(&webUser, &docRoot, &ownerID)
 	if err != nil {
 		s.failDeployment(ctx, deploymentID, "load website: "+err.Error(), 0)
 		return
@@ -151,9 +171,18 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	start := time.Now()
 
 	// Bound the whole deployment run; the executor's default timeout is too
-	// short for cloning real repositories.
+	// short for cloning real repositories. The cancel func is registered so
+	// a stuck run can be stopped from the UI.
 	ctx, cancel := context.WithTimeout(ctx, deployTimeout)
 	defer cancel()
+	s.mu.Lock()
+	s.runners[deploymentID] = cancel
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.runners, deploymentID)
+		s.mu.Unlock()
+	}()
 
 	var logBuf strings.Builder
 
@@ -303,23 +332,34 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		}
 	}
 
-	// Success — update status.
+	// Success — update status, guarded so a deployment the user stopped
+	// mid-run keeps its cancelled status instead of being overwritten.
 	duration := int(time.Since(start).Milliseconds())
 	now = time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(ctx,
-		`UPDATE deployments SET status = ?, commit_hash = ?, duration_ms = ?, log = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE deployments SET status = ?, commit_hash = ?, duration_ms = ?, log = ?, updated_at = ? WHERE id = ? AND status = 'running'`,
 		"success", commitHash, duration, logBuf.String(), now, deploymentID,
 	)
+
+	// The deploy rewrote the project files: refresh the owning SSH account's
+	// ACLs so files created without them (e.g. .env) become accessible again.
+	if s.sshAccounts != nil && ownerID != "" {
+		syncCtx := context.WithoutCancel(ctx)
+		if err := s.sshAccounts.SyncOwnedWebsites(syncCtx, ownerID); err != nil {
+			logBuf.WriteString("ERROR: ssh access resync: " + err.Error() + "\n")
+			_, _ = s.db.ExecContext(ctx,
+				`UPDATE deployments SET log = ?, updated_at = ? WHERE id = ? AND status = 'success'`,
+				logBuf.String(), time.Now().UTC().Format(time.RFC3339), deploymentID)
+		}
+	}
 }
 
-// failDeployment marks a deployment as failed with the collected log output.
 // CancelDeployment marks a pending deployment as cancelled so the worker
-// skips it. Deployments that already run cannot be cancelled; they finish or
-// hit the run timeout on their own.
+// skips it, and stops a running deployment via its registered cancel func.
 func (s *Service) CancelDeployment(ctx context.Context, id string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE deployments SET status = 'cancelled', log = '', updated_at = ? WHERE id = ? AND status = 'pending'`,
+		`UPDATE deployments SET status = 'cancelled', log = '', updated_at = ? WHERE id = ? AND status IN ('pending', 'running')`,
 		now, id)
 	if err != nil {
 		return fmt.Errorf("cancel deployment: %w", err)
@@ -328,11 +368,19 @@ func (s *Service) CancelDeployment(ctx context.Context, id string) error {
 		if _, getErr := s.GetDeployment(ctx, id); getErr != nil {
 			return model.ErrNotFound
 		}
-		return model.NewValidationError("only pending deployments can be cancelled")
+		return model.NewValidationError("only pending or running deployments can be cancelled")
+	}
+	s.mu.Lock()
+	cancel := s.runners[id]
+	delete(s.runners, id)
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
 	}
 	return nil
 }
 
+// failDeployment marks a deployment as failed with the collected log output.
 // DeleteDeployment removes a deployment record from the history. Running
 // deployments are protected so the worker can always close them out.
 func (s *Service) DeleteDeployment(ctx context.Context, id string) error {
@@ -350,10 +398,12 @@ func (s *Service) DeleteDeployment(ctx context.Context, id string) error {
 }
 
 // failDeployment marks a deployment as failed with the collected log output.
+// The update is guarded by status so a deployment the user cancelled or
+// stopped mid-run is not overwritten.
 func (s *Service) failDeployment(ctx context.Context, id, log string, durationMs int) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(ctx,
-		`UPDATE deployments SET status = ?, duration_ms = ?, log = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE deployments SET status = ?, duration_ms = ?, log = ?, updated_at = ? WHERE id = ? AND status IN ('pending', 'running')`,
 		"failed", durationMs, log, now, id,
 	)
 }

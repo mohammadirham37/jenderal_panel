@@ -461,6 +461,16 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "php.config")).
 				Put("/php/{version}/config", phpHandler.SaveConfig)
 
+			// PHP extensions (per-version enable/disable/install)
+			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
+				Get("/php/{version}/extensions", phpHandler.Extensions)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/extensions/{ext}/enable", phpHandler.EnableExtension)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/extensions/{ext}/disable", phpHandler.DisableExtension)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/extensions/{ext}/install", phpHandler.InstallExtension)
+
 			// SSL
 			// SSL (website-scoped; ownership handled by the scope middleware,
 			// so website-level permissions are enough here)

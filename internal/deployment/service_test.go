@@ -295,8 +295,8 @@ func TestCancelAndDeleteDeploymentLifecycle(t *testing.T) {
 		t.Fatalf("status = %q, want cancelled", got.Status)
 	}
 
-	if err := svc.CancelDeployment(context.Background(), d.ID); err == nil || !strings.Contains(err.Error(), "only pending") {
-		t.Fatalf("second cancel = %v, want only-pending validation error", err)
+	if err := svc.CancelDeployment(context.Background(), d.ID); err == nil || !strings.Contains(err.Error(), "only pending or running") {
+		t.Fatalf("second cancel = %v, want only-pending-or-running validation error", err)
 	}
 
 	// The worker must skip deployments that are no longer pending.
@@ -323,5 +323,77 @@ func TestCancelAndDeleteDeploymentLifecycle(t *testing.T) {
 	}
 	if err := svc.DeleteDeployment(context.Background(), running); err == nil || !strings.Contains(err.Error(), "running") {
 		t.Fatalf("deleting a running deployment = %v, want protection error", err)
+	}
+
+	// A running deployment can be stopped: status flips to cancelled and the
+	// subsequent delete goes through.
+	if err := svc.CancelDeployment(context.Background(), running); err != nil {
+		t.Fatalf("CancelDeployment on running: %v", err)
+	}
+	got, _ = svc.GetDeployment(context.Background(), running)
+	if got.Status != "cancelled" {
+		t.Fatalf("stopped status = %q, want cancelled", got.Status)
+	}
+	if err := svc.DeleteDeployment(context.Background(), running); err != nil {
+		t.Fatalf("DeleteDeployment after stop: %v", err)
+	}
+}
+
+// fakeSSHAccountSyncer records the owners whose SSH site access was
+// re-synced: deploys rewrite project files, so the owner's ACLs must be
+// refreshed afterwards for files created without them (e.g. .env).
+type fakeSSHAccountSyncer struct {
+	userIDs []string
+}
+
+func (f *fakeSSHAccountSyncer) SyncOwnedWebsites(_ context.Context, userID string) error {
+	f.userIDs = append(f.userIDs, userID)
+	return nil
+}
+
+func TestDeployResyncsOwnerSSHAccess(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+
+	syncer := &fakeSSHAccountSyncer{}
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				// fresh clone path: .git absent, deploy key absent, project
+				// root absent, no composer.json/artisan
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+	}
+	svc := NewService(db, exec, auditSvc)
+	svc.SetSSHAccounts(syncer)
+
+	websiteID := insertWebsite(t, db, "example.com", "web_example", "/home/web_example/app/public")
+	if _, err := db.Exec(`UPDATE websites SET created_by = 'owner-1' WHERE id = ?`, websiteID); err != nil {
+		t.Fatalf("set owner: %v", err)
+	}
+
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	got, err := svc.GetDeployment(context.Background(), d.ID)
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+	if got.Status != "success" {
+		t.Fatalf("status = %q, want success", got.Status)
+	}
+	if len(syncer.userIDs) != 1 || syncer.userIDs[0] != "owner-1" {
+		t.Fatalf("sync calls = %v, want one resync for owner-1", syncer.userIDs)
 	}
 }

@@ -80,6 +80,86 @@ import { toast } from '$lib/stores/toast';
 	function onTaskComplete() {
 		actionInProgress = null;
 		loadPhp();
+		if (extVersion) void loadExtensions(extVersion);
+	}
+
+	// ─── Extensions ─────────────────────────────────────────────────
+
+	interface ExtensionStatus {
+		enabled: string[];
+		disabled: string[];
+		available: string[];
+	}
+	let extVersion = $state<string | null>(null);
+	let extensions = $state<ExtensionStatus | null>(null);
+	let extLoading = $state(false);
+	let extBusy = $state('');
+	let extSearch = $state('');
+
+	async function openExtensions(version: string) {
+		extVersion = version;
+		extensions = null;
+		extSearch = '';
+		await loadExtensions(version);
+	}
+
+	async function loadExtensions(version: string) {
+		extLoading = true;
+		try {
+			extensions = await api.get<ExtensionStatus>(`/api/v1/php/${version}/extensions`);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errLoad'));
+		} finally {
+			extLoading = false;
+		}
+	}
+
+	async function enableExt(ext: string) {
+		if (!extVersion || extBusy) return;
+		extBusy = `enable-${ext}`;
+		try {
+			await api.post(`/api/v1/php/${extVersion}/extensions/${ext}/enable`);
+			toast.success(translate($language, 'phpv.ext.enableToast').replace('{ext}', ext));
+			await loadExtensions(extVersion);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
+		} finally {
+			extBusy = '';
+		}
+	}
+
+	async function disableExt(ext: string) {
+		if (!extVersion || extBusy) return;
+		extBusy = `disable-${ext}`;
+		try {
+			await api.post(`/api/v1/php/${extVersion}/extensions/${ext}/disable`);
+			toast.success(translate($language, 'phpv.ext.disableToast').replace('{ext}', ext));
+			await loadExtensions(extVersion);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
+		} finally {
+			extBusy = '';
+		}
+	}
+
+	async function installExt(ext: string) {
+		if (!extVersion || extBusy || currentTaskId) return;
+		extBusy = `install-${ext}`;
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/php/${extVersion}/extensions/${ext}/install`);
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'phpv.ext.installToast').replace('{ext}', ext));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
+		} finally {
+			extBusy = '';
+		}
+	}
+
+	function filterExts(list: string[]): string[] {
+		const query = extSearch.trim().toLowerCase();
+		if (!query) return list;
+		return list.filter((name) => name.includes(query));
 	}
 
 	async function uninstallPhp(version: string) {
@@ -229,6 +309,14 @@ import { toast } from '$lib/stores/toast';
 								{translate($language, 'phpv.config')}
 							</button>
 
+							<button
+								onclick={() => openExtensions(php.version)}
+								disabled={operationInProgress}
+								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+							>
+								{translate($language, 'phpv.ext.open')}
+							</button>
+
 							{#if uninstallConfirmVersion === php.version}
 								<div class="flex items-center gap-2 mt-2 w-full p-2 bg-red-900/30 border border-red-700 rounded-lg">
 									<span class="text-xs text-red-300">{translate($language, 'phpv.removeConfirm').replace('{version}', php.version)}</span>
@@ -260,6 +348,88 @@ import { toast } from '$lib/stores/toast';
 				</div>
 			{/each}
 		</div>
+
+		<!-- Extensions Manager -->
+		{#if extVersion}
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+				<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+					<h3 class="text-lg font-semibold text-white">{translate($language, 'phpv.ext.title').replace('{version}', extVersion)}</h3>
+					<div class="flex items-center gap-2">
+						<input
+							type="search"
+							bind:value={extSearch}
+							placeholder={translate($language, 'phpv.ext.search')}
+							class="w-52 px-3 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+						/>
+						<button
+							onclick={() => { extVersion = null; extensions = null; }}
+							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+						>
+							{translate($language, 'phpv.config.close')}
+						</button>
+					</div>
+				</div>
+				<p class="text-xs text-gray-500 mb-4">{translate($language, 'phpv.ext.reloadNote')}</p>
+
+				{#if extLoading}
+					<div class="text-gray-400 text-sm">{translate($language, 'phpv.ext.loading')}</div>
+				{:else if extensions}
+					<div class="grid gap-4 md:grid-cols-3">
+						<div class="rounded-lg border border-green-800/60 bg-green-950/20 p-4">
+							<h4 class="text-sm font-semibold uppercase tracking-wider text-green-300 mb-3">{translate($language, 'phpv.ext.enabled')} ({filterExts(extensions.enabled).length})</h4>
+							{#if filterExts(extensions.enabled).length === 0}
+								<p class="text-xs text-gray-500">{translate($language, 'phpv.ext.none')}</p>
+							{:else}
+								<ul class="space-y-1.5">
+									{#each filterExts(extensions.enabled) as ext (ext)}
+										<li class="flex items-center justify-between gap-2 rounded border border-gray-700 bg-gray-900/60 px-2.5 py-1.5">
+											<code class="text-xs text-gray-200 truncate">{ext}</code>
+											<button onclick={() => disableExt(ext)} disabled={!!extBusy} class="shrink-0 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/10 rounded transition-colors cursor-pointer disabled:opacity-50">
+												{extBusy === `disable-${ext}` ? translate($language, 'phpv.ext.working') : translate($language, 'phpv.ext.disable')}
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+						<div class="rounded-lg border border-gray-700 bg-gray-900/30 p-4">
+							<h4 class="text-sm font-semibold uppercase tracking-wider text-gray-300 mb-3">{translate($language, 'phpv.ext.disabled')} ({filterExts(extensions.disabled).length})</h4>
+							{#if filterExts(extensions.disabled).length === 0}
+								<p class="text-xs text-gray-500">{translate($language, 'phpv.ext.none')}</p>
+							{:else}
+								<ul class="space-y-1.5">
+									{#each filterExts(extensions.disabled) as ext (ext)}
+										<li class="flex items-center justify-between gap-2 rounded border border-gray-700 bg-gray-900/60 px-2.5 py-1.5">
+											<code class="text-xs text-gray-400 truncate">{ext}</code>
+											<button onclick={() => enableExt(ext)} disabled={!!extBusy} class="shrink-0 px-2 py-0.5 text-xs text-green-300 hover:bg-green-500/10 rounded transition-colors cursor-pointer disabled:opacity-50">
+												{extBusy === `enable-${ext}` ? translate($language, 'phpv.ext.working') : translate($language, 'phpv.ext.enable')}
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+						<div class="rounded-lg border border-blue-800/60 bg-blue-950/20 p-4">
+							<h4 class="text-sm font-semibold uppercase tracking-wider text-blue-300 mb-3">{translate($language, 'phpv.ext.available')} ({filterExts(extensions.available).length})</h4>
+							{#if filterExts(extensions.available).length === 0}
+								<p class="text-xs text-gray-500">{translate($language, 'phpv.ext.none')}</p>
+							{:else}
+								<ul class="space-y-1.5">
+									{#each filterExts(extensions.available) as ext (ext)}
+										<li class="flex items-center justify-between gap-2 rounded border border-gray-700 bg-gray-900/60 px-2.5 py-1.5">
+											<code class="text-xs text-gray-400 truncate">{ext}</code>
+											<button onclick={() => installExt(ext)} disabled={!!extBusy || !!currentTaskId} class="shrink-0 px-2 py-0.5 text-xs text-blue-300 hover:bg-blue-500/10 rounded transition-colors cursor-pointer disabled:opacity-50">
+												{extBusy === `install-${ext}` ? translate($language, 'phpv.ext.installing') : translate($language, 'phpv.ext.install')}
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+						</div>
+					</div>
+				{/if}
+			</div>
+		{/if}
 
 		<!-- php.ini Config Editor -->
 		{#if configVersion}

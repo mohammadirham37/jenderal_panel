@@ -941,6 +941,17 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
+	async function stopDeployment(dep: DeploymentEntry) {
+		if (!confirm(translate($language, 'wd.deploy.stop_confirm'))) return;
+		try {
+			await api.post(`/api/v1/deployments/${dep.id}/cancel`, {});
+			toast.success(translate($language, 'wd.deploy.stopped'));
+			await loadDeployments();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.deploy.action_failed'));
+		}
+	}
+
 	async function deleteDeployment(dep: DeploymentEntry) {
 		if (!confirm(translate($language, 'wd.deploy.delete_confirm'))) return;
 		try {
@@ -1913,24 +1924,32 @@ import { toast } from '$lib/stores/toast';
 												</td>
 												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration_ms ? formatDuration(dep.duration_ms) : '-'}</td>
 												<td class="px-4 py-2 text-sm text-gray-400">{formatDate(dep.created_at)}</td>
-												<td class="px-4 py-2 text-right whitespace-nowrap">
-													{#if dep.status === 'pending'}
-														<button
-															onclick={(e) => { e.stopPropagation(); cancelDeployment(dep); }}
-															class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer"
-														>
-															{translate($language, 'wd.deploy.cancel')}
-														</button>
-													{/if}
-													{#if dep.status !== 'running'}
-														<button
-															onclick={(e) => { e.stopPropagation(); deleteDeployment(dep); }}
-															class="ml-1 px-2.5 py-1 text-red-400 hover:bg-red-500/10 text-xs rounded transition-colors cursor-pointer"
-														>
-															{translate($language, 'wd.deploy.delete')}
-														</button>
-													{/if}
-												</td>
+											<td class="px-4 py-2 text-right whitespace-nowrap">
+												{#if dep.status === 'running'}
+													<button
+														onclick={(e) => { e.stopPropagation(); stopDeployment(dep); }}
+														class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'wd.deploy.stop')}
+													</button>
+												{/if}
+												{#if dep.status === 'pending'}
+													<button
+														onclick={(e) => { e.stopPropagation(); cancelDeployment(dep); }}
+														class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'wd.deploy.cancel')}
+													</button>
+												{/if}
+												{#if dep.status !== 'running'}
+													<button
+														onclick={(e) => { e.stopPropagation(); deleteDeployment(dep); }}
+														class="ml-1 px-2.5 py-1 text-red-400 hover:bg-red-500/10 text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'wd.deploy.delete')}
+													</button>
+												{/if}
+											</td>
 											</tr>
 											{#if expandedDeploymentId === dep.id}
 												<tr>

@@ -109,6 +109,54 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
 }
 
+// Extensions handles GET /php/{version}/extensions.
+func (h *Handler) Extensions(w http.ResponseWriter, r *http.Request) {
+	version := chi.URLParam(r, "version")
+	status, err := h.svc.Extensions(r.Context(), version)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, status)
+}
+
+// EnableExtension handles POST /php/{version}/extensions/{ext}/enable.
+func (h *Handler) EnableExtension(w http.ResponseWriter, r *http.Request) {
+	version, ext := chi.URLParam(r, "version"), chi.URLParam(r, "ext")
+	if err := h.svc.EnableExtension(r.Context(), version, ext); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "enable_php_extension", "php"+version, "enabled extension "+ext)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// DisableExtension handles POST /php/{version}/extensions/{ext}/disable.
+func (h *Handler) DisableExtension(w http.ResponseWriter, r *http.Request) {
+	version, ext := chi.URLParam(r, "version"), chi.URLParam(r, "ext")
+	if err := h.svc.DisableExtension(r.Context(), version, ext); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "disable_php_extension", "php"+version, "disabled extension "+ext)
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// InstallExtension handles POST /php/{version}/extensions/{ext}/install via
+// background task: apt update, install the phpX.Y-<ext> package, enable it.
+func (h *Handler) InstallExtension(w http.ResponseWriter, r *http.Request) {
+	version, ext := chi.URLParam(r, "version"), chi.URLParam(r, "ext")
+	if err := h.svc.validateExtension(version, ext); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	taskID := h.tasks.RunMultiple("Install PHP "+version+" extension "+ext, h.svc.installExtensionCommands(version, ext))
+
+	h.logAction(r, "install_php_extension", "php"+version, "installing extension "+ext+" task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // SaveConfig saves the FPM php.ini content for the specified PHP version.
 func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
