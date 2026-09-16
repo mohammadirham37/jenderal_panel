@@ -200,6 +200,7 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 	let canManageServices = $derived(hasPermission($permissions, 'services.manage'));
+	let canUpdateWebsite = $derived(hasPermission($permissions, 'websites.update'));
 
 	// ─── Benchmark ────────────────────────────────────────────────────
 	interface BenchmarkLatency {
@@ -688,8 +689,7 @@ import { toast } from '$lib/stores/toast';
 		if (!website) return;
 		nodeRuntimeLoading = true;
 		try {
-			const runtimes = await api.get<NodeRuntime[]>('/api/v1/nodejs/runtimes') || [];
-			nodeRuntime = runtimes.find((r) => r.website_id === website?.id) || null;
+			nodeRuntime = await api.get<NodeRuntime>(`/api/v1/websites/${website.id}/nodejs-runtime`);
 			if (nodeRuntime) nodeRuntimeChoice = nodeRuntime.selected_version || '24';
 			nodeRuntimeError = '';
 		} catch (err) {
@@ -702,9 +702,9 @@ import { toast } from '$lib/stores/toast';
 
 	async function installNodeRuntime() {
 		if (!website || nodeRuntimeTaskId) return;
-		
+
 		try {
-			const result = await api.post<{ task_id: string }>(`/api/v1/nodejs/runtimes/${website.id}`, {
+			const result = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/nodejs-runtime`, {
 				version: nodeRuntimeChoice
 			});
 			nodeRuntimeTaskId = result.task_id || '';
@@ -1410,37 +1410,39 @@ import { toast } from '$lib/stores/toast';
 						{#if nodeRuntimeLoading}
 							<div class="text-gray-400 text-sm">{translate($language, 'wd.node.loading')}</div>
 						{:else}
-							<div class="flex flex-wrap items-center justify-between gap-4">
-								<div>
-									{#if nodeRuntime}
-										<p class="text-sm text-gray-300">
-											{nodeRuntime.installed ? translate($language, 'wd.node.installed').replace('{version}', nodeRuntime.installed_version).replace('{npm}', nodeRuntime.npm_version) : translate($language, 'wd.node.not_installed')}
-											· NVM {nodeRuntime.nvm_version || nodeRuntime.nvm_state}
-										</p>
-										<p class="text-xs text-gray-400">{translate($language, 'wd.node.selected').replace('{version}', nodeRuntime.selected_version || translate($language, 'wd.none'))}</p>
-										{#if nodeRuntime.error_message}<p class="text-sm text-red-400">{nodeRuntime.error_message}</p>{/if}
-									{:else}
-										<p class="text-sm text-gray-400">{translate($language, 'wd.node.none_configured')}</p>
+								<div class="flex flex-wrap items-center justify-between gap-4">
+									<div>
+										{#if nodeRuntime}
+											<p class="text-sm text-gray-300">
+												{nodeRuntime.installed ? translate($language, 'wd.node.installed').replace('{version}', nodeRuntime.installed_version).replace('{npm}', nodeRuntime.npm_version) : translate($language, 'wd.node.not_installed')}
+												· NVM {nodeRuntime.nvm_version || nodeRuntime.nvm_state}
+											</p>
+											<p class="text-xs text-gray-400">{translate($language, 'wd.node.selected').replace('{version}', nodeRuntime.selected_version || translate($language, 'wd.none'))}</p>
+											{#if nodeRuntime.error_message}<p class="text-sm text-red-400">{nodeRuntime.error_message}</p>{/if}
+										{:else}
+											<p class="text-sm text-gray-400">{translate($language, 'wd.node.none_configured')}</p>
+										{/if}
+									</div>
+									{#if canUpdateWebsite}
+										<div class="flex gap-2">
+											<select
+												bind:value={nodeRuntimeChoice}
+												aria-label={translate($language, 'wd.node.version_label')}
+												disabled={!!nodeRuntimeTaskId}
+												class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200"
+											>
+												{#each ['20', '22', '24'] as version}<option value={version}>Node.js {version}</option>{/each}
+											</select>
+											<button
+												onclick={installNodeRuntime}
+												disabled={!!nodeRuntimeTaskId}
+												class="rounded bg-blue-600 px-4 py-2 text-white text-sm disabled:opacity-50"
+											>
+												{nodeRuntime?.installed ? translate($language, 'wd.node.install_update') : translate($language, 'wd.install')}
+											</button>
+										</div>
 									{/if}
 								</div>
-								<div class="flex gap-2">
-									<select
-										bind:value={nodeRuntimeChoice}
-										aria-label={translate($language, 'wd.node.version_label')}
-										disabled={!!nodeRuntimeTaskId}
-										class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200"
-									>
-										{#each ['20', '22', '24'] as version}<option value={version}>Node.js {version}</option>{/each}
-									</select>
-									<button
-										onclick={installNodeRuntime}
-										disabled={!!nodeRuntimeTaskId}
-										class="rounded bg-blue-600 px-4 py-2 text-white text-sm disabled:opacity-50"
-									>
-										{nodeRuntime?.installed ? translate($language, 'wd.node.install_update') : translate($language, 'wd.install')}
-									</button>
-								</div>
-							</div>
 							<TaskProgress bind:taskId={nodeRuntimeTaskId} storageKey="nodejs-task-{website.id}" onComplete={() => { nodeRuntimeTaskId = ''; void loadNodeRuntime(); }} />
 						{/if}
 					</div>

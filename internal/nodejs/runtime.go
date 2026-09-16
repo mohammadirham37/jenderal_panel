@@ -85,24 +85,39 @@ func (s *Service) ListRuntimes(ctx context.Context) ([]RuntimeInfo, error) {
 	}
 
 	for index := range runtimes {
-		runtime := &runtimes[index]
-		if runtime.SelectedVersion == "" {
-			runtime.NVMState = "not_selected"
-			continue
-		}
-		status, err := s.runtime.Detect(ctx, runtime.WebUser, runtime.SelectedVersion)
-		if err != nil {
-			runtime.NVMState = "error"
-			runtime.ErrorMessage = err.Error()
-			continue
-		}
-		runtime.Installed = status.Installed
-		runtime.InstalledVersion = status.NodeVersion
-		runtime.NPMVersion = status.NPMVersion
-		runtime.NVMVersion = status.NVMVersion
-		runtime.NVMState = status.NVMState
+		s.fillRuntimeStatus(ctx, &runtimes[index])
 	}
 	return runtimes, nil
+}
+
+// WebsiteRuntime reports the runtime status for a single website; it backs the
+// website-scoped route used by the website detail page.
+func (s *Service) WebsiteRuntime(ctx context.Context, websiteID string) (*RuntimeInfo, error) {
+	website, err := s.loadWebsiteRuntime(ctx, websiteID)
+	if err != nil {
+		return nil, err
+	}
+	runtime := &RuntimeInfo{WebsiteID: website.ID, Domain: website.Domain, WebUser: website.WebUser, SelectedVersion: website.NodeVersion}
+	s.fillRuntimeStatus(ctx, runtime)
+	return runtime, nil
+}
+
+func (s *Service) fillRuntimeStatus(ctx context.Context, runtime *RuntimeInfo) {
+	if runtime.SelectedVersion == "" {
+		runtime.NVMState = "not_selected"
+		return
+	}
+	status, err := s.runtime.Detect(ctx, runtime.WebUser, runtime.SelectedVersion)
+	if err != nil {
+		runtime.NVMState = "error"
+		runtime.ErrorMessage = err.Error()
+		return
+	}
+	runtime.Installed = status.Installed
+	runtime.InstalledVersion = status.NodeVersion
+	runtime.NPMVersion = status.NPMVersion
+	runtime.NVMVersion = status.NVMVersion
+	runtime.NVMState = status.NVMState
 }
 
 type unitSnapshot struct {

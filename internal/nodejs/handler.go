@@ -79,9 +79,27 @@ func (h *Handler) ListRuntimes(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, runtimes)
 }
 
+// WebsiteRuntime handles GET /api/v1/websites/{id}/nodejs-runtime.
+func (h *Handler) WebsiteRuntime(w http.ResponseWriter, r *http.Request) {
+	runtime, err := h.svc.WebsiteRuntime(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, runtime)
+}
+
+// ChangeWebsiteRuntime handles POST /api/v1/websites/{id}/nodejs-runtime.
+func (h *Handler) ChangeWebsiteRuntime(w http.ResponseWriter, r *http.Request) {
+	h.changeRuntime(w, r, chi.URLParam(r, "id"))
+}
+
 // ChangeRuntime handles POST /api/v1/nodejs/runtimes/{websiteID}.
 func (h *Handler) ChangeRuntime(w http.ResponseWriter, r *http.Request) {
-	websiteID := chi.URLParam(r, "websiteID")
+	h.changeRuntime(w, r, chi.URLParam(r, "websiteID"))
+}
+
+func (h *Handler) changeRuntime(w http.ResponseWriter, r *http.Request, websiteID string) {
 	var req struct {
 		Version string `json:"version"`
 	}

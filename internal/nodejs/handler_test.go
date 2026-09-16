@@ -75,6 +75,50 @@ func TestRuntimeHandlersExposePersistentTaskContract(t *testing.T) {
 	t.Fatal("runtime task did not complete")
 }
 
+func TestWebsiteScopedRuntimeHandlersServeSingleWebsite(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "site-scoped", "scoped.example.com", "web_scoped", "/home/web_scoped/public")
+	svc := NewService(db, newMockExec(), nil)
+	svc.runtime = installedRuntime("22")
+	runner := taskrunner.New()
+	handler := NewHandler(svc, nil, runner)
+	router := chi.NewRouter()
+	router.Get("/api/v1/websites/{id}/nodejs-runtime", handler.WebsiteRuntime)
+	router.Post("/api/v1/websites/{id}/nodejs-runtime", handler.ChangeWebsiteRuntime)
+
+	getRecorder := httptest.NewRecorder()
+	router.ServeHTTP(getRecorder, httptest.NewRequest(http.MethodGet, "/api/v1/websites/site-scoped/nodejs-runtime", nil))
+	if getRecorder.Code != http.StatusOK || !strings.Contains(getRecorder.Body.String(), `"website_id":"site-scoped"`) || !strings.Contains(getRecorder.Body.String(), `"installed_version":"v24.2.1"`) {
+		t.Fatalf("website runtime response status=%d body=%s", getRecorder.Code, getRecorder.Body.String())
+	}
+
+	postRecorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/websites/site-scoped/nodejs-runtime", strings.NewReader(`{"version":"22"}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(postRecorder, request)
+	if postRecorder.Code != http.StatusAccepted {
+		t.Fatalf("change response status=%d body=%s", postRecorder.Code, postRecorder.Body.String())
+	}
+	var response struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(postRecorder.Body.Bytes(), &response); err != nil || response.Data["task_id"] == "" {
+		t.Fatalf("change response=%q err=%v", postRecorder.Body.String(), err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		task, _ := runner.Get(response.Data["task_id"])
+		if task != nil && task.Status != "running" {
+			if task.Status != "completed" {
+				t.Fatalf("runtime task=%#v", task)
+			}
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("runtime task did not complete")
+}
+
 func TestListRuntimesReturnsEmptyArrayForFreshPanel(t *testing.T) {
 	db := setupTestDB(t)
 	handler := NewHandler(NewService(db, newMockExec(), nil), nil, taskrunner.New())
