@@ -38,6 +38,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
 	"github.com/mohammadirham37/jenderal_panel/internal/sshserver"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
@@ -80,6 +81,7 @@ type Dependencies struct {
 	Tasks           *taskrunner.Runner
 	SecuritySvc     *security.Service
 	SecurityEvents  *security.EventService
+	WAFSvc          *waf.Service
 	Fail2banSvc     *fail2ban.Service
 	MalwareSvc      *malware.Service
 	MalwareRepo     *malware.Repository
@@ -137,6 +139,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 	securityHandler.SetSetupService(deps.SecuritySetup, deps.Tasks)
+	wafHandler := waf.NewHandler(deps.WAFSvc, deps.AuditSvc, deps.Tasks)
 	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
 	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
 	trafficHandler := trafficguard.NewHandler(deps.TrafficGuardSvc, deps.Tasks, deps.AuditSvc)
@@ -862,6 +865,23 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/security/fail2ban/bans", fail2banHandler.Ban)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Delete("/security/fail2ban/bans/{ip}", fail2banHandler.Unban)
+
+			// Web application firewall (ModSecurity + OWASP CRS) and the
+			// mod_evasive-style DoS protection.
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/waf", wafHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/waf/modsecurity/install", wafHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/waf/modsecurity/enable", wafHandler.EnableModsecurity)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/waf/modsecurity/disable", wafHandler.DisableModsecurity)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Put("/security/waf/modsecurity/mode", wafHandler.SetMode)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Put("/security/waf/dosevasive", wafHandler.ConfigureDoS)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/waf/dosevasive/disable", wafHandler.DisableDoS)
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/malware/status", malwareHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).

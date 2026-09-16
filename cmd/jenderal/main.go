@@ -52,6 +52,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
+	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
 )
 
@@ -285,6 +286,7 @@ func cmdServe() {
 	trafficCollector := trafficguard.NewCollector(db, trafficRepo, exec, securityEvents)
 	trafficWorker := trafficguard.NewWorker(trafficCollector, cloudflareUpdater)
 	securitySvc := security.NewService(securityEvents, tasks, fail2banSvc, malwareSvc, trafficSvc)
+	wafSvc := waf.NewService(exec, auditSvc)
 	postureChecker := security.NewPostureChecker(exec)
 	securitySvc.SetPostureChecker(postureChecker)
 	securityWorker := security.NewWorker(securitySvc, securityEvents)
@@ -302,6 +304,7 @@ func cmdServe() {
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
+	provisioner.SetSSHAccounts(sshAccountSvc)
 	panelDomainSvc := paneldomain.NewService(db, exec, auditSvc)
 	if cfg.Server.TLS.Enabled {
 		// The panel serves TLS on the upstream port (self-signed), so the
@@ -393,6 +396,7 @@ func cmdServe() {
 		Tasks:           tasks,
 		SecuritySvc:     securitySvc,
 		SecurityEvents:  securityEvents,
+		WAFSvc:          wafSvc,
 		Fail2banSvc:     fail2banSvc,
 		MalwareSvc:      malwareSvc,
 		MalwareRepo:     malwareRepo,
@@ -430,6 +434,14 @@ func cmdServe() {
 	malwareScheduler.Start(bgCtx)
 	trafficWorker.Start(bgCtx)
 	securityWorker.Start(bgCtx)
+
+	// Converge SSH site grants in the background: sites provisioned before
+	// this wiring existed, or while an account was missing, gain access here.
+	go func() {
+		if err := sshAccountSvc.ReconcileAll(bgCtx); err != nil {
+			logger.Warn("ssh account reconciliation failed", "error", err)
+		}
+	}()
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {

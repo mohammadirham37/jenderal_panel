@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import FirewallPanel from '$lib/components/FirewallPanel.svelte';
+	import { hasPermission, permissions } from '$lib/stores/auth';
 	import {
 		buildSafeFail2banSettings,
 		conditionTone,
@@ -25,7 +27,7 @@
 import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 
-	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'events';
+	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'firewall' | 'waf' | 'events';
 	interface ComponentStatus {
 		name: string;
 		state: string;
@@ -178,6 +180,24 @@ import { toast } from '$lib/stores/toast';
 	let setupTrafficWebsites = $state<string[]>([]);
 	let setupReview = $state<SetupReview | null>(null);
 	let setupConfirmed = $state(false);
+
+	// WAF (ModSecurity + OWASP CRS) and mod_evasive-style DoS protection
+	interface WAFStatus {
+		modsecurity: { installed: boolean; enabled: boolean; mode: string; rules_ready: boolean };
+		dosevasive: { enabled: boolean; requests_per_minute: number; burst: number };
+	}
+	let wafStatus = $state<WAFStatus | null>(null);
+	let wafBusy = $state('');
+	let modsecMode = $state('blocking');
+	let dosRPM = $state(120);
+	let dosBurst = $state(20);
+
+	let securityTabs = $derived.by(() => {
+		const tabs: Tab[] = ['overview', 'setup', 'fail2ban', 'malware', 'traffic'];
+		if (hasPermission($permissions, 'firewall.view')) tabs.push('firewall');
+		tabs.push('waf', 'events');
+		return tabs;
+	});
 	let trafficSummary = $derived(summarizeTraffic(trafficBuckets));
 	let trafficPeak = $derived(Math.max(1, ...trafficBuckets.map((bucket) => bucket.requests)));
 	let topTrafficPaths = $derived.by(() => {
@@ -199,7 +219,7 @@ import { toast } from '$lib/stores/toast';
 		loading = true;
 		error = '';
 		try {
-			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData, trafficData, setupData] = await Promise.all([
+			const [overviewData, statusData, banData, eventData, malwareData, scanData, quarantineData, scheduleData, websiteData, trafficData, setupData, wafData] = await Promise.all([
 				api.get<Overview>('/api/v1/security/overview'),
 				api.get<Fail2banStatus>('/api/v1/security/fail2ban'),
 				api.get<Ban[]>('/api/v1/security/fail2ban/bans'),
@@ -210,7 +230,8 @@ import { toast } from '$lib/stores/toast';
 				api.get<MalwareSchedule[]>('/api/v1/security/malware/schedules'),
 				api.get<Website[]>('/api/v1/websites'),
 				api.get<TrafficProfile[]>('/api/v1/security/traffic/profiles'),
-				api.get<SetupAssessment>('/api/v1/security/setup')
+				api.get<SetupAssessment>('/api/v1/security/setup'),
+				api.get<WAFStatus>('/api/v1/security/waf')
 			]);
 			overview = normalizeOverview(overviewData) as Overview;
 			fail2ban = { ...statusData, jails: statusData?.jails || [] };
@@ -229,6 +250,12 @@ import { toast } from '$lib/stores/toast';
 			websites = (websiteData || []).filter((website) => website.status === 'active' || website.status === 'suspended');
 			trafficProfiles = trafficData || [];
 			setupAssessment = setupData || { website_ids: [] };
+			wafStatus = wafData || null;
+			if (wafStatus) {
+				modsecMode = wafStatus.modsecurity.mode || 'blocking';
+				dosRPM = wafStatus.dosevasive.requests_per_minute;
+				dosBurst = wafStatus.dosevasive.burst;
+			}
 			if (setupTrafficWebsites.length === 0) setupTrafficWebsites = [...(setupAssessment.website_ids || [])];
 			if (!selectedWebsite && websites.length > 0) selectedWebsite = websites[0].id;
 			if (!selectedTrafficWebsite && websites.length > 0) selectedTrafficWebsite = websites[0].id;
@@ -516,6 +543,63 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
+	async function loadWaf() {
+		try { wafStatus = await api.get<WAFStatus>('/api/v1/security/waf') || null; }
+		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errLoad')); }
+	}
+
+	async function installModsecurity() {
+		wafBusy = 'install';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/security/waf/modsecurity/install', {});
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'waf.installStarted'));
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errInstall')); }
+		finally { wafBusy = ''; }
+	}
+
+	async function setModsecurity(enabled: boolean) {
+		wafBusy = enabled ? 'enable' : 'disable';
+		try {
+			await api.post(`/api/v1/security/waf/modsecurity/${enabled ? 'enable' : 'disable'}`, {});
+			toast.success(translate($language, enabled ? 'waf.enabledToast' : 'waf.disabledToast'));
+			await loadWaf();
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
+		finally { wafBusy = ''; }
+	}
+
+	async function applyModsecMode() {
+		wafBusy = 'mode';
+		try {
+			await api.put('/api/v1/security/waf/modsecurity/mode', { mode: modsecMode });
+			toast.success(translate($language, 'waf.modeApplied'));
+			await loadWaf();
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
+		finally { wafBusy = ''; }
+	}
+
+	async function applyDoS() {
+		wafBusy = 'dos';
+		try {
+			await api.put('/api/v1/security/waf/dosevasive', {
+				requests_per_minute: Number(dosRPM), burst: Number(dosBurst)
+			});
+			toast.success(translate($language, 'waf.dosApplied'));
+			await loadWaf();
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
+		finally { wafBusy = ''; }
+	}
+
+	async function disableDoS() {
+		wafBusy = 'dos-disable';
+		try {
+			await api.post('/api/v1/security/waf/dosevasive/disable', {});
+			toast.success(translate($language, 'waf.dosDisabledToast'));
+			await loadWaf();
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
+		finally { wafBusy = ''; }
+	}
+
 	function taskComplete(task: { status?: string; error?: string }) {
 		if (task.status === 'completed') {
 			toast.success(translate($language, 'sec.taskCompleted'));
@@ -542,7 +626,7 @@ import { toast } from '$lib/stores/toast';
 	</div>
 
 	<div class="flex gap-1 overflow-x-auto rounded-xl border border-gray-700 bg-gray-900 p-1">
-		{#each ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'events'] as tab}
+		{#each securityTabs as tab}
 			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{translate($language, `sec.tab.${tab}`)}</button>
 		{/each}
 	</div>
@@ -767,6 +851,70 @@ import { toast } from '$lib/stores/toast';
 				<div class="mt-5 rounded-lg border {trafficMode === 'observe' ? 'border-blue-800 bg-blue-950/30 text-blue-200' : 'border-yellow-700 bg-yellow-950/30 text-yellow-200'} p-4 text-sm">{enforcementWarning(trafficMode)}</div>
 				{#if trafficMode !== 'observe'}<label class="mt-4 flex items-start gap-2 rounded-lg border border-yellow-700 bg-yellow-900/20 p-3 text-sm text-yellow-200"><input class="mt-1" type="checkbox" bind:checked={trafficConfirmed} /><span>{translate($language, 'tg.confirmEnforce')}</span></label>{/if}
 				<div class="mt-5 flex flex-wrap gap-3"><button onclick={applyTrafficGuard} disabled={!selectedTrafficWebsite || busy !== '' || !!currentTaskId || (trafficMode !== 'observe' && (!trafficConfirmed || trafficObservation < 100))} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{translate($language, 'sec.validateApply')}</button><button onclick={resetTrafficObserve} disabled={!selectedTrafficWebsite || selectedTrafficProfile?.mode === 'observe' || busy !== '' || !!currentTaskId} class="rounded-lg border border-green-700 px-4 py-2 text-sm text-green-300 disabled:opacity-50">{translate($language, 'tg.returnObserve')}</button></div>
+			</section>
+		</div>
+	{:else if activeTab === 'firewall'}
+		<FirewallPanel />
+	{:else if activeTab === 'waf'}
+		<div class="space-y-4">
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div class="max-w-3xl">
+						<div class="flex flex-wrap items-center gap-2">
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'waf.modsec.title')}</h3>
+							<span class="rounded-full px-2 py-0.5 text-xs {wafStatus?.modsecurity.enabled ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}">{wafStatus?.modsecurity.enabled ? translate($language, 'waf.on') : translate($language, 'waf.off')}</span>
+							{#if wafStatus?.modsecurity.installed}<span class="rounded-full bg-blue-900 px-2 py-0.5 text-xs text-blue-300">{translate($language, 'waf.modsec.installed')}</span>{:else}<span class="rounded-full bg-yellow-900 px-2 py-0.5 text-xs text-yellow-300">{translate($language, 'waf.modsec.notInstalled')}</span>{/if}
+							{#if wafStatus?.modsecurity.enabled && wafStatus.modsecurity.mode}<span class="rounded-full px-2 py-0.5 text-xs {wafStatus.modsecurity.mode === 'blocking' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{wafStatus.modsecurity.mode === 'blocking' ? translate($language, 'waf.modsec.blocking') : translate($language, 'waf.modsec.detectionOnly')}</span>{/if}
+						</div>
+						<p class="mt-1 text-sm text-gray-400">{translate($language, 'waf.modsec.desc')}</p>
+					</div>
+					<div class="flex flex-wrap gap-2">
+						{#if !wafStatus?.modsecurity.installed}
+							<button onclick={installModsecurity} disabled={wafBusy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{wafBusy === 'install' ? translate($language, 'waf.installing') : translate($language, 'waf.modsec.install')}</button>
+						{:else if wafStatus?.modsecurity.enabled}
+							<button onclick={() => setModsecurity(false)} disabled={wafBusy !== ''} class="rounded-lg border border-red-700 px-4 py-2 text-sm text-red-300 hover:bg-red-900/30 disabled:opacity-50">{wafBusy === 'disable' ? translate($language, 'waf.working') : translate($language, 'waf.modsec.disable')}</button>
+						{:else}
+							<button onclick={() => setModsecurity(true)} disabled={wafBusy !== ''} class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">{wafBusy === 'enable' ? translate($language, 'waf.working') : translate($language, 'waf.modsec.enable')}</button>
+						{/if}
+					</div>
+				</div>
+				{#if wafStatus?.modsecurity.installed}
+					<div class="mt-4 flex flex-wrap items-end gap-3 border-t border-gray-700 pt-4">
+						<label><span class="text-sm text-gray-300">{translate($language, 'waf.modsec.mode')}</span>
+							<select bind:value={modsecMode} class="mt-1 block rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white">
+								<option value="blocking">{translate($language, 'waf.modsec.blocking')}</option>
+								<option value="detection_only">{translate($language, 'waf.modsec.detectionOnly')}</option>
+							</select>
+						</label>
+						<button onclick={applyModsecMode} disabled={wafBusy !== ''} class="rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 hover:bg-blue-900/30 disabled:opacity-50">{wafBusy === 'mode' ? translate($language, 'waf.working') : translate($language, 'waf.modsec.applyMode')}</button>
+						<p class="text-xs text-gray-500">{translate($language, 'waf.modsec.modeHint')}</p>
+					</div>
+				{/if}
+			</section>
+
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div class="max-w-3xl">
+						<div class="flex flex-wrap items-center gap-2">
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'waf.dos.title')}</h3>
+							<span class="rounded-full px-2 py-0.5 text-xs {wafStatus?.dosevasive.enabled ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}">{wafStatus?.dosevasive.enabled ? translate($language, 'waf.on') : translate($language, 'waf.off')}</span>
+						</div>
+						<p class="mt-1 text-sm text-gray-400">{translate($language, 'waf.dos.desc')}</p>
+					</div>
+					<div class="flex flex-wrap gap-2">
+						{#if wafStatus?.dosevasive.enabled}
+							<button onclick={disableDoS} disabled={wafBusy !== ''} class="rounded-lg border border-red-700 px-4 py-2 text-sm text-red-300 hover:bg-red-900/30 disabled:opacity-50">{wafBusy === 'dos-disable' ? translate($language, 'waf.working') : translate($language, 'waf.dos.disable')}</button>
+						{:else}
+							<button onclick={applyDoS} disabled={wafBusy !== ''} class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">{wafBusy === 'dos' ? translate($language, 'waf.working') : translate($language, 'waf.dos.enable')}</button>
+						{/if}
+					</div>
+				</div>
+				<div class="mt-4 grid gap-4 border-t border-gray-700 pt-4 sm:grid-cols-3">
+					<label><span class="text-sm text-gray-300">{translate($language, 'waf.dos.rpm')}</span><input type="number" min="10" max="60000" bind:value={dosRPM} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
+					<label><span class="text-sm text-gray-300">{translate($language, 'waf.dos.burst')}</span><input type="number" min="1" max="1000" bind:value={dosBurst} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>
+					<div class="flex items-end"><button onclick={applyDoS} disabled={wafBusy !== ''} class="rounded-lg border border-blue-600 px-4 py-2 text-sm text-blue-300 hover:bg-blue-900/30 disabled:opacity-50">{wafBusy === 'dos' ? translate($language, 'waf.working') : translate($language, 'waf.dos.update')}</button></div>
+				</div>
+				<p class="mt-3 text-xs text-gray-500">{translate($language, 'waf.dos.hint')}</p>
 			</section>
 		</div>
 	{:else}
