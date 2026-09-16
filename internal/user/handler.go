@@ -89,7 +89,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	_ = h.rbac.AssignRole(r.Context(), user.ID, role)
 
 	if req.SSHEnabled {
-		if err := h.provisionSSH(r, user.ID); err != nil {
+		if err := h.provisionSSH(r, user.ID, req.Password); err != nil {
 			httputil.HandleError(w, err)
 			return
 		}
@@ -109,17 +109,24 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // provisionSSH flips the panel flag first — the site ACL sync reads it —
-// then creates the Linux account with access to the user's websites.
-func (h *Handler) provisionSSH(r *http.Request, userID string) error {
+// then creates the Linux account with access to the user's websites. A
+// non-empty password is mirrored onto the account so SSH password
+// authentication matches the panel login; without one the account stays
+// key-only until the panel password is (re)set.
+func (h *Handler) provisionSSH(r *http.Request, userID, password string) error {
 	if err := h.auth.SetSSHEnabled(r.Context(), userID, true); err != nil {
 		return err
 	}
-	if h.ssh != nil {
-		if err := h.ssh.Provision(r.Context(), userID); err != nil {
-			return err
-		}
+	if h.ssh == nil {
+		return nil
 	}
-	return nil
+	if err := h.ssh.Provision(r.Context(), userID); err != nil {
+		return err
+	}
+	if password == "" {
+		return nil
+	}
+	return h.ssh.SetPassword(r.Context(), userID, password)
 }
 
 // Update updates a user's profile fields.
@@ -129,6 +136,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username   string `json:"username"`
 		Email      string `json:"email"`
+		Password   string `json:"password"`
 		IsActive   *bool  `json:"is_active"`
 		SSHEnabled *bool  `json:"ssh_enabled"`
 	}
@@ -172,7 +180,7 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 	// SSH access lifecycle follows the panel flag and activation state.
 	if req.SSHEnabled != nil && *req.SSHEnabled != existing.SSHEnabled {
 		if *req.SSHEnabled {
-			if err := h.provisionSSH(r, id); err != nil {
+			if err := h.provisionSSH(r, id, req.Password); err != nil {
 				httputil.HandleError(w, err)
 				return
 			}
@@ -294,6 +302,21 @@ func (h *Handler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 	if err := h.auth.UpdatePassword(r.Context(), id, req.Password); err != nil {
 		httputil.HandleError(w, err)
 		return
+	}
+
+	// Keep SSH password authentication in lockstep with the panel login.
+	if h.ssh != nil {
+		target, err := h.auth.GetUserByID(r.Context(), id)
+		if err != nil {
+			httputil.HandleError(w, err)
+			return
+		}
+		if target.SSHEnabled {
+			if err := h.ssh.SetPassword(r.Context(), id, req.Password); err != nil {
+				httputil.HandleError(w, err)
+				return
+			}
+		}
 	}
 
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})

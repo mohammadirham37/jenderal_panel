@@ -334,6 +334,42 @@ func TestDomainToUser(t *testing.T) {
 	}
 }
 
+func TestDomainToUserCapsLongDomainsAtUseraddLimit(t *testing.T) {
+	longDomains := []string{
+		"backend.absen.jenderalcorp.com",
+		"backend.absensi.jenderalcorp.com",
+		"backend.absen.jenderalcorp.com.extra.sub.and.more.example.com",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com",
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaab.com",
+	}
+
+	seen := make(map[string]string, len(longDomains))
+	for _, domain := range longDomains {
+		got := DomainToUser(domain)
+		if len(got) > 32 {
+			t.Errorf("DomainToUser(%q) = %q is longer than 32 characters", domain, got)
+		}
+		if !webUserRegex.MatchString(got) {
+			t.Errorf("DomainToUser(%q) = %q does not match webUserRegex", domain, got)
+		}
+		if !strings.HasPrefix(got, "web_") {
+			t.Errorf("DomainToUser(%q) = %q lost the web_ prefix", domain, got)
+		}
+		if previous, clash := seen[got]; clash {
+			t.Errorf("DomainToUser collision: %q and %q both map to %q", previous, domain, got)
+		}
+		seen[got] = domain
+
+		if again := DomainToUser(domain); again != got {
+			t.Errorf("DomainToUser(%q) is not deterministic: %q vs %q", domain, got, again)
+		}
+	}
+
+	if got := DomainToUser("backend.absen.jenderalcorp.com"); got == "web_backend_absen_jenderalcorp_com" {
+		t.Errorf("long domain kept its too-long user name %q", got)
+	}
+}
+
 func TestRenderSuspendedVhost(t *testing.T) {
 	content, err := RenderSuspendedVhost(SuspendedVhostData{
 		Domain:      "example.com",

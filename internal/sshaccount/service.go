@@ -1,7 +1,8 @@
 // Package sshaccount provisions panel users as Linux SSH accounts and keeps
-// their access to the websites they own in sync. Authentication is public key
-// only: accounts are created with a locked password and the authorized_keys
-// file is always rewritten from the panel database.
+// their access to the websites they own in sync. Accounts are created with a
+// locked password and the authorized_keys file is always rewritten from the
+// panel database. SetPassword mirrors the panel password onto the Linux
+// account so SSH password authentication uses the same credentials.
 package sshaccount
 
 import (
@@ -179,6 +180,55 @@ func (s *Service) Resume(ctx context.Context, userID string) error {
 	if err := s.runSudoOK(ctx, "usermod", "-U", "-s", "/bin/bash", u.Username); err != nil {
 		return fmt.Errorf("unlock account: %w", err)
 	}
+	return nil
+}
+
+// SetPassword mirrors a panel password onto the Linux account so SSH password
+// authentication accepts the same credentials as the panel. It is a no-op for
+// users without SSH access or without a provisioned Linux account. The
+// password travels to chpasswd over stdin so it never appears in a process
+// listing.
+func (s *Service) SetPassword(ctx context.Context, userID, password string) error {
+	if password == "" {
+		return model.NewValidationError("password is required")
+	}
+	if strings.ContainsAny(password, "\n\r") {
+		return model.NewValidationError("password must not contain line breaks")
+	}
+	u, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if !u.SSHEnabled {
+		return nil
+	}
+	if !ValidateUsername(u.Username) {
+		return ErrInvalidUsername
+	}
+	exists, err := s.accountExists(ctx, u.Username)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		// Without a Linux account there is nothing to sync; provisioning
+		// callers pass the password to SetPassword right after Provision.
+		return nil
+	}
+	result, err := s.exec.RunSudoWithInput(ctx, u.Username+":"+password+"\n", "chpasswd")
+	if err != nil {
+		return fmt.Errorf("sync account password: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		detail := "executor returned no result"
+		if result != nil {
+			detail = strings.TrimSpace(result.Stderr)
+			if detail == "" {
+				detail = fmt.Sprintf("exit status %d", result.ExitCode)
+			}
+		}
+		return fmt.Errorf("sync account password %s: %s", u.Username, detail)
+	}
+	_ = s.audit.Log(ctx, audit.LogEntry{Action: "ssh_account_password_sync", Module: "ssh", Target: u.Username, Detail: "synced SSH password for " + u.Username})
 	return nil
 }
 

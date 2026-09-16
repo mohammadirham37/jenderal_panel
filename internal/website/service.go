@@ -596,7 +596,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if !safeDomainComponent(w.Domain) {
 		return fmt.Errorf("delete website: unsafe stored domain %q", w.Domain)
 	}
-	if !webUserRegex.MatchString(w.WebUser) || filepath.Base(w.WebUser) != w.WebUser || w.WebUser != DomainToUser(w.Domain) {
+	if !webUserRegex.MatchString(w.WebUser) || filepath.Base(w.WebUser) != w.WebUser || !knownWebUser(w.WebUser, w.Domain) {
 		return fmt.Errorf("delete website: unsafe stored web user %q", w.WebUser)
 	}
 	if w.PHPVersion != "" && !phpVersionRegex.MatchString(w.PHPVersion) {
@@ -868,6 +868,21 @@ func (s *Service) Retry(ctx context.Context, id string) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+
+	// Provisions that failed before long user names were capped may store
+	// the legacy derivation, which useradd rejects; heal it so the retry
+	// provisions with the capped name. useradd never created such a user,
+	// so nothing on the system references the old name.
+	if w.WebUser != DomainToUser(w.Domain) && w.WebUser == LegacyDomainToUser(w.Domain) {
+		if _, err := s.db.ExecContext(ctx,
+			`UPDATE websites SET web_user = ?, updated_at = ? WHERE id = ?`,
+			DomainToUser(w.Domain), now, id,
+		); err != nil {
+			return fmt.Errorf("heal web user: %w", err)
+		}
+		w.WebUser = DomainToUser(w.Domain)
+	}
+
 	_, err = s.db.ExecContext(ctx,
 		`UPDATE websites SET status = ?, error_message = NULL, provision_stage = ?, updated_at = ? WHERE id = ?`,
 		"pending", "queued", now, id,

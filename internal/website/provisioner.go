@@ -445,7 +445,7 @@ func (p *Provisioner) runSystemctlOK(ctx context.Context, action, unit string) e
 // ensureServingPermissions makes the managed public directory reachable by
 // the Nginx worker without exposing directory listings from the account home.
 func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow) error {
-	if !webUserRegex.MatchString(w.WebUser) || w.WebUser != DomainToUser(w.Domain) {
+	if !webUserRegex.MatchString(w.WebUser) || !knownWebUser(w.WebUser, w.Domain) {
 		return fmt.Errorf("unsafe stored web user %q", w.WebUser)
 	}
 	homeDir := filepath.Join("/home", w.WebUser)

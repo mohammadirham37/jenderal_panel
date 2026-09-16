@@ -249,7 +249,7 @@ func profileForWebsiteRow(w websiteRow) (Profile, error) {
 }
 
 func installerStagingRoot(w websiteRow) (string, error) {
-	if !webUserRegex.MatchString(w.WebUser) || w.WebUser != DomainToUser(w.Domain) || !websiteIDRegex.MatchString(w.ID) {
+	if !webUserRegex.MatchString(w.WebUser) || !knownWebUser(w.WebUser, w.Domain) || !websiteIDRegex.MatchString(w.ID) {
 		return "", fmt.Errorf("unsafe website identity")
 	}
 	return filepath.Join("/home", w.WebUser, ".jenderal-install-"+w.ID), nil

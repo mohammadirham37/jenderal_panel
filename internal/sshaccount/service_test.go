@@ -125,10 +125,12 @@ func TestSanitizeKeyName(t *testing.T) {
 // fakeSSHExecutor dispatches system commands with stateful behaviour: the
 // Linux account exists only after a successful useradd.
 type fakeSSHExecutor struct {
-	exists    bool
-	useraddN  int
-	usermodN  int
-	missingOK bool
+	exists        bool
+	useraddN      int
+	usermodN      int
+	missingOK     bool
+	chpasswdN     int
+	chpasswdInput string
 }
 
 func (f *fakeSSHExecutor) Run(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -157,6 +159,10 @@ func (f *fakeSSHExecutor) RunSudo(ctx context.Context, name string, args ...stri
 }
 
 func (f *fakeSSHExecutor) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+	if name == "chpasswd" {
+		f.chpasswdN++
+		f.chpasswdInput = input
+	}
 	return f.RunSudo(ctx, name, args...)
 }
 
@@ -191,6 +197,58 @@ func setupSSHTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("seed user: %v", err)
 	}
 	return db
+}
+
+func TestSetPasswordMirrorsPanelPasswordOntoAccount(t *testing.T) {
+	db := setupSSHTestDB(t)
+	fake := &fakeSSHExecutor{}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+
+	if err := svc.Provision(context.Background(), "u-admin"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if err := svc.SetPassword(context.Background(), "u-admin", "s3cret pa:ss"); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	if fake.chpasswdN != 1 {
+		t.Fatalf("chpasswd ran %d times, want 1", fake.chpasswdN)
+	}
+	if fake.chpasswdInput != "admin:s3cret pa:ss\n" {
+		t.Errorf("chpasswd input = %q, want %q", fake.chpasswdInput, "admin:s3cret pa:ss\n")
+	}
+}
+
+func TestSetPasswordSkipsWithoutAccountOrSSH(t *testing.T) {
+	db := setupSSHTestDB(t)
+	if _, err := db.Exec(`UPDATE users SET ssh_enabled = 0 WHERE id = 'u-admin'`); err != nil {
+		t.Fatalf("disable ssh: %v", err)
+	}
+	fake := &fakeSSHExecutor{}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+
+	if err := svc.SetPassword(context.Background(), "u-admin", "secret"); err != nil {
+		t.Fatalf("SetPassword with ssh disabled: %v", err)
+	}
+	if fake.chpasswdN != 0 {
+		t.Errorf("chpasswd must not run with ssh disabled, ran %d times", fake.chpasswdN)
+	}
+
+	if _, err := db.Exec(`UPDATE users SET ssh_enabled = 1 WHERE id = 'u-admin'`); err != nil {
+		t.Fatalf("enable ssh: %v", err)
+	}
+	if err := svc.SetPassword(context.Background(), "u-admin", "secret"); err != nil {
+		t.Fatalf("SetPassword with missing account: %v", err)
+	}
+	if fake.chpasswdN != 0 {
+		t.Errorf("chpasswd must not run without a system account, ran %d times", fake.chpasswdN)
+	}
+
+	if err := svc.SetPassword(context.Background(), "u-admin", ""); err == nil {
+		t.Error("expected rejection of empty password")
+	}
+	if err := svc.SetPassword(context.Background(), "u-admin", "line\nbreak"); err == nil {
+		t.Error("expected rejection of password with line break")
+	}
 }
 
 func TestLockToleratesMissingSystemAccount(t *testing.T) {

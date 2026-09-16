@@ -10,6 +10,43 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
 
+func TestRetryHealsLegacyOverlongWebUser(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	svc := NewService(db, &executor.MockExecutor{}, nil)
+	ctx := context.Background()
+
+	domain := "backend.absen.jenderalcorp.com"
+	legacyUser := LegacyDomainToUser(domain)
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, document_root, web_user, status, ssl_enabled, created_at, updated_at)
+		 VALUES (?, ?, 'php', '/home/x/public', ?, 'failed', 0, ?, ?)`,
+		"site-legacy", domain, legacyUser, now, now,
+	)
+	if err != nil {
+		t.Fatalf("insert failed website: %v", err)
+	}
+
+	if err := svc.Retry(ctx, "site-legacy"); err != nil {
+		t.Fatalf("Retry() error = %v", err)
+	}
+
+	var status, webUser string
+	if err := db.QueryRow(`SELECT status, web_user FROM websites WHERE id = ?`, "site-legacy").Scan(&status, &webUser); err != nil {
+		t.Fatalf("reload website: %v", err)
+	}
+	if status != "pending" {
+		t.Errorf("status = %q, want pending", status)
+	}
+	if webUser != DomainToUser(domain) {
+		t.Errorf("web_user = %q, want healed %q", webUser, DomainToUser(domain))
+	}
+	if len(webUser) > 32 {
+		t.Errorf("healed web_user %q is still longer than 32 characters", webUser)
+	}
+}
+
 func TestOptionsReportsPHPComposerAndNodeChoicesWithoutGlobalNodeProbe(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()

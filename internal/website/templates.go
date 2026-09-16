@@ -2,6 +2,8 @@ package website
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strconv"
 	"strings"
@@ -572,13 +574,41 @@ func RenderPool(data PoolData) (string, error) {
 	return buf.String(), nil
 }
 
-// DomainToUser converts a domain name to a system user name.
-// Dots and hyphens are replaced with underscores, and the result is prefixed
-// with "web_". For example, "example.com" becomes "web_example_com".
-func DomainToUser(domain string) string {
+// maxSystemUserNameLength is the user name length accepted by useradd;
+// longer names are rejected as "invalid user name".
+const maxSystemUserNameLength = 32
+
+// LegacyDomainToUser is the domain-to-user derivation used before long names
+// were capped at the useradd limit. useradd always rejected these names, so
+// rows storing one only exist after a failed provision; Delete accepts them
+// and Retry heals them to the capped name.
+func LegacyDomainToUser(domain string) string {
 	s := strings.ReplaceAll(domain, ".", "_")
 	s = strings.ReplaceAll(s, "-", "_")
 	return "web_" + s
+}
+
+// DomainToUser converts a domain name to a system user name.
+// Dots and hyphens are replaced with underscores, and the result is prefixed
+// with "web_". For example, "example.com" becomes "web_example_com".
+// useradd rejects names longer than 32 characters, so long domains are
+// truncated and suffixed with a short hash of the full name, keeping the
+// mapping deterministic and collision-free across distinct long domains.
+func DomainToUser(domain string) string {
+	s := LegacyDomainToUser(domain)
+	if len(s) <= maxSystemUserNameLength {
+		return s
+	}
+	sum := sha256.Sum256([]byte(s))
+	suffix := "_" + hex.EncodeToString(sum[:])[:8]
+	prefix := strings.TrimRight(s[:maxSystemUserNameLength-len(suffix)], "_-")
+	return prefix + suffix
+}
+
+// knownWebUser reports whether name is a user name this panel would derive
+// for domain: the capped scheme, or a legacy name from a failed provision.
+func knownWebUser(name, domain string) bool {
+	return name == DomainToUser(domain) || name == LegacyDomainToUser(domain)
 }
 
 // SuspendedVhostData carries what RenderSuspendedVhost needs.
