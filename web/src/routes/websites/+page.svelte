@@ -601,29 +601,29 @@ import { language, translate } from '$lib/stores/language';
 							<div class="flex flex-wrap items-center gap-2">
 								<a
 									href="/websites/{website.id}"
-									class="rounded-md bg-blue-600/90 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-blue-600"
+									class="rounded-md bg-blue-600/90 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
 								>
 									{translate($language, 'wl.manage')}
 								</a>
 								{#if website.status === 'active' && website.framework === 'laravel' && website.setup_mode === 'auto-install'}
-									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>{translate($language, 'wl.repair')}</button>
+									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>{translate($language, 'wl.repair')}</button>
 								{/if}
 								{#if website.status === 'failed'}
-									<button onclick={() => retryWebsite(website.id)} class="cursor-pointer rounded-md border border-yellow-600/50 bg-yellow-600/20 px-2.5 py-1.5 text-xs font-medium text-yellow-300 transition hover:bg-yellow-600/30">
+									<button onclick={() => retryWebsite(website.id)} class="cursor-pointer rounded-md border border-yellow-600/50 bg-yellow-600/20 px-3 py-2 text-sm font-medium text-yellow-300 transition hover:bg-yellow-600/30">
 										{translate($language, 'wl.retry')}
 									</button>
 								{/if}
 								{#if website.status === 'active'}
-									<button onclick={() => suspendWebsite(website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600">
+									<button onclick={() => suspendWebsite(website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
 										{translate($language, 'wl.suspend')}
 									</button>
 								{/if}
 								{#if website.status === 'suspended' || website.status === 'disabled'}
-									<button onclick={() => enableWebsite(website.id)} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 px-2.5 py-1.5 text-xs font-medium text-green-300 transition hover:bg-green-600/30">
+									<button onclick={() => enableWebsite(website.id)} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 px-3 py-2 text-sm font-medium text-green-300 transition hover:bg-green-600/30">
 										{translate($language, 'wl.enable')}
 									</button>
 								{/if}
-								<button onclick={() => (deleteConfirmId = website.id)} class="ml-auto cursor-pointer rounded-md px-2.5 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10" title={translate($language, 'wl.titleDelete')}>
+								<button onclick={() => (deleteConfirmId = website.id)} class="ml-auto cursor-pointer rounded-md px-3 py-2 text-sm text-red-400 transition hover:bg-red-500/10" title={translate($language, 'wl.titleDelete')}>
 									{translate($language, 'wl.delete')}
 								</button>
 							</div>
