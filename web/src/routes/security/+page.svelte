@@ -128,7 +128,6 @@ import { toast } from '$lib/stores/toast';
 	let editMode = $state<'simple' | 'advanced'>('simple');
 	let loading = $state(true);
 	let error = $state('');
-	let actionMessage = $state('');
 	let busy = $state('');
 	let currentTaskId = $state('');
 	let overview = $state<Overview>(normalizeOverview({}) as Overview);
@@ -264,7 +263,7 @@ import { toast } from '$lib/stores/toast';
 
 	async function reviewSecuritySetup() {
 		busy = 'setup-review'; setupConfirmed = false;
-		try { setupReview = normalizeSetupReview(await api.post<SetupReview>('/api/v1/security/setup/review', setupRequest())); actionMessage = translate($language, 'sec.setup.reviewGenerated'); }
+		try { setupReview = normalizeSetupReview(await api.post<SetupReview>('/api/v1/security/setup/review', setupRequest())); toast.success(translate($language, 'sec.setup.reviewGenerated')); }
 		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'sec.setup.errReview')); }
 		finally { busy = ''; }
 	}
@@ -274,7 +273,7 @@ import { toast } from '$lib/stores/toast';
 		busy = 'setup-apply'; 
 		try {
 			const result = await api.post<{ run_id: string; task_id: string }>('/api/v1/security/setup/apply', { request: setupRequest(), review: setupReview, confirm: true });
-			currentTaskId = result.task_id; actionMessage = translate($language, 'sec.setup.started');
+			currentTaskId = result.task_id; toast.success(translate($language, 'sec.setup.started'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'sec.setup.errApply')); }
 		finally { busy = ''; }
 	}
@@ -282,7 +281,7 @@ import { toast } from '$lib/stores/toast';
 	async function resumeSecuritySetup() {
 		if (!setupAssessment.latest) return;
 		busy = 'setup-resume'; 
-		try { const result = await api.post<{ task_id: string }>('/api/v1/security/setup/resume', { run_id: setupAssessment.latest.id }); currentTaskId = result.task_id; actionMessage = translate($language, 'sec.setup.resumed'); }
+		try { const result = await api.post<{ task_id: string }>('/api/v1/security/setup/resume', { run_id: setupAssessment.latest.id }); currentTaskId = result.task_id; toast.success(translate($language, 'sec.setup.resumed')); }
 		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'sec.setup.errResume')); }
 		finally { busy = ''; }
 	}
@@ -314,7 +313,7 @@ import { toast } from '$lib/stores/toast';
 
 	async function applyTrafficGuard() {
 		if (!selectedTrafficWebsite) { toast.error(translate($language, 'sec.selectWebsiteFirst')); return; }
-		busy = 'traffic-apply'; actionMessage = '';
+		busy = 'traffic-apply';
 		try {
 			const payload = buildTrafficProfile({
 				mode: trafficMode, proxy_mode: trafficProxyMode, proxy_header: trafficProxyHeader,
@@ -323,7 +322,7 @@ import { toast } from '$lib/stores/toast';
 			});
 			if (trafficMode !== 'observe' && !trafficConfirmed) throw new Error(translate($language, 'tg.errConfirmEnforcement'));
 			const result = await api.put<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}`, { ...payload, confirm: trafficMode !== 'observe' && trafficConfirmed });
-			currentTaskId = result.task_id; actionMessage = translate($language, 'tg.applied');
+			currentTaskId = result.task_id; toast.success(translate($language, 'tg.applied'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errApply')); }
 		finally { busy = ''; }
 	}
@@ -333,7 +332,7 @@ import { toast } from '$lib/stores/toast';
 		busy = 'traffic-observe'; 
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/security/traffic/websites/${selectedTrafficWebsite}/observe`, {});
-			currentTaskId = result.task_id; actionMessage = translate($language, 'tg.observeReset');
+			currentTaskId = result.task_id; toast.success(translate($language, 'tg.observeReset'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errObserveReset')); }
 		finally { busy = ''; }
 	}
@@ -342,38 +341,38 @@ import { toast } from '$lib/stores/toast';
 		busy = 'traffic-cloudflare'; 
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/traffic/cloudflare/refresh', {});
-			currentTaskId = result.task_id; actionMessage = translate($language, 'tg.cloudflareRefreshStarted');
+			currentTaskId = result.task_id; toast.success(translate($language, 'tg.cloudflareRefreshStarted'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'tg.errCloudflareRefresh')); }
 		finally { busy = ''; }
 	}
 
 	async function installMalware(mode: 'low_memory' | 'daemon') {
-		busy = `malware-install:${mode}`; actionMessage = '';
+		busy = `malware-install:${mode}`;
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/install', { mode });
 			currentTaskId = result.task_id;
-			actionMessage = translate($language, 'mal.installStarted');
+			toast.success(translate($language, 'mal.installStarted'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errInstall')); }
 		finally { busy = ''; }
 	}
 
 	async function updateSignatures() {
-		busy = 'malware-signatures'; actionMessage = '';
+		busy = 'malware-signatures';
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/signatures/update', {});
-			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.sigUpdateStarted');
+			currentTaskId = result.task_id; toast.success(translate($language, 'mal.sigUpdateStarted'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errSigUpdate')); }
 		finally { busy = ''; }
 	}
 
 	async function startMalwareScan(mode: 'quick' | 'website' | 'full_websites') {
 		if (mode === 'website' && !selectedWebsite) { toast.error(translate($language, 'sec.selectWebsiteFirst')); return; }
-		busy = `malware-scan:${mode}`; actionMessage = '';
+		busy = `malware-scan:${mode}`;
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/malware/scans', {
 				mode, website_ids: mode === 'website' ? [selectedWebsite] : []
 			});
-			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.scanStarted');
+			currentTaskId = result.task_id; toast.success(translate($language, 'mal.scanStarted'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errScan')); }
 		finally { busy = ''; }
 	}
@@ -385,7 +384,7 @@ import { toast } from '$lib/stores/toast';
 			await api.put('/api/v1/security/malware/schedules', {
 				...safe, id: malwareSchedules[0]?.id || '', enabled: scheduleEnabled
 			});
-			actionMessage = scheduleEnabled ? translate($language, 'mal.scheduleSaved').replace('{time}', scheduleTime) : translate($language, 'mal.scheduleDisabled');
+			toast.success(scheduleEnabled ? translate($language, 'mal.scheduleSaved').replace('{time}', scheduleTime) : translate($language, 'mal.scheduleDisabled'));
 			await loadData();
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errSchedule')); }
 		finally { busy = ''; }
@@ -396,7 +395,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const request = buildOnAccessRequest({ enabled: onAccessEnabled, prevention: preventionEnabled, confirmed: preventionConfirmed });
 			const result = await api.put<{ task_id: string }>('/api/v1/security/malware/on-access', request);
-			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.onAccessApplied');
+			currentTaskId = result.task_id; toast.success(translate($language, 'mal.onAccessApplied'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errOnAccess')); }
 		finally { busy = ''; }
 	}
@@ -406,7 +405,7 @@ import { toast } from '$lib/stores/toast';
 		busy = `restore:${item.id}`; 
 		try {
 			const result = await api.post<{ task_id: string }>(`/api/v1/security/malware/quarantine/${item.id}/restore`, {});
-			currentTaskId = result.task_id; actionMessage = translate($language, 'mal.restoreStarted');
+			currentTaskId = result.task_id; toast.success(translate($language, 'mal.restoreStarted'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errRestore')); }
 		finally { busy = ''; }
 	}
@@ -414,7 +413,7 @@ import { toast } from '$lib/stores/toast';
 	async function markFalsePositive(item: QuarantineItem) {
 		if (!confirm(translate($language, 'mal.confirmFalsePositive'))) return;
 		busy = `false-positive:${item.id}`; 
-		try { await api.post(`/api/v1/security/malware/quarantine/${item.id}/false-positive`, {}); actionMessage = translate($language, 'mal.falsePositiveMarked'); await loadData(); }
+		try { await api.post(`/api/v1/security/malware/quarantine/${item.id}/false-positive`, {}); toast.success(translate($language, 'mal.falsePositiveMarked')); await loadData(); }
 		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errFalsePositive')); }
 		finally { busy = ''; }
 	}
@@ -422,18 +421,18 @@ import { toast } from '$lib/stores/toast';
 	async function deleteQuarantine(item: QuarantineItem) {
 		if (!confirm(translate($language, 'mal.confirmDelete').replace('{id}', item.id))) return;
 		busy = `delete:${item.id}`; 
-		try { await api.del(`/api/v1/security/malware/quarantine/${item.id}`); actionMessage = translate($language, 'mal.deleted'); await loadData(); }
+		try { await api.del(`/api/v1/security/malware/quarantine/${item.id}`); toast.success(translate($language, 'mal.deleted')); await loadData(); }
 		catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'mal.errDelete')); }
 		finally { busy = ''; }
 	}
 
 	async function installFail2ban() {
 		busy = 'install';
-		actionMessage = '';
+		
 		try {
 			const result = await api.post<{ task_id: string }>('/api/v1/security/fail2ban/install', {});
 			currentTaskId = result.task_id;
-			actionMessage = translate($language, 'f2b.installStarted');
+			toast.success(translate($language, 'f2b.installStarted'));
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errInstallStart'));
 		} finally {
@@ -443,7 +442,7 @@ import { toast } from '$lib/stores/toast';
 
 	async function applySettings() {
 		busy = 'apply';
-		actionMessage = '';
+		
 		try {
 			const networks = managementNetworks.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
 			settings.ignore_ips = networks;
@@ -454,7 +453,7 @@ import { toast } from '$lib/stores/toast';
 				ban_time_seconds: Number(settings.ban_time_seconds)
 			});
 			currentTaskId = result.task_id;
-			actionMessage = translate($language, 'f2b.settingsApplied');
+			toast.success(translate($language, 'f2b.settingsApplied'));
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errSettings'));
 		} finally {
@@ -466,7 +465,7 @@ import { toast } from '$lib/stores/toast';
 		busy = action;
 		try {
 			await api.post(`/api/v1/security/fail2ban/${action}`, {});
-			actionMessage = translate($language, `f2b.actionDone.${action}`);
+			toast.success(translate($language, `f2b.actionDone.${action}`));
 			await loadData();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, `f2b.errAction.${action}`));
@@ -480,7 +479,7 @@ import { toast } from '$lib/stores/toast';
 		try {
 			const request = validateBan({ jail: banJail, ip: banIP, duration_seconds: Number(banDuration) });
 			await api.post('/api/v1/security/fail2ban/bans', request);
-			actionMessage = translate($language, 'f2b.banCreated').replace('{ip}', banIP);
+			toast.success(translate($language, 'f2b.banCreated').replace('{ip}', banIP));
 			banIP = '';
 			await loadData();
 		} catch (err) {
@@ -495,7 +494,7 @@ import { toast } from '$lib/stores/toast';
 		busy = `unban:${ban.jail}:${ban.ip}`;
 		try {
 			await api.del(`/api/v1/security/fail2ban/bans/${encodeURIComponent(ban.ip)}?jail=${encodeURIComponent(ban.jail)}`);
-			actionMessage = translate($language, 'f2b.unbanned').replace('{ip}', ban.ip);
+			toast.success(translate($language, 'f2b.unbanned').replace('{ip}', ban.ip));
 			await loadData();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'f2b.errUnban'));
@@ -508,7 +507,7 @@ import { toast } from '$lib/stores/toast';
 		busy = `event:${event.id}`;
 		try {
 			await api.post(`/api/v1/security/events/${event.id}/transition`, { status });
-			actionMessage = translate($language, `sec.eventMarked.${status}`);
+			toast.success(translate($language, `sec.eventMarked.${status}`));
 			await loadData();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'sec.errEventUpdate'));
@@ -519,12 +518,12 @@ import { toast } from '$lib/stores/toast';
 
 	function taskComplete(task: { status?: string; error?: string }) {
 		if (task.status === 'completed') {
-			actionMessage = translate($language, 'sec.taskCompleted');
-			void loadData();
+			toast.success(translate($language, 'sec.taskCompleted'));
 		} else {
 			toast.error(task.error || translate($language, 'sec.taskFailed'));
-			void loadData();
 		}
+		currentTaskId = '';
+		void loadData();
 	}
 
 	onMount(() => void loadData());
@@ -548,7 +547,6 @@ import { toast } from '$lib/stores/toast';
 		{/each}
 	</div>
 
-	{#if actionMessage}<div class="rounded-lg border border-green-700 bg-green-900/50 p-3 text-sm text-green-300">{actionMessage}</div>{/if}
 
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_security_fail2ban_task" onComplete={taskComplete} />
 
