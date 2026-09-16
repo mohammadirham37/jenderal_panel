@@ -580,3 +580,88 @@ func DomainToUser(domain string) string {
 	s = strings.ReplaceAll(s, "-", "_")
 	return "web_" + s
 }
+
+// SuspendedVhostData carries what RenderSuspendedVhost needs.
+type SuspendedVhostData struct {
+	Domain      string
+	Aliases     string
+	CertDomains []string
+	IPv6        bool
+}
+
+// RenderSuspendedVhost renders the vhost shown while a website is
+// suspended: 503 + a self-hosted suspension page for every request, over
+// HTTP and HTTPS. Each certified domain keeps serving its own certificate
+// so visitors never see a TLS error, and ACME challenges keep working so
+// certificates can still renew.
+func RenderSuspendedVhost(data SuspendedVhostData) (string, error) {
+	names := data.Domain
+	if data.Aliases != "" {
+		names += " " + data.Aliases
+	}
+	suspendLocations := `    location / {
+        return 503;
+    }
+    error_page 503 /__suspended.html;
+    location = /__suspended.html {
+        root /etc/jenderal/suspend;
+    }
+    add_header Retry-After "3600" always;`
+
+	var b strings.Builder
+	b.WriteString("# Suspended by Jenderal Panel\n")
+	b.WriteString("server {\n")
+	b.WriteString("    listen 80;\n")
+	if data.IPv6 {
+		b.WriteString("    listen [::]:80;\n")
+	}
+	b.WriteString("    server_name " + names + ";\n")
+	b.WriteString("    location /.well-known/acme-challenge/ { root " + DefaultACMEChallengeRoot + "; }\n")
+	b.WriteString(suspendLocations + "\n")
+	b.WriteString("}\n")
+	for _, certDomain := range data.CertDomains {
+		b.WriteString("server {\n")
+		b.WriteString("    listen 443 ssl;\n")
+		if data.IPv6 {
+			b.WriteString("    listen [::]:443 ssl;\n")
+		}
+		b.WriteString("    server_name " + certDomain + ";\n")
+		b.WriteString("    ssl_certificate /etc/jenderal/ssl/" + certDomain + "/cert.pem;\n")
+		b.WriteString("    ssl_certificate_key /etc/jenderal/ssl/" + certDomain + "/key.pem;\n")
+		b.WriteString("    ssl_protocols TLSv1.2 TLSv1.3;\n")
+		b.WriteString(suspendLocations + "\n")
+		b.WriteString("}\n")
+	}
+	return b.String(), nil
+}
+
+// SuspendPageHTML is the self-contained page served for suspended websites.
+const SuspendPageHTML = `<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Situs Dinonaktifkan — Service Suspended</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { min-height: 100vh; display: flex; align-items: center; justify-content: center;
+         background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 34rem; padding: 3rem 2rem; text-align: center; }
+  .code { display: inline-block; font-size: .8rem; font-weight: 700; letter-spacing: .3em;
+          color: #f87171; border: 1px solid #7f1d1d; border-radius: 999px; padding: .35rem 1rem; margin-bottom: 1.5rem; }
+  h1 { font-size: 1.6rem; margin-bottom: .75rem; }
+  p { line-height: 1.6; color: #94a3b8; margin-bottom: .5rem; }
+  .en { font-size: .85rem; color: #64748b; margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid #1e293b; }
+</style>
+</head>
+<body>
+<main>
+  <span class="code">503</span>
+  <h1>Situs Dinonaktifkan Sementara</h1>
+  <p>Website ini saat ini dinonaktifkan oleh administratornya.</p>
+  <p>Hubungi pemilik situs atau administrator server untuk informasi lebih lanjut.</p>
+  <p class="en">This website has been suspended by its administrator.<br>Please contact the site owner for more information.</p>
+</main>
+</body>
+</html>
+`

@@ -333,3 +333,33 @@ func TestDomainToUser(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderSuspendedVhost(t *testing.T) {
+	content, err := RenderSuspendedVhost(SuspendedVhostData{
+		Domain:      "example.com",
+		Aliases:     "www.example.com",
+		CertDomains: []string{"example.com"},
+		IPv6:        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"server_name example.com www.example.com;",
+		"listen 443 ssl;",
+		"listen [::]:443 ssl;",
+		"server_name example.com;",
+		"ssl_certificate /etc/jenderal/ssl/example.com/cert.pem;",
+		"ssl_certificate_key /etc/jenderal/ssl/example.com/key.pem;",
+		"return 503;",
+		"root /etc/jenderal/suspend;",
+		"acme-challenge",
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("rendered vhost missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "fastcgi_pass") {
+		t.Error("suspended vhost must not serve PHP")
+	}
+}

@@ -666,6 +666,85 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// writeSuspendedConfig replaces the site's enabled vhost with a placeholder
+// that serves 503 + the suspension page, keeping each certified domain on
+// its own certificate. The original symlink was moved aside by
+// moveWebsiteConfigs; Enable deletes this file and moves the symlink back.
+func (s *Service) writeSuspendedConfig(ctx context.Context, w model.Website) error {
+	if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", "/etc/jenderal/suspend"); err != nil {
+		return fmt.Errorf("create suspend page directory: %w", err)
+	}
+	pageTmp, err := os.CreateTemp("", "jenderal_suspend_page_*.html")
+	if err != nil {
+		return fmt.Errorf("create temp suspend page: %w", err)
+	}
+	pagePath := pageTmp.Name()
+	defer os.Remove(pagePath)
+	if _, err := pageTmp.WriteString(SuspendPageHTML); err != nil {
+		pageTmp.Close()
+		return fmt.Errorf("write temp suspend page: %w", err)
+	}
+	if err := pageTmp.Close(); err != nil {
+		return fmt.Errorf("close temp suspend page: %w", err)
+	}
+	if result, err := s.exec.RunSudo(ctx, "cp", pagePath, "/etc/jenderal/suspend/suspended.html"); err != nil {
+		return fmt.Errorf("write suspend page: %w", err)
+	} else if result.ExitCode != 0 {
+		return fmt.Errorf("write suspend page: %s", strings.TrimSpace(result.Stderr))
+	}
+	if _, err := s.exec.RunSudo(ctx, "chmod", "0644", "/etc/jenderal/suspend/suspended.html"); err != nil {
+		return fmt.Errorf("chmod suspend page: %w", err)
+	}
+
+	var aliases []string
+	domains, err := s.getDomains(ctx, w.ID)
+	if err != nil {
+		return err
+	}
+	for _, d := range domains {
+		if d.Type != "primary" {
+			aliases = append(aliases, d.Name)
+		}
+	}
+	certDomains, err := s.activeSSLDomains(ctx, w.ID)
+	if err != nil {
+		return err
+	}
+
+	content, err := RenderSuspendedVhost(SuspendedVhostData{
+		Domain:      w.Domain,
+		Aliases:     strings.Join(aliases, " "),
+		CertDomains: certDomains,
+		IPv6:        s.ipv6Available(),
+	})
+	if err != nil {
+		return fmt.Errorf("render suspended vhost: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "jenderal_suspend_*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.WriteString(content); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+
+	result, err := s.exec.RunSudo(ctx, "cp", tmpPath, "/etc/nginx/sites-enabled/"+w.Domain)
+	if err != nil {
+		return fmt.Errorf("write suspended vhost: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("write suspended vhost: %s", strings.TrimSpace(result.Stderr))
+	}
+	return nil
+}
+
 // Suspend suspends a website by renaming its nginx config.
 func (s *Service) Suspend(ctx context.Context, id string) error {
 	unlock := s.mutations.Lock(id)
@@ -679,6 +758,12 @@ func (s *Service) Suspend(ctx context.Context, id string) error {
 	}
 
 	if err := s.moveWebsiteConfigs(ctx, w, true); err != nil {
+		return fmt.Errorf("suspend website: %w", err)
+	}
+	// Serve a "suspended" page instead of leaving the domain to fall back
+	// to the default vhost (which leaks another site or the Ubuntu page).
+	if err := s.writeSuspendedConfig(ctx, w); err != nil {
+		s.restoreWebsiteConfigs(w, true)
 		return fmt.Errorf("suspend website: %w", err)
 	}
 	if err := s.reloadNginx(ctx); err != nil {
@@ -711,6 +796,11 @@ func (s *Service) Enable(ctx context.Context, id string) error {
 		return model.NewValidationError("website is not suspended")
 	}
 
+	// The suspend placeholder is a real file sitting where the symlink
+	// belongs; remove it so the original symlink can move back.
+	if err := s.runSudoOK(ctx, "rm", "-f", "/etc/nginx/sites-enabled/"+w.Domain); err != nil {
+		return fmt.Errorf("enable website: %w", err)
+	}
 	if err := s.moveWebsiteConfigs(ctx, w, false); err != nil {
 		return fmt.Errorf("enable website: %w", err)
 	}
