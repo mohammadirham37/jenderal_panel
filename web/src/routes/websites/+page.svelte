@@ -22,6 +22,7 @@ import { language, translate } from '$lib/stores/language';
 		provision_stage: string;
 		provision_log: string;
 		created_at: string;
+		owner_email?: string;
 	}
 	interface RuntimeOption { version: string; installed: boolean; running: boolean }
 	interface DependencyOption { name: string; version: string; installed: boolean; manage_url: string }
@@ -560,9 +561,13 @@ import { language, translate } from '$lib/stores/language';
 							<dt class="text-gray-500">PHP</dt>
 							<dd class="truncate font-medium text-gray-300">{website.app_type === 'static' ? '—' : website.php_version || '—'}</dd>
 						</div>
-						<div class="col-span-2">
+						<div>
 							<dt class="text-gray-500">{translate($language, 'wl.labelCreated')}</dt>
 							<dd class="font-medium text-gray-300">{new Date(website.created_at).toLocaleDateString()}</dd>
+						</div>
+						<div class="min-w-0">
+							<dt class="text-gray-500">{translate($language, 'wl.labelOwner')}</dt>
+							<dd class="truncate font-medium text-gray-300" title={website.owner_email}>{website.owner_email || translate($language, 'wl.ownerLegacy')}</dd>
 						</div>
 					</dl>
 

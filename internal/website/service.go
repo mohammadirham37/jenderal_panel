@@ -523,7 +523,52 @@ func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]mo
 		websites[i].Domains = domains
 	}
 
+	s.attachOwnerEmails(ctx, websites)
+
 	return websites, nil
+}
+
+// attachOwnerEmails fills the display-only owner email for each website in
+// one batched query. A missing user row leaves the field empty; that is not
+// an error.
+func (s *Service) attachOwnerEmails(ctx context.Context, websites []model.Website) {
+	ids := make([]string, 0, len(websites))
+	seen := make(map[string]bool, len(websites))
+	for _, w := range websites {
+		if w.CreatedBy != "" && !seen[w.CreatedBy] {
+			seen[w.CreatedBy] = true
+			ids = append(ids, w.CreatedBy)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, email FROM users WHERE id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	emails := make(map[string]string, len(ids))
+	for rows.Next() {
+		var id, email string
+		if err := rows.Scan(&id, &email); err != nil {
+			return
+		}
+		emails[id] = email
+	}
+	for i := range websites {
+		if email, ok := emails[websites[i].CreatedBy]; ok {
+			websites[i].OwnerEmail = email
+		}
+	}
 }
 
 // Update updates a website's mutable fields.

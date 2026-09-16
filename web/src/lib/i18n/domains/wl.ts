@@ -69,6 +69,8 @@ const en = {
 	// Website card
 	'wl.labelStack': 'Stack',
 	'wl.labelCreated': 'Created',
+	'wl.labelOwner': 'Created By',
+	'wl.ownerLegacy': 'legacy (admin)',
 	'wl.provisionLog': 'Provisioning log',
 	'wl.repairConfirm': 'Create missing SQLite files and run pending SQLite migrations? Existing data and app key are preserved.',
 	'wl.confirmRepair': 'Confirm repair',
@@ -169,6 +171,8 @@ const id: Record<keyof typeof en, string> = {
 
 	'wl.labelStack': 'Stack',
 	'wl.labelCreated': 'Dibuat',
+	'wl.labelOwner': 'Dibuat Oleh',
+	'wl.ownerLegacy': 'lama (admin)',
 	'wl.provisionLog': 'Log provisioning',
 	'wl.repairConfirm': 'Buat file SQLite yang belum ada dan jalankan migrasi SQLite yang tertunda? Data yang ada dan kunci aplikasi tetap dipertahankan.',
 	'wl.confirmRepair': 'Konfirmasi perbaikan',
