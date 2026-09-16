@@ -252,9 +252,27 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		// A fresh clone needs an empty target: leftover files from a
 		// previous install make `git clone` refuse to run. Clear the
 		// project root first so the user does not have to delete the files
-		// by hand through the file manager.
+		// by hand through the file manager — but preserve .env and the
+		// storage directory across the wipe: they hold secrets and uploaded
+		// files that a re-clone cannot restore.
+		preserveDir := homeDir + "/.deploy-preserve"
 		res, err = s.exec.RunSudo(ctx, "test", "-e", projectRoot)
 		if err == nil && res.ExitCode == 0 {
+			for _, name := range []string{".env", "storage"} {
+				probe, probeErr := s.exec.RunSudo(ctx, "test", "-e", projectRoot+"/"+name)
+				if probeErr != nil || probe == nil || probe.ExitCode != 0 {
+					continue
+				}
+				if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", preserveDir); err != nil {
+					s.failDeployment(ctx, deploymentID, "prepare deploy preserve dir: "+err.Error(), int(time.Since(start).Milliseconds()))
+					return
+				}
+				if _, err := s.exec.RunSudo(ctx, "cp", "-a", projectRoot+"/"+name, preserveDir+"/"+name); err != nil {
+					s.failDeployment(ctx, deploymentID, "preserve "+name+": "+err.Error(), int(time.Since(start).Milliseconds()))
+					return
+				}
+				appendLog("preserve "+name, nil, nil)
+			}
 			res, err = s.exec.RunSudo(ctx, "rm", "-rf", projectRoot)
 			if !appendLog("clear existing project files", res, err) {
 				s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
@@ -272,6 +290,31 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		if !appendLog("git checkout", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
+		}
+		// Restore the preserved .env and storage contents into the fresh
+		// clone, then drop the staging directory.
+		if _, err := s.exec.RunSudo(ctx, "test", "-e", preserveDir); err == nil {
+			restored := false
+			for _, name := range []string{".env", "storage"} {
+				probe, probeErr := s.exec.RunSudo(ctx, "test", "-e", preserveDir+"/"+name)
+				if probeErr != nil || probe == nil || probe.ExitCode != 0 {
+					continue
+				}
+				if name == ".env" {
+					res, err = s.exec.RunSudo(ctx, "cp", "-a", preserveDir+"/.env", projectRoot+"/.env")
+				} else {
+					res, err = s.exec.RunSudo(ctx, "cp", "-a", preserveDir+"/storage/.", projectRoot+"/storage/")
+				}
+				if !appendLog("restore "+name, res, err) {
+					s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
+					return
+				}
+				restored = true
+			}
+			_, _ = s.exec.RunSudo(ctx, "rm", "-rf", preserveDir)
+			if restored {
+				appendLog("restored preserved files", nil, nil)
+			}
 		}
 	}
 

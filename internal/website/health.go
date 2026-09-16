@@ -109,10 +109,11 @@ func (s *Service) loadEnabledHealthChecks(ctx context.Context) ([]healthCheckRow
 func (s *Service) GetHealthCheck(ctx context.Context, websiteID string) (HealthCheck, error) {
 	hc := HealthCheck{WebsiteID: websiteID, ExpectedStatus: 200}
 	var lastStatus, lastChecked sql.NullString
+	var lastLatency sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT url, expected_status, enabled, last_status, last_latency_ms, consecutive_failures, last_checked_at
 		 FROM website_health_checks WHERE website_id = ?`, websiteID,
-	).Scan(&hc.URL, &hc.ExpectedStatus, &hc.Enabled, &lastStatus, &hc.LastLatencyMS,
+	).Scan(&hc.URL, &hc.ExpectedStatus, &hc.Enabled, &lastStatus, &lastLatency,
 		&hc.ConsecutiveFailures, &lastChecked)
 	if err == sql.ErrNoRows {
 		return hc, nil
@@ -122,6 +123,9 @@ func (s *Service) GetHealthCheck(ctx context.Context, websiteID string) (HealthC
 	}
 	if lastStatus.Valid {
 		hc.LastStatus, _ = strconv.Atoi(lastStatus.String)
+	}
+	if lastLatency.Valid {
+		hc.LastLatencyMS = lastLatency.Int64
 	}
 	hc.LastCheckedAt = lastChecked.String
 	return hc, nil

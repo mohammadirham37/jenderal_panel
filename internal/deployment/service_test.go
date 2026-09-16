@@ -397,3 +397,76 @@ func TestDeployResyncsOwnerSSHAccess(t *testing.T) {
 		t.Fatalf("sync calls = %v, want one resync for owner-1", syncer.userIDs)
 	}
 }
+
+func TestDeployPreservesEnvAndStorageAcrossWipe(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+
+	var mu sync.Mutex
+	var sudoCalls [][]string
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			mu.Lock()
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			mu.Unlock()
+			if name == "test" {
+				// No .git in the project root (fresh clone); everything else
+				// that is probed (.env, storage, deploy key, composer,
+				// artisan) exists.
+				if args[0] == "-d" && strings.HasSuffix(args[1], "/.git") {
+					return &executor.Result{ExitCode: 1}, nil
+				}
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+	}
+	svc := NewService(db, exec, auditSvc)
+
+	websiteID := insertWebsite(t, db, "example.com", "web_example", "/home/web_example/app/public")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	mu.Lock()
+	defer mu.Unlock()
+	joined := make([]string, 0, len(sudoCalls))
+	for _, call := range sudoCalls {
+		joined = append(joined, strings.Join(call, " "))
+	}
+	all := strings.Join(joined, "\n")
+
+	wipeIdx, restoreIdx := -1, -1
+	for i, line := range joined {
+		if strings.Contains(line, "rm -rf /home/web_example/app") && wipeIdx == -1 {
+			wipeIdx = i
+		}
+		if strings.Contains(line, "cp -a /home/web_example/.deploy-preserve/.env /home/web_example/app/.env") {
+			restoreIdx = i
+		}
+	}
+	if wipeIdx == -1 {
+		t.Fatalf("expected the project root wipe, got:\n%s", all)
+	}
+	if restoreIdx == -1 {
+		t.Fatalf("expected .env restore after the clone, got:\n%s", all)
+	}
+	if restoreIdx < wipeIdx {
+		t.Errorf("restore must happen after the wipe: restore at %d, wipe at %d", restoreIdx, wipeIdx)
+	}
+	for _, want := range []string{
+		"cp -a /home/web_example/app/.env /home/web_example/.deploy-preserve/.env",
+		"cp -a /home/web_example/app/storage /home/web_example/.deploy-preserve/storage",
+		"cp -a /home/web_example/.deploy-preserve/storage/. /home/web_example/app/storage/",
+		"rm -rf /home/web_example/.deploy-preserve",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("expected %q in the deploy steps:\n%s", want, all)
+		}
+	}
+}
