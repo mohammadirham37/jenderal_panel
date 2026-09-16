@@ -104,6 +104,8 @@ import { language, translate } from '$lib/stores/language';
 
 	// Delete confirm
 	let deleteConfirmId = $state<string | null>(null);
+	let suspendConfirmId = $state<string | null>(null);
+	let enableConfirmId = $state<string | null>(null);
 
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -589,6 +591,22 @@ import { language, translate } from '$lib/stores/language';
 									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => repairConfirmId = null}>{translate($language, 'wl.cancel')}</button>
 								</div>
 							</div>
+						{:else if suspendConfirmId === website.id}
+							<div class="rounded-lg border border-yellow-600/50 bg-yellow-900/20 p-2.5">
+								<p class="text-xs text-yellow-300">{translate($language, 'wl.suspendConfirm').replace('{domain}', website.domain)}</p>
+								<div class="mt-2 flex gap-2">
+									<button class="cursor-pointer rounded-md bg-yellow-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-yellow-700" onclick={() => { suspendConfirmId = ''; suspendWebsite(website.id); }}>{translate($language, 'wl.yesSuspend')}</button>
+									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (suspendConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
+								</div>
+							</div>
+						{:else if enableConfirmId === website.id}
+							<div class="rounded-lg border border-green-600/50 bg-green-900/20 p-2.5">
+								<p class="text-xs text-green-300">{translate($language, 'wl.enableConfirm').replace('{domain}', website.domain)}</p>
+								<div class="mt-2 flex gap-2">
+									<button class="cursor-pointer rounded-md bg-green-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-green-700" onclick={() => { enableConfirmId = ''; enableWebsite(website.id); }}>{translate($language, 'wl.yesEnable')}</button>
+									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (enableConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
+								</div>
+							</div>
 						{:else if deleteConfirmId === website.id}
 							<div class="rounded-lg border border-red-600/50 bg-red-900/20 p-2.5">
 								<p class="text-xs text-red-300">{translate($language, 'wl.deleteConfirm')}</p>
@@ -614,12 +632,12 @@ import { language, translate } from '$lib/stores/language';
 									</button>
 								{/if}
 								{#if website.status === 'active'}
-									<button onclick={() => suspendWebsite(website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+									<button onclick={() => (suspendConfirmId = website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
 										{translate($language, 'wl.suspend')}
 									</button>
 								{/if}
 								{#if website.status === 'suspended' || website.status === 'disabled'}
-									<button onclick={() => enableWebsite(website.id)} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 px-3 py-2 text-sm font-medium text-green-300 transition hover:bg-green-600/30">
+									<button onclick={() => (enableConfirmId = website.id)} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 px-3 py-2 text-sm font-medium text-green-300 transition hover:bg-green-600/30">
 										{translate($language, 'wl.enable')}
 									</button>
 								{/if}

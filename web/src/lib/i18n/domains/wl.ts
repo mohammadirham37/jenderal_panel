@@ -99,7 +99,11 @@ const en = {
 
 	// Profile combination reasons (built in website-form.js)
 	'wl.reasonUnavailable': 'This template combination is not available.',
-	'wl.reasonMissingDeps': '{names} must be installed first.'
+	'wl.reasonMissingDeps': '{names} must be installed first.',
+	'wl.suspendConfirm': 'Suspend {domain}? The site will be offline until you enable it again.',
+	'wl.yesSuspend': 'Yes, suspend',
+	'wl.enableConfirm': 'Re-enable {domain}?',
+	'wl.yesEnable': 'Yes, enable',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -193,7 +197,11 @@ const id: Record<keyof typeof en, string> = {
 	'wl.errorRetry': 'Gagal mencoba ulang situs web',
 
 	'wl.reasonUnavailable': 'Kombinasi template ini tidak tersedia.',
-	'wl.reasonMissingDeps': '{names} harus dipasang terlebih dahulu.'
+	'wl.reasonMissingDeps': '{names} harus dipasang terlebih dahulu.',
+	'wl.suspendConfirm': 'Suspend {domain}? Situs akan offline sampai Anda aktifkan kembali.',
+	'wl.yesSuspend': 'Ya, suspend',
+	'wl.enableConfirm': 'Aktifkan kembali {domain}?',
+	'wl.yesEnable': 'Ya, aktifkan',
 };
 
 export const dict = { en, id };
