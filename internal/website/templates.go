@@ -602,8 +602,8 @@ func RenderSuspendedVhost(data SuspendedVhostData) (string, error) {
 	suspendLocations := `    location / {
         return 503;
     }
-    error_page 503 /__suspended.html;
-    location = /__suspended.html {
+    error_page 503 /suspended.html;
+    location = /suspended.html {
         root /var/www/jenderal-suspend;
     }
     add_header Retry-After "3600" always;`

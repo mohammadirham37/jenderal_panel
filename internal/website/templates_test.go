@@ -353,6 +353,7 @@ func TestRenderSuspendedVhost(t *testing.T) {
 		"ssl_certificate_key /etc/jenderal/ssl/example.com/key.pem;",
 		"return 503;",
 		"root /var/www/jenderal-suspend;",
+		"error_page 503 /suspended.html;",
 		"acme-challenge",
 	} {
 		if !strings.Contains(content, want) {
