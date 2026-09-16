@@ -318,21 +318,57 @@ JENDERAL_DATABASE_PATH=/custom/path.db
 
 ## CLI Commands
 
+The `jenderal` binary doubles as the panel server and the operator CLI. On an
+installed server it lives at `/opt/jenderal/jenderal`, and the commands that
+touch the service require root:
+
 ```bash
-jenderal serve              # Start the HTTP server
-jenderal migrate            # Run database migrations
-jenderal admin create       # Create admin user (interactive)
-jenderal version            # Print version
-jenderal restart            # Restart the systemd service (requires root)
+sudo /opt/jenderal/jenderal serve         # Start the HTTP server (normally run by systemd)
+sudo /opt/jenderal/jenderal migrate       # Run database migrations
+sudo /opt/jenderal/jenderal admin create  # Create an admin user (interactive)
+/opt/jenderal/jenderal version            # Print version (source revision)
+sudo /opt/jenderal/jenderal restart       # Restart the jenderal systemd service
+sudo /opt/jenderal/jenderal update        # Update the panel to the latest main
 ```
 
-Use `--config /path/to/config.yaml` to specify config file location.
+`serve`, `migrate`, and `admin create` accept `--config /path/to/jenderal.yaml`
+to override the config file (default: `/etc/jenderal/jenderal.yaml`).
 
-On an installed server, restart the panel over SSH with:
+### Updating the Panel
+
+The normal path is the panel's **Update** page (`/update`): it pulls the latest
+`main`, rebuilds the frontend and the embedded binary, swaps the binary
+atomically (keeping a `.bak` copy), and restarts the service with rollback on
+failure.
+
+When the web UI is unreachable, run the same flow over SSH:
+
+```bash
+sudo /opt/jenderal/jenderal update
+```
+
+The command prints each step as it runs and ends by scheduling a verified
+service restart — the panel is back within a few seconds (check with
+`sudo systemctl status jenderal`). If a previous update's restart is still in
+progress, the command exits early and asks you to wait, then retry.
+
+### Restarting the Service
 
 ```bash
 sudo /opt/jenderal/jenderal restart
 ```
+
+Restarts `jenderal.service` and verifies it reports `active` before exiting;
+it does not rebuild anything. If the service fails to come back, inspect the
+logs:
+
+```bash
+sudo journalctl -u jenderal -n 100 --no-pager
+```
+
+Restart for configuration changes or a stuck process; for new code, prefer
+`update` (or the Update page) so the installed binary stays in sync with the
+source.
 
 ## Development
 
