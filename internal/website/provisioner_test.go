@@ -386,6 +386,8 @@ func TestEnsureServingPermissionsGrantsOnlyNginxGroupAccessWithoutPrivilegedChmo
 		{"chown", "-h", "web_example_com:www-data", "--", "/home/web_example_com", "/home/web_example_com/public"},
 		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com"},
 		{"-u", "web_example_com", "--", "chmod", "0750", "--", "/home/web_example_com/public"},
+		{"chmod", "-R", "o+rX", "--", "/home/web_example_com/public"},
+		{"setfacl", "-R", "-d", "-m", "o::rX", "--", "/home/web_example_com/public"},
 	}
 	if len(commands) != len(want) {
 		t.Fatalf("permission commands = %q, want %q", commands, want)
@@ -412,6 +414,8 @@ func TestEnsureServingPermissionsSupportsCanonicalAppPublicRoot(t *testing.T) {
 		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com"},
 		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com/app"},
 		{"-u", "web_example_com", "--", "chmod", "0750", "--", "/home/web_example_com/app/public"},
+		{"chmod", "-R", "o+rX", "--", "/home/web_example_com/app/public"},
+		{"setfacl", "-R", "-d", "-m", "o::rX", "--", "/home/web_example_com/app/public"},
 	}
 	if len(commands) != len(want) {
 		t.Fatalf("permission commands = %q, want %q", commands, want)
@@ -443,7 +447,8 @@ func TestRepairServingPermissionsUpdatesExistingActiveWebsites(t *testing.T) {
 	if err := NewProvisioner(db, mock, nil).RepairServingPermissions(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(commands) != 3 {
+	// 3 boundary commands + the document-root other-readability pair.
+	if len(commands) != 5 {
 		t.Fatalf("repair commands = %q, want only the managed default document root", commands)
 	}
 	for _, command := range commands {

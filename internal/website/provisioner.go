@@ -508,6 +508,21 @@ func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow
 			return fmt.Errorf("chmod %s: %s", permission.path, strings.TrimSpace(result.Stderr))
 		}
 	}
+
+	// The document root tree is served to the internet by nginx through the
+	// "other" permission class (SSH grants put named-user ACLs on these
+	// files whose default "other" entry is ---), so keep the whole tree
+	// world-readable and make future files inherit that.
+	docRootPath := publicRoot
+	if documentRoot == appPublicRoot {
+		docRootPath = appPublicRoot
+	}
+	if _, err := p.exec.RunSudo(ctx, "chmod", "-R", "o+rX", "--", docRootPath); err != nil {
+		return fmt.Errorf("chmod document root other-readable: %w", err)
+	}
+	if _, err := p.exec.RunSudo(ctx, "setfacl", "-R", "-d", "-m", "o::rX", "--", docRootPath); err != nil {
+		return fmt.Errorf("set document root default other ACL: %w", err)
+	}
 	return nil
 }
 
