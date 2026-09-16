@@ -772,16 +772,17 @@ func TestUpdateDocumentRoot(t *testing.T) {
 	var written []string
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			// "test -d <dir>" succeeds only for the existing directory.
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// "test -d <dir>" probes as root and succeeds only for the
+			// existing directory.
 			if name == "test" && args[0] == "-d" {
 				if args[1] == "/home/web_roots_example_com/missing" {
 					return &executor.Result{ExitCode: 1}, nil
 				}
 				return &executor.Result{ExitCode: 0}, nil
 			}
-			return &executor.Result{ExitCode: 0}, nil
-		},
-		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			if name == "cp" && len(args) == 2 && strings.Contains(args[0], "jenderal_website_regen_") {
 				written = append(written, args[1])
 			}

@@ -601,7 +601,10 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 		if strings.Contains(newRoot, "..") {
 			return model.NewValidationError("document root must not contain '..'")
 		}
-		if result, err := s.exec.Run(ctx, "test", "-d", newRoot); err != nil || result == nil || result.ExitCode != 0 {
+		// Probe as root: the site home is 0710 owned by the site account, so
+		// the panel account cannot stat inside it and a plain probe would
+		// reject directories that actually exist.
+		if result, err := s.exec.RunSudo(ctx, "test", "-d", newRoot); err != nil || result == nil || result.ExitCode != 0 {
 			return model.NewValidationError("directory does not exist yet: " + newRoot)
 		}
 		if newRoot != w.DocumentRoot {
