@@ -380,6 +380,15 @@ func (s *Service) GrantWebsiteOwner(ctx context.Context, websiteID string) error
 	if err := s.GrantWebsite(ctx, u.Username, webUser); err != nil {
 		return err
 	}
+	// Verify the account can actually enter the site home now. When only the
+	// group-bit fallback applied, membership starts on the next login — the
+	// caller must know the repair did not take effect yet.
+	siteHome := "/home/" + webUser
+	if !s.accountCanEnter(ctx, u.Username, siteHome) {
+		return model.NewDomainError("SSH_ACCESS_NOT_EFFECTIVE",
+			"access was applied but "+u.Username+" cannot enter "+siteHome+
+				" yet; log out and log back in (or reconnect SSH), then try again", nil)
+	}
 	_ = s.audit.Log(ctx, audit.LogEntry{
 		Action: "ssh_account_website_grant",
 		Module: "ssh",
@@ -389,9 +398,21 @@ func (s *Service) GrantWebsiteOwner(ctx context.Context, websiteID string) error
 	return nil
 }
 
+// accountCanEnter reports whether username can traverse dir right now, as
+// that account.
+func (s *Service) accountCanEnter(ctx context.Context, username, dir string) bool {
+	result, err := s.exec.RunSudo(ctx, "-u", username, "--", "/usr/bin/test", "-x", dir)
+	if err != nil || result == nil {
+		return false
+	}
+	return result.ExitCode == 0
+}
+
 // GrantWebsite gives a panel account group membership plus POSIX ACL
-// read/write access to a website's project directory. Falls back to
-// group-write permissions when setfacl is unavailable.
+// read/write access to a website's project directory. ACLs apply to current
+// sessions immediately; when the acl tooling is missing it is installed
+// first, with group-write permissions as the last resort (that fallback only
+// takes effect on the account's next login).
 func (s *Service) GrantWebsite(ctx context.Context, username, webUser string) error {
 	if !ValidateUsername(username) || !webUserRegex.MatchString(webUser) {
 		return model.NewValidationError("unsafe account or website user name")
@@ -400,6 +421,11 @@ func (s *Service) GrantWebsite(ctx context.Context, username, webUser string) er
 		return fmt.Errorf("join website group: %w", err)
 	}
 	siteHome := "/home/" + webUser
+	if !s.setfaclAvailable(ctx) {
+		if _, err := s.exec.RunSudo(ctx, "apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "acl"); err != nil {
+			return fmt.Errorf("install acl package: %w", err)
+		}
+	}
 	if s.setfaclAvailable(ctx) {
 		if err := s.runSudoOK(ctx, "setfacl", "-R", "-m", "u:"+username+":rwX", siteHome); err != nil {
 			return fmt.Errorf("grant site ACL: %w", err)

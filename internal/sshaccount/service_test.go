@@ -131,6 +131,10 @@ type fakeSSHExecutor struct {
 	missingOK     bool
 	chpasswdN     int
 	chpasswdInput string
+	aclInstalled  bool
+	setfaclPre    bool
+	canEnter      bool
+	chmodN        int
 }
 
 func (f *fakeSSHExecutor) Run(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -151,7 +155,39 @@ func (f *fakeSSHExecutor) RunSudo(ctx context.Context, name string, args ...stri
 	case "usermod":
 		f.usermodN++
 		return &executor.Result{ExitCode: 0}, nil
-	case "cat", "mkdir", "setfacl", "getfacl", "tee", "chown", "rm", "touch":
+	case "apt-get":
+		for _, arg := range args {
+			if arg == "acl" {
+				f.aclInstalled = true
+			}
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	case "setfacl", "getfacl":
+		if f.aclInstalled || f.setfaclPre {
+			return &executor.Result{ExitCode: 0}, nil
+		}
+		return &executor.Result{ExitCode: 1, Stderr: name + ": command not found"}, nil
+	case "chmod":
+		f.chmodN++
+		return &executor.Result{ExitCode: 0}, nil
+	case "-u":
+		// sudo -u <account> -- /usr/bin/test -x <dir>: the traversal check
+		// for that account.
+		for _, arg := range args {
+			if arg == "/usr/bin/test" {
+				if f.canEnter {
+					return &executor.Result{ExitCode: 0}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	case "test", "/usr/bin/test":
+		if f.canEnter {
+			return &executor.Result{ExitCode: 0}, nil
+		}
+		return &executor.Result{ExitCode: 1}, nil
+	case "cat", "mkdir", "tee", "chown", "rm", "touch":
 		return &executor.Result{ExitCode: 0}, nil
 	default:
 		return &executor.Result{ExitCode: 0}, nil
@@ -299,5 +335,100 @@ func TestSyncOwnedWebsitesSkipsMissingSystemAccount(t *testing.T) {
 	}
 	if fake.usermodN != 0 {
 		t.Errorf("ACL usermod must not run without a system account, ran %d times", fake.usermodN)
+	}
+}
+
+func TestReconcileAllSyncsOnlySSHEnabledUsers(t *testing.T) {
+	db := setupSSHTestDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO users (id, username, email, password, is_active, ssh_enabled, created_at, updated_at)
+		 VALUES ('u-user', 'budi', 'budi@test', 'x', 1, 0, ?, ?)`, now, now,
+	); err != nil {
+		t.Fatalf("seed disabled user: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, created_by, created_at, updated_at)
+		 VALUES ('w-1', 'example.com', 'php', '8.2', '/home/web_example_com/public', 'web_example_com', 'active', 'u-admin', ?, ?)`,
+		now, now,
+	); err != nil {
+		t.Fatalf("seed website: %v", err)
+	}
+
+	fake := &fakeSSHExecutor{}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+	if err := svc.Provision(context.Background(), "u-admin"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	fake.usermodN = 0
+
+	if err := svc.ReconcileAll(context.Background()); err != nil {
+		t.Fatalf("ReconcileAll: %v", err)
+	}
+	if fake.usermodN == 0 {
+		t.Error("ReconcileAll must re-grant site access for the SSH-enabled user")
+	}
+
+	if _, err := db.Exec(`UPDATE users SET ssh_enabled = 0`); err != nil {
+		t.Fatalf("disable all users: %v", err)
+	}
+	fake.usermodN = 0
+	if err := svc.ReconcileAll(context.Background()); err != nil {
+		t.Fatalf("ReconcileAll with no enabled users: %v", err)
+	}
+	if fake.usermodN != 0 {
+		t.Errorf("usermod ran %d times with no SSH-enabled users, want 0", fake.usermodN)
+	}
+}
+
+func TestGrantWebsiteOwnerVerifiesTraverseAccess(t *testing.T) {
+	db := setupSSHTestDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, created_by, created_at, updated_at)
+		 VALUES ('w-1', 'example.com', 'php', '8.2', '/home/web_example_com/public', 'web_example_com', 'active', 'u-admin', ?, ?)`,
+		now, now,
+	); err != nil {
+		t.Fatalf("seed website: %v", err)
+	}
+	fake := &fakeSSHExecutor{setfaclPre: true}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+	if err := svc.Provision(context.Background(), "u-admin"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	fake.canEnter = true
+	if err := svc.GrantWebsiteOwner(context.Background(), "w-1"); err != nil {
+		t.Fatalf("GrantWebsiteOwner: %v", err)
+	}
+
+	fake.canEnter = false
+	err := svc.GrantWebsiteOwner(context.Background(), "w-1")
+	if err == nil || !strings.Contains(err.Error(), "log out and log back in") {
+		t.Fatalf("GrantWebsiteOwner without traversal = %v, want re-login guidance", err)
+	}
+}
+
+func TestGrantWebsiteInstallsAclWhenMissing(t *testing.T) {
+	db := setupSSHTestDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, created_by, created_at, updated_at)
+		 VALUES ('w-2', 'acl.example.com', 'php', '8.2', '/home/web_acl_example/public', 'web_acl_example', 'active', 'u-admin', ?, ?)`,
+		now, now,
+	); err != nil {
+		t.Fatalf("seed website: %v", err)
+	}
+	fake := &fakeSSHExecutor{}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+
+	if err := svc.Provision(context.Background(), "u-admin"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	if !fake.aclInstalled {
+		t.Error("missing setfacl must trigger the acl package installation")
+	}
+	if fake.chmodN != 0 {
+		t.Errorf("chmod fallback must not run once acl is installed, ran %d times", fake.chmodN)
 	}
 }
