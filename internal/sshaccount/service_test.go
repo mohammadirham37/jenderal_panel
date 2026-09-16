@@ -135,6 +135,7 @@ type fakeSSHExecutor struct {
 	setfaclPre    bool
 	canEnter      bool
 	chmodN        int
+	calls         [][]string
 }
 
 func (f *fakeSSHExecutor) Run(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -142,6 +143,7 @@ func (f *fakeSSHExecutor) Run(ctx context.Context, name string, args ...string) 
 }
 
 func (f *fakeSSHExecutor) RunSudo(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+	f.calls = append(f.calls, append([]string{name}, args...))
 	switch name {
 	case "id":
 		if f.exists {
@@ -430,5 +432,12 @@ func TestGrantWebsiteInstallsAclWhenMissing(t *testing.T) {
 	}
 	if fake.chmodN != 0 {
 		t.Errorf("chmod fallback must not run once acl is installed, ran %d times", fake.chmodN)
+	}
+	// The chown must set the OWNER only: the www-data group on the managed
+	// directories is the nginx worker's access path and must survive.
+	for _, call := range fake.calls {
+		if call[0] == "chown" && strings.Contains(call[len(call)-1], "web_acl_example_com:") {
+			t.Errorf("chown overwrote the group: %v", call)
+		}
 	}
 }

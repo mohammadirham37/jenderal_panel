@@ -441,10 +441,12 @@ func (s *Service) GrantWebsite(ctx context.Context, username, webUser string) er
 		return fmt.Errorf("join website group: %w", err)
 	}
 	siteHome := "/home/" + webUser
-	// Normalize ownership: files may have been written by other identities
-	// (deploy steps, uploads); the site account must own them for PHP-FPM
-	// and for the ACL entries below to be meaningful.
-	if err := s.runSudoOK(ctx, "chown", "-R", webUser+":"+webUser, siteHome); err != nil {
+	// Normalize the OWNER only: the GROUP of the managed directories is
+	// www-data (the nginx worker's access path established by
+	// ensureServingPermissions) and must never be overwritten. Files created
+	// by the panel account are flipped back to the site account so PHP-FPM
+	// keeps write access (e.g. storage/logs written over SSH).
+	if err := s.runSudoOK(ctx, "chown", "-R", webUser, siteHome); err != nil {
 		return fmt.Errorf("normalize site ownership: %w", err)
 	}
 	if !s.setfaclAvailable(ctx) {
