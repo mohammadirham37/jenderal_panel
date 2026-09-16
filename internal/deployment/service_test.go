@@ -470,3 +470,55 @@ func TestDeployPreservesEnvAndStorageAcrossWipe(t *testing.T) {
 		}
 	}
 }
+
+func TestLaravelDeployPureClonesIntoApp(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+
+	var mu sync.Mutex
+	var sudoCalls [][]string
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			mu.Lock()
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			mu.Unlock()
+			return &executor.Result{ExitCode: 0, Stdout: "abc1234\n"}, nil
+		},
+	}
+	svc := NewService(db, exec, auditSvc)
+
+	// A stale docRoot must not decide where the project lands.
+	websiteID := insertWebsite(t, db, "lara.example.com", "web_lara_example_com", "/home/web_lara_example_com/public")
+	if _, err := db.Exec(`UPDATE websites SET framework = 'laravel' WHERE id = ?`, websiteID); err != nil {
+		t.Fatalf("set framework: %v", err)
+	}
+
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	mu.Lock()
+	defer mu.Unlock()
+	joined := make([]string, 0, len(sudoCalls))
+	for _, call := range sudoCalls {
+		joined = append(joined, strings.Join(call, " "))
+	}
+	all := strings.Join(joined, "\n")
+
+	if !strings.Contains(all, "git clone https://github.com/example/repo.git /home/web_lara_example_com/app") {
+		t.Errorf("expected a pure clone into the app directory:\n%s", all)
+	}
+	for _, banned := range []string{"composer install", "artisan", "git pull"} {
+		if strings.Contains(all, banned) {
+			t.Errorf("pure clone must not run %q:\n%s", banned, all)
+		}
+	}
+	if !strings.Contains(all, "rm -rf /home/web_lara_example_com/app") {
+		t.Errorf("expected a fresh-clone wipe of the app directory:\n%s", all)
+	}
+}

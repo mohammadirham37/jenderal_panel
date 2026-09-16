@@ -151,11 +151,11 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Load website information.
-	var webUser, docRoot, ownerID string
+	var webUser, docRoot, ownerID, framework string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT web_user, document_root, created_by FROM websites WHERE id = ?`,
+		`SELECT web_user, document_root, created_by, framework FROM websites WHERE id = ?`,
 		d.WebsiteID,
-	).Scan(&webUser, &docRoot, &ownerID)
+	).Scan(&webUser, &docRoot, &ownerID, &framework)
 	if err != nil {
 		s.failDeployment(ctx, deploymentID, "load website: "+err.Error(), 0)
 		return
@@ -228,17 +228,19 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		appendLog("deploy key found", nil, nil)
 	}
 
-	// The nginx root (document root) may be nested inside the project root:
-	// Laravel sites live in <home>/app with document root <home>/app/public.
-	// Git and build steps must operate on the project root.
+	// Laravel sites always live at <home>/app with the document root at
+	// <home>/app/public: cloning anywhere else nests the project inside the
+	// vhost root (the "app inside public/app" mess). Pure clone only —
+	// composer and artisan steps are run manually over SSH, not on deploy.
+	pureClone := strings.Contains(strings.ToLower(framework), "laravel")
 	projectRoot := docRoot
-	if docRoot == homeDir+"/app/public" {
+	if pureClone || docRoot == homeDir+"/app/public" {
 		projectRoot = homeDir + "/app"
 	}
 
 	// Step 1: Check if .git dir exists in the project root.
 	res, err = s.exec.RunSudo(ctx, "test", "-d", projectRoot+"/.git")
-	gitExists := err == nil && res.ExitCode == 0
+	gitExists := err == nil && res.ExitCode == 0 && !pureClone
 
 	// Step 2/3: Clone or pull (run as web_user via sudo -u).
 	if gitExists {
@@ -328,37 +330,9 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 	appendLog("git rev-parse", res, err)
 
-	// Step 5: Check if composer.json exists and run composer install.
-	res, err = s.exec.RunSudo(ctx, "test", "-f", projectRoot+"/composer.json")
-	if err == nil && res.ExitCode == 0 {
-		shellCmd := fmt.Sprintf("cd %s && composer install --no-dev --no-interaction", projectRoot)
-		res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
-		if !appendLog("composer install", res, err) {
-			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
-			return
-		}
-	}
-
-	// Step 6: Check if artisan exists and run Laravel commands.
-	res, err = s.exec.RunSudo(ctx, "test", "-f", projectRoot+"/artisan")
-	if err == nil && res.ExitCode == 0 {
-		artisanCmds := []struct {
-			label, cmd string
-		}{
-			{"artisan migrate", "php artisan migrate --force"},
-			{"artisan config:cache", "php artisan config:cache"},
-			{"artisan route:cache", "php artisan route:cache"},
-			{"artisan view:cache", "php artisan view:cache"},
-		}
-		for _, ac := range artisanCmds {
-			shellCmd := fmt.Sprintf("cd %s && %s", projectRoot, ac.cmd)
-			res, err = s.exec.RunSudo(ctx, "su", "-s", "/bin/bash", "-c", shellCmd, webUser)
-			if !appendLog(ac.label, res, err) {
-				s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
-				return
-			}
-		}
-	}
+	// Deploys are a pure clone on purpose: composer install and artisan
+	// (migrate/cache) steps are run manually over SSH so the deploy never
+	// fails on app-level tooling.
 
 	// Step 7: chown the project root (covers a nested document root) and
 	// the document root itself.
