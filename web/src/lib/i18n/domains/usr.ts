@@ -81,6 +81,18 @@ const en = {
 	'usr.failed_add_key': 'Failed to add SSH key',
 	'usr.remove_key_confirm': 'Remove key "{name}"? SSH access with this key stops immediately.',
 	'usr.failed_delete_key': 'Failed to delete SSH key',
+	'usr.reset': 'Reset Password',
+	'usr.reset_aria': 'Reset password',
+	'usr.reset_title': 'Reset Password — {name}',
+	'usr.reset_new': 'New password',
+	'usr.reset_confirm': 'Confirm new password',
+	'usr.reset_generate': 'Generate',
+	'usr.reset_hint':
+		'The new password applies to panel login and — for SSH-enabled accounts — to SSH password login.',
+	'usr.password_mismatch': 'Passwords do not match.',
+	'usr.resetting': 'Resetting…',
+	'usr.toast_reset': 'Password for "{name}" has been reset.',
+	'usr.failed_reset': 'Failed to reset password',
 
 	// ─── Alerts page ─────────────────────────────────────────────────
 	'alr.title': 'Alerts',
@@ -203,6 +215,18 @@ const id: Record<keyof typeof en, string> = {
 	'usr.failed_add_key': 'Gagal menambahkan kunci SSH',
 	'usr.remove_key_confirm': 'Hapus kunci "{name}"? Akses SSH dengan kunci ini akan langsung berhenti.',
 	'usr.failed_delete_key': 'Gagal menghapus kunci SSH',
+	'usr.reset': 'Reset Kata Sandi',
+	'usr.reset_aria': 'Reset kata sandi',
+	'usr.reset_title': 'Reset Kata Sandi — {name}',
+	'usr.reset_new': 'Kata sandi baru',
+	'usr.reset_confirm': 'Konfirmasi kata sandi baru',
+	'usr.reset_generate': 'Buat otomatis',
+	'usr.reset_hint':
+		'Kata sandi baru berlaku untuk login panel dan — untuk akun dengan SSH aktif — untuk login kata sandi SSH.',
+	'usr.password_mismatch': 'Kata sandi tidak cocok.',
+	'usr.resetting': 'Mereset…',
+	'usr.toast_reset': 'Kata sandi "{name}" berhasil direset.',
+	'usr.failed_reset': 'Gagal mereset kata sandi',
 
 	// ─── Alerts page ─────────────────────────────────────────────────
 	'alr.title': 'Peringatan',

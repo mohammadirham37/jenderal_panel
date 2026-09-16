@@ -45,6 +45,13 @@ import { language, translate } from '$lib/stores/language';
 	let newKeyMaterial = $state('');
 	let addingKey = $state(false);
 
+	// Reset password (modal)
+	let resetUser = $state<User | null>(null);
+	let resetPassword = $state('');
+	let resetConfirm = $state('');
+	let resetReveal = $state(false);
+	let resetting = $state(false);
+
 	function initials(name: string): string {
 		return name.slice(0, 2).toUpperCase();
 	}
@@ -132,6 +139,46 @@ import { language, translate } from '$lib/stores/language';
 		}
 	}
 
+	// ─── Reset password ─────────────────────────────────────────────
+
+	function startReset(u: User) {
+		resetUser = u;
+		resetPassword = '';
+		resetConfirm = '';
+		resetReveal = false;
+	}
+
+	// Unambiguous alphabet: no 0/O/1/l/I so a dictated or copied password
+	// survives transcription.
+	function generateResetPassword() {
+		const alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+		const random = crypto.getRandomValues(new Uint32Array(16));
+		resetPassword = Array.from(random, (n) => alphabet[n % alphabet.length]).join('');
+		resetConfirm = resetPassword;
+		resetReveal = true;
+	}
+
+	async function submitReset() {
+		if (!resetUser || resetting) return;
+		if (resetPassword !== resetConfirm) {
+			toast.error(translate($language, 'usr.password_mismatch'));
+			return;
+		}
+		resetting = true;
+		try {
+			await api.put(`/api/v1/users/${resetUser.id}/password`, { password: resetPassword });
+			toast.success(translate($language, 'usr.toast_reset').replace('{name}', resetUser.username));
+			resetUser = null;
+			resetPassword = '';
+			resetConfirm = '';
+			resetReveal = false;
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'usr.failed_reset'));
+		} finally {
+			resetting = false;
+		}
+	}
+
 	// ─── SSH keys ────────────────────────────────────────────────────
 
 	async function openKeys(u: User) {
@@ -192,6 +239,7 @@ import { language, translate } from '$lib/stores/language';
 		if (e.key === 'Escape') {
 			editingUser = null;
 			keysUser = null;
+			resetUser = null;
 		}
 	}}
 />
@@ -414,6 +462,12 @@ import { language, translate } from '$lib/stores/language';
 							{translate($language, 'usr.edit')}
 						</button>
 						<button
+							onclick={() => startReset(u)}
+							class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
+						>
+							{translate($language, 'usr.reset')}
+						</button>
+						<button
 							onclick={() => deleteUser(u)}
 							class="ml-auto cursor-pointer rounded-md px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10"
 						>
@@ -478,6 +532,13 @@ import { language, translate } from '$lib/stores/language';
 											class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
 										>
 											{translate($language, 'usr.edit')}
+										</button>
+										<button
+											onclick={() => startReset(u)}
+											aria-label={translate($language, 'usr.reset_aria')}
+											class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
+										>
+											{translate($language, 'usr.reset')}
 										</button>
 										<button
 											onclick={() => deleteUser(u)}
@@ -592,6 +653,93 @@ import { language, translate } from '$lib/stores/language';
 						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 					>
 						{saving ? translate($language, 'usr.saving') : translate($language, 'usr.save_changes')}
+					</button>
+				</div>
+			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- Reset Password modal -->
+{#if resetUser}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		aria-label={translate($language, 'usr.reset_aria')}
+		tabindex="-1"
+	>
+		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-4 flex items-center justify-between">
+				<h3 class="text-lg font-semibold text-white">
+					{translate($language, 'usr.reset_title').replace('{name}', resetUser.username)}
+				</h3>
+				<button
+					type="button"
+					onclick={() => (resetUser = null)}
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+					aria-label={translate($language, 'usr.close')}
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<form
+				onsubmit={(e) => {
+					e.preventDefault();
+					submitReset();
+				}}
+				class="space-y-4"
+			>
+				<div>
+					<div class="mb-1 flex items-center justify-between">
+						<label for="reset-password" class="block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'usr.reset_new')}</label>
+						<button
+							type="button"
+							onclick={generateResetPassword}
+							class="cursor-pointer text-xs font-medium text-blue-400 transition hover:text-blue-300"
+						>
+							{translate($language, 'usr.reset_generate')}
+						</button>
+					</div>
+					<input
+						id="reset-password"
+						type={resetReveal ? 'text' : 'password'}
+						bind:value={resetPassword}
+						required
+						autocomplete="new-password"
+						spellcheck="false"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+					/>
+				</div>
+				<div>
+					<label for="reset-confirm" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'usr.reset_confirm')}</label>
+					<input
+						id="reset-confirm"
+						type={resetReveal ? 'text' : 'password'}
+						bind:value={resetConfirm}
+						required
+						autocomplete="new-password"
+						spellcheck="false"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+					/>
+				</div>
+				<p class="text-xs text-gray-500">{translate($language, 'usr.reset_hint')}</p>
+				<div class="flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
+					<button
+						type="button"
+						onclick={() => (resetUser = null)}
+						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
+					>
+						{translate($language, 'usr.cancel')}
+					</button>
+					<button
+						type="submit"
+						disabled={resetting}
+						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+					>
+						{resetting ? translate($language, 'usr.resetting') : translate($language, 'usr.reset')}
 					</button>
 				</div>
 			</form>
