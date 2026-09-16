@@ -174,6 +174,31 @@ import { toast } from '$lib/stores/toast';
 	let octaneTaskId = $state('');
 	let octaneWorkersChoice = $state('4');
 	let octaneInitialized = $state(false);
+
+	// Document root editing
+	let docRootEditing = $state(false);
+	let docRootValue = $state('');
+	let docRootBusy = $state(false);
+
+	function openDocRootEdit() {
+		docRootValue = website?.document_root ?? '';
+		docRootEditing = true;
+	}
+
+	async function saveDocRoot() {
+		if (!website || docRootBusy) return;
+		docRootBusy = true;
+		try {
+			await api.put(`/api/v1/websites/${website.id}`, { document_root: docRootValue });
+			toast.success(translate($language, 'wd.docroot_saved'));
+			docRootEditing = false;
+			await loadWebsite();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.docroot_failed'));
+		} finally {
+			docRootBusy = false;
+		}
+	}
 	let canManageServices = $derived(hasPermission($permissions, 'services.manage'));
 
 	// ─── Benchmark ────────────────────────────────────────────────────
@@ -1342,8 +1367,26 @@ import { toast } from '$lib/stores/toast';
 					<!-- Info Cards -->
 					<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
-							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'wd.docroot')}</div>
-							<div class="text-sm text-gray-200 font-mono">{website.document_root}</div>
+							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1 flex items-center justify-between gap-2">
+								{translate($language, 'wd.docroot')}
+								{#if !docRootEditing}
+									<button type="button" onclick={openDocRootEdit} class="cursor-pointer text-[10px] normal-case tracking-normal text-blue-400 hover:text-blue-300">{translate($language, 'wd.docroot_edit')}</button>
+								{/if}
+							</div>
+							{#if docRootEditing}
+								<input
+									type="text"
+									bind:value={docRootValue}
+									class="w-full rounded border border-gray-600 bg-gray-900 px-2 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+								/>
+								<p class="mt-1 text-[10px] text-gray-500">{translate($language, 'wd.docroot_hint')}</p>
+								<div class="mt-2 flex gap-2">
+									<button type="button" onclick={saveDocRoot} disabled={docRootBusy} class="cursor-pointer rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50">{docRootBusy ? translate($language, 'dbm.saving') : translate($language, 'wd.docroot_save')}</button>
+									<button type="button" onclick={() => (docRootEditing = false)} class="cursor-pointer rounded border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:bg-gray-700">{translate($language, 'wd.cancel')}</button>
+								</div>
+							{:else}
+								<div class="text-sm text-gray-200 font-mono break-all">{website.document_root}</div>
+							{/if}
 						</div>
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
 							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'wd.web_user')}</div>

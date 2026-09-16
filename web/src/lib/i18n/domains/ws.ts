@@ -336,6 +336,11 @@ const en = {
 	'wd.octane.served_by': 'Served by',
 	'wd.octane.failed': 'Start failed',
 	'wd.octane.unit_logs': 'Recent unit logs (why the last start failed)',
+	'wd.docroot_edit': 'Change',
+	'wd.docroot_save': 'Save',
+	'wd.docroot_saved': 'Document root updated. The change is live immediately.',
+	'wd.docroot_failed': 'Failed to update document root',
+	'wd.docroot_hint': 'The directory must already exist inside the site home (/home/<user>/…). Octane sites keep app/public.',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -671,6 +676,11 @@ const id: Record<keyof typeof en, string> = {
 	'wd.octane.served_by': 'Dilayani oleh',
 	'wd.octane.failed': 'Start gagal',
 	'wd.octane.unit_logs': 'Log unit terakhir (alasan start gagal)',
+	'wd.docroot_edit': 'Ubah',
+	'wd.docroot_save': 'Simpan',
+	'wd.docroot_saved': 'Document root diperbarui. Perubahan langsung aktif.',
+	'wd.docroot_failed': 'Gagal memperbarui document root',
+	'wd.docroot_hint': 'Direktorinya harus sudah ada di dalam home situs (/home/<user>/…). Situs Octane tetap memakai app/public.',
 };
 
 

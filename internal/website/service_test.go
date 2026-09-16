@@ -728,3 +728,74 @@ func containsMove(moves [][2]string, want [2]string) bool {
 	}
 	return false
 }
+
+func TestUpdateDocumentRoot(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var written []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// "test -d <dir>" succeeds only for the existing directory.
+			if name == "test" && args[0] == "-d" {
+				if args[1] == "/home/web_roots_example_com/missing" {
+					return &executor.Result{ExitCode: 1}, nil
+				}
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "cp" && len(args) == 2 && strings.Contains(args[0], "jenderal_website_regen_") {
+				written = append(written, args[1])
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "roots.example.com", Template: "php", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// Pointing at a directory that does not exist is rejected before the DB
+	// or the vhost are touched.
+	err = svc.Update(context.Background(), created.ID, UpdateRequest{
+		DocumentRoot: strPtr("/home/web_roots_example_com/missing"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "directory does not exist") {
+		t.Fatalf("missing dir error = %v, want 'directory does not exist'", err)
+	}
+	if len(written) != 0 {
+		t.Fatal("vhost regenerated for a rejected update")
+	}
+
+	// A valid directory inside the site home updates the row and regenerates
+	// the vhost.
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{
+		DocumentRoot: strPtr("/home/web_roots_example_com/site"),
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	loaded, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.DocumentRoot != "/home/web_roots_example_com/site" {
+		t.Fatalf("document root = %q", loaded.DocumentRoot)
+	}
+	if len(written) == 0 {
+		t.Fatal("vhost was not regenerated after the document root change")
+	}
+
+	// Paths outside the site home are rejected.
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{
+		DocumentRoot: strPtr("/var/www/elsewhere"),
+	}); err == nil || !strings.Contains(err.Error(), "inside /home/") {
+		t.Fatalf("outside-home error = %v, want home-prefix validation", err)
+	}
+}
+
+func strPtr(v string) *string { return &v }

@@ -538,8 +538,39 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 	if req.PHPVersion != nil {
 		w.PHPVersion = *req.PHPVersion
 	}
+
+	// Document root changes are validated against the site's own home
+	// directory: absolute, cleaned, existing on disk, and never the bare
+	// home directory. Octane sites must keep the Laravel app/public layout
+	// — the Octane runtime depends on it.
+	rootChanged := false
 	if req.DocumentRoot != nil {
-		w.DocumentRoot = *req.DocumentRoot
+		if w.OctaneEnabled || NginxProfileForWebsite(w) == "laravel-octane" {
+			return model.NewValidationError("Octane sites must keep the app/public document root")
+		}
+		newRoot := filepath.Clean(strings.TrimSpace(*req.DocumentRoot))
+		home := "/home/" + w.WebUser
+		if newRoot == home || !strings.HasPrefix(newRoot, home+"/") {
+			return model.NewValidationError("document root must be a directory inside " + home)
+		}
+		if strings.Contains(newRoot, "..") {
+			return model.NewValidationError("document root must not contain '..'")
+		}
+		if result, err := s.exec.Run(ctx, "test", "-d", newRoot); err != nil || result == nil || result.ExitCode != 0 {
+			return model.NewValidationError("directory does not exist yet: " + newRoot)
+		}
+		if newRoot != w.DocumentRoot {
+			w.DocumentRoot = newRoot
+			rootChanged = true
+		}
+	}
+
+	// Regenerate the vhost from the updated state before committing, so a
+	// failed regeneration leaves the stored values untouched.
+	if rootChanged {
+		if err := s.regenerateConfig(ctx, w, ""); err != nil {
+			return fmt.Errorf("regenerate vhost: %w", err)
+		}
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
