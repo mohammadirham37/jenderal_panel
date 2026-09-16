@@ -25,6 +25,7 @@ const (
 	crsSetup         = "/usr/share/modsecurity-crs/crs-setup.conf"
 	crsRulesDir      = "/usr/share/modsecurity-crs/rules"
 	rulesFile        = "/etc/nginx/jenderal-modsecurity-rules.conf"
+	auditLog         = "/var/log/nginx/modsec_audit.log"
 	enableFile       = "/etc/nginx/conf.d/jenderal-modsecurity.conf"
 	dosFile          = "/etc/nginx/conf.d/jenderal-dosevasive.conf"
 )
@@ -147,6 +148,9 @@ func (s *Service) Install(ctx context.Context, log func(string)) error {
 	if err := s.writeRulesFile(ctx, ModeBlocking); err != nil {
 		return err
 	}
+	if err := s.prepareAuditLog(ctx); err != nil {
+		return err
+	}
 	if log != nil {
 		log("WAF installed. Enable it to protect every nginx website.")
 	}
@@ -163,6 +167,9 @@ func (s *Service) Enable(ctx context.Context) error {
 		mode = ModeDetectionOnly
 	}
 	if err := s.writeRulesFile(ctx, mode); err != nil {
+		return err
+	}
+	if err := s.prepareAuditLog(ctx); err != nil {
 		return err
 	}
 	content := "# Managed by Jenderal Panel - ModSecurity WAF\n" +
@@ -200,7 +207,10 @@ func (s *Service) SetMode(ctx context.Context, mode string) error {
 	if err := s.requireInstalled(ctx); err != nil {
 		return err
 	}
-	return s.writeRulesFile(ctx, mode)
+	if err := s.writeRulesFile(ctx, mode); err != nil {
+		return err
+	}
+	return s.prepareAuditLog(ctx)
 }
 
 func (s *Service) writeRulesFile(ctx context.Context, mode string) error {
@@ -220,10 +230,30 @@ func (s *Service) writeRulesFile(ctx context.Context, mode string) error {
 	} else {
 		b.WriteString("SecRuleEngine On\n")
 	}
+	// The stock /etc/modsecurity/modsecurity.conf (an Apache-flavored
+	// package) points SecAuditLog at /var/log/apache2, which the nginx
+	// worker cannot write to — every proxied request then fails with 500.
+	// Re-anchor the logs and temp dirs after the includes so ours win.
+	b.WriteString("# Keep ModSecurity state where the nginx worker can write.\n")
+	b.WriteString("SecAuditLog " + auditLog + "\n")
+	b.WriteString("SecTmpDir /tmp\n")
+	b.WriteString("SecDataDir /tmp\n")
 	if err := s.writeFile(ctx, rulesFile, b.String()); err != nil {
 		return fmt.Errorf("write WAF rules: %w", err)
 	}
 	return nil
+}
+
+// prepareAuditLog makes sure the audit log exists and is writable by the
+// nginx worker user before ModSecurity tries to open it.
+func (s *Service) prepareAuditLog(ctx context.Context) error {
+	if err := s.runSudoOK(ctx, "touch", auditLog); err != nil {
+		return fmt.Errorf("create modsecurity audit log: %w", err)
+	}
+	if err := s.runSudoOK(ctx, "chown", "www-data:adm", auditLog); err != nil {
+		return fmt.Errorf("chown modsecurity audit log: %w", err)
+	}
+	return s.runSudoOK(ctx, "chmod", "0660", auditLog)
 }
 
 // ConfigureDoS enables (or updates) the mod_evasive-style per-IP rate limit:

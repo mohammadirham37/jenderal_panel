@@ -136,7 +136,7 @@ func TestEnableWritesNginxIncludeAndRulesFile(t *testing.T) {
 	}
 
 	rules := fake.files[rulesFile]
-	for _, want := range []string{"Include /etc/modsecurity/modsecurity.conf", "Include /usr/share/modsecurity-crs/crs-setup.conf", "Include /usr/share/modsecurity-crs/rules/*.conf", "SecRuleEngine On"} {
+	for _, want := range []string{"Include /etc/modsecurity/modsecurity.conf", "Include /usr/share/modsecurity-crs/crs-setup.conf", "Include /usr/share/modsecurity-crs/rules/*.conf", "SecRuleEngine On", "SecAuditLog /var/log/nginx/modsec_audit.log", "SecTmpDir /tmp"} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("rules file missing %q:\n%s", want, rules)
 		}
