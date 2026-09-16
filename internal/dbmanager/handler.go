@@ -221,9 +221,19 @@ type createDBUserRequest struct {
 	Engine   string `json:"engine"`
 }
 
-// ListDBUsers returns all database users.
+// ListDBUsers returns all database users (admins) or the caller's own
+// database users (user role).
 func (h *Handler) ListDBUsers(w http.ResponseWriter, r *http.Request) {
-	users, err := h.svc.ListDBUsers(r.Context())
+	var (
+		users []model.DBUser
+		err   error
+	)
+	if auth.AdminFromContext(r.Context()) {
+		users, err = h.svc.ListDBUsers(r.Context())
+	} else {
+		user, _ := auth.UserFromContext(r.Context())
+		users, err = h.svc.ListDBUsersByOwner(r.Context(), user.ID)
+	}
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -239,13 +249,13 @@ func (h *Handler) CreateDBUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, err := h.svc.CreateDBUser(r.Context(), req.Username, req.Password, req.Engine)
+	user, _ := auth.UserFromContext(r.Context())
+	u, err := h.svc.CreateDBUser(r.Context(), req.Username, req.Password, req.Engine, user.ID)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	user, _ := auth.UserFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
 		UserID: user.ID,
 		Action: "create_db_user",
@@ -261,6 +271,11 @@ func (h *Handler) CreateDBUser(w http.ResponseWriter, r *http.Request) {
 // DropDBUser drops a database user by ID.
 func (h *Handler) DropDBUser(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+
+	if !h.canManageDBUser(r, id) {
+		httputil.HandleError(w, model.ErrForbidden)
+		return
+	}
 
 	if err := h.svc.DropDBUser(r.Context(), id); err != nil {
 		httputil.HandleError(w, err)
@@ -288,6 +303,11 @@ type resetPasswordRequest struct {
 // ResetPassword resets the password for a database user.
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+
+	if !h.canManageDBUser(r, id) {
+		httputil.HandleError(w, model.ErrForbidden)
+		return
+	}
 
 	var req resetPasswordRequest
 	if err := httputil.DecodeJSON(r, &req); err != nil {
@@ -361,6 +381,17 @@ func (h *Handler) canManageDatabase(r *http.Request, databaseID string) bool {
 	user, _ := auth.UserFromContext(r.Context())
 	db, err := h.svc.GetDatabase(r.Context(), databaseID)
 	return err == nil && auth.CanManageResource(false, user.ID, db.CreatedBy)
+}
+
+// canManageDBUser reports whether the caller may act on the database user:
+// admins on any user, users only on database users they created.
+func (h *Handler) canManageDBUser(r *http.Request, dbUserID string) bool {
+	if auth.AdminFromContext(r.Context()) {
+		return true
+	}
+	user, _ := auth.UserFromContext(r.Context())
+	dbUser, err := h.svc.GetDBUser(r.Context(), dbUserID)
+	return err == nil && auth.CanManageResource(false, user.ID, dbUser.CreatedBy)
 }
 
 // ExportDatabase handles GET /databases/{id}/export?format=sql|sql.gz and

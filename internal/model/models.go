@@ -288,6 +288,7 @@ type DBUser struct {
 	Username   string    `json:"username"`
 	Engine     string    `json:"engine"`
 	Privileges string    `json:"privileges"`
+	CreatedBy  string    `json:"created_by"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

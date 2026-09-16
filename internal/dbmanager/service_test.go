@@ -88,6 +88,57 @@ func TestCreateDatabase(t *testing.T) {
 	}
 }
 
+func TestDBUserOwnershipScoping(t *testing.T) {
+	mock := newMockExec()
+	svc := newTestService(t, mock)
+	ctx := context.Background()
+
+	owned, err := svc.CreateDBUser(ctx, "alice_user", "secret", "mysql", "panel-user-1")
+	if err != nil {
+		t.Fatalf("CreateDBUser: %v", err)
+	}
+	if owned.CreatedBy != "panel-user-1" {
+		t.Fatalf("created_by: want panel-user-1, got %q", owned.CreatedBy)
+	}
+
+	adminUser, err := svc.CreateDBUser(ctx, "root_user", "secret", "mysql", "")
+	if err != nil {
+		t.Fatalf("CreateDBUser (admin): %v", err)
+	}
+
+	got, err := svc.GetDBUser(ctx, owned.ID)
+	if err != nil {
+		t.Fatalf("GetDBUser: %v", err)
+	}
+	if got.CreatedBy != "panel-user-1" {
+		t.Errorf("GetDBUser created_by: want panel-user-1, got %q", got.CreatedBy)
+	}
+
+	own, err := svc.ListDBUsersByOwner(ctx, "panel-user-1")
+	if err != nil {
+		t.Fatalf("ListDBUsersByOwner: %v", err)
+	}
+	if len(own) != 1 || own[0].ID != owned.ID {
+		t.Fatalf("ListDBUsersByOwner = %+v, want only %s", own, owned.ID)
+	}
+
+	all, err := svc.ListDBUsers(ctx)
+	if err != nil {
+		t.Fatalf("ListDBUsers: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListDBUsers: want 2 users, got %d", len(all))
+	}
+
+	if _, err := svc.GetDBUser(ctx, "missing-id"); err != model.ErrNotFound {
+		t.Fatalf("GetDBUser(missing) = %v, want ErrNotFound", err)
+	}
+
+	if err := svc.DropDBUser(ctx, adminUser.ID); err != nil {
+		t.Fatalf("DropDBUser: %v", err)
+	}
+}
+
 func TestCreateDatabase_Validation(t *testing.T) {
 	mock := newMockExec()
 	svc := newTestService(t, mock)
@@ -181,7 +232,7 @@ func TestCreateDBUser(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	u, err := svc.CreateDBUser(ctx, "testuser", "secret123", "mysql")
+	u, err := svc.CreateDBUser(ctx, "testuser", "secret123", "mysql", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDBUser: %v", err)
 	}
@@ -217,17 +268,17 @@ func TestCreateDBUser_Validation(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	_, err := svc.CreateDBUser(ctx, "", "pass", "mysql")
+	_, err := svc.CreateDBUser(ctx, "", "pass", "mysql", "admin-user")
 	if err == nil {
 		t.Fatal("expected validation error for empty username")
 	}
 
-	_, err = svc.CreateDBUser(ctx, "user", "", "mysql")
+	_, err = svc.CreateDBUser(ctx, "user", "", "mysql", "admin-user")
 	if err == nil {
 		t.Fatal("expected validation error for empty password")
 	}
 
-	_, err = svc.CreateDBUser(ctx, "user", "pass", "")
+	_, err = svc.CreateDBUser(ctx, "user", "pass", "", "admin-user")
 	if err == nil {
 		t.Fatal("expected validation error for empty engine")
 	}
@@ -238,7 +289,7 @@ func TestDropDBUser(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	u, err := svc.CreateDBUser(ctx, "dropme", "pass123", "postgresql")
+	u, err := svc.CreateDBUser(ctx, "dropme", "pass123", "postgresql", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDBUser: %v", err)
 	}
@@ -272,7 +323,7 @@ func TestResetPassword(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	u, err := svc.CreateDBUser(ctx, "resetme", "oldpass", "mysql")
+	u, err := svc.CreateDBUser(ctx, "resetme", "oldpass", "mysql", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDBUser: %v", err)
 	}
@@ -298,7 +349,7 @@ func TestGrantPrivileges(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	u, err := svc.CreateDBUser(ctx, "grantme", "pass", "mysql")
+	u, err := svc.CreateDBUser(ctx, "grantme", "pass", "mysql", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDBUser: %v", err)
 	}
@@ -318,7 +369,7 @@ func TestGrantPrivileges_EngineMismatch(t *testing.T) {
 	svc := newTestService(t, mock)
 	ctx := context.Background()
 
-	u, err := svc.CreateDBUser(ctx, "mysqluser", "pass", "mysql")
+	u, err := svc.CreateDBUser(ctx, "mysqluser", "pass", "mysql", "admin-user")
 	if err != nil {
 		t.Fatalf("CreateDBUser: %v", err)
 	}

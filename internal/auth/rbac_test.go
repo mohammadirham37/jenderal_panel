@@ -80,6 +80,34 @@ func TestUserRoleLacksServerReboot(t *testing.T) {
 	}
 }
 
+func TestUserRoleHasDatabaseUsersPermission(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, testConfig())
+	rbac := NewRBAC(db)
+	ctx := context.Background()
+
+	if err := rbac.Seed(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	user, err := svc.CreateUser(ctx, "dbowner", "dbowner@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	if err := rbac.AssignRole(ctx, user.ID, "user"); err != nil {
+		t.Fatalf("assign role: %v", err)
+	}
+
+	has, err := rbac.HasPermission(ctx, user.ID, "databases.users")
+	if err != nil {
+		t.Fatalf("has permission: %v", err)
+	}
+	if !has {
+		t.Error("expected user role to have databases.users permission")
+	}
+}
+
 func TestGetUserPermissions(t *testing.T) {
 	db := setupTestDB(t)
 	svc := NewService(db, testConfig())

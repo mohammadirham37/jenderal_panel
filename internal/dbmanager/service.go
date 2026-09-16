@@ -227,7 +227,7 @@ func (s *Service) GetDatabase(ctx context.Context, id string) (model.ManagedData
 }
 
 // CreateDBUser creates a user on the engine and records it in the panel DB.
-func (s *Service) CreateDBUser(ctx context.Context, username, password, engineName string) (model.DBUser, error) {
+func (s *Service) CreateDBUser(ctx context.Context, username, password, engineName, createdBy string) (model.DBUser, error) {
 	if username == "" {
 		return model.DBUser{}, model.NewValidationError("username is required")
 	}
@@ -251,9 +251,9 @@ func (s *Service) CreateDBUser(ctx context.Context, username, password, engineNa
 	id := ulid.Make().String()
 
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO db_users (id, username, engine, privileges, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id, username, engineName, "[]", now, now,
+		`INSERT INTO db_users (id, username, engine, privileges, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, username, engineName, "[]", createdBy, now, now,
 	)
 	if err != nil {
 		return model.DBUser{}, fmt.Errorf("insert db user: %w", err)
@@ -264,6 +264,7 @@ func (s *Service) CreateDBUser(ctx context.Context, username, password, engineNa
 		Username:   username,
 		Engine:     engineName,
 		Privileges: "[]",
+		CreatedBy:  createdBy,
 	}
 	u.CreatedAt, _ = time.Parse(time.RFC3339, now)
 	u.UpdatedAt = u.CreatedAt
@@ -303,9 +304,39 @@ func (s *Service) DropDBUser(ctx context.Context, id string) error {
 
 // ListDBUsers returns all database users from the panel DB.
 func (s *Service) ListDBUsers(ctx context.Context) ([]model.DBUser, error) {
+	return s.listDBUsersWhere(ctx, "", nil)
+}
+
+// ListDBUsersByOwner returns the database users created by the given panel user.
+func (s *Service) ListDBUsersByOwner(ctx context.Context, userID string) ([]model.DBUser, error) {
+	return s.listDBUsersWhere(ctx, " WHERE created_by = ?", []any{userID})
+}
+
+// GetDBUser loads one database user record.
+func (s *Service) GetDBUser(ctx context.Context, id string) (model.DBUser, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, username, engine, privileges, created_by, created_at, updated_at
+		 FROM db_users WHERE id = ?`, id)
+	var u model.DBUser
+	var privs sql.NullString
+	var createdStr, updatedStr string
+	if err := row.Scan(&u.ID, &u.Username, &u.Engine, &privs, &u.CreatedBy, &createdStr, &updatedStr); err != nil {
+		if err == sql.ErrNoRows {
+			return model.DBUser{}, model.ErrNotFound
+		}
+		return model.DBUser{}, fmt.Errorf("get db user: %w", err)
+	}
+	u.Privileges = privs.String
+	u.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+	u.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
+	return u, nil
+}
+
+func (s *Service) listDBUsersWhere(ctx context.Context, where string, args []any) ([]model.DBUser, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, username, engine, privileges, created_at, updated_at
-		 FROM db_users ORDER BY created_at DESC`,
+		`SELECT id, username, engine, privileges, created_by, created_at, updated_at
+		 FROM db_users`+where+` ORDER BY created_at DESC`,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query db users: %w", err)
@@ -317,7 +348,7 @@ func (s *Service) ListDBUsers(ctx context.Context) ([]model.DBUser, error) {
 		var u model.DBUser
 		var privs sql.NullString
 		var createdStr, updatedStr string
-		if err := rows.Scan(&u.ID, &u.Username, &u.Engine, &privs, &createdStr, &updatedStr); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Engine, &privs, &u.CreatedBy, &createdStr, &updatedStr); err != nil {
 			return nil, fmt.Errorf("scan db user: %w", err)
 		}
 		u.Privileges = privs.String

@@ -1,0 +1,1 @@
+ALTER TABLE db_users ADD COLUMN created_by TEXT NOT NULL DEFAULT '';
