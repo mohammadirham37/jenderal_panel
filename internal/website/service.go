@@ -671,7 +671,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 // its own certificate. The original symlink was moved aside by
 // moveWebsiteConfigs; Enable deletes this file and moves the symlink back.
 func (s *Service) writeSuspendedConfig(ctx context.Context, w model.Website) error {
-	if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", "/etc/jenderal/suspend"); err != nil {
+	// /var/www is world-traversable, so the Nginx worker (www-data) can
+	// always read the page; /etc/jenderal may not be.
+	if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", "/var/www/jenderal-suspend"); err != nil {
 		return fmt.Errorf("create suspend page directory: %w", err)
 	}
 	pageTmp, err := os.CreateTemp("", "jenderal_suspend_page_*.html")
@@ -692,7 +694,7 @@ func (s *Service) writeSuspendedConfig(ctx context.Context, w model.Website) err
 	} else if result.ExitCode != 0 {
 		return fmt.Errorf("write suspend page: %s", strings.TrimSpace(result.Stderr))
 	}
-	if _, err := s.exec.RunSudo(ctx, "chmod", "0644", "/etc/jenderal/suspend/suspended.html"); err != nil {
+	if _, err := s.exec.RunSudo(ctx, "chmod", "0644", "/var/www/jenderal-suspend/suspended.html"); err != nil {
 		return fmt.Errorf("chmod suspend page: %w", err)
 	}
 
