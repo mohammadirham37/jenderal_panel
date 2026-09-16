@@ -637,6 +637,22 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/databases/manage/{token}/empty-table", dbHandler.ManageEmptyTable)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/manage/{token}/restore", dbHandler.ManageRestore)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/objects", dbHandler.ManageObjects)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/definition", dbHandler.ManageObjectDefinition)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/insert-row", dbHandler.ManageInsertRow)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/update-row", dbHandler.ManageUpdateRow)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/delete-row", dbHandler.ManageDeleteRow)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/add-column", dbHandler.ManageAddColumn)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/drop-column", dbHandler.ManageDropColumn)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/manage/{token}/modify-column", dbHandler.ManageModifyColumn)
 
 			// Docker
 			r.With(auth.RequirePermission(deps.RBAC, "docker.view")).

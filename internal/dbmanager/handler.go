@@ -653,3 +653,155 @@ func (h *Handler) ManageRestore(w http.ResponseWriter, r *http.Request) {
 	})
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// ManageObjects handles GET /databases/manage/{token}/objects?database=.
+func (h *Handler) ManageObjects(w http.ResponseWriter, r *http.Request) {
+	objects, err := h.svc.ManageObjects(r.Context(), manageTokenFromRequest(r), r.URL.Query().Get("database"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, objects)
+}
+
+// ManageObjectDefinition handles GET /databases/manage/{token}/definition.
+func (h *Handler) ManageObjectDefinition(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	definition, err := h.svc.ManageObjectDefinition(r.Context(), manageTokenFromRequest(r),
+		query.Get("database"), query.Get("kind"), query.Get("name"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]string{"definition": definition})
+}
+
+// rowValuesRequest carries column names plus values (null = SQL NULL).
+type rowValuesRequest struct {
+	Columns []string  `json:"columns"`
+	Values  []*string `json:"values"`
+}
+
+func (req rowValuesRequest) toRowValues() ManagedRowValues {
+	return ManagedRowValues{Columns: req.Columns, Values: req.Values}
+}
+
+// ManageInsertRow handles POST /databases/manage/{token}/insert-row.
+func (h *Handler) ManageInsertRow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string           `json:"database"`
+		Table    string           `json:"table"`
+		Columns  []string         `json:"columns"`
+		Values   []*string        `json:"values"`
+		Row      rowValuesRequest `json:"-"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ManageInsertRow(r.Context(), manageTokenFromRequest(r), req.Database, req.Table,
+		ManagedRowValues{Columns: req.Columns, Values: req.Values})
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
+// ManageUpdateRow handles POST /databases/manage/{token}/update-row.
+func (h *Handler) ManageUpdateRow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string           `json:"database"`
+		Table    string           `json:"table"`
+		Keys     rowValuesRequest `json:"keys"`
+		Set      rowValuesRequest `json:"set"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ManageUpdateRow(r.Context(), manageTokenFromRequest(r), req.Database, req.Table,
+		req.Keys.toRowValues(), req.Set.toRowValues())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
+// ManageDeleteRow handles POST /databases/manage/{token}/delete-row.
+func (h *Handler) ManageDeleteRow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string           `json:"database"`
+		Table    string           `json:"table"`
+		Keys     rowValuesRequest `json:"keys"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ManageDeleteRow(r.Context(), manageTokenFromRequest(r), req.Database, req.Table, req.Keys.toRowValues())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
+// ManageAddColumn handles POST /databases/manage/{token}/add-column.
+func (h *Handler) ManageAddColumn(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string                      `json:"database"`
+		Table    string                      `json:"table"`
+		Spec     ManagedColumnSpec `json:"spec"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ManageAddColumn(r.Context(), manageTokenFromRequest(r), req.Database, req.Table, req.Spec)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
+// ManageDropColumn handles POST /databases/manage/{token}/drop-column.
+func (h *Handler) ManageDropColumn(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string `json:"database"`
+		Table    string `json:"table"`
+		Column   string `json:"column"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ManageDropColumn(r.Context(), manageTokenFromRequest(r), req.Database, req.Table, req.Column)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}
+
+// ManageModifyColumn handles POST /databases/manage/{token}/modify-column.
+func (h *Handler) ManageModifyColumn(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Database string                      `json:"database"`
+		Table    string                      `json:"table"`
+		Original string                      `json:"original"`
+		Spec     ManagedColumnSpec `json:"spec"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ManageModifyColumn(r.Context(), manageTokenFromRequest(r), req.Database, req.Table, req.Original, req.Spec)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, result)
+}

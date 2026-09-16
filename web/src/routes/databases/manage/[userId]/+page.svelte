@@ -46,6 +46,21 @@
 
 	let token = $state(sessionStorage.getItem(tokenKey) || '');
 	let unlockedUser = $state<{ username: string; engine: string } | null>(null);
+	function restoreStoredUser(): { username: string; engine: string } | null {
+		try {
+			const raw = sessionStorage.getItem(tokenKey + '-user');
+			return raw && token ? JSON.parse(raw) : null;
+		} catch {
+			return null;
+		}
+	}
+	unlockedUser = restoreStoredUser();
+	// A stored token survives refresh — reload the workspace instead of
+	// forcing the operator back to the unlock gate.
+	$effect(() => {
+		if (token) loadDatabases().catch((err) => toast(err.message, true));
+		if (token) loadObjects().catch(() => undefined);
+	});
 	let sessionError = $state('');
 
 	// Unlock form
@@ -84,6 +99,28 @@
 	let sqlRunning = $state(false);
 	let sqlResult = $state<QueryResult | null>(null);
 	let sqlError = $state('');
+
+	// Non-table objects (views, routines, triggers)
+	interface DbObjects {
+		views: string[];
+		procedures: string[];
+		functions: string[];
+		triggers: string[];
+	}
+	let objects = $state<DbObjects | null>(null);
+	let objectDefinition = $state<{ kind: string; name: string; text: string } | null>(null);
+	let objectBusy = $state('');
+
+	// Row editing
+	let editingRow = $state<{ mode: 'insert' | 'edit'; columns: string[]; values: (string | null)[] } | null>(null);
+	let rowSaving = $state(false);
+	let deletingRowIndex = $state(-1);
+
+	// Column management
+	let showColumnForm = $state(false);
+	let columnForm = $state<{ mode: 'add' | 'modify'; original: string; name: string; type: string; nullable: boolean; hasDefault: boolean; default: string } | null>(null);
+	let columnBusy = $state('');
+	let dropColumnTarget = $state('');
 
 	// Modals + feedback
 	let confirmAction = $state<'empty' | 'drop' | null>(null);
@@ -146,6 +183,7 @@
 			}).catch(() => undefined);
 		}
 		sessionStorage.removeItem(tokenKey);
+		sessionStorage.removeItem(tokenKey + '-user');
 		token = '';
 		unlockedUser = null;
 		databases = [];
@@ -172,8 +210,10 @@
 			token = json.data.token;
 			unlockedUser = { username: json.data.username, engine: json.data.engine };
 			sessionStorage.setItem(tokenKey, token);
+			sessionStorage.setItem(tokenKey + '-user', JSON.stringify({ username: json.data.username, engine: json.data.engine }));
 			unlockPassword = '';
 			await loadDatabases();
+			await loadObjects().catch(() => undefined);
 		} catch (err) {
 			unlockError = err instanceof Error ? err.message : translate($language, 'dbm.unlock_failed');
 		} finally {
@@ -194,12 +234,23 @@
 		tables = await mapi<ManagedTable[]>(`/tables?database=${encodeURIComponent(selectedDb)}`);
 	}
 
+	async function loadObjects() {
+		if (!selectedDb) return;
+		try {
+			objects = await mapi<DbObjects>(`/objects?database=${encodeURIComponent(selectedDb)}`);
+		} catch (err) {
+			toast(err instanceof Error ? err.message : String(err), true);
+		}
+	}
+
 	function pickDatabase(name: string) {
 		selectedDb = name;
 		selectedTable = '';
 		viewMode = 'tables';
 		tables = [];
+		objects = null;
 		loadTables().catch((err) => toast(err.message, true));
+		loadObjects().catch((err) => toast(err.message, true));
 	}
 
 	function pickTable(name: string) {
@@ -379,10 +430,194 @@
 		URL.revokeObjectURL(a.href);
 	}
 
+	async function viewObjectDefinition(kind: string, name: string) {
+		objectBusy = kind + ':' + name;
+		try {
+			const res = await mapi<{ definition: string }>(
+				`/definition?database=${encodeURIComponent(selectedDb)}&kind=${encodeURIComponent(kind)}&name=${encodeURIComponent(name)}`
+			);
+			objectDefinition = { kind, name, text: res.definition || '(empty)' };
+		} catch (err) {
+			toast(err instanceof Error ? err.message : String(err), true);
+		} finally {
+			objectBusy = '';
+		}
+	}
+
+	function primaryKeyColumns(): string[] {
+		return structure.filter((c) => c.key === 'PRI').map((c) => c.name);
+	}
+
+	function rowKeyValue(row: (string | null)[] | null, col: string): string | null {
+		const idx = browse?.columns.indexOf(col) ?? -1;
+		return idx === -1 || row === null ? null : (row[idx] ?? null);
+	}
+
+	function openInsertRow() {
+		if (!browse) return;
+		editingRow = { mode: 'insert', columns: browse.columns, values: browse.columns.map(() => null) };
+	}
+
+	function openEditRow(row: (string | null)[]) {
+		if (!browse) return;
+		editingRow = { mode: 'edit', columns: browse.columns, values: [...row] };
+	}
+
+	function setEditingValue(idx: number, value: string) {
+		const row = editingRow;
+		if (!row) return;
+		row.values[idx] = value === '' ? null : value;
+		editingRow = { ...row };
+	}
+
+	function setEditingNull(idx: number, isNull: boolean) {
+		const row = editingRow;
+		if (!row) return;
+		row.values[idx] = isNull ? null : row.values[idx] ?? '';
+		editingRow = { ...row };
+	}
+
+	async function saveEditingRow() {
+		const editing = editingRow;
+		if (!editing || !browse || rowSaving) return;
+		rowSaving = true;
+		try {
+			if (editing.mode === 'insert') {
+				await mapi('/insert-row', {
+					method: 'POST',
+					body: { database: selectedDb, table: selectedTable, columns: editing.columns, values: editing.values }
+				});
+				toast(translate($language, 'dbm.rowInserted'));
+			} else {
+				const pks = primaryKeyColumns();
+				const keys = pks.map((col) => ({ col, val: rowKeyValue(editing.values, col) }));
+				const set = editing.columns
+					.map((col, i) => ({ col, val: editing.values[i] }))
+					.filter((entry) => !pks.includes(entry.col));
+				await mapi('/update-row', {
+					method: 'POST',
+					body: {
+						database: selectedDb,
+						table: selectedTable,
+						keys: { columns: keys.map((k) => k.col), values: keys.map((k) => k.val) },
+						set: { columns: set.map((s) => s.col), values: set.map((s) => s.val) }
+					}
+				});
+				toast(translate($language, 'dbm.rowSaved'));
+			}
+			editingRow = null;
+			await loadBrowse().catch((err) => toast(err.message, true));
+		} catch (err) {
+			toast(err instanceof Error ? err.message : String(err), true);
+		} finally {
+			rowSaving = false;
+		}
+	}
+
+	let pendingDeleteRow = $state<(string | null)[] | null>(null);
+
+	function askDeleteRow(row: (string | null)[]) {
+		pendingDeleteRow = row;
+	}
+
+	async function confirmDeleteRow() {
+		if (!pendingDeleteRow || !browse) return;
+		rowSaving = true;
+		try {
+			const pks = primaryKeyColumns();
+			const keys = pks.map((col) => ({ col, val: rowKeyValue(pendingDeleteRow, col) }));
+			await mapi('/delete-row', {
+				method: 'POST',
+				body: { database: selectedDb, table: selectedTable, keys: { columns: keys.map((k) => k.col), values: keys.map((k) => k.val) } }
+			});
+			toast(translate($language, 'dbm.rowDeleted'));
+			pendingDeleteRow = null;
+			await loadBrowse().catch((err) => toast(err.message, true));
+		} catch (err) {
+			toast(err instanceof Error ? err.message : String(err), true);
+		} finally {
+			rowSaving = false;
+		}
+	}
+
+	// ── Column management ───────────────────────────────────────────
+	function openAddColumn() {
+		columnForm = { mode: 'add', original: '', name: '', type: 'varchar(255)', nullable: true, hasDefault: false, default: '' };
+	}
+
+	function openModifyColumn(name: string, col: ManagedColumn) {
+		columnForm = { mode: 'modify', original: name, name, type: col.type, nullable: col.nullable, hasDefault: !!col.default, default: col.default || '' };
+	}
+
+	async function saveColumn() {
+		if (!columnForm || columnBusy) return;
+		columnBusy = 'save';
+		try {
+			if (columnForm.mode === 'add') {
+				await mapi('/add-column', {
+					method: 'POST',
+					body: {
+						database: selectedDb,
+						table: selectedTable,
+						spec: {
+							name: columnForm.name,
+							type: columnForm.type,
+							nullable: columnForm.nullable,
+							has_default: columnForm.hasDefault,
+							default: columnForm.hasDefault ? columnForm.default : null
+						}
+					}
+				});
+				toast(translate($language, 'dbm.columnAdded'));
+			} else {
+				await mapi('/modify-column', {
+					method: 'POST',
+					body: {
+						database: selectedDb,
+						table: selectedTable,
+						original: columnForm.original,
+						spec: {
+							name: columnForm.name,
+							type: columnForm.type,
+							nullable: columnForm.nullable,
+							has_default: columnForm.hasDefault,
+							default: columnForm.hasDefault ? columnForm.default : null
+						}
+					}
+				});
+				toast(translate($language, 'dbm.columnSaved'));
+			}
+			columnForm = null;
+			await loadStructure().catch((err) => toast(err.message, true));
+		} catch (err) {
+			toast(err instanceof Error ? err.message : String(err), true);
+		} finally {
+			columnBusy = '';
+		}
+	}
+
+	async function dropColumn(name: string) {
+		if (columnBusy) return;
+		columnBusy = 'drop';
+		try {
+			await mapi('/drop-column', { method: 'POST', body: { database: selectedDb, table: selectedTable, column: name } });
+			toast(translate($language, 'dbm.columnDropped').replace('{name}', name));
+			dropColumnTarget = '';
+			await loadStructure().catch((err) => toast(err.message, true));
+		} catch (err) {
+			toast(err instanceof Error ? err.message : String(err), true);
+		} finally {
+			columnBusy = '';
+		}
+	}
+
 	let filteredTables = $derived.by(() => {
 		const q = tableFilter.trim().toLowerCase();
 		return q ? tables.filter((t) => t.name.toLowerCase().includes(q)) : tables;
 	});
+
+	let pkColumns = $derived(structure.filter((c) => c.key === 'PRI').map((c) => c.name));
+	let rowActionsVisible = $derived(pkColumns.length > 0 && !objects?.views.includes(selectedTable));
 
 	let tableSearchDebounce: ReturnType<typeof setTimeout> | undefined;
 	function onSearchInput() {
@@ -397,7 +632,7 @@
 
 <svelte:window
 	onkeydown={(e) => {
-		if (e.key === 'Escape' && confirmAction) confirmAction = null;
+		if (e.key === 'Escape') { if (confirmAction) confirmAction = null; if (editingRow) editingRow = null; if (columnForm) columnForm = null; if (objectDefinition) objectDefinition = null; if (pendingDeleteRow) pendingDeleteRow = null; }
 	}}
 />
 
@@ -556,6 +791,77 @@
 				{:else}
 					<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? translate($language, 'dbm.no_tables_match') : translate($language, 'dbm.no_tables')}</p>
 				{/each}
+
+				{#if objects}
+					{#if objects.views.length}
+						<div class="mt-2.5 border-t border-white/5 pt-2.5">
+							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.views')}</span>
+							{#each objects.views as v (v)}
+								<button type="button" onclick={() => pickTable(v)} class="mb-0.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition {selectedTable === v && viewMode === 'tables' ? 'bg-blue-500/15 text-blue-100' : 'text-gray-300 hover:bg-white/5'}">
+									<span class="min-w-0 truncate font-mono text-xs">{v}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+					{#if objects.procedures.length || objects.functions.length || objects.triggers.length}
+						<div class="mt-2.5 border-t border-white/5 pt-2.5">
+							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.routines')}</span>
+							{#each objects.procedures as p (p)}
+								<button type="button" onclick={() => viewObjectDefinition('procedure', p)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
+									<span class="min-w-0 truncate font-mono text-xs">{p}</span>
+									<span class="shrink-0 text-[9px] uppercase text-gray-500">proc</span>
+								</button>
+							{/each}
+							{#each objects.functions as fn (fn)}
+								<button type="button" onclick={() => viewObjectDefinition('function', fn)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
+									<span class="min-w-0 truncate font-mono text-xs">{fn}</span>
+									<span class="shrink-0 text-[9px] uppercase text-gray-500">fn</span>
+								</button>
+							{/each}
+							{#each objects.triggers as tg (tg)}
+								<button type="button" onclick={() => viewObjectDefinition('trigger', tg)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
+									<span class="min-w-0 truncate font-mono text-xs">{tg}</span>
+									<span class="shrink-0 text-[9px] uppercase text-gray-500">trg</span>
+								</button>
+							{/each}
+				{#if objects}
+					{#if objects.views.length}
+						<div class="mt-2.5 border-t border-white/5 pt-2.5">
+							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.views')}</span>
+							{#each objects.views as v (v)}
+								<button type="button" onclick={() => pickTable(v)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition {selectedTable === v && viewMode === 'tables' ? 'bg-blue-500/15 text-blue-100' : 'text-gray-300 hover:bg-white/5'}">
+									<span class="min-w-0 truncate font-mono text-xs">{v}</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+					{#if objects.procedures.length || objects.functions.length || objects.triggers.length}
+						<div class="mt-2.5 border-t border-white/5 pt-2.5">
+							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.routines')}</span>
+							{#each objects.procedures as p (p)}
+								<button type="button" onclick={() => viewObjectDefinition('procedure', p)} class="mb-0.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
+									<span class="min-w-0 truncate font-mono text-xs">{p}</span>
+									<span class="shrink-0 text-[9px] uppercase text-gray-500">proc</span>
+								</button>
+							{/each}
+							{#each objects.functions as fn (fn)}
+								<button type="button" onclick={() => viewObjectDefinition('function', fn)} class="mb-0.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
+									<span class="min-w-0 truncate font-mono text-xs">{fn}</span>
+									<span class="shrink-0 text-[9px] uppercase text-gray-500">fn</span>
+								</button>
+							{/each}
+							{#each objects.triggers as tg (tg)}
+								<button type="button" onclick={() => viewObjectDefinition('trigger', tg)} class="mb-0.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
+									<span class="min-w-0 truncate font-mono text-xs">{tg}</span>
+									<span class="shrink-0 text-[9px] uppercase text-gray-500">trg</span>
+								</button>
+							{/each}
+						</div>
+					{/if}
+				{/if}
+						</div>
+					{/if}
+				{/if}
 			</nav>
 		</aside>
 
@@ -603,6 +909,11 @@
 					{:else if sqlResult}
 						{#if sqlResult.is_select}
 							<div class="overflow-x-auto rounded-xl border border-gray-700">
+								<div class="mb-3 flex items-center justify-between gap-2">
+									<p class="text-xs text-gray-500">{translate($language, 'dbm.column_hint')}</p>
+									<button type="button" onclick={openAddColumn} class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700">{translate($language, 'dbm.add_column')}</button>
+								</div>
+
 								<table class="w-full text-xs">
 									<thead>
 										<tr class="border-b border-gray-700 bg-gray-900/80">
@@ -699,6 +1010,22 @@
 						</select>
 						<button
 							type="button"
+							onclick={openInsertRow}
+							disabled={!browse}
+							class="cursor-pointer rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-blue-700 disabled:opacity-40"
+						>
+							{translate($language, 'dbm.insert_row')}
+						</button>
+									<button
+										type="button"
+										onclick={openInsertRow}
+										disabled={!browse}
+										class="cursor-pointer rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-blue-700 disabled:opacity-40"
+									>
+										{translate($language, 'dbm.insert_row')}
+									</button>
+						<button
+							type="button"
 							onclick={exportCsv}
 							disabled={!browse || browse.rows.length === 0}
 							class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
@@ -732,6 +1059,7 @@
 												</button>
 											</th>
 										{/each}
+												{#if rowActionsVisible}<th class="px-3 py-2 text-right font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.actions')}</th>{/if}
 									</tr>
 								</thead>
 								<tbody class="divide-y divide-gray-700/40">
@@ -742,9 +1070,15 @@
 													{#if cell === null}<span class="italic text-gray-600">NULL</span>{:else}{cell}{/if}
 												</td>
 											{/each}
+											{#if rowActionsVisible}
+												<td class="whitespace-nowrap px-3 py-1.5 text-right">
+													<button type="button" onclick={() => openEditRow(row)} class="cursor-pointer rounded border border-blue-600/50 bg-blue-600/10 px-2 py-0.5 text-[11px] text-blue-300 transition hover:bg-blue-600/20">{translate($language, 'dbm.edit')}</button>
+													<button type="button" onclick={() => askDeleteRow(row)} class="ml-1 cursor-pointer rounded border border-red-600/50 bg-red-600/10 px-2 py-0.5 text-[11px] text-red-300 transition hover:bg-red-600/20">{translate($language, 'dbm.delete')}</button>
+												</td>
+											{/if}
 										</tr>
 									{:else}
-										<tr><td class="px-4 py-8 text-center text-gray-500" colspan="{browse.columns.length || 1}">
+										<tr><td class="px-4 py-8 text-center text-gray-500" colspan="{browse.columns.length + (rowActionsVisible ? 1 : 0) || 1}">
 											{browseSearch ? translate($language, 'dbm.no_rows_match').replace('{query}', browseSearch) : translate($language, 'dbm.table_empty')}
 										</td></tr>
 									{/each}
@@ -786,6 +1120,7 @@
 										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_null')}</th>
 										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_key')}</th>
 										<th class="px-3 py-2 text-left font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_default')}</th>
+									<th class="px-3 py-2 text-right font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'dbm.actions')}</th>
 									</tr>
 								</thead>
 								<tbody class="divide-y divide-gray-700/40">
@@ -800,6 +1135,15 @@
 												{/if}
 											</td>
 											<td class="px-3 py-2 font-mono text-gray-400">{col.default || '—'}</td>
+									<td class="px-3 py-2 text-right whitespace-nowrap">
+										<button type="button" onclick={() => openModifyColumn(col.name, col)} class="cursor-pointer rounded border border-gray-600 bg-gray-700 px-2 py-0.5 text-[10px] text-gray-200 transition hover:bg-gray-600">{translate($language, 'dbm.modify')}</button>
+										{#if dropColumnTarget === col.name}
+											<button type="button" onclick={() => dropColumn(col.name)} disabled={columnBusy !== ''} class="ml-1 cursor-pointer rounded bg-red-600 px-2 py-0.5 text-[10px] font-medium text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'dbm.confirm_drop')}</button>
+											<button type="button" onclick={() => (dropColumnTarget = '')} class="ml-1 cursor-pointer text-[10px] text-gray-400 hover:text-gray-200">{translate($language, 'wl.cancel')}</button>
+										{:else}
+											<button type="button" onclick={() => (dropColumnTarget = col.name)} class="ml-1 cursor-pointer rounded border border-red-600/50 bg-red-600/10 px-2 py-0.5 text-[10px] text-red-300 transition hover:bg-red-600/20">{translate($language, 'dbm.drop')}</button>
+										{/if}
+									</td>
 										</tr>
 									{/each}
 								</tbody>
@@ -877,4 +1221,103 @@
 			</div>
 		</div>
 	{/if}
+{/if}
+
+{#if editingRow}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') editingRow = null; }}>
+		<div class="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-xl border border-gray-700 bg-gray-800 p-6">
+			<div class="mb-4 flex items-center justify-between gap-3">
+				<h3 class="text-lg font-semibold text-white">{editingRow.mode === 'insert' ? translate($language, 'dbm.insert_row') : translate($language, 'dbm.edit_row')} — <span class="font-mono">{selectedTable}</span></h3>
+				<button type="button" onclick={() => (editingRow = null)} class="cursor-pointer rounded-lg p-1.5 text-gray-400 hover:bg-white/5 hover:text-white">✕</button>
+			</div>
+			<div class="space-y-3">
+				{#each editingRow.columns as col, i}
+					<div class="flex flex-wrap items-center gap-3">
+						<label for="rowcol-{i}" class="w-40 shrink-0 truncate font-mono text-xs text-gray-400">{col}</label>
+						<input
+							id="rowcol-{i}"
+							type="text"
+							value={editingRow.values[i] ?? ''}
+							oninput={(e) => setEditingValue(i, e.currentTarget.value)}
+							class="min-w-0 flex-1 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+						/>
+						<label class="flex shrink-0 items-center gap-1.5 text-xs text-gray-400">
+							<input type="checkbox" checked={editingRow.values[i] === null} onchange={(e) => setEditingNull(i, e.currentTarget.checked)} /> NULL
+						</label>
+					</div>
+				{/each}
+			</div>
+			<div class="mt-5 flex justify-end gap-2">
+				<button type="button" onclick={() => (editingRow = null)} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 transition hover:bg-gray-700">{translate($language, 'wl.cancel')}</button>
+				<button type="button" onclick={saveEditingRow} disabled={rowSaving} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50">
+					{rowSaving ? translate($language, 'dbm.saving') : translate($language, 'dbm.save_row')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if columnForm}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') columnForm = null; }}>
+		<div class="w-full max-w-lg space-y-4 rounded-xl border border-gray-700 bg-gray-800 p-6">
+			<div class="flex items-center justify-between gap-3">
+				<h3 class="text-lg font-semibold text-white">{columnForm.mode === 'add' ? translate($language, 'dbm.add_column') : translate($language, 'dbm.modify_column')}</h3>
+				<button type="button" onclick={() => (columnForm = null)} class="cursor-pointer rounded-lg p-1.5 text-gray-400 hover:bg-white/5 hover:text-white">✕</button>
+			</div>
+			<div class="space-y-3">
+				<div>
+					<label for="colform-name" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_column')}</label>
+					<input id="colform-name" type="text" bind:value={columnForm.name} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200" />
+				</div>
+				<div>
+					<label for="colform-type" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_type')}</label>
+					<input id="colform-type" type="text" bind:value={columnForm.type} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200" />
+				</div>
+				<div class="flex flex-wrap items-center gap-4 text-sm text-gray-300">
+					<label class="flex items-center gap-2"><input type="checkbox" bind:checked={columnForm.nullable} /> {translate($language, 'dbm.col_null')}</label>
+					<label class="flex items-center gap-2"><input type="checkbox" bind:checked={columnForm.hasDefault} /> {translate($language, 'dbm.has_default')}</label>
+				</div>
+				{#if columnForm.hasDefault}
+					<div>
+						<label for="colform-default" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'dbm.col_default')}</label>
+						<input id="colform-default" type="text" bind:value={columnForm.default} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200" />
+					</div>
+				{/if}
+			</div>
+			<div class="flex justify-end gap-2">
+				<button type="button" onclick={() => (columnForm = null)} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 transition hover:bg-gray-700">{translate($language, 'wl.cancel')}</button>
+				<button type="button" onclick={saveColumn} disabled={columnBusy !== ''} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50">
+					{columnBusy ? translate($language, 'dbm.working') : translate($language, 'dbm.save')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if objectDefinition}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') objectDefinition = null; }}>
+		<div class="max-h-[85vh] w-full max-w-3xl overflow-y-auto rounded-xl border border-gray-700 bg-gray-800 p-6">
+			<div class="mb-4 flex items-center justify-between gap-3">
+				<h3 class="text-lg font-semibold text-white">{translate($language, 'dbm.definition')}: <span class="font-mono">{objectDefinition.name}</span></h3>
+				<button type="button" onclick={() => (objectDefinition = null)} class="cursor-pointer rounded-lg p-1.5 text-gray-400 hover:bg-white/5 hover:text-white">✕</button>
+			</div>
+			<pre class="overflow-x-auto rounded-lg bg-gray-950 p-4 font-mono text-xs leading-relaxed text-gray-200">{objectDefinition.text}</pre>
+			<div class="mt-4 flex justify-end">
+				<button type="button" onclick={() => (objectDefinition = null)} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 transition hover:bg-gray-700">{translate($language, 'wl.cancel')}</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if pendingDeleteRow}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" role="dialog" aria-modal="true" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') pendingDeleteRow = null; }}>
+		<div class="w-full max-w-md rounded-xl border border-red-700 bg-gray-800 p-6">
+			<h3 class="text-lg font-semibold text-white">{translate($language, 'dbm.delete_row')}</h3>
+			<p class="mt-2 text-sm text-gray-300">{translate($language, 'dbm.delete_row_confirm')}</p>
+			<div class="mt-5 flex justify-end gap-2">
+				<button type="button" onclick={() => (pendingDeleteRow = null)} class="rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 transition hover:bg-gray-700">{translate($language, 'wl.cancel')}</button>
+				<button type="button" onclick={confirmDeleteRow} disabled={rowSaving} class="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'dbm.delete')}</button>
+			</div>
+		</div>
+	</div>
 {/if}

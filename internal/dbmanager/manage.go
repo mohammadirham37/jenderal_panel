@@ -957,3 +957,363 @@ func itoa(n int) string {
 	}
 	return digits
 }
+
+// ─── Objects: views, routines, triggers ───────────────────────────
+
+// ManageObjects lists non-table objects of a database: views, stored
+// procedures, functions and triggers.
+type ManageObjects struct {
+	Views      []string `json:"views"`
+	Procedures []string `json:"procedures"`
+	Functions  []string `json:"functions"`
+	Triggers   []string `json:"triggers"`
+}
+
+// ManageObjects lists every non-table object the managed user can see.
+func (s *Service) ManageObjects(ctx context.Context, token, database string) (ManageObjects, error) {
+	session, err := s.manageSessionFor(token)
+	if err != nil {
+		return ManageObjects{}, err
+	}
+	if err := validateIdentifier(database); err != nil {
+		return ManageObjects{}, err
+	}
+
+	out := ManageObjects{Views: []string{}, Procedures: []string{}, Functions: []string{}, Triggers: []string{}}
+	var result *executor.Result
+	switch session.Engine {
+	case "mysql":
+		result, err = s.runMySQL(ctx, session, database,
+			"SELECT 'view', TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = "+sqlString(database)+" "+
+				"UNION ALL SELECT ROUTINE_TYPE, ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = "+sqlString(database)+" "+
+				"UNION ALL SELECT 'trigger', TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = "+sqlString(database)+" "+
+				"ORDER BY 1, 2")
+	case "postgresql":
+		result, err = s.runPostgres(ctx, session, database, `
+			SELECT 'view', CASE WHEN n.nspname = 'public' THEN c.relname ELSE n.nspname || '.' || c.relname END
+			  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+			  WHERE c.relkind IN ('v','m') AND n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+			UNION ALL
+			SELECT routine_type, CASE WHEN routine_schema = 'public' THEN routine_name ELSE routine_schema || '.' || routine_name END
+			  FROM information_schema.routines
+			  WHERE routine_schema NOT IN ('pg_catalog','information_schema')
+			UNION ALL
+			SELECT DISTINCT 'trigger', trigger_name FROM information_schema.triggers
+			  WHERE trigger_schema NOT IN ('pg_catalog','information_schema')
+			ORDER BY 1, 2`)
+	default:
+		return ManageObjects{}, model.NewValidationError("unsupported engine")
+	}
+	if err != nil {
+		return ManageObjects{}, err
+	}
+
+	for i, line := range splitLines(result.Stdout) {
+		if i == 0 {
+			continue // column header
+		}
+		fields := splitFields(session.Engine, line)
+		if len(fields) < 2 || fields[0] == "" || fields[1] == "" {
+			continue
+		}
+		switch fields[0] {
+		case "view", "VIEW":
+			out.Views = append(out.Views, fields[1])
+		case "procedure", "PROCEDURE":
+			out.Procedures = append(out.Procedures, fields[1])
+		case "function", "FUNCTION":
+			out.Functions = append(out.Functions, fields[1])
+		case "trigger", "TRIGGER":
+			out.Triggers = append(out.Triggers, fields[1])
+		}
+	}
+	return out, nil
+}
+
+// ManageObjectDefinition returns the SQL source of a view, routine or
+// trigger, rendered as text.
+func (s *Service) ManageObjectDefinition(ctx context.Context, token, database, kind, name string) (string, error) {
+	session, err := s.manageSessionFor(token)
+	if err != nil {
+		return "", err
+	}
+	if err := validateIdentifier(database); err != nil {
+		return "", err
+	}
+	if err := validateIdentifier(name); err != nil {
+		return "", err
+	}
+
+	var statement string
+	switch kind {
+	case "view":
+		switch session.Engine {
+		case "mysql":
+			statement = "SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA = " + sqlString(database) + " AND TABLE_NAME = " + sqlString(name)
+		case "postgresql":
+			statement = "SELECT pg_get_viewdef(to_regclass(" + sqlString(name) + "), true)"
+		}
+	case "procedure", "function":
+		routineType := strings.ToUpper(kind)
+		switch session.Engine {
+		case "mysql":
+			statement = "SELECT ROUTINE_DEFINITION FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = " + sqlString(database) + " AND ROUTINE_TYPE = '" + routineType + "' AND ROUTINE_NAME = " + sqlString(name)
+		case "postgresql":
+			statement = "SELECT pg_get_functiondef(p.oid) FROM pg_proc p WHERE p.proname = " + sqlString(name) + " LIMIT 1"
+		}
+	case "trigger":
+		switch session.Engine {
+		case "mysql":
+			statement = "SELECT ACTION_STATEMENT FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = " + sqlString(database) + " AND TRIGGER_NAME = " + sqlString(name)
+		case "postgresql":
+			statement = "SELECT pg_get_triggerdef(t.oid) FROM pg_trigger t WHERE t.tgname = " + sqlString(name) + " AND NOT t.tgisinternal LIMIT 1"
+		}
+	default:
+		return "", model.NewValidationError("unknown object kind: " + kind)
+	}
+
+	var result *executor.Result
+	switch session.Engine {
+	case "mysql":
+		result, err = s.runMySQL(ctx, session, database, statement)
+	case "postgresql":
+		result, err = s.runPostgres(ctx, session, database, statement)
+	default:
+		return "", model.NewValidationError("unsupported engine")
+	}
+	if err != nil {
+		return "", err
+	}
+	lines := splitLines(result.Stdout)
+	if len(lines) > 0 {
+		lines = lines[1:] // drop the column header
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// ─── Row editing ──────────────────────────────────────────────────
+
+// ManagedRowValues is one set of column values. A nil value is SQL NULL.
+type ManagedRowValues struct {
+	Columns []string
+	Values  []*string
+}
+
+
+// quoteTableFor/quoteIdentFor are the plain-function forms used by the
+// row/column SQL builders, mirroring Service.quoteTable/quoteIdent.
+func quoteTableFor(engine, database, table string) string {
+	if engine == "postgresql" {
+		if schema, name, ok := splitQualifiedTable(table); ok {
+			return quotePG(schema) + "." + quotePG(name)
+		}
+		return "public." + quotePG(table)
+	}
+	return quoteMySQL(database) + "." + quoteMySQL(table)
+}
+
+func quoteIdentFor(engine, name string) string {
+	if engine == "postgresql" {
+		return quotePG(name)
+	}
+	return quoteMySQL(name)
+}
+
+// validateRowValues requires column/value parity and safe identifiers.
+func validateRowValues(row ManagedRowValues) error {
+	if len(row.Columns) == 0 || len(row.Columns) != len(row.Values) {
+		return model.NewValidationError("columns and values must be non-empty and of equal length")
+	}
+	for _, col := range row.Columns {
+		if err := validateIdentifier(col); err != nil {
+			return fmt.Errorf("column %q: %w", col, err)
+		}
+	}
+	return nil
+}
+
+func sqlValue(v *string) string {
+	if v == nil {
+		return "NULL"
+	}
+	return sqlString(*v)
+}
+
+// buildInsert renders INSERT INTO table (cols) VALUES (...).
+func buildInsert(engine, database, table string, row ManagedRowValues) (string, error) {
+	if err := validateRowValues(row); err != nil {
+		return "", err
+	}
+	quotedTable := quoteTableFor(engine, database, table)
+	cols := make([]string, len(row.Columns))
+	vals := make([]string, len(row.Values))
+	for i, col := range row.Columns {
+		cols[i] = quoteIdentFor(engine, col)
+		vals[i] = sqlValue(row.Values[i])
+	}
+	return "INSERT INTO " + quotedTable + " (" + strings.Join(cols, ", ") + ") VALUES (" + strings.Join(vals, ", ") + ")", nil
+}
+
+// buildUpdate renders UPDATE table SET ... WHERE key = ... (AND ...).
+func buildUpdate(engine, database, table string, keys ManagedRowValues, set ManagedRowValues) (string, error) {
+	if err := validateRowValues(keys); err != nil {
+		return "", fmt.Errorf("row identifier: %w", err)
+	}
+	if err := validateRowValues(set); err != nil {
+		return "", fmt.Errorf("new values: %w", err)
+	}
+	quotedTable := quoteTableFor(engine, database, table)
+	sets := make([]string, len(set.Columns))
+	for i, col := range set.Columns {
+		sets[i] = quoteIdentFor(engine, col) + " = " + sqlValue(set.Values[i])
+	}
+	wheres := make([]string, len(keys.Columns))
+	for i, col := range keys.Columns {
+		wheres[i] = quoteIdentFor(engine, col) + " = " + sqlValue(keys.Values[i])
+	}
+	return "UPDATE " + quotedTable + " SET " + strings.Join(sets, ", ") + " WHERE " + strings.Join(wheres, " AND "), nil
+}
+
+// buildDelete renders DELETE FROM table WHERE key = ... (AND ...).
+func buildDelete(engine, database, table string, keys ManagedRowValues) (string, error) {
+	if err := validateRowValues(keys); err != nil {
+		return "", fmt.Errorf("row identifier: %w", err)
+	}
+	quotedTable := quoteTableFor(engine, database, table)
+	wheres := make([]string, len(keys.Columns))
+	for i, col := range keys.Columns {
+		wheres[i] = quoteIdentFor(engine, col) + " = " + sqlValue(keys.Values[i])
+	}
+	return "DELETE FROM " + quotedTable + " WHERE " + strings.Join(wheres, " AND "), nil
+}
+
+// ManageInsertRow inserts one row into a table.
+func (s *Service) ManageInsertRow(ctx context.Context, token, database, table string, row ManagedRowValues) (QueryResult, error) {
+	statement, err := buildInsert(sessionEngineFor(token), database, table, row)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return s.ManageQuery(ctx, token, database, statement)
+}
+
+// ManageUpdateRow updates rows matched by their key values.
+func (s *Service) ManageUpdateRow(ctx context.Context, token, database, table string, keys, set ManagedRowValues) (QueryResult, error) {
+	statement, err := buildUpdate(sessionEngineFor(token), database, table, keys, set)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return s.ManageQuery(ctx, token, database, statement)
+}
+
+// ManageDeleteRow deletes rows matched by their key values.
+func (s *Service) ManageDeleteRow(ctx context.Context, token, database, table string, keys ManagedRowValues) (QueryResult, error) {
+	statement, err := buildDelete(sessionEngineFor(token), database, table, keys)
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return s.ManageQuery(ctx, token, database, statement)
+}
+
+// sessionEngineFor resolves the engine for a management session token.
+func sessionEngineFor(token string) string {
+	if session, ok := manageSessions.get(token); ok {
+		return session.Engine
+	}
+	return ""
+}
+
+// ─── Column management ────────────────────────────────────────────
+
+// ManagedColumnSpec describes a column for add/modify operations.
+type ManagedColumnSpec struct {
+	Name       string  `json:"name"`
+	Type       string  `json:"type"`
+	Nullable   bool    `json:"nullable"`
+	HasDefault bool    `json:"has_default"`
+	Default    *string `json:"default"`
+}
+
+func validateColumnSpec(spec ManagedColumnSpec) error {
+	if err := validateIdentifier(spec.Name); err != nil {
+		return fmt.Errorf("column %q: %w", spec.Name, err)
+	}
+	if err := validateColumnType(spec.Type); err != nil {
+		return fmt.Errorf("type %q: %w", spec.Type, err)
+	}
+	return nil
+}
+
+func validateColumnType(dataType string) error {
+	if strings.TrimSpace(dataType) == "" || len(dataType) > 128 {
+		return model.NewValidationError("column type must be 1-128 characters")
+	}
+	bad := strings.ContainsAny(dataType, ";\\<>") ||
+		strings.Contains(dataType, "--") || strings.Contains(dataType, "/*")
+	if bad {
+		return model.NewValidationError("column type contains invalid characters")
+	}
+	return nil
+}
+
+func columnDefinition(engine string, spec ManagedColumnSpec) string {
+	def := quoteIdentFor(engine, spec.Name) + " " + spec.Type
+	if !spec.Nullable {
+		def += " NOT NULL"
+	}
+	if spec.HasDefault {
+		def += " DEFAULT " + sqlValue(spec.Default)
+	}
+	return def
+}
+
+// ManageAddColumn adds a column to a table.
+func (s *Service) ManageAddColumn(ctx context.Context, token, database, table string, spec ManagedColumnSpec) (QueryResult, error) {
+	engine := sessionEngineFor(token)
+	statement := "ALTER TABLE " + quoteTableFor(engine, database, table) + " ADD COLUMN " + columnDefinition(engine, spec)
+	return s.ManageQuery(ctx, token, database, statement)
+}
+
+// ManageDropColumn removes a column from a table.
+func (s *Service) ManageDropColumn(ctx context.Context, token, database, table, column string) (QueryResult, error) {
+	if err := validateIdentifier(column); err != nil {
+		return QueryResult{}, fmt.Errorf("column %q: %w", column, err)
+	}
+	engine := sessionEngineFor(token)
+	statement := "ALTER TABLE " + quoteTableFor(engine, database, table) + " DROP COLUMN " + quoteIdentFor(engine, column)
+	return s.ManageQuery(ctx, token, database, statement)
+}
+
+// ManageModifyColumn changes a column's type/nullability/default.
+func (s *Service) ManageModifyColumn(ctx context.Context, token, database, table, original string, spec ManagedColumnSpec) (QueryResult, error) {
+	if err := validateIdentifier(original); err != nil {
+		return QueryResult{}, fmt.Errorf("column %q: %w", original, err)
+	}
+	if err := validateColumnSpec(spec); err != nil {
+		return QueryResult{}, err
+	}
+	engine := sessionEngineFor(token)
+	quotedTable := quoteTableFor(engine, database, table)
+	colDef := columnDefinition(engine, spec)
+	quotedOriginal := quoteIdentFor(engine, original)
+
+	var statement string
+	if engine == "postgresql" {
+		parts := []string{
+			"ALTER TABLE " + quotedTable + " ALTER COLUMN " + quotedOriginal + " TYPE " + spec.Type,
+		}
+		if spec.Nullable {
+			parts = append(parts, "ALTER TABLE "+quotedTable+" ALTER COLUMN "+quotedOriginal+" DROP NOT NULL")
+		} else {
+			parts = append(parts, "ALTER TABLE "+quotedTable+" ALTER COLUMN "+quotedOriginal+" SET NOT NULL")
+		}
+		if spec.HasDefault {
+			parts = append(parts, "ALTER TABLE "+quotedTable+" ALTER COLUMN "+quotedOriginal+" SET DEFAULT "+sqlValue(spec.Default))
+		} else {
+			parts = append(parts, "ALTER TABLE "+quotedTable+" ALTER COLUMN "+quotedOriginal+" DROP DEFAULT")
+		}
+		statement = strings.Join(parts, "; ")
+	} else {
+		statement = "ALTER TABLE " + quotedTable + " MODIFY COLUMN " + colDef
+	}
+	return s.ManageQuery(ctx, token, database, statement)
+}

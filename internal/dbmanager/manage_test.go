@@ -337,3 +337,60 @@ func TestManageSessionTTLExpiry(t *testing.T) {
 		t.Fatal("expired session should be rejected")
 	}
 }
+
+func TestBuildRowStatements(t *testing.T) {
+	acme := "acme"
+	five := "5"
+	row := ManagedRowValues{Columns: []string{"name", "qty"}, Values: []*string{&acme, nil}}
+
+	ins, err := buildInsert("mysql", "shop", "items", row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ins != "INSERT INTO `shop`.`items` (`name`, `qty`) VALUES ('acme', NULL)" {
+		t.Fatalf("insert = %q", ins)
+	}
+
+	keys := ManagedRowValues{Columns: []string{"id"}, Values: []*string{&five}}
+	set := ManagedRowValues{Columns: []string{"name"}, Values: []*string{&acme}}
+	upd, err := buildUpdate("postgresql", "shop", "items", keys, set)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upd != `UPDATE public."items" SET "name" = 'acme' WHERE "id" = '5'` {
+		t.Fatalf("update = %q", upd)
+	}
+
+	del, err := buildDelete("postgresql", "shop", "public.items", keys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if del != `DELETE FROM "public"."items" WHERE "id" = '5'` {
+		t.Fatalf("delete = %q", del)
+	}
+
+	bad := ManagedRowValues{Columns: []string{"a b"}, Values: []*string{&acme}}
+	if _, err := buildInsert("mysql", "shop", "items", bad); err == nil {
+		t.Fatal("invalid column accepted")
+	}
+	if _, err := buildUpdate("mysql", "shop", "items", ManagedRowValues{}, set); err == nil {
+		t.Fatal("update without keys accepted")
+	}
+}
+
+func TestValidateColumnSpec(t *testing.T) {
+	spec := ManagedColumnSpec{Name: "email", Type: "varchar(255)", Nullable: true, HasDefault: true, Default: ptrString("x@y")}
+	if err := validateColumnSpec(spec); err != nil {
+		t.Fatalf("valid spec rejected: %v", err)
+	}
+	spec.Type = "text; DROP TABLE users"
+	if err := validateColumnSpec(spec); err == nil {
+		t.Fatal("malicious type accepted")
+	}
+	spec = ManagedColumnSpec{Name: "", Type: "int"}
+	if err := validateColumnSpec(spec); err == nil {
+		t.Fatal("missing name accepted")
+	}
+}
+
+func ptrString(v string) *string { return &v }
