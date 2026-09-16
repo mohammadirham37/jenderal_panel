@@ -13,6 +13,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -295,6 +296,25 @@ func (s *Service) ReconcileAll(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
+// Start launches a background reconciler that periodically re-applies site
+// access for every SSH-enabled account. Files created after a grant (e.g.
+// .env written through the file manager) lack the named-user ACL entries,
+// and this converges them without a manual repair.
+func (s *Service) Start(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(5 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				_ = s.ReconcileAll(ctx)
+			}
+		}
+	}()
+}
+
 // SyncOwnedWebsites grants the account access to every website currently
 // owned by the panel user. Safe to run repeatedly.
 func (s *Service) SyncOwnedWebsites(ctx context.Context, userID string) error {
@@ -421,6 +441,12 @@ func (s *Service) GrantWebsite(ctx context.Context, username, webUser string) er
 		return fmt.Errorf("join website group: %w", err)
 	}
 	siteHome := "/home/" + webUser
+	// Normalize ownership: files may have been written by other identities
+	// (deploy steps, uploads); the site account must own them for PHP-FPM
+	// and for the ACL entries below to be meaningful.
+	if err := s.runSudoOK(ctx, "chown", "-R", webUser+":"+webUser, siteHome); err != nil {
+		return fmt.Errorf("normalize site ownership: %w", err)
+	}
 	if !s.setfaclAvailable(ctx) {
 		if _, err := s.exec.RunSudo(ctx, "apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120", "acl"); err != nil {
 			return fmt.Errorf("install acl package: %w", err)

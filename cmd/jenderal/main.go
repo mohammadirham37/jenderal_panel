@@ -443,6 +443,7 @@ func cmdServe() {
 			logger.Warn("ssh account reconciliation failed", "error", err)
 		}
 	}()
+	sshAccountSvc.Start(bgCtx)
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {
