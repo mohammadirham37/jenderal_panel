@@ -213,6 +213,14 @@ const en = {
 	'wd.th.status': 'Status',
 	'wd.th.duration': 'Duration',
 	'wd.th.date': 'Date',
+	'wd.th.actions': 'Actions',
+	'wd.deploy.cancel': 'Cancel',
+	'wd.deploy.cancel_confirm': 'Cancel this pending deployment?',
+	'wd.deploy.cancelled': 'Deployment cancelled.',
+	'wd.deploy.delete': 'Delete',
+	'wd.deploy.delete_confirm': 'Delete this deployment record from the history?',
+	'wd.deploy.deleted': 'Deployment record deleted.',
+	'wd.deploy.action_failed': 'Failed to update the deployment',
 
 	// Commands
 	'wd.cmd.loading': 'Loading command presets...',
@@ -561,6 +569,14 @@ const id: Record<keyof typeof en, string> = {
 	'wd.th.status': 'Status',
 	'wd.th.duration': 'Durasi',
 	'wd.th.date': 'Tanggal',
+	'wd.th.actions': 'Aksi',
+	'wd.deploy.cancel': 'Batalkan',
+	'wd.deploy.cancel_confirm': 'Batalkan deployment yang masih pending ini?',
+	'wd.deploy.cancelled': 'Deployment dibatalkan.',
+	'wd.deploy.delete': 'Hapus',
+	'wd.deploy.delete_confirm': 'Hapus catatan deployment ini dari riwayat?',
+	'wd.deploy.deleted': 'Catatan deployment dihapus.',
+	'wd.deploy.action_failed': 'Gagal memperbarui deployment',
 
 	// Commands
 	'wd.cmd.loading': 'Memuat preset perintah...',

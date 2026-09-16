@@ -104,3 +104,30 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 
 	httputil.JSON(w, http.StatusOK, d)
 }
+
+// Cancel handles POST /api/deployments/{id}/cancel — clears a stuck pending
+// deployment so it no longer shows as queued.
+func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if err := h.svc.CancelDeployment(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "cancel_deployment", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+}
+
+// Delete handles DELETE /api/deployments/{id}.
+func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	if err := h.svc.DeleteDeployment(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "delete_deployment", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}

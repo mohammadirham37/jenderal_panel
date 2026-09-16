@@ -506,6 +506,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/deployments", deployHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "deployments.view")).
 				Get("/deployments/{id}", deployHandler.Get)
+			r.With(auth.RequirePermission(deps.RBAC, "deployments.deploy")).
+				Post("/deployments/{id}/cancel", deployHandler.Cancel)
+			r.With(auth.RequirePermission(deps.RBAC, "deployments.deploy")).
+				Delete("/deployments/{id}", deployHandler.Delete)
 
 			// Cron Jobs
 			// Cron jobs (website-scoped; ownership handled by the scope

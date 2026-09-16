@@ -45,7 +45,7 @@ func (d *Dependencies) ScopeMiddleware(next http.Handler) http.Handler {
 				httputil.HandleError(w, model.ErrForbidden)
 				return
 			}
-		case pattern == "/deployments/{id}":
+		case pattern == "/deployments/{id}" || strings.HasPrefix(pattern, "/deployments/{id}/"):
 			deployment, err := d.DeploymentSvc.GetDeployment(ctx, chi.URLParam(r, "id"))
 			if err != nil {
 				httputil.HandleError(w, err)

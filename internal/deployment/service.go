@@ -119,6 +119,10 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		s.failDeployment(ctx, deploymentID, "load deployment: "+err.Error(), 0)
 		return
 	}
+	if d.Status != "pending" {
+		// Cancelled (or already handled): the queue entry must not run.
+		return
+	}
 
 	// Extract repo URL from log field where we temporarily stored it.
 	repo := ""
@@ -306,6 +310,43 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		`UPDATE deployments SET status = ?, commit_hash = ?, duration_ms = ?, log = ?, updated_at = ? WHERE id = ?`,
 		"success", commitHash, duration, logBuf.String(), now, deploymentID,
 	)
+}
+
+// failDeployment marks a deployment as failed with the collected log output.
+// CancelDeployment marks a pending deployment as cancelled so the worker
+// skips it. Deployments that already run cannot be cancelled; they finish or
+// hit the run timeout on their own.
+func (s *Service) CancelDeployment(ctx context.Context, id string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE deployments SET status = 'cancelled', log = '', updated_at = ? WHERE id = ? AND status = 'pending'`,
+		now, id)
+	if err != nil {
+		return fmt.Errorf("cancel deployment: %w", err)
+	}
+	if affected, _ := res.RowsAffected(); affected == 0 {
+		if _, getErr := s.GetDeployment(ctx, id); getErr != nil {
+			return model.ErrNotFound
+		}
+		return model.NewValidationError("only pending deployments can be cancelled")
+	}
+	return nil
+}
+
+// DeleteDeployment removes a deployment record from the history. Running
+// deployments are protected so the worker can always close them out.
+func (s *Service) DeleteDeployment(ctx context.Context, id string) error {
+	d, err := s.GetDeployment(ctx, id)
+	if err != nil {
+		return err
+	}
+	if d.Status == "running" {
+		return model.NewValidationError("a running deployment cannot be deleted; cancel pending ones or wait for it to finish")
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM deployments WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("delete deployment: %w", err)
+	}
+	return nil
 }
 
 // failDeployment marks a deployment as failed with the collected log output.

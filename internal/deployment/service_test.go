@@ -272,3 +272,56 @@ func TestListByWebsite(t *testing.T) {
 		t.Errorf("expected second deployment to be %s (oldest), got %s", id1, list[1].ID)
 	}
 }
+
+func TestCancelAndDeleteDeploymentLifecycle(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+	svc := NewService(db, newMockExecutor(), auditSvc)
+
+	websiteID := insertWebsite(t, db, "test.com", "testuser", "/var/www/test")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+
+	if err := svc.CancelDeployment(context.Background(), d.ID); err != nil {
+		t.Fatalf("CancelDeployment: %v", err)
+	}
+	got, err := svc.GetDeployment(context.Background(), d.ID)
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+	if got.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", got.Status)
+	}
+
+	if err := svc.CancelDeployment(context.Background(), d.ID); err == nil || !strings.Contains(err.Error(), "only pending") {
+		t.Fatalf("second cancel = %v, want only-pending validation error", err)
+	}
+
+	// The worker must skip deployments that are no longer pending.
+	svc.deploy(context.Background(), d.ID)
+	got, _ = svc.GetDeployment(context.Background(), d.ID)
+	if got.Status != "cancelled" || got.Log != "" {
+		t.Fatalf("cancelled deployment was executed: status=%q log=%q", got.Status, got.Log)
+	}
+
+	if err := svc.DeleteDeployment(context.Background(), d.ID); err != nil {
+		t.Fatalf("DeleteDeployment: %v", err)
+	}
+	if _, err := svc.GetDeployment(context.Background(), d.ID); err == nil {
+		t.Fatal("expected the deployment to be gone")
+	}
+
+	running := ulid.Make().String()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO deployments (id, website_id, branch, status, created_at, updated_at)
+		 VALUES (?, ?, 'main', 'running', ?, ?)`, running, websiteID, now, now,
+	); err != nil {
+		t.Fatalf("insert running deployment: %v", err)
+	}
+	if err := svc.DeleteDeployment(context.Background(), running); err == nil || !strings.Contains(err.Error(), "running") {
+		t.Fatalf("deleting a running deployment = %v, want protection error", err)
+	}
+}
