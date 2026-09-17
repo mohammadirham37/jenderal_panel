@@ -23,6 +23,7 @@ const (
 	coreConfig       = "/etc/modsecurity/modsecurity.conf"
 	crsSetupExample  = "/usr/share/modsecurity-crs/crs-setup.conf.example"
 	crsSetup         = "/usr/share/modsecurity-crs/crs-setup.conf"
+	crsSetupManaged  = "/etc/nginx/jenderal-crs-setup.conf"
 	crsRulesDir      = "/usr/share/modsecurity-crs/rules"
 	rulesFile        = "/etc/nginx/jenderal-modsecurity-rules.conf"
 	auditLog         = "/var/log/nginx/modsec_audit.log"
@@ -87,15 +88,6 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	status.ModSecurity.Installed = installed == 2
 
-	if s.fileExists(ctx, crsSetup) {
-		status.ModSecurity.RulesReady = true
-	} else if _, ok := s.readFile(ctx, crsSetupExample); ok {
-		// The CRS package ships only the example; prepare the live file so
-		// the generated rules include resolves on the first enable.
-		if _, err := s.exec.RunSudo(ctx, "cp", crsSetupExample, crsSetup); err == nil {
-			status.ModSecurity.RulesReady = true
-		}
-	}
 
 	if content, ok := s.readFile(ctx, rulesFile); ok {
 		status.ModSecurity.RulesReady = true
@@ -139,11 +131,6 @@ func (s *Service) Install(ctx context.Context, log func(string)) error {
 	if err := s.runSudoOK(ctx, "apt-get", "install", "-y", "-o", "DPkg::Lock::Timeout=120",
 		connectorPackage, crsPackage); err != nil {
 		return fmt.Errorf("install waf packages: %w", err)
-	}
-	if s.fileExists(ctx, crsSetupExample) && !s.fileExists(ctx, crsSetup) {
-		if _, err := s.exec.RunSudo(ctx, "cp", crsSetupExample, crsSetup); err != nil {
-			return fmt.Errorf("prepare crs-setup.conf: %w", err)
-		}
 	}
 	if err := s.writeRulesFile(ctx, ModeBlocking); err != nil {
 		return err
@@ -219,9 +206,15 @@ func (s *Service) writeRulesFile(ctx context.Context, mode string) error {
 	if s.fileExists(ctx, coreConfig) {
 		b.WriteString("Include " + coreConfig + "\n")
 	}
-	if s.fileExists(ctx, crsSetup) {
-		b.WriteString("Include " + crsSetup + "\n")
+	// The shipped crs-setup.conf.example is fully commented out; including a
+	// copy as-is leaves tx.crs_setup_version unset and CRS rule 901001 then
+	// denies every request with 500. Serve our own active initialization.
+	if err := s.writeFile(ctx, crsSetupManaged,
+		"# Managed by Jenderal Panel - active CRS initialization\n"+
+			"SecAction \"id:900100, phase:1, nolog, pass, t:none, setvar:tx.crs_setup_version=335\"\n"); err != nil {
+		return fmt.Errorf("write CRS setup: %w", err)
 	}
+	b.WriteString("Include " + crsSetupManaged + "\n")
 	if s.fileExists(ctx, crsRulesDir) {
 		b.WriteString("Include " + crsRulesDir + "/*.conf\n")
 	}

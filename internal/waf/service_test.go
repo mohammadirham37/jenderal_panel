@@ -136,10 +136,13 @@ func TestEnableWritesNginxIncludeAndRulesFile(t *testing.T) {
 	}
 
 	rules := fake.files[rulesFile]
-	for _, want := range []string{"Include /etc/modsecurity/modsecurity.conf", "Include /usr/share/modsecurity-crs/crs-setup.conf", "Include /usr/share/modsecurity-crs/rules/*.conf", "SecRuleEngine On", "SecAuditLog /var/log/nginx/modsec_audit.log", "SecTmpDir /tmp"} {
+	for _, want := range []string{"Include /etc/modsecurity/modsecurity.conf", "Include " + crsSetupManaged, "Include /usr/share/modsecurity-crs/rules/*.conf", "SecRuleEngine On", "SecAuditLog /var/log/nginx/modsec_audit.log", "SecTmpDir /tmp"} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("rules file missing %q:\n%s", want, rules)
 		}
+	}
+	if !strings.Contains(fake.files[crsSetupManaged], "setvar:tx.crs_setup_version=335") {
+		t.Fatalf("managed CRS setup must set tx.crs_setup_version:\n%s", fake.files[crsSetupManaged])
 	}
 	enable := fake.files[enableFile]
 	if !strings.Contains(enable, "modsecurity on;") || !strings.Contains(enable, "modsecurity_rules_file "+rulesFile) {
