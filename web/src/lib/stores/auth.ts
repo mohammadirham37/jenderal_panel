@@ -27,6 +27,7 @@ export async function login(username: string, password: string, totpCode = ''): 
 	}
 	setCSRFToken(data.csrf_token);
 	user.set(data.user);
+	roles.set(data.roles || []);
 	permissions.set(data.permissions || []);
 	isAuthenticated.set(true);
 }
@@ -56,6 +57,7 @@ export async function checkAuth(): Promise<boolean> {
 	} catch (error) {
 		setTimeoutError(error);
 		user.set(null);
+		roles.set([]);
 		permissions.set([]);
 		isAuthenticated.set(false);
 		return false;

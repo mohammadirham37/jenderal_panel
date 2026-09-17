@@ -121,6 +121,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 
 	permissions, _ := h.rbac.GetUserPermissions(r.Context(), user.ID)
+	roles, _ := h.rbac.GetUserRoles(r.Context(), user.ID)
 
 	// Audit log.
 	_ = h.audit.Log(r.Context(), audit.LogEntry{
@@ -134,6 +135,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	httputil.JSON(w, http.StatusOK, map[string]any{
 		"user":        user,
+		"roles":       roles,
 		"permissions": permissions,
 		"csrf_token":  csrfToken,
 	})

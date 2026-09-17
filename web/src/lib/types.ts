@@ -41,6 +41,7 @@ export interface UserWithRoles {
 
 export interface LoginResponse {
 	user: User;
+	roles?: Role[];
 	permissions: Permission[];
 	csrf_token: string;
 	/** Present instead of user/session when the account has 2FA enabled and no code was supplied. */
