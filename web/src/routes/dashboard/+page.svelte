@@ -650,6 +650,10 @@
 							<span class="h-1.5 w-4 rounded-full bg-purple-400"></span>
 							{translate($language, 'dash.memory')}
 						</span>
+						<span class="flex items-center gap-1.5">
+							<span class="h-1.5 w-4 rounded-full bg-green-400"></span>
+							{translate($language, 'dash.disk')}
+						</span>
 					</div>
 				</div>
 				{#if cpuSeries.length < 2}
@@ -679,10 +683,18 @@
 									></line>
 								{/each}
 								<path d={chartArea(ramSeries, 600, 176, 100)} class="fill-purple-400/10"></path>
+								<path d={chartArea(diskSeries, 600, 176, 100)} class="fill-green-400/10"></path>
 								<path d={chartArea(cpuSeries, 600, 176, 100)} class="fill-blue-400/10"></path>
 								<path
 									d={chartLine(ramSeries, 600, 176, 100)}
 									class="fill-none stroke-purple-400"
+									stroke-width="1.5"
+									vector-effect="non-scaling-stroke"
+									stroke-linejoin="round"
+								></path>
+								<path
+									d={chartLine(diskSeries, 600, 176, 100)}
+									class="fill-none stroke-green-400"
 									stroke-width="1.5"
 									vector-effect="non-scaling-stroke"
 									stroke-linejoin="round"

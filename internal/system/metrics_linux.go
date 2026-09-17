@@ -7,24 +7,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-func readCPU() float64 {
-	data, err := os.ReadFile("/proc/stat")
-	if err != nil {
-		return 0
-	}
+// cpuTimes holds cumulative CPU counters from one /proc/stat sample.
+type cpuTimes struct {
+	idle  uint64
+	total uint64
+}
 
-	lines := strings.Split(string(data), "\n")
-	if len(lines) == 0 {
-		return 0
-	}
-
-	fields := strings.Fields(lines[0])
+// parseCPULine extracts aggregate idle and total jiffies from the "cpu" line.
+func parseCPULine(line string) (cpuTimes, bool) {
+	fields := strings.Fields(line)
 	if len(fields) < 8 || fields[0] != "cpu" {
-		return 0
+		return cpuTimes{}, false
 	}
 
 	var vals [7]uint64
@@ -34,12 +32,72 @@ func readCPU() float64 {
 
 	idle := vals[3]
 	total := vals[0] + vals[1] + vals[2] + vals[3] + vals[4] + vals[5] + vals[6]
-
 	if total == 0 {
+		return cpuTimes{}, false
+	}
+	return cpuTimes{idle: idle, total: total}, true
+}
+
+// cpuPercent computes busy CPU percentage between two cumulative samples.
+func cpuPercent(prev, cur cpuTimes) (float64, bool) {
+	if cur.total < prev.total {
+		// Counters reset (e.g. reboot) — no valid delta.
+		return 0, false
+	}
+	dTotal := cur.total - prev.total
+	if dTotal == 0 {
+		return 0, false
+	}
+	dIdle := cur.idle - prev.idle
+	busy := dTotal - dIdle
+	if dIdle > dTotal {
+		return 0, false
+	}
+	return float64(busy) / float64(dTotal) * 100, true
+}
+
+var (
+	cpuMu        sync.Mutex
+	lastCPUTimes cpuTimes
+	hasLastCPU   bool
+)
+
+// readCPU returns CPU usage over the interval since the previous call, so the
+// dashboard line reflects current load. A single /proc/stat snapshot only
+// yields the cumulative average since boot, which is flat on long-uptime
+// servers and made the CPU charts look frozen.
+func readCPU() float64 {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return 0
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) == 0 {
+		return 0
+	}
+	times, ok := parseCPULine(lines[0])
+	if !ok {
 		return 0
 	}
 
-	return float64(total-idle) / float64(total) * 100
+	cpuMu.Lock()
+	defer cpuMu.Unlock()
+
+	if !hasLastCPU {
+		// No previous sample yet: fall back to the cumulative average;
+		// the next sample produces a real interval delta.
+		lastCPUTimes = times
+		hasLastCPU = true
+		return float64(times.total-times.idle) / float64(times.total) * 100
+	}
+
+	pct, ok := cpuPercent(lastCPUTimes, times)
+	if !ok {
+		lastCPUTimes = times
+		return 0
+	}
+	lastCPUTimes = times
+	return pct
 }
 
 func readMemory() (used, total uint64) {
