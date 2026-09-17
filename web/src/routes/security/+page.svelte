@@ -183,8 +183,8 @@ import { toast } from '$lib/stores/toast';
 
 	// WAF (ModSecurity + OWASP CRS) and mod_evasive-style DoS protection
 	interface WAFStatus {
-		modsecurity: { installed: boolean; enabled: boolean; mode: string; rules_ready: boolean };
-		dosevasive: { enabled: boolean; requests_per_minute: number; burst: number };
+		modsecurity: { installed: boolean; mode: string; rules_ready: boolean };
+		dosevasive: { defaults: boolean; requests_per_minute: number; burst: number };
 	}
 	let wafStatus = $state<WAFStatus | null>(null);
 	let wafBusy = $state('');
@@ -558,16 +558,6 @@ import { toast } from '$lib/stores/toast';
 		finally { wafBusy = ''; }
 	}
 
-	async function setModsecurity(enabled: boolean) {
-		wafBusy = enabled ? 'enable' : 'disable';
-		try {
-			await api.post(`/api/v1/security/waf/modsecurity/${enabled ? 'enable' : 'disable'}`, {});
-			toast.success(translate($language, enabled ? 'waf.enabledToast' : 'waf.disabledToast'));
-			await loadWaf();
-		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
-		finally { wafBusy = ''; }
-	}
-
 	async function applyModsecMode() {
 		wafBusy = 'mode';
 		try {
@@ -585,16 +575,6 @@ import { toast } from '$lib/stores/toast';
 				requests_per_minute: Number(dosRPM), burst: Number(dosBurst)
 			});
 			toast.success(translate($language, 'waf.dosApplied'));
-			await loadWaf();
-		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
-		finally { wafBusy = ''; }
-	}
-
-	async function disableDoS() {
-		wafBusy = 'dos-disable';
-		try {
-			await api.post('/api/v1/security/waf/dosevasive/disable', {});
-			toast.success(translate($language, 'waf.dosDisabledToast'));
 			await loadWaf();
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'waf.errAction')); }
 		finally { wafBusy = ''; }
@@ -862,19 +842,14 @@ import { toast } from '$lib/stores/toast';
 					<div class="max-w-3xl">
 						<div class="flex flex-wrap items-center gap-2">
 							<h3 class="text-lg font-semibold text-white">{translate($language, 'waf.modsec.title')}</h3>
-							<span class="rounded-full px-2 py-0.5 text-xs {wafStatus?.modsecurity.enabled ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}">{wafStatus?.modsecurity.enabled ? translate($language, 'waf.on') : translate($language, 'waf.off')}</span>
 							{#if wafStatus?.modsecurity.installed}<span class="rounded-full bg-blue-900 px-2 py-0.5 text-xs text-blue-300">{translate($language, 'waf.modsec.installed')}</span>{:else}<span class="rounded-full bg-yellow-900 px-2 py-0.5 text-xs text-yellow-300">{translate($language, 'waf.modsec.notInstalled')}</span>{/if}
-							{#if wafStatus?.modsecurity.enabled && wafStatus.modsecurity.mode}<span class="rounded-full px-2 py-0.5 text-xs {wafStatus.modsecurity.mode === 'blocking' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{wafStatus.modsecurity.mode === 'blocking' ? translate($language, 'waf.modsec.blocking') : translate($language, 'waf.modsec.detectionOnly')}</span>{/if}
+							{#if wafStatus?.modsecurity.mode}<span class="rounded-full px-2 py-0.5 text-xs {wafStatus.modsecurity.mode === 'blocking' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'}">{wafStatus.modsecurity.mode === 'blocking' ? translate($language, 'waf.modsec.blocking') : translate($language, 'waf.modsec.detectionOnly')}</span>{/if}
 						</div>
-						<p class="mt-1 text-sm text-gray-400">{translate($language, 'waf.modsec.desc')}</p>
+						<p class="mt-1 text-sm text-gray-400">{translate($language, 'waf.modsec.desc') + ' ' + translate($language, 'waf.persite_hint')}</p>
 					</div>
 					<div class="flex flex-wrap gap-2">
 						{#if !wafStatus?.modsecurity.installed}
 							<button onclick={installModsecurity} disabled={wafBusy !== '' || !!currentTaskId} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">{wafBusy === 'install' ? translate($language, 'waf.installing') : translate($language, 'waf.modsec.install')}</button>
-						{:else if wafStatus?.modsecurity.enabled}
-							<button onclick={() => setModsecurity(false)} disabled={wafBusy !== ''} class="rounded-lg border border-red-700 px-4 py-2 text-sm text-red-300 hover:bg-red-900/30 disabled:opacity-50">{wafBusy === 'disable' ? translate($language, 'waf.working') : translate($language, 'waf.modsec.disable')}</button>
-						{:else}
-							<button onclick={() => setModsecurity(true)} disabled={wafBusy !== ''} class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">{wafBusy === 'enable' ? translate($language, 'waf.working') : translate($language, 'waf.modsec.enable')}</button>
 						{/if}
 					</div>
 				</div>
@@ -897,17 +872,11 @@ import { toast } from '$lib/stores/toast';
 					<div class="max-w-3xl">
 						<div class="flex flex-wrap items-center gap-2">
 							<h3 class="text-lg font-semibold text-white">{translate($language, 'waf.dos.title')}</h3>
-							<span class="rounded-full px-2 py-0.5 text-xs {wafStatus?.dosevasive.enabled ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}">{wafStatus?.dosevasive.enabled ? translate($language, 'waf.on') : translate($language, 'waf.off')}</span>
+							{#if wafStatus?.dosevasive.defaults}<span class="rounded-full bg-green-900 px-2 py-0.5 text-xs text-green-300">{translate($language, 'waf.dos.configured')}</span>{/if}
 						</div>
-						<p class="mt-1 text-sm text-gray-400">{translate($language, 'waf.dos.desc')}</p>
+						<p class="mt-1 text-sm text-gray-400">{translate($language, 'waf.dos.desc') + ' ' + translate($language, 'waf.persite_hint')}</p>
 					</div>
-					<div class="flex flex-wrap gap-2">
-						{#if wafStatus?.dosevasive.enabled}
-							<button onclick={disableDoS} disabled={wafBusy !== ''} class="rounded-lg border border-red-700 px-4 py-2 text-sm text-red-300 hover:bg-red-900/30 disabled:opacity-50">{wafBusy === 'dos-disable' ? translate($language, 'waf.working') : translate($language, 'waf.dos.disable')}</button>
-						{:else}
-							<button onclick={applyDoS} disabled={wafBusy !== ''} class="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 disabled:opacity-50">{wafBusy === 'dos' ? translate($language, 'waf.working') : translate($language, 'waf.dos.enable')}</button>
-						{/if}
-					</div>
+
 				</div>
 				<div class="mt-4 grid gap-4 border-t border-gray-700 pt-4 sm:grid-cols-3">
 					<label><span class="text-sm text-gray-300">{translate($language, 'waf.dos.rpm')}</span><input type="number" min="10" max="60000" bind:value={dosRPM} class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-white" /></label>

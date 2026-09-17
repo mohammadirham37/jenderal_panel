@@ -40,14 +40,13 @@ const (
 // ModSecurityStatus reports the nginx WAF state.
 type ModSecurityStatus struct {
 	Installed  bool   `json:"installed"`
-	Enabled    bool   `json:"enabled"`
 	Mode       string `json:"mode"`
 	RulesReady bool   `json:"rules_ready"`
 }
 
 // DoSStatus reports the mod_evasive-style rate limiting state.
 type DoSStatus struct {
-	Enabled           bool `json:"enabled"`
+	Defaults          bool `json:"defaults"`
 	RequestsPerMinute int  `json:"requests_per_minute"`
 	Burst             int  `json:"burst"`
 }
@@ -98,10 +97,17 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			status.ModSecurity.Mode = ModeBlocking
 		}
 	}
-	status.ModSecurity.Enabled = s.fileExists(ctx, enableFile)
+	// Legacy migration: the old global include filtered every server block
+	// (panel included); protection is now per-site. Removing it happens on
+	// the first status read after the update.
+	if s.fileExists(ctx, enableFile) {
+		_, _ = s.exec.RunSudo(ctx, "rm", "-f", enableFile)
+		_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
+	}
+	s.migrateLegacyDoSConf(ctx)
 
 	if content, ok := s.readFile(ctx, dosFile); ok {
-		status.DoS.Enabled = true
+		status.DoS.Defaults = true
 		if match := regexp.MustCompile(`rate=(\d+)r/m`).FindStringSubmatch(content); match != nil {
 			if rate, err := strconv.Atoi(match[1]); err == nil {
 				status.DoS.RequestsPerMinute = rate
@@ -144,44 +150,115 @@ func (s *Service) Install(ctx context.Context, log func(string)) error {
 	return nil
 }
 
-// Enable turns ModSecurity on for every nginx website via a conf.d include.
-func (s *Service) Enable(ctx context.Context) error {
-	if err := s.requireInstalled(ctx); err != nil {
-		return err
-	}
-	mode := ModeBlocking
-	if content, ok := s.readFile(ctx, rulesFile); ok && strings.Contains(content, "SecRuleEngine DetectionOnly") {
-		mode = ModeDetectionOnly
-	}
-	if err := s.writeRulesFile(ctx, mode); err != nil {
-		return err
-	}
-	if err := s.prepareAuditLog(ctx); err != nil {
-		return err
-	}
-	content := "# Managed by Jenderal Panel - ModSecurity WAF\n" +
-		"modsecurity on;\n" +
-		"modsecurity_rules_file " + rulesFile + ";\n"
-	if err := s.writeFile(ctx, enableFile, content); err != nil {
-		return fmt.Errorf("enable WAF: %w", err)
-	}
-	if err := s.reloadNginx(ctx); err != nil {
-		s.rollbackFile(ctx, enableFile)
-		return err
-	}
-	return nil
+// SiteProtection is the per-site enforcement state, read from the site's
+// security include file (/etc/nginx/jenderal/security/sites/<id>.conf).
+type SiteProtection struct {
+	WAF bool `json:"waf"`
+	DoS bool `json:"dos"`
 }
 
-// Disable turns ModSecurity off while keeping the installation in place.
-func (s *Service) Disable(ctx context.Context) error {
-	if !s.fileExists(ctx, enableFile) {
-		return nil
+const siteHookFormat = "/etc/nginx/jenderal/security/sites/%s.conf"
+
+// siteHookPath validates the site id and returns its security include path.
+func siteHookPath(siteID string) (string, error) {
+	if len(siteID) < 10 || len(siteID) > 64 {
+		return "", model.NewValidationError("invalid site id")
 	}
-	if _, err := s.exec.RunSudo(ctx, "rm", "-f", enableFile); err != nil {
-		return fmt.Errorf("disable WAF: %w", err)
+	for _, r := range siteID {
+		if !(r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z') {
+			return "", model.NewValidationError("invalid site id")
+		}
 	}
-	if err := s.reloadNginx(ctx); err != nil {
+	return fmt.Sprintf(siteHookFormat, siteID), nil
+}
+
+// siteProtectionFromHook parses the include file into the per-site state.
+func siteProtectionFromHook(content string) SiteProtection {
+	return SiteProtection{
+		WAF: strings.Contains(content, "modsecurity on;"),
+		DoS: strings.Contains(content, "limit_req zone=jenderal_dos"),
+	}
+}
+
+// GetSiteProtection reports the per-site WAF/DoS enforcement state.
+func (s *Service) GetSiteProtection(ctx context.Context, siteID string) (SiteProtection, error) {
+	hookPath, err := siteHookPath(siteID)
+	if err != nil {
+		return SiteProtection{}, err
+	}
+	content, ok := s.readFile(ctx, hookPath)
+	if !ok {
+		return SiteProtection{WAF: false, DoS: false}, nil
+	}
+	return siteProtectionFromHook(content), nil
+}
+
+// SetSiteProtection turns WAF and/or DoS enforcement on or off for ONE
+// website by writing its security include file (already included by the
+// site's vhost) and reloading nginx. The panel domain has no such include
+// and is therefore never filtered.
+func (s *Service) SetSiteProtection(ctx context.Context, siteID string, protect SiteProtection, dosRate, dosBurst int) error {
+	hookPath, err := siteHookPath(siteID)
+	if err != nil {
 		return err
+	}
+
+	var parts []string
+	if protect.WAF {
+		if err := s.requireInstalled(ctx); err != nil {
+			return err
+		}
+		mode := ModeBlocking
+		if content, ok := s.readFile(ctx, rulesFile); ok && strings.Contains(content, "SecRuleEngine DetectionOnly") {
+			mode = ModeDetectionOnly
+		}
+		if err := s.writeRulesFile(ctx, mode); err != nil {
+			return err
+		}
+		if err := s.prepareAuditLog(ctx); err != nil {
+			return err
+		}
+		parts = append(parts, "modsecurity on;\nmodsecurity_rules_file "+rulesFile+";\n")
+	}
+	if protect.DoS {
+		if err := s.writeDoSZone(ctx, dosRate); err != nil {
+			return err
+		}
+		parts = append(parts, "limit_req_status 403;\nlimit_req zone=jenderal_dos burst="+strconv.Itoa(dosBurst)+" nodelay;\n")
+	}
+
+	previous := ""
+	if content, ok := s.readFile(ctx, hookPath); ok {
+		previous = content
+	}
+
+	var content string
+	if len(parts) > 0 {
+		content = "# Managed by Jenderal Panel - per-site protection\n" + strings.Join(parts, "")
+		if err := s.writeFile(ctx, hookPath, content); err != nil {
+			return fmt.Errorf("enable site protection: %w", err)
+		}
+	} else {
+		// Both off: remove the include entirely.
+		if _, err := s.exec.RunSudo(ctx, "rm", "-f", hookPath); err != nil {
+			return fmt.Errorf("disable site protection: %w", err)
+		}
+	}
+
+	if err := s.reloadNginx(ctx); err != nil {
+		s.rollbackFile(ctx, hookPath)
+		if previous != "" {
+			if writeErr := s.writeFile(ctx, hookPath, previous); writeErr != nil {
+				return fmt.Errorf("rollback hook: %w (original error: %v)", writeErr, err)
+			}
+			if reloadErr := s.reloadNginx(ctx); reloadErr != nil {
+				return fmt.Errorf("rollback reload: %w (original error: %v)", reloadErr, err)
+			}
+		}
+		if err != nil {
+			return err
+		}
+		return fmt.Errorf("reload nginx: site protection change rolled back")
 	}
 	return nil
 }
@@ -249,42 +326,52 @@ func (s *Service) prepareAuditLog(ctx context.Context) error {
 	return s.runSudoOK(ctx, "chmod", "0660", auditLog)
 }
 
-// ConfigureDoS enables (or updates) the mod_evasive-style per-IP rate limit:
-// clients exceeding requests_per_minute (with the given burst) receive 403.
-func (s *Service) ConfigureDoS(ctx context.Context, requestsPerMinute, burst int) error {
+// SetDoSDefaults writes the shared DoS rate-limit zone used by the per-site
+// security includes. Enforcement itself is opt-in per website.
+func (s *Service) SetDoSDefaults(ctx context.Context, requestsPerMinute, burst int) error {
 	if requestsPerMinute < 10 || requestsPerMinute > 60000 {
 		return model.NewValidationError("requests_per_minute must be between 10 and 60000")
 	}
 	if burst < 1 || burst > 1000 {
 		return model.NewValidationError("burst must be between 1 and 1000")
 	}
-	content := fmt.Sprintf(`# Managed by Jenderal Panel - DoS protection (mod_evasive-style rate limiting)
-limit_req_zone $binary_remote_addr zone=jenderal_dos:10m rate=%dr/m;
-limit_req_status 403;
-limit_req zone=jenderal_dos burst=%d nodelay;
-`, requestsPerMinute, burst)
-	if err := s.writeFile(ctx, dosFile, content); err != nil {
-		return fmt.Errorf("enable DoS protection: %w", err)
-	}
-	if err := s.reloadNginx(ctx); err != nil {
-		s.rollbackFile(ctx, dosFile)
+	if err := s.writeDoSZone(ctx, requestsPerMinute); err != nil {
 		return err
+	}
+	return s.reloadNginx(ctx)
+}
+
+// writeDoSZone (re)writes the shared rate-limit zone definition without
+// reloading nginx.
+func (s *Service) writeDoSZone(ctx context.Context, requestsPerMinute int) error {
+	content := fmt.Sprintf(`# Managed by Jenderal Panel - DoS protection rate limit zone
+limit_req_zone $binary_remote_addr zone=jenderal_dos:10m rate=%dr/m;
+`, requestsPerMinute)
+	if err := s.writeFile(ctx, dosFile, content); err != nil {
+		return fmt.Errorf("write DoS zone: %w", err)
 	}
 	return nil
 }
 
-// DisableDoS turns the per-IP rate limit off.
-func (s *Service) DisableDoS(ctx context.Context) error {
-	if !s.fileExists(ctx, dosFile) {
-		return nil
+// legacyDoSGlobalLimit detects the pre-per-site conf that rate-limited
+// every server (including the panel) and migrates it to the zone-only form.
+func (s *Service) migrateLegacyDoSConf(ctx context.Context) {
+	content, ok := s.readFile(ctx, dosFile)
+	if !ok {
+		return
 	}
-	if _, err := s.exec.RunSudo(ctx, "rm", "-f", dosFile); err != nil {
-		return fmt.Errorf("disable DoS protection: %w", err)
+	if !strings.Contains(content, "\nlimit_req zone=") && !strings.HasPrefix(content, "limit_req zone=") {
+		return
 	}
-	if err := s.reloadNginx(ctx); err != nil {
-		return err
+	var zone []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "limit_req_zone ") || strings.Contains(line, "Managed by Jenderal Panel") {
+			zone = append(zone, line)
+		}
 	}
-	return nil
+	if len(zone) > 0 {
+		_ = s.writeFile(ctx, dosFile, strings.Join(zone, "\n")+"\n")
+	}
 }
 
 func (s *Service) requireInstalled(ctx context.Context) error {

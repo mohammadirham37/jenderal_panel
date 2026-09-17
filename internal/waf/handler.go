@@ -3,6 +3,9 @@ package waf
 import (
 	"context"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -61,25 +64,6 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 }
 
 // EnableModsecurity handles POST /security/waf/modsecurity/enable.
-func (h *Handler) EnableModsecurity(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Enable(r.Context()); err != nil {
-		httputil.HandleError(w, err)
-		return
-	}
-	h.logAction(r, "enable_modsecurity", "waf", "")
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// DisableModsecurity handles POST /security/waf/modsecurity/disable.
-func (h *Handler) DisableModsecurity(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Disable(r.Context()); err != nil {
-		httputil.HandleError(w, err)
-		return
-	}
-	h.logAction(r, "disable_modsecurity", "waf", "")
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
 // SetMode handles PUT /security/waf/modsecurity/mode.
 func (h *Handler) SetMode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -107,7 +91,7 @@ func (h *Handler) ConfigureDoS(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
-	if err := h.svc.ConfigureDoS(r.Context(), req.RequestsPerMinute, req.Burst); err != nil {
+	if err := h.svc.SetDoSDefaults(r.Context(), req.RequestsPerMinute, req.Burst); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
@@ -117,11 +101,60 @@ func (h *Handler) ConfigureDoS(w http.ResponseWriter, r *http.Request) {
 }
 
 // DisableDoS handles POST /security/waf/dosevasive/disable.
-func (h *Handler) DisableDoS(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.DisableDoS(r.Context()); err != nil {
+
+// SiteProtection handles GET /security/waf/sites/{id}.
+func (h *Handler) SiteProtection(w http.ResponseWriter, r *http.Request) {
+	state, err := h.svc.GetSiteProtection(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
-	h.logAction(r, "disable_dos_protection", "waf", "")
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httputil.JSON(w, http.StatusOK, state)
+}
+
+// SetSiteProtection handles PUT /security/waf/sites/{id} — turns WAF and/or
+// DoS enforcement on or off for ONE website.
+func (h *Handler) SetSiteProtection(w http.ResponseWriter, r *http.Request) {
+	siteID := chi.URLParam(r, "id")
+	var req struct {
+		WAF               *bool `json:"waf"`
+		DoS               *bool `json:"dos"`
+		RequestsPerMinute *int  `json:"requests_per_minute"`
+		Burst             *int  `json:"burst"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	// Merge with the current state so each toggle can be sent separately.
+	state, err := h.svc.GetSiteProtection(r.Context(), siteID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	protect := SiteProtection{WAF: state.WAF, DoS: state.DoS}
+	if req.WAF != nil {
+		protect.WAF = *req.WAF
+	}
+	if req.DoS != nil {
+		protect.DoS = *req.DoS
+	}
+
+	rate := 120
+	burst := 20
+	if req.RequestsPerMinute != nil {
+		rate = *req.RequestsPerMinute
+	}
+	if req.Burst != nil {
+		burst = *req.Burst
+	}
+
+	if err := h.svc.SetSiteProtection(r.Context(), siteID, protect, rate, burst); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "site_protection", siteID,
+		fmt.Sprintf("waf=%v dos=%v", protect.WAF, protect.DoS))
+	httputil.JSON(w, http.StatusOK, protect)
 }

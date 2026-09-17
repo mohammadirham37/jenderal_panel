@@ -358,6 +358,14 @@ const en = {
 	'wd.docroot_saved': 'Document root updated. The change is live immediately.',
 	'wd.docroot_failed': 'Failed to update document root',
 	'wd.docroot_hint': 'The directory must already exist inside the site home (/home/<user>/…). Octane sites keep app/public.',
+	// Per-site protection card
+	'wd.prot.title': 'Protection',
+	'wd.prot.waf': 'WAF (ModSecurity)',
+	'wd.prot.dos': 'DoS protection',
+	'wd.prot.desc': 'Applies only to this website. The panel itself is never filtered. DoS limits requests per visitor IP using the rate set on the Security page.',
+	'wd.prot.wafToggled': 'WAF {state} for this site.',
+	'wd.prot.dosToggled': 'DoS protection {state} for this site.',
+	'wd.prot.failed': 'Failed to update protection',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -715,6 +723,14 @@ const id: Record<keyof typeof en, string> = {
 	'wd.docroot_saved': 'Document root diperbarui. Perubahan langsung aktif.',
 	'wd.docroot_failed': 'Gagal memperbarui document root',
 	'wd.docroot_hint': 'Direktorinya harus sudah ada di dalam home situs (/home/<user>/…). Situs Octane tetap memakai app/public.',
+	// Per-site protection card
+	'wd.prot.title': 'Proteksi',
+	'wd.prot.waf': 'WAF (ModSecurity)',
+	'wd.prot.dos': 'Proteksi DoS',
+	'wd.prot.desc': 'Hanya berlaku untuk situs ini. Panel sendiri tidak pernah difilter. DoS membatasi request per IP pengunjung dengan rate yang diatur di halaman Keamanan.',
+	'wd.prot.wafToggled': 'WAF {state} untuk situs ini.',
+	'wd.prot.dosToggled': 'Proteksi DoS {state} untuk situs ini.',
+	'wd.prot.failed': 'Gagal memperbarui proteksi',
 };
 
 

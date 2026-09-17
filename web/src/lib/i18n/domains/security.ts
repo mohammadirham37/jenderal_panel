@@ -402,6 +402,9 @@ const en = {
 	'fw.deleteFailed': 'Failed to delete rule',
 	'fw.portInvalid': 'Enter a valid port number.',
 	'fw.portRange': 'Port must be between 1 and 65535.',
+	'waf.installing': 'Installing…',
+	'waf.persite_hint': 'Enforcement is per website: enable it from each site\'s detail page (Protection card). The panel itself is never filtered.',
+	'waf.dos.configured': 'Configured',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -803,6 +806,9 @@ const id: Record<keyof typeof en, string> = {
 	'fw.deleteFailed': 'Gagal menghapus aturan',
 	'fw.portInvalid': 'Masukkan nomor port yang valid.',
 	'fw.portRange': 'Port harus antara 1 dan 65535.',
+	'waf.installing': 'Menginstall…',
+	'waf.persite_hint': 'Penerapannya per situs: aktifkan dari halaman detail masing-masing situs (kartu Proteksi). Panel sendiri tidak pernah difilter.',
+	'waf.dos.configured': 'Terconfigured',
 };
 
 export const dict = { en, id };

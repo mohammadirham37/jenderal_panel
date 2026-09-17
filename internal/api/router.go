@@ -887,15 +887,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Post("/security/waf/modsecurity/install", wafHandler.Install)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
-				Post("/security/waf/modsecurity/enable", wafHandler.EnableModsecurity)
-			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
-				Post("/security/waf/modsecurity/disable", wafHandler.DisableModsecurity)
-			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Put("/security/waf/modsecurity/mode", wafHandler.SetMode)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Put("/security/waf/dosevasive", wafHandler.ConfigureDoS)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/waf/sites/{id}", wafHandler.SiteProtection)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
-				Post("/security/waf/dosevasive/disable", wafHandler.DisableDoS)
+				Put("/security/waf/sites/{id}", wafHandler.SetSiteProtection)
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/malware/status", malwareHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).

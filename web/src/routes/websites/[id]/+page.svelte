@@ -176,6 +176,34 @@ import { toast } from '$lib/stores/toast';
 	let octaneInitialized = $state(false);
 
 	// Document root editing
+	let siteProtection = $state<{ waf: boolean; dos: boolean } | null>(null);
+	let protectionLoaded = $state(false);
+	let protectionBusy = $state('');
+
+	const canManageSecurity = $derived(hasPermission($permissions, 'security.manage'));
+
+	async function loadSiteProtection() {
+		if (!website || !canManageSecurity) return;
+		try {
+			siteProtection = await api.get<{ waf: boolean; dos: boolean }>(`/api/v1/security/waf/sites/${website.id}`);
+		} catch { siteProtection = null; }
+	}
+
+	async function toggleSiteProtection(kind: 'waf' | 'dos') {
+		if (!website || !siteProtection || protectionBusy) return;
+		protectionBusy = kind;
+		try {
+			siteProtection = await api.put<{ waf: boolean; dos: boolean }>(`/api/v1/security/waf/sites/${website.id}`, {
+				[kind]: !siteProtection[kind]
+			});
+			toast.success(translate($language, kind === 'waf' ? 'wd.prot.wafToggled' : 'wd.prot.dosToggled').replace('{state}', translate($language, siteProtection[kind] ? 'wd.on' : 'wd.off')));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.prot.failed'));
+		} finally {
+			protectionBusy = '';
+		}
+	}
+
 	let docRootEditing = $state(false);
 	let docRootValue = $state('');
 	let docRootBusy = $state(false);
@@ -1217,6 +1245,10 @@ import { toast } from '$lib/stores/toast';
 			octaneInitialized = true;
 			loadOctaneStatus();
 		}
+		if (activeTab === 'Overview' && website && !protectionLoaded) {
+			protectionLoaded = true;
+			void loadSiteProtection();
+		}
 	});
 
 	$effect(() => {
@@ -1625,7 +1657,34 @@ import { toast } from '$lib/stores/toast';
 
 					<!-- Actions -->
 					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.actions')}</h3>
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+							<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+								<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.prot.title')}</h3>
+								{#if canManageSecurity}
+									<div class="flex flex-wrap gap-2">
+										<button
+											type="button"
+											onclick={() => toggleSiteProtection('waf')}
+											disabled={protectionBusy !== '' || !siteProtection}
+											class="cursor-pointer rounded-md px-3 py-2 text-sm font-medium transition disabled:opacity-50 {siteProtection?.waf ? 'bg-green-600 text-white hover:bg-green-700' : 'border border-gray-600 bg-gray-700 text-gray-200 hover:bg-gray-600'}"
+										>
+											{translate($language, 'wd.prot.waf')}
+										</button>
+										<button
+											type="button"
+											onclick={() => toggleSiteProtection('dos')}
+											disabled={protectionBusy !== '' || !siteProtection}
+											class="cursor-pointer rounded-md px-3 py-2 text-sm font-medium transition disabled:opacity-50 {siteProtection?.dos ? 'bg-green-600 text-white hover:bg-green-700' : 'border border-gray-600 bg-gray-700 text-gray-200 hover:bg-gray-600'}"
+										>
+											{translate($language, 'wd.prot.dos')}
+										</button>
+									</div>
+								{/if}
+							</div>
+							<p class="text-sm text-gray-400">{translate($language, 'wd.prot.desc')}</p>
+						</div>
+
+<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.actions')}</h3>
 						<div class="flex flex-wrap gap-2">
 							{#if website.status === 'active'}
 								<button

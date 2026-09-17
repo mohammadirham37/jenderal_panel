@@ -2,6 +2,7 @@ package waf
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -104,21 +105,20 @@ func TestStatusDetectsInstalledEnabledAndMode(t *testing.T) {
 	fake.files[coreConfig] = "core"
 	fake.files[crsSetup] = "setup"
 	fake.files[rulesFile] = "Include /etc/modsecurity/modsecurity.conf\nSecRuleEngine On\n"
-	fake.files[enableFile] = "modsecurity on;\n"
-	fake.files[dosFile] = "limit_req_zone $binary_remote_addr zone=jenderal_dos:10m rate=60r/m;\nlimit_req_status 403;\nlimit_req zone=jenderal_dos burst=10 nodelay;\n"
+	fake.files[dosFile] = "limit_req_zone $binary_remote_addr zone=jenderal_dos:10m rate=60r/m;\n"
 
 	status, err := newFakeService(fake).Status(context.Background())
 	if err != nil {
 		t.Fatalf("Status: %v", err)
 	}
-	if !status.ModSecurity.Installed || !status.ModSecurity.Enabled {
-		t.Errorf("modsecurity installed/enabled = %v/%v, want true/true", status.ModSecurity.Installed, status.ModSecurity.Enabled)
+	if !status.ModSecurity.Installed {
+		t.Errorf("modsecurity installed = %v, want true", status.ModSecurity.Installed)
 	}
 	if status.ModSecurity.Mode != ModeBlocking {
 		t.Errorf("mode = %q, want blocking", status.ModSecurity.Mode)
 	}
-	if !status.DoS.Enabled || status.DoS.RequestsPerMinute != 60 || status.DoS.Burst != 10 {
-		t.Errorf("dos status = %+v, want enabled 60r/m burst 10", status.DoS)
+	if !status.DoS.Defaults || status.DoS.RequestsPerMinute != 60 {
+		t.Errorf("dos status = %+v, want defaults with 60r/m", status.DoS)
 	}
 }
 
@@ -131,8 +131,9 @@ func TestEnableWritesNginxIncludeAndRulesFile(t *testing.T) {
 	fake.files[crsSetup] = "setup"
 
 	svc := &Service{exec: fake}
-	if err := svc.Enable(context.Background()); err != nil {
-		t.Fatalf("Enable: %v", err)
+	siteID := "01M247E0A6H332PZNCS9AQGXFQ"
+	if err := svc.SetSiteProtection(context.Background(), siteID, SiteProtection{WAF: true, DoS: true}, 120, 20); err != nil {
+		t.Fatalf("SetSiteProtection: %v", err)
 	}
 
 	rules := fake.files[rulesFile]
@@ -144,15 +145,22 @@ func TestEnableWritesNginxIncludeAndRulesFile(t *testing.T) {
 	if !strings.Contains(fake.files[crsSetupManaged], "setvar:tx.crs_setup_version=335") {
 		t.Fatalf("managed CRS setup must set tx.crs_setup_version:\n%s", fake.files[crsSetupManaged])
 	}
-	enable := fake.files[enableFile]
-	if !strings.Contains(enable, "modsecurity on;") || !strings.Contains(enable, "modsecurity_rules_file "+rulesFile) {
-		t.Errorf("unexpected enable file:\n%s", enable)
+	hook := fake.files[fmt.Sprintf(siteHookFormat, siteID)]
+	for _, want := range []string{"modsecurity on;", "modsecurity_rules_file "+rulesFile, "limit_req zone=jenderal_dos burst=20 nodelay;"} {
+		if !strings.Contains(hook, want) {
+			t.Errorf("site hook missing %q:\n%s", want, hook)
+		}
 	}
 	if !fake.called("/usr/sbin/nginx") || !fake.called("/usr/bin/systemctl") {
 		t.Error("enable must validate with nginx -t and reload nginx")
 	}
-	if _, still := fake.files[enableFile]; !still {
-		t.Error("enable file must not be rolled back on success")
+
+	// Both off removes the include entirely.
+	if err := svc.SetSiteProtection(context.Background(), siteID, SiteProtection{}, 120, 20); err != nil {
+		t.Fatalf("SetSiteProtection(off): %v", err)
+	}
+	if _, still := fake.files[fmt.Sprintf(siteHookFormat, siteID)]; still {
+		t.Error("hook file must be removed when protection is disabled")
 	}
 }
 
@@ -164,33 +172,37 @@ func TestEnableRollsBackWhenNginxConfigBroken(t *testing.T) {
 	fake.nginxOK = false
 
 	svc := &Service{exec: fake}
-	if err := svc.Enable(context.Background()); err == nil {
+	siteID := "01M247E0A6H332PZNCS9AQGXFQ"
+	if err := svc.SetSiteProtection(context.Background(), siteID, SiteProtection{WAF: true, DoS: true}, 120, 20); err == nil {
 		t.Fatal("expected error when nginx -t fails")
 	}
-	if _, still := fake.files[enableFile]; still {
+	if _, still := fake.files[fmt.Sprintf(siteHookFormat, siteID)]; still {
 		t.Error("broken config must be rolled back")
 	}
 }
 
 func TestConfigureDoSValidatesAndWritesRateLimit(t *testing.T) {
 	svc := &Service{exec: newFakeExec()}
-	if err := svc.ConfigureDoS(context.Background(), 5, 10); err == nil {
+	if err := svc.SetDoSDefaults(context.Background(), 5, 10); err == nil {
 		t.Error("expected rejection of requests_per_minute below 10")
 	}
-	if err := svc.ConfigureDoS(context.Background(), 120, 0); err == nil {
+	if err := svc.SetDoSDefaults(context.Background(), 120, 0); err == nil {
 		t.Error("expected rejection of burst below 1")
 	}
 
 	fake := newFakeExec()
 	svc.exec = fake
-	if err := svc.ConfigureDoS(context.Background(), 120, 20); err != nil {
+	if err := svc.SetDoSDefaults(context.Background(), 120, 20); err != nil {
 		t.Fatalf("ConfigureDoS: %v", err)
 	}
 	content := fake.files[dosFile]
-	for _, want := range []string{"rate=120r/m", "limit_req_status 403;", "burst=20 nodelay"} {
+	for _, want := range []string{"rate=120r/m", "zone=jenderal_dos:10m"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("dos conf missing %q:\n%s", want, content)
 		}
+	}
+	if strings.Contains(content, "limit_req zone=") {
+		t.Errorf("dos defaults conf must not enforce globally:\n%s", content)
 	}
 }
 
