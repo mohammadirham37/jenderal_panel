@@ -1681,8 +1681,18 @@ import { toast } from '$lib/stores/toast';
 									</div>
 								{/if}
 							</div>
-							<p class="text-sm text-gray-400">{translate($language, 'wd.prot.desc')}</p>
+						<div class="mt-3 grid gap-3 sm:grid-cols-2">
+							<div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+								<p class="text-xs font-semibold text-gray-200">{translate($language, 'wd.prot.waf')}</p>
+								<p class="mt-1 text-xs leading-relaxed text-gray-400">{translate($language, 'wd.prot.waf_desc')}</p>
+							</div>
+							<div class="rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+								<p class="text-xs font-semibold text-gray-200">{translate($language, 'wd.prot.dos')}</p>
+								<p class="mt-1 text-xs leading-relaxed text-gray-400">{translate($language, 'wd.prot.dos_desc')}</p>
+							</div>
 						</div>
+						<p class="mt-3 text-xs text-gray-500">{translate($language, 'wd.prot.desc')}</p>
+					</div>
 
 <h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.actions')}</h3>
 						<div class="flex flex-wrap gap-2">

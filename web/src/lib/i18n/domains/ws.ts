@@ -366,6 +366,8 @@ const en = {
 	'wd.prot.wafToggled': 'WAF {state} for this site.',
 	'wd.prot.dosToggled': 'DoS protection {state} for this site.',
 	'wd.prot.failed': 'Failed to update protection',
+	'wd.prot.waf_desc': 'ModSecurity + OWASP CRS inspect every request and block common attacks (SQL injection, XSS, known exploits). Blocked requests get a 403 response.',
+	'wd.prot.dos_desc': 'Rate-limits requests per visitor IP using the rate set on the Security page. Requests over the limit get a 403 — effective against flood attacks.',
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -731,6 +733,8 @@ const id: Record<keyof typeof en, string> = {
 	'wd.prot.wafToggled': 'WAF {state} untuk situs ini.',
 	'wd.prot.dosToggled': 'Proteksi DoS {state} untuk situs ini.',
 	'wd.prot.failed': 'Gagal memperbarui proteksi',
+	'wd.prot.waf_desc': 'ModSecurity + OWASP CRS memeriksa setiap request dan memblokir pola serangan umum (SQL injection, XSS, eksploit yang dikenal). Request yang diblokir mendapat respons 403.',
+	'wd.prot.dos_desc': 'Membatasi kecepatan request per IP pengunjung sesuai rate di halaman Keamanan. Request yang melebihi batas mendapat 403 — efektif menahan serangan flood.',
 };
 
 
