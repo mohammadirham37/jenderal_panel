@@ -166,13 +166,16 @@ func readLoadAvg() (load1, load5, load15 float64) {
 	return load1, load5, load15
 }
 
-func readNetwork() (rx, tx uint64) {
-	data, err := os.ReadFile("/proc/net/dev")
-	if err != nil {
-		return 0, 0
-	}
+// netCounters holds summed /proc/net/dev byte totals plus when they were read.
+type netCounters struct {
+	rx, tx uint64
+	at     time.Time
+}
 
-	for _, line := range strings.Split(string(data), "\n") {
+// sumNetDev totals receive and transmit bytes across all non-loopback
+// interfaces. The values are lifetime counters since the interfaces came up.
+func sumNetDev(content string) (rx, tx uint64) {
+	for _, line := range strings.Split(content, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "lo:") || !strings.Contains(line, ":") {
 			continue
@@ -191,6 +194,51 @@ func readNetwork() (rx, tx uint64) {
 		tx += t
 	}
 	return rx, tx
+}
+
+// netRatesPerSec converts two counter snapshots into average bytes per second.
+func netRatesPerSec(prev, cur netCounters) (float64, float64, bool) {
+	elapsed := cur.at.Sub(prev.at).Seconds()
+	if elapsed <= 0 || cur.rx < prev.rx || cur.tx < prev.tx {
+		// Clock went backwards or counters reset (interface/reboot) — re-baseline.
+		return 0, 0, false
+	}
+	return float64(cur.rx-prev.rx) / elapsed, float64(cur.tx-prev.tx) / elapsed, true
+}
+
+var (
+	netMu      sync.Mutex
+	lastNet    netCounters
+	hasLastNet bool
+)
+
+// readNetwork returns traffic as bytes per second over the interval since the
+// previous call. /proc/net/dev only exposes lifetime byte totals; displaying
+// those directly made the dashboard show total-since-boot bytes mislabeled as
+// a per-second rate.
+func readNetwork() (rxPerSec, txPerSec uint64) {
+	data, err := os.ReadFile("/proc/net/dev")
+	if err != nil {
+		return 0, 0
+	}
+	rx, tx := sumNetDev(string(data))
+
+	netMu.Lock()
+	defer netMu.Unlock()
+
+	cur := netCounters{rx: rx, tx: tx, at: time.Now()}
+	if !hasLastNet {
+		lastNet = cur
+		hasLastNet = true
+		return 0, 0
+	}
+
+	rxRate, txRate, ok := netRatesPerSec(lastNet, cur)
+	lastNet = cur
+	if !ok {
+		return 0, 0
+	}
+	return uint64(rxRate), uint64(txRate)
 }
 
 func readUptime() time.Duration {
