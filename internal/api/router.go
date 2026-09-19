@@ -107,6 +107,7 @@ func NewRouter(deps Dependencies) http.Handler {
 
 	// Handlers
 	authHandler := auth.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)
+	authHandler.SetNotifier(deps.NotifSvc)
 	systemHandler := system.NewHandler(deps.SystemInfo, deps.Metrics, deps.AuditSvc, deps.LogSvc)
 	serviceHandler := service.NewHandler(deps.ServiceMgr, deps.AuditSvc)
 	dependencyHandler := dependency.NewHandler(deps.DependencySvc, deps.AuditSvc, deps.Tasks)
@@ -159,6 +160,8 @@ func NewRouter(deps Dependencies) http.Handler {
 
 			r.Post("/auth/logout", authHandler.Logout)
 			r.Get("/auth/me", authHandler.Me)
+			r.Get("/auth/sessions", authHandler.ListSessions)
+			r.Delete("/auth/sessions/{sessionID}", authHandler.RevokeSession)
 
 			// Dashboard
 			r.Get("/dashboard", systemHandler.Dashboard)

@@ -170,7 +170,22 @@ const en = {
 	'set.tokens.createdMsg': 'Token created. Copy it now -- it will not be shown again.',
 	'set.tokens.createFailed': 'Failed to create token',
 	'set.tokens.deletedMsg': 'Token deleted.',
-	'set.tokens.deleteFailed': 'Failed to delete token'
+	'set.tokens.deleteFailed': 'Failed to delete token',
+
+	// ─── Settings page: active sessions ───────────────────────────
+	'set.sessions.title': 'Active Sessions',
+	'set.sessions.desc': 'Devices currently signed in to the panel. Revoke any session you do not recognise.',
+	'set.sessions.loading': 'Loading sessions...',
+	'set.sessions.ip': 'IP Address',
+	'set.sessions.device': 'Device',
+	'set.sessions.signedIn': 'Signed In',
+	'set.sessions.current': 'This device',
+	'set.sessions.empty': 'No active sessions.',
+	'set.sessions.revoke': 'Log out',
+	'set.sessions.revokeConfirm': 'Log out this session?',
+	'set.sessions.revokedMsg': 'Session revoked.',
+	'set.sessions.revokeFailed': 'Failed to revoke session',
+	'set.sessions.loadFailed': 'Failed to load sessions'
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -341,7 +356,22 @@ const id: Record<keyof typeof en, string> = {
 	'set.tokens.createdMsg': 'Token dibuat. Salin sekarang -- token tidak akan ditampilkan lagi.',
 	'set.tokens.createFailed': 'Gagal membuat token',
 	'set.tokens.deletedMsg': 'Token dihapus.',
-	'set.tokens.deleteFailed': 'Gagal menghapus token'
+	'set.tokens.deleteFailed': 'Gagal menghapus token',
+
+	// ─── Settings page: active sessions ───────────────────────────
+	'set.sessions.title': 'Sesi Aktif',
+	'set.sessions.desc': 'Perangkat yang saat ini masuk ke panel. Cabut sesi apa pun yang tidak Anda kenali.',
+	'set.sessions.loading': 'Memuat sesi...',
+	'set.sessions.ip': 'Alamat IP',
+	'set.sessions.device': 'Perangkat',
+	'set.sessions.signedIn': 'Waktu Masuk',
+	'set.sessions.current': 'Perangkat ini',
+	'set.sessions.empty': 'Tidak ada sesi aktif.',
+	'set.sessions.revoke': 'Keluarkan',
+	'set.sessions.revokeConfirm': 'Keluarkan sesi ini?',
+	'set.sessions.revokedMsg': 'Sesi dicabut.',
+	'set.sessions.revokeFailed': 'Gagal mencabut sesi',
+	'set.sessions.loadFailed': 'Gagal memuat sesi'
 };
 
 export const dict = { en, id };

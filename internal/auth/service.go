@@ -330,6 +330,84 @@ func (s *Service) DeleteSession(ctx context.Context, id string) error {
 	return nil
 }
 
+// ListSessions returns the user's unexpired sessions, newest first.
+func (s *Service) ListSessions(ctx context.Context, userID string) ([]model.Session, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, user_id, ip_address, user_agent, expires_at, created_at
+		 FROM sessions
+		 WHERE user_id = ? AND expires_at > ?
+		 ORDER BY created_at DESC`,
+		userID, time.Now().UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	var sessions []model.Session
+	for rows.Next() {
+		var session model.Session
+		var expiresStr, createdStr string
+		if err := rows.Scan(&session.ID, &session.UserID, &session.IPAddress, &session.UserAgent, &expiresStr, &createdStr); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		session.ExpiresAt, _ = time.Parse(time.RFC3339, expiresStr)
+		session.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
+		sessions = append(sessions, session)
+	}
+
+	return sessions, rows.Err()
+}
+
+// GetSessionForUser returns a session only if it belongs to userID, so
+// revocation cannot target other accounts.
+func (s *Service) GetSessionForUser(ctx context.Context, id, userID string) (model.Session, error) {
+	session, err := s.GetSession(ctx, id)
+	if err != nil {
+		return model.Session{}, err
+	}
+	if session.UserID != userID {
+		return model.Session{}, model.ErrForbidden
+	}
+	return session, nil
+}
+
+// MarkLogin records a successful login from ip. It reports whether this is
+// the first time the user logs in from that IP, so the panel can send a
+// new-device notification.
+func (s *Service) MarkLogin(ctx context.Context, userID, ip string) (bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	var known int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM known_logins WHERE user_id = ? AND ip_address = ?`,
+		userID, ip,
+	).Scan(&known); err != nil {
+		return false, fmt.Errorf("query known login: %w", err)
+	}
+
+	if known == 0 {
+		_, err := s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO known_logins (user_id, ip_address, first_seen, last_seen)
+			 VALUES (?, ?, ?, ?)`,
+			userID, ip, now, now,
+		)
+		if err != nil {
+			return false, fmt.Errorf("insert known login: %w", err)
+		}
+		return true, nil
+	}
+
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE known_logins SET last_seen = ? WHERE user_id = ? AND ip_address = ?`,
+		now, userID, ip,
+	)
+	if err != nil {
+		return false, fmt.Errorf("update known login: %w", err)
+	}
+	return false, nil
+}
+
 // CleanExpiredSessions deletes all expired sessions.
 func (s *Service) CleanExpiredSessions(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx,

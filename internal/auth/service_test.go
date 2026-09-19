@@ -304,3 +304,118 @@ func TestCleanExpiredSessions(t *testing.T) {
 		t.Fatalf("clean expired sessions: %v", err)
 	}
 }
+
+func TestListSessionsFiltersExpired(t *testing.T) {
+	db := setupTestDB(t)
+	cfg := testConfig()
+	svc := NewService(db, cfg)
+	ctx := context.Background()
+
+	user, err := svc.CreateUser(ctx, "admin", "admin@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	live, err := svc.CreateSession(ctx, user.ID, "127.0.0.1", "LiveBrowser/1.0")
+	if err != nil {
+		t.Fatalf("create live session: %v", err)
+	}
+
+	// Second session already past its expiry.
+	expiredSvc := NewService(db, func() config.AuthConfig {
+		c := testConfig()
+		c.SessionTTL = -1 * time.Hour
+		return c
+	}())
+	if _, err := expiredSvc.CreateSession(ctx, user.ID, "127.0.0.2", "OldBrowser/1.0"); err != nil {
+		t.Fatalf("create expired session: %v", err)
+	}
+
+	// Another user's session must not leak in.
+	other, err := svc.CreateUser(ctx, "other", "other@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+	if _, err := svc.CreateSession(ctx, other.ID, "127.0.0.3", "OtherBrowser/1.0"); err != nil {
+		t.Fatalf("create other session: %v", err)
+	}
+
+	sessions, err := svc.ListSessions(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("list sessions: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("expected 1 live session, got %d", len(sessions))
+	}
+	if sessions[0].ID != live.ID {
+		t.Errorf("expected live session %s, got %s", live.ID, sessions[0].ID)
+	}
+}
+
+func TestMarkLoginReportsNewIPOnce(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, testConfig())
+	ctx := context.Background()
+
+	user, err := svc.CreateUser(ctx, "admin", "admin@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	isNew, err := svc.MarkLogin(ctx, user.ID, "203.0.113.10")
+	if err != nil {
+		t.Fatalf("mark login: %v", err)
+	}
+	if !isNew {
+		t.Error("expected first login from IP to be reported as new")
+	}
+
+	isNew, err = svc.MarkLogin(ctx, user.ID, "203.0.113.10")
+	if err != nil {
+		t.Fatalf("mark login again: %v", err)
+	}
+	if isNew {
+		t.Error("expected repeated login from same IP to not be new")
+	}
+
+	// A different user must not inherit the known IP.
+	other, err := svc.CreateUser(ctx, "other", "other@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+	isNew, err = svc.MarkLogin(ctx, other.ID, "203.0.113.10")
+	if err != nil {
+		t.Fatalf("mark login for other user: %v", err)
+	}
+	if !isNew {
+		t.Error("expected first login from IP for another user to be new")
+	}
+}
+
+func TestGetSessionForUserRejectsForeignSession(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, testConfig())
+	ctx := context.Background()
+
+	owner, err := svc.CreateUser(ctx, "owner", "owner@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	attacker, err := svc.CreateUser(ctx, "attacker", "attacker@test.com", "pass")
+	if err != nil {
+		t.Fatalf("create attacker: %v", err)
+	}
+
+	ownerSession, err := svc.CreateSession(ctx, owner.ID, "127.0.0.1", "Browser/1.0")
+	if err != nil {
+		t.Fatalf("create owner session: %v", err)
+	}
+
+	if _, err := svc.GetSessionForUser(ctx, ownerSession.ID, attacker.ID); err != model.ErrForbidden {
+		t.Errorf("expected ErrForbidden for foreign session, got %v", err)
+	}
+
+	if _, err := svc.GetSessionForUser(ctx, ownerSession.ID, owner.ID); err != nil {
+		t.Errorf("expected owner to access own session, got %v", err)
+	}
+}

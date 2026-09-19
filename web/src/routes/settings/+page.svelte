@@ -51,6 +51,52 @@ import { toast } from '$lib/stores/toast';
 	let sshKeyMsg = $state('');
 	let sshKeyError = $state('');
 
+	// Active sessions
+	interface PanelSession {
+		id: string;
+		ip_address: string;
+		user_agent: string;
+		created_at: string;
+		expires_at: string;
+		current: boolean;
+	}
+
+	let sessions = $state<PanelSession[]>([]);
+	let sessionsLoading = $state(true);
+	let sessionsMsg = $state('');
+	let sessionsError = $state('');
+
+	async function loadSessions() {
+		sessionsLoading = true;
+		try {
+			sessions = (await api.get<PanelSession[]>('/api/v1/auth/sessions')) || [];
+			sessionsError = '';
+		} catch (err) {
+			sessionsError = err instanceof Error ? err.message : translate($language, 'set.sessions.loadFailed');
+		} finally {
+			sessionsLoading = false;
+		}
+	}
+
+	async function revokeSession(session: PanelSession) {
+		if (!confirm(translate($language, 'set.sessions.revokeConfirm'))) return;
+		sessionsMsg = '';
+		sessionsError = '';
+		try {
+			await api.del(`/api/v1/auth/sessions/${session.id}`);
+			sessionsMsg = translate($language, 'set.sessions.revokedMsg');
+			await loadSessions();
+		} catch (err) {
+			sessionsError = err instanceof Error ? err.message : translate($language, 'set.sessions.revokeFailed');
+		}
+	}
+
+	function shortUserAgent(ua: string): string {
+		if (!ua) return '—';
+		const match = ua.match(/\(([^)]+)\)/);
+		return (match ? match[1] : ua).slice(0, 60);
+	}
+
 	async function loadSSHKeys() {
 		sshKeysLoading = true;
 		try {
@@ -366,6 +412,7 @@ import { toast } from '$lib/stores/toast';
 		loadTotpStatus();
 		loadTokens();
 		loadSSHKeys();
+		loadSessions();
 	});
 </script>
 
@@ -784,9 +831,67 @@ import { toast } from '$lib/stores/toast';
 						class="px-3 py-2 bg-gray-700 border border-gray-600 rounded text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
 					/>
 				</div>
-				<button onclick={createToken} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
-					{translate($language, 'set.tokens.create')}
-				</button>
+			<button onclick={createToken} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer">
+				{translate($language, 'set.tokens.create')}
+			</button>
+		</div>
+		{/if}
+	</div>
+
+	<!-- Active Sessions -->
+	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+		<h3 class="text-lg font-semibold text-white mb-1">{translate($language, 'set.sessions.title')}</h3>
+		<p class="text-xs text-gray-500 mb-4">{translate($language, 'set.sessions.desc')}</p>
+
+		{#if sessionsMsg}
+			<div class="mb-3 p-3 bg-green-900/50 border border-green-700 rounded-lg text-green-300 text-sm">
+				{sessionsMsg}
+				<button onclick={() => (sessionsMsg = '')} class="ml-2 text-green-400 hover:text-green-200 cursor-pointer">{translate($language, 'set.dismiss')}</button>
+			</div>
+		{/if}
+
+		{#if sessionsError}
+			<div class="mb-3 p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">
+				{sessionsError}
+				<button onclick={() => (sessionsError = '')} class="ml-2 text-red-400 hover:text-red-200 cursor-pointer">{translate($language, 'set.dismiss')}</button>
+			</div>
+		{/if}
+
+		{#if sessionsLoading}
+			<div class="text-gray-400 text-sm">{translate($language, 'set.sessions.loading')}</div>
+		{:else if sessions.length === 0}
+			<div class="text-gray-400 text-sm">{translate($language, 'set.sessions.empty')}</div>
+		{:else}
+			<div class="overflow-x-auto">
+				<table class="w-full">
+					<thead>
+						<tr class="border-b border-gray-700">
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'set.sessions.ip')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'set.sessions.device')}</th>
+							<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'set.sessions.signedIn')}</th>
+							<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'set.actions')}</th>
+						</tr>
+					</thead>
+					<tbody class="divide-y divide-gray-700">
+						{#each sessions as session (session.id)}
+							<tr class="hover:bg-gray-750">
+								<td class="px-4 py-3 text-sm text-white font-mono">
+									{session.ip_address}
+									{#if session.current}
+										<span class="ml-2 rounded-full bg-green-900/50 px-2 py-0.5 text-[11px] font-medium text-green-400">{translate($language, 'set.sessions.current')}</span>
+									{/if}
+								</td>
+								<td class="px-4 py-3 text-sm text-gray-400">{shortUserAgent(session.user_agent)}</td>
+								<td class="px-4 py-3 text-sm text-gray-400">{new Date(session.created_at).toLocaleString()}</td>
+								<td class="px-4 py-3 text-right">
+									{#if !session.current}
+										<button onclick={() => revokeSession(session)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'set.sessions.revoke')}</button>
+									{/if}
+								</td>
+							</tr>
+						{/each}
+					</tbody>
+				</table>
 			</div>
 		{/if}
 	</div>

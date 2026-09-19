@@ -1,15 +1,24 @@
 package auth
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
+
+// Notifier delivers a message to the panel's configured notification
+// channels. Satisfied by *notification.Service; kept as an interface so
+// auth does not depend on the notification package.
+type Notifier interface {
+	SendAll(ctx context.Context, message string) error
+}
 
 // Handler handles authentication-related HTTP requests.
 type Handler struct {
@@ -17,6 +26,7 @@ type Handler struct {
 	rbac     *RBAC
 	audit    *audit.Service
 	throttle *loginThrottle
+	notifier Notifier
 }
 
 // NewHandler creates a new auth Handler.
@@ -26,6 +36,12 @@ func NewHandler(authSvc *Service, rbac *RBAC, auditSvc *audit.Service) *Handler 
 		rbac:  rbac,
 		audit: auditSvc,
 	}
+}
+
+// SetNotifier wires the notification service used to alert configured
+// channels when a login arrives from an IP the account never used before.
+func (h *Handler) SetNotifier(n Notifier) {
+	h.notifier = n
 }
 
 // Login authenticates a user and creates a session.
@@ -60,6 +76,13 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, model.ErrInvalidCredentials) {
 			h.throttle.recordFailure(key, time.Now())
+			_ = h.audit.Log(r.Context(), audit.LogEntry{
+				Action: "login_failed",
+				Module: "auth",
+				Target: req.Username,
+				Detail: "failed login attempt",
+				IP:     r.RemoteAddr,
+			})
 		}
 		httputil.HandleError(w, err)
 		return
@@ -133,12 +156,104 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		IP:     r.RemoteAddr,
 	})
 
+	// Notify configured channels on the first successful login from an IP
+	// this account has never used. Sent in the background so a slow SMTP or
+	// webhook cannot delay the login response.
+	if h.notifier != nil {
+		if isNew, err := h.auth.MarkLogin(r.Context(), user.ID, r.RemoteAddr); err == nil && isNew {
+			go func(username, ip, userAgent string) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				msg := "Jenderal Panel: new login for '" + username + "' from " + ip +
+					" (" + userAgent + "). If this was not you, change your password and revoke sessions in Settings."
+				_ = h.notifier.SendAll(ctx, msg)
+			}(user.Username, r.RemoteAddr, r.UserAgent())
+		}
+	}
+
 	httputil.JSON(w, http.StatusOK, map[string]any{
 		"user":        user,
 		"roles":       roles,
 		"permissions": permissions,
 		"csrf_token":  csrfToken,
 	})
+}
+
+// ListSessions returns the authenticated user's active sessions, marking
+// which one the current request came from.
+func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+
+	current, _ := SessionFromContext(r.Context())
+
+	sessions, err := h.auth.ListSessions(r.Context(), user.ID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	type sessionInfo struct {
+		ID        string    `json:"id"`
+		IPAddress string    `json:"ip_address"`
+		UserAgent string    `json:"user_agent"`
+		CreatedAt time.Time `json:"created_at"`
+		ExpiresAt time.Time `json:"expires_at"`
+		Current   bool      `json:"current"`
+	}
+
+	list := make([]sessionInfo, 0, len(sessions))
+	for _, s := range sessions {
+		list = append(list, sessionInfo{
+			ID:        s.ID,
+			IPAddress: s.IPAddress,
+			UserAgent: s.UserAgent,
+			CreatedAt: s.CreatedAt,
+			ExpiresAt: s.ExpiresAt,
+			Current:   s.ID == current.ID,
+		})
+	}
+
+	httputil.JSON(w, http.StatusOK, list)
+}
+
+// RevokeSession deletes one of the authenticated user's own sessions.
+func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
+	user, ok := UserFromContext(r.Context())
+	if !ok {
+		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+
+	sessionID := chi.URLParam(r, "sessionID")
+	if sessionID == "" {
+		httputil.HandleError(w, model.NewValidationError("session id is required"))
+		return
+	}
+
+	if _, err := h.auth.GetSessionForUser(r.Context(), sessionID, user.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if err := h.auth.DeleteSession(r.Context(), sessionID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "session_revoke",
+		Module: "auth",
+		Target: user.Username,
+		Detail: "revoked session " + sessionID,
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // Logout destroys the current session and clears cookies.
