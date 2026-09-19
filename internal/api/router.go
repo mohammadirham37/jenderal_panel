@@ -41,6 +41,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
+	"github.com/mohammadirham37/jenderal_panel/internal/websitestaging"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
 	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
@@ -58,6 +59,7 @@ type Dependencies struct {
 	SystemInfo      *system.Info
 	Metrics         *system.MetricsCollector
 	DiskUsageSvc    *diskusage.Service
+	StagingSvc      *websitestaging.Service
 	ServiceMgr      service.ServiceManager
 	SettingsSvc     *settings.Service
 	NginxSvc        *nginx.Service
@@ -120,6 +122,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
 	diskUsageHandler := diskusage.NewHandler(deps.DiskUsageSvc, deps.AuditSvc, deps.Tasks)
+	stagingHandler := websitestaging.NewHandler(deps.StagingSvc)
 	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc, deps.Tasks)
 	websiteHandler.SetSSHAccounts(deps.SSHAccountSvc)
 	sshKeyHandler := sshaccount.NewHandler(deps.SSHAccountSvc)
@@ -353,6 +356,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Delete("/websites/{id}", websiteHandler.Delete)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.suspend")).
 				Post("/websites/{id}/suspend", websiteHandler.Suspend)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.create")).
+				Post("/websites/{id}/staging", stagingHandler.Create)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/staging", stagingHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/enable", websiteHandler.Enable)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).

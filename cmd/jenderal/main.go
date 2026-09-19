@@ -40,6 +40,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
+	"github.com/mohammadirham37/jenderal_panel/internal/websitestaging"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
@@ -306,6 +307,7 @@ func cmdServe() {
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
+	stagingSvc := websitestaging.NewService(db, exec, websiteSvc, dbManagerSvc, tasks, auditSvc)
 	provisioner.SetSSHAccounts(sshAccountSvc)
 	deploySvc.SetSSHAccounts(sshAccountSvc)
 	websiteSvc.SetTLSVhostRegenerator(sslSvc)
@@ -376,6 +378,7 @@ func cmdServe() {
 		SystemInfo:      systemInfo,
 		Metrics:         metricsCollector,
 		DiskUsageSvc:    diskUsageSvc,
+		StagingSvc:      stagingSvc,
 		ServiceMgr:      serviceMgr,
 		SettingsSvc:     settingsSvc,
 		NginxSvc:        nginxSvc,

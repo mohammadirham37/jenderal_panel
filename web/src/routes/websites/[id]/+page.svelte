@@ -472,6 +472,58 @@ import { toast } from '$lib/stores/toast';
 	let transferMsg = $state('');
 	let transferError = $state('');
 
+	// ─── Staging ──────────────────────────────────────────────────────
+	// Clone this site into a fresh staging site: files, database (when the
+	// source has one) and URL rewrites run as a background task.
+	let canCloneSite = $derived(hasPermission($permissions, 'websites.create'));
+	interface StagingClone {
+		id: string;
+		target_website_id: string;
+		target_domain: string;
+		status: string;
+		task_id: string;
+		error: string;
+		created_at: string;
+	}
+	let stagingClones = $state<StagingClone[]>([]);
+	let stagingDomain = $state('');
+	let stagingCloning = $state(false);
+	let stagingDefaulted = $state(false);
+
+	function stagingStatusLabel(status: string): string {
+		const keys: Record<string, string> = {
+			waiting_provision: 'wd.staging.status_provisioning',
+			copying: 'wd.staging.status_copying',
+			completed: 'wd.staging.status_done',
+			failed: 'wd.staging.status_failed'
+		};
+		return translate($language, keys[status] || 'wd.staging.status_provisioning');
+	}
+
+	async function loadStagingClones() {
+		if (!website) return;
+		try {
+			stagingClones = (await api.get<StagingClone[]>(`/api/v1/websites/${website.id}/staging`)) || [];
+		} catch {
+			stagingClones = [];
+		}
+	}
+
+	async function startStagingClone() {
+		if (!website || !stagingDomain.trim() || stagingCloning) return;
+		stagingCloning = true;
+		try {
+			await api.post(`/api/v1/websites/${website.id}/staging`, { domain: stagingDomain.trim() });
+			toast.success(translate($language, 'wd.staging.started'));
+			stagingDomain = '';
+			await loadStagingClones();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.staging.start_failed'));
+		} finally {
+			stagingCloning = false;
+		}
+	}
+
 	async function loadPanelUsers() {
 		if (!canManageUsers || panelUsers.length > 0) return;
 		try {
@@ -1258,6 +1310,18 @@ import { toast } from '$lib/stores/toast';
 	});
 
 	$effect(() => {
+		if (activeTab === 'Overview' && website && canCloneSite) {
+			if (!stagingDefaulted) {
+				stagingDefaulted = true;
+				const parts = website.domain.split('.');
+				stagingDomain =
+					parts.length >= 2 ? `staging.${parts.slice(0, -1).join('.')}` : `staging.${website.domain}`;
+			}
+			loadStagingClones();
+		}
+	});
+
+	$effect(() => {
 		if (activeTab === 'Logs' && !logsInitialized && website) {
 			logsInitialized = true;
 			loadLogs(logTab);
@@ -1379,6 +1443,52 @@ import { toast } from '$lib/stores/toast';
 							</div>
 							{#if transferMsg}<p class="mt-2 text-xs text-green-400">{transferMsg}</p>{/if}
 							{#if transferError}<p class="mt-2 text-xs text-red-400">{transferError}</p>{/if}
+						</div>
+					{/if}
+
+					{#if canCloneSite && website.status === 'active'}
+						<div class="p-4 bg-gray-800 border border-gray-700 rounded-lg">
+							<h3 class="text-sm font-semibold text-white">{translate($language, 'wd.staging.title')}</h3>
+							<p class="mt-1 text-xs text-gray-500">{translate($language, 'wd.staging.desc')}</p>
+							<div class="mt-3 flex flex-wrap items-center gap-2">
+								<input
+									type="text"
+									bind:value={stagingDomain}
+									placeholder="staging.{website.domain}"
+									aria-label={translate($language, 'wd.staging.domain_label')}
+									class="flex-1 min-w-48 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+								/>
+								<button
+									type="button"
+									onclick={startStagingClone}
+									disabled={stagingCloning || !stagingDomain.trim()}
+									class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+								>
+									{stagingCloning ? translate($language, 'wd.staging.cloning') : translate($language, 'wd.staging.clone')}
+								</button>
+							</div>
+							{#if stagingClones.length > 0}
+								<div class="mt-3 space-y-1.5">
+									{#each stagingClones as clone (clone.id)}
+										<div class="flex flex-wrap items-center gap-2 text-xs">
+											<a href={`/websites/${clone.target_website_id}`} class="font-mono text-gray-300 hover:text-blue-400">{clone.target_domain}</a>
+											<span
+												class="rounded-full px-2 py-0.5 text-[11px] font-medium {clone.status === 'completed'
+													? 'bg-green-900/50 text-green-400'
+													: clone.status === 'failed'
+														? 'bg-red-900/50 text-red-400'
+														: 'bg-yellow-900/50 text-yellow-400'}"
+											>
+												{stagingStatusLabel(clone.status)}
+											</span>
+											<span class="text-gray-500">{formatDate(clone.created_at)}</span>
+											{#if clone.error}
+												<span class="text-red-400">{clone.error}</span>
+											{/if}
+										</div>
+									{/each}
+								</div>
+							{/if}
 						</div>
 					{/if}
 

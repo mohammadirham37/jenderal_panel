@@ -60,6 +60,19 @@ const en = {
 	'wd.ssl_not_configured': 'Not configured',
 	'wd.manage_ssl': 'Manage SSL Certificates',
 
+	// Staging clone
+	'wd.staging.title': 'Staging',
+	'wd.staging.desc': 'Clone this site into a new staging site: files, database (if any) and URLs are copied; the staging site gets its own database user. WordPress URLs are rewritten automatically.',
+	'wd.staging.domain_label': 'Staging domain',
+	'wd.staging.clone': 'Clone to Staging',
+	'wd.staging.cloning': 'Starting...',
+	'wd.staging.started': 'Staging clone started. Progress appears below; the copy runs in the background.',
+	'wd.staging.start_failed': 'Failed to start staging clone',
+	'wd.staging.status_provisioning': 'Provisioning staging site...',
+	'wd.staging.status_copying': 'Copying...',
+	'wd.staging.status_done': 'Done',
+	'wd.staging.status_failed': 'Failed',
+
 	// Ownership
 	'wd.ownership.title': 'Ownership',
 	'wd.ownership.owner': 'Owner:',
@@ -428,6 +441,19 @@ const id: Record<keyof typeof en, string> = {
 	'wd.ssl_label': 'SSL:',
 	'wd.ssl_not_configured': 'Belum dikonfigurasi',
 	'wd.manage_ssl': 'Kelola Sertifikat SSL',
+
+	// Staging clone
+	'wd.staging.title': 'Staging',
+	'wd.staging.desc': 'Kloning situs ini menjadi situs staging baru: file, database (jika ada), dan URL disalin; situs staging mendapatkan user database sendiri. URL WordPress ditulis ulang secara otomatis.',
+	'wd.staging.domain_label': 'Domain staging',
+	'wd.staging.clone': 'Kloning ke Staging',
+	'wd.staging.cloning': 'Memulai...',
+	'wd.staging.started': 'Kloning staging dimulai. Progres muncul di bawah; penyalinan berjalan di latar belakang.',
+	'wd.staging.start_failed': 'Gagal memulai kloning staging',
+	'wd.staging.status_provisioning': 'Menyiapkan situs staging...',
+	'wd.staging.status_copying': 'Menyalin...',
+	'wd.staging.status_done': 'Selesai',
+	'wd.staging.status_failed': 'Gagal',
 
 	// Ownership
 	'wd.ownership.title': 'Kepemilikan',
