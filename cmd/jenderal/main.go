@@ -242,7 +242,7 @@ func cmdServe() {
 	nginxSvc := nginx.NewService(exec, auditSvc)
 	firewallSvc := firewall.NewService(exec, auditSvc)
 	processSvc := process.NewService(exec)
-	diskUsageSvc := diskusage.NewService(exec)
+	diskUsageSvc := diskusage.NewService(db, exec)
 	logSvc := system.NewLogService(exec)
 	var acmeEmail string
 	_ = db.QueryRow(`SELECT email FROM users WHERE is_active = 1 ORDER BY created_at LIMIT 1`).Scan(&acmeEmail)

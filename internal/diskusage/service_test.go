@@ -16,8 +16,10 @@ func TestParseDF(t *testing.T) {
 		"/dev/vda1 41234567000 21000000000 19000000000 53% /boot\n"
 
 	stats := parseDF(out)
-	if len(stats) != 2 {
-		t.Fatalf("expected 2 filesystems (header+tmpfs skipped is 2 real rows), got %d", len(stats))
+	// parseDF skips only the header; tmpfs rows are filtered by df's -x flags
+	// at runtime, so the raw parser must report all three data rows.
+	if len(stats) != 3 {
+		t.Fatalf("expected 3 filesystems, got %d", len(stats))
 	}
 	root := stats[0]
 	if root.Source != "/dev/vda1" || root.MountedOn != "/" {
@@ -61,8 +63,19 @@ func TestParseJournalUsage(t *testing.T) {
 	}
 }
 
+func TestParseDuSizes(t *testing.T) {
+	out := "104857600\t/var/log\n20971520\t/var/cache/apt\n0\t/tmp\nnot-a-number\tx\njustonepath\n"
+	sizes := parseDuSizes(out)
+	if len(sizes) != 3 {
+		t.Fatalf("expected 3 parsed paths, got %d: %v", len(sizes), sizes)
+	}
+	if sizes["/var/log"] != 104857600 || sizes["/tmp"] != 0 {
+		t.Errorf("unexpected sizes: %v", sizes)
+	}
+}
+
 func TestCleanupCommandsBounds(t *testing.T) {
-	svc := NewService(&executor.MockExecutor{})
+	svc := NewService(nil, &executor.MockExecutor{})
 
 	// Nothing selected -> no commands.
 	if cmds := svc.CleanupCommands(CleanupOptions{}); len(cmds) != 0 {
@@ -114,6 +127,13 @@ func TestOverviewCollectsReport(t *testing.T) {
 		case "df":
 			return &executor.Result{Stdout: "Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/vda1 100 60 40 60% /\n"}, nil
 		case "du":
+			// The labeled-paths scan passes "-sb" plus the path list; the
+			// root filesystem scan passes "-B1 --max-depth=1 -x /".
+			if len(args) > 0 && args[0] == "-B1" {
+				return &executor.Result{
+					Stdout: "32212254720\t/\n21474836480\t/var\n5368709120\t/home\n1073741824\t/usr\n",
+				}, nil
+			}
 			return &executor.Result{
 				Stdout: "104857600\t/var/log\n20971520\t/var/cache/apt\n0\t/tmp\n",
 			}, nil
@@ -127,7 +147,7 @@ func TestOverviewCollectsReport(t *testing.T) {
 		return &executor.Result{}, errors.New("unexpected sudo command " + name)
 	}
 
-	svc := NewService(exec)
+	svc := NewService(nil, exec)
 	overview, err := svc.Overview(context.Background())
 	if err != nil {
 		t.Fatalf("overview: %v", err)
@@ -145,8 +165,24 @@ func TestOverviewCollectsReport(t *testing.T) {
 	if len(overview.OldKernels) != 2 {
 		t.Fatalf("expected 2 old kernel packages, got %d: %v", len(overview.OldKernels), overview.OldKernels)
 	}
-	if overview.HasDocker || len(overview.Docker) != 2 {
+	if !overview.HasDocker || len(overview.Docker) != 2 {
 		t.Errorf("unexpected docker usage: %+v", overview.Docker)
+	}
+
+	// Root folders come back largest first, without the "/" total line.
+	if len(overview.RootDirs) != 3 {
+		t.Fatalf("expected 3 root dirs, got %d: %+v", len(overview.RootDirs), overview.RootDirs)
+	}
+	if overview.RootDirs[0].Path != "/var" || overview.RootDirs[0].Bytes != 21474836480 {
+		t.Errorf("expected /var first, got %+v", overview.RootDirs[0])
+	}
+	if overview.RootDirs[2].Path != "/usr" {
+		t.Errorf("expected /usr last, got %+v", overview.RootDirs[2])
+	}
+
+	// No database handle means no per-website section.
+	if len(overview.Websites) != 0 {
+		t.Errorf("expected no website rows without a db, got %+v", overview.Websites)
 	}
 
 	byLabel := map[string]DirUsage{}

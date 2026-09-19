@@ -20,6 +20,13 @@
 		missing: boolean;
 	}
 
+	interface SiteUsage {
+		id: string;
+		domain: string;
+		path: string;
+		bytes: number;
+	}
+
 	interface DockerUsage {
 		type: string;
 		size: string;
@@ -28,6 +35,8 @@
 	interface Overview {
 		filesystems: FilesystemStat[];
 		dirs: DirUsage[];
+		websites: SiteUsage[];
+		root_dirs: DirUsage[];
 		journal_bytes: number;
 		kernel: string;
 		old_kernels: string[];
@@ -73,6 +82,11 @@
 
 	function labelKey(label: string): string {
 		return `dku.label.${label}`;
+	}
+
+	function shareOf(bytes: number, max: number): number {
+		if (max <= 0) return 0;
+		return Math.max(2, Math.round((bytes / max) * 100));
 	}
 
 	async function load() {
@@ -229,6 +243,77 @@
 				</table>
 			</div>
 		</div>
+
+		{#if overview.websites.length > 0}
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+				<h3 class="text-lg font-semibold text-white mb-1">{translate($language, 'dku.websites.title')}</h3>
+				<p class="text-xs text-gray-500 mb-4">{translate($language, 'dku.websites.desc')}</p>
+				<div class="overflow-x-auto">
+					<table class="w-full">
+						<thead>
+							<tr class="border-b border-gray-700">
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'dku.websites.site')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'dku.websites.path')}</th>
+								<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'dku.websites.size')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium w-48">{translate($language, 'dku.fs.use')}</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-gray-700">
+							{#each overview.websites as site (site.id)}
+								{@const maxSiteBytes = overview.websites[0]?.bytes || 1}
+								<tr class="hover:bg-gray-750">
+									<td class="px-4 py-3 text-sm">
+										<a href={`/websites/${site.id}`} class="text-white hover:text-blue-400">{site.domain}</a>
+									</td>
+									<td class="px-4 py-3 text-sm text-gray-400 font-mono">{site.path}</td>
+									<td class="px-4 py-3 text-sm text-gray-400 text-right">{formatBytes(site.bytes)}</td>
+									<td class="px-4 py-3">
+										<div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+											<div class="h-full bg-blue-500 rounded-full" style="width: {shareOf(site.bytes, maxSiteBytes)}%"></div>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
+
+		{#if overview.root_dirs.length > 0}
+			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+				<h3 class="text-lg font-semibold text-white mb-1">{translate($language, 'dku.root.title')}</h3>
+				<p class="text-xs text-gray-500 mb-4">{translate($language, 'dku.root.desc')}</p>
+				<div class="overflow-x-auto">
+					<table class="w-full">
+						<thead>
+							<tr class="border-b border-gray-700">
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'dku.root.path')}</th>
+								<th class="text-right px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'dku.root.size')}</th>
+								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium w-48">{translate($language, 'dku.fs.use')}</th>
+							</tr>
+						</thead>
+						<tbody class="divide-y divide-gray-700">
+							{#each overview.root_dirs as dir (dir.path)}
+								{@const maxRootBytes = overview.root_dirs[0]?.bytes || 1}
+								<tr class="hover:bg-gray-750">
+									<td class="px-4 py-3 text-sm text-white font-mono">{dir.path}</td>
+									<td class="px-4 py-3 text-sm text-gray-400 text-right">{formatBytes(dir.bytes)}</td>
+									<td class="px-4 py-3">
+										<div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+											<div
+												class="h-full rounded-full {dir.path === '/var' ? 'bg-yellow-500' : 'bg-blue-500'}"
+												style="width: {shareOf(dir.bytes, maxRootBytes)}%"
+											></div>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			</div>
+		{/if}
 
 		{#if overview.old_kernels.length > 0}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
