@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // Service inspects disk usage and builds cleanup command lists.
@@ -227,6 +228,78 @@ func (s *Service) collectRootDirs(ctx context.Context, o *Overview) {
 	if len(o.RootDirs) > rootDirsLimit {
 		o.RootDirs = o.RootDirs[:rootDirsLimit]
 	}
+}
+
+// BreakdownEntry is one folder inside a per-website breakdown.
+type BreakdownEntry struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+// WebsiteBreakdown is the folder-level report for one website's home.
+type WebsiteBreakdown struct {
+	WebsiteID  string           `json:"website_id"`
+	Domain     string           `json:"domain"`
+	Home       string           `json:"home"`
+	TotalBytes int64            `json:"total_bytes"`
+	Entries    []BreakdownEntry `json:"entries"`
+}
+
+// breakdownLimit caps how many folders are reported per website.
+const breakdownLimit = 25
+
+// WebsiteBreakdown measures one website's home directory one level deep so
+// the user can see which folders inside the site take the most space.
+func (s *Service) WebsiteBreakdown(ctx context.Context, websiteID string) (WebsiteBreakdown, error) {
+	if s.db == nil {
+		return WebsiteBreakdown{}, fmt.Errorf("website breakdown requires a database handle")
+	}
+
+	var domain, webUser string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT domain, web_user FROM websites WHERE id = ?`, websiteID,
+	).Scan(&domain, &webUser)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return WebsiteBreakdown{}, model.ErrNotFound
+		}
+		return WebsiteBreakdown{}, fmt.Errorf("query website: %w", err)
+	}
+
+	breakdown, err := s.dirBreakdown(ctx, "/home/"+webUser)
+	if err != nil {
+		return WebsiteBreakdown{}, err
+	}
+	breakdown.WebsiteID = websiteID
+	breakdown.Domain = domain
+	return breakdown, nil
+}
+
+// dirBreakdown runs the one-level du scan on a directory and assembles the
+// sorted report. The directory's own total line is excluded from entries.
+func (s *Service) dirBreakdown(ctx context.Context, dir string) (WebsiteBreakdown, error) {
+	res, err := s.exec.RunSudo(ctx, "du", "-B1", "--max-depth=1", "-x", dir)
+	if err != nil {
+		return WebsiteBreakdown{}, fmt.Errorf("measure %s: %w", dir, err)
+	}
+
+	byPath := parseDuSizes(res.Stdout)
+	breakdown := WebsiteBreakdown{
+		Home:       dir,
+		TotalBytes: byPath[dir],
+		Entries:    []BreakdownEntry{},
+	}
+	for path, bytes := range byPath {
+		if path == dir {
+			continue
+		}
+		breakdown.Entries = append(breakdown.Entries, BreakdownEntry{Path: path, Bytes: bytes})
+	}
+	sort.SliceStable(breakdown.Entries, func(i, j int) bool { return breakdown.Entries[i].Bytes > breakdown.Entries[j].Bytes })
+	if len(breakdown.Entries) > breakdownLimit {
+		breakdown.Entries = breakdown.Entries[:breakdownLimit]
+	}
+	return breakdown, nil
 }
 
 func (s *Service) collectJournal(ctx context.Context, o *Overview) {

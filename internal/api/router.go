@@ -189,6 +189,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/disk/plan", diskUsageHandler.PlanCleanup)
 			r.With(auth.RequirePermission(deps.RBAC, "disk.manage")).
 				Post("/disk/cleanup", diskUsageHandler.RunCleanup)
+			// Folder-level breakdown of one website's home; the scope
+			// middleware enforces ownership for /websites/{id}/... patterns.
+			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).
+				Get("/websites/{id}/disk-usage", diskUsageHandler.WebsiteBreakdown)
 
 			// Services
 			r.Get("/services", serviceHandler.List)

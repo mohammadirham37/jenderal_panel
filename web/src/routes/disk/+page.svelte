@@ -27,6 +27,19 @@
 		bytes: number;
 	}
 
+	interface BreakdownEntry {
+		path: string;
+		bytes: number;
+	}
+
+	interface SiteBreakdown {
+		website_id: string;
+		domain: string;
+		home: string;
+		total_bytes: number;
+		entries: BreakdownEntry[];
+	}
+
 	interface DockerUsage {
 		type: string;
 		size: string;
@@ -87,6 +100,42 @@
 	function shareOf(bytes: number, max: number): number {
 		if (max <= 0) return 0;
 		return Math.max(2, Math.round((bytes / max) * 100));
+	}
+
+	// Per-website folder breakdown (expandable rows in "Websites by Size").
+	// One row is expanded at a time; the report is fetched on demand.
+	let expandedSiteId = $state<string | null>(null);
+	let expandedBreakdown = $state<SiteBreakdown | null>(null);
+	let expandedState = $state<'loading' | 'error' | 'ready'>('loading');
+
+	function folderName(path: string, home: string): string {
+		if (path.startsWith(home + '/')) return path.slice(home.length + 1);
+		return path;
+	}
+
+	async function fetchBreakdown(siteId: string) {
+		expandedState = 'loading';
+		try {
+			expandedBreakdown = await api.get<SiteBreakdown>(`/api/v1/websites/${siteId}/disk-usage`);
+			expandedState = 'ready';
+		} catch {
+			expandedBreakdown = null;
+			expandedState = 'error';
+		}
+	}
+
+	async function toggleSite(site: SiteUsage) {
+		if (expandedSiteId === site.id) {
+			expandedSiteId = null;
+			return;
+		}
+		expandedSiteId = site.id;
+		await fetchBreakdown(site.id);
+	}
+
+	async function retryBreakdown(site: SiteUsage) {
+		if (expandedSiteId !== site.id) return;
+		await fetchBreakdown(site.id);
 	}
 
 	async function load() {
@@ -247,7 +296,7 @@
 		{#if overview.websites.length > 0}
 			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 				<h3 class="text-lg font-semibold text-white mb-1">{translate($language, 'dku.websites.title')}</h3>
-				<p class="text-xs text-gray-500 mb-4">{translate($language, 'dku.websites.desc')}</p>
+				<p class="text-xs text-gray-500 mb-4">{translate($language, 'dku.websites.desc')} {translate($language, 'dku.websites.analyzeHint')}</p>
 				<div class="overflow-x-auto">
 					<table class="w-full">
 						<thead>
@@ -258,23 +307,73 @@
 								<th class="text-left px-4 py-3 text-xs text-gray-400 uppercase tracking-wider font-medium w-48">{translate($language, 'dku.fs.use')}</th>
 							</tr>
 						</thead>
-						<tbody class="divide-y divide-gray-700">
-							{#each overview.websites as site (site.id)}
-								{@const maxSiteBytes = overview.websites[0]?.bytes || 1}
-								<tr class="hover:bg-gray-750">
-									<td class="px-4 py-3 text-sm">
-										<a href={`/websites/${site.id}`} class="text-white hover:text-blue-400">{site.domain}</a>
-									</td>
-									<td class="px-4 py-3 text-sm text-gray-400 font-mono">{site.path}</td>
-									<td class="px-4 py-3 text-sm text-gray-400 text-right">{formatBytes(site.bytes)}</td>
-									<td class="px-4 py-3">
-										<div class="h-2 bg-gray-700 rounded-full overflow-hidden">
-											<div class="h-full bg-blue-500 rounded-full" style="width: {shareOf(site.bytes, maxSiteBytes)}%"></div>
+					<tbody class="divide-y divide-gray-700">
+						{#each overview.websites as site (site.id)}
+							{@const maxSiteBytes = overview.websites[0]?.bytes || 1}
+							<tr
+								class="hover:bg-gray-750 cursor-pointer {expandedSiteId === site.id ? 'bg-gray-750' : ''}"
+								onclick={() => toggleSite(site)}
+								aria-expanded={expandedSiteId === site.id}
+							>
+								<td class="px-4 py-3 text-sm">
+									<span class="inline-flex items-center gap-2 text-white">
+										<svg
+											class="w-3.5 h-3.5 text-gray-500 transition-transform {expandedSiteId === site.id ? 'rotate-90' : ''}"
+											fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"
+										>
+											<path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+										</svg>
+										{site.domain}
+									</span>
+								</td>
+								<td class="px-4 py-3 text-sm text-gray-400 font-mono">{site.path}</td>
+								<td class="px-4 py-3 text-sm text-gray-400 text-right">{formatBytes(site.bytes)}</td>
+								<td class="px-4 py-3">
+									<div class="h-2 bg-gray-700 rounded-full overflow-hidden">
+										<div class="h-full bg-blue-500 rounded-full" style="width: {shareOf(site.bytes, maxSiteBytes)}%"></div>
+									</div>
+								</td>
+							</tr>
+							{#if expandedSiteId === site.id}
+								<tr>
+									<td colspan="4" class="px-4 pb-4 bg-gray-900/40">
+										<div class="rounded-lg border border-gray-700 bg-gray-900 p-3">
+											{#if expandedState === 'loading'}
+												<div class="text-gray-400 text-sm py-2">{translate($language, 'dku.breakdown.loading')}</div>
+											{:else if expandedState === 'error'}
+												<div class="flex items-center justify-between gap-2 py-2">
+													<span class="text-red-400 text-sm">{translate($language, 'dku.breakdown.loadFailed')}</span>
+													<button
+														onclick={() => retryBreakdown(site)}
+														class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 text-gray-200 text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'dku.breakdown.retry')}
+													</button>
+												</div>
+											{:else if expandedBreakdown}
+												<div class="space-y-1.5">
+													{#each expandedBreakdown.entries as entry (entry.path)}
+														{@const maxEntryBytes = expandedBreakdown.entries[0]?.bytes || 1}
+														<div class="flex items-center gap-3">
+															<code class="w-40 shrink-0 text-xs text-gray-300 font-mono truncate" title={entry.path}>{folderName(entry.path, expandedBreakdown.home)}</code>
+															<div class="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+																<div class="h-full bg-blue-500 rounded-full" style="width: {shareOf(entry.bytes, maxEntryBytes)}%"></div>
+															</div>
+															<span class="w-20 shrink-0 text-right text-xs text-gray-400">{formatBytes(entry.bytes)}</span>
+														</div>
+													{/each}
+													<div class="flex items-center justify-between pt-2 mt-2 border-t border-gray-700 text-xs">
+														<span class="text-gray-500">{translate($language, 'dku.breakdown.total')}</span>
+														<span class="text-gray-300">{formatBytes(expandedBreakdown.total_bytes)}</span>
+													</div>
+												</div>
+											{/if}
 										</div>
 									</td>
 								</tr>
-							{/each}
-						</tbody>
+							{/if}
+						{/each}
+					</tbody>
 					</table>
 				</div>
 			</div>

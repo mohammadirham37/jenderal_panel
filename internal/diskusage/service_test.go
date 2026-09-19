@@ -74,6 +74,63 @@ func TestParseDuSizes(t *testing.T) {
 	}
 }
 
+func TestDirBreakdownSortsAndExcludesTotal(t *testing.T) {
+	exec := &executor.MockExecutor{}
+	exec.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name != "du" {
+			return nil, errors.New("unexpected sudo command " + name)
+		}
+		return &executor.Result{
+			Stdout: "52428800\t/home/site_u\n" +
+				"41943040\t/home/site_u/public\n" +
+				"10485760\t/home/site_u/logs\n" +
+				"2048\t/home/site_u/tmp\n",
+		}, nil
+	}
+
+	svc := NewService(nil, exec)
+	breakdown, err := svc.dirBreakdown(context.Background(), "/home/site_u")
+	if err != nil {
+		t.Fatalf("dirBreakdown: %v", err)
+	}
+
+	if breakdown.Home != "/home/site_u" {
+		t.Errorf("unexpected home: %s", breakdown.Home)
+	}
+	if breakdown.TotalBytes != 52428800 {
+		t.Errorf("expected the directory total to be captured, got %d", breakdown.TotalBytes)
+	}
+	// The total line must not appear as its own entry.
+	if len(breakdown.Entries) != 3 {
+		t.Fatalf("expected 3 entries, got %d: %+v", len(breakdown.Entries), breakdown.Entries)
+	}
+	if breakdown.Entries[0].Path != "/home/site_u/public" || breakdown.Entries[0].Bytes != 41943040 {
+		t.Errorf("expected public/ first, got %+v", breakdown.Entries[0])
+	}
+	if breakdown.Entries[2].Path != "/home/site_u/tmp" {
+		t.Errorf("expected tmp/ last, got %+v", breakdown.Entries[2])
+	}
+}
+
+func TestDirBreakdownHandlesMissingDirectory(t *testing.T) {
+	// du exits non-zero with empty stdout when the path does not exist; the
+	// executor treats that as a result, not an error, so the report comes
+	// back empty instead of failing.
+	exec := &executor.MockExecutor{}
+	exec.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		return &executor.Result{ExitCode: 1, Stderr: "du: cannot access: No such file or directory"}, nil
+	}
+
+	svc := NewService(nil, exec)
+	breakdown, err := svc.dirBreakdown(context.Background(), "/home/gone_u")
+	if err != nil {
+		t.Fatalf("dirBreakdown: %v", err)
+	}
+	if breakdown.TotalBytes != 0 || len(breakdown.Entries) != 0 {
+		t.Errorf("expected an empty report, got %+v", breakdown)
+	}
+}
+
 func TestCleanupCommandsBounds(t *testing.T) {
 	svc := NewService(nil, &executor.MockExecutor{})
 

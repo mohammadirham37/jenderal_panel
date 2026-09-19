@@ -3,6 +3,8 @@ package diskusage
 import (
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
@@ -53,6 +55,22 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.JSON(w, http.StatusOK, overview)
+}
+
+// WebsiteBreakdown measures one website's home directory folder by folder.
+func (h *Handler) WebsiteBreakdown(w http.ResponseWriter, r *http.Request) {
+	websiteID := chi.URLParam(r, "id")
+	if websiteID == "" {
+		httputil.HandleError(w, model.NewValidationError("website id is required"))
+		return
+	}
+
+	breakdown, err := h.svc.WebsiteBreakdown(r.Context(), websiteID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, breakdown)
 }
 
 // PlanCleanup previews the commands that would run for the given options,
