@@ -40,6 +40,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
 	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
+	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
 	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
@@ -56,6 +57,7 @@ type Dependencies struct {
 	AuditSvc        *audit.Service
 	SystemInfo      *system.Info
 	Metrics         *system.MetricsCollector
+	DiskUsageSvc    *diskusage.Service
 	ServiceMgr      service.ServiceManager
 	SettingsSvc     *settings.Service
 	NginxSvc        *nginx.Service
@@ -117,6 +119,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	nginxHandler := nginx.NewHandler(deps.NginxSvc, deps.AuditSvc)
 	firewallHandler := firewall.NewHandler(deps.FirewallSvc, deps.AuditSvc)
 	processHandler := process.NewHandler(deps.ProcessSvc, deps.AuditSvc)
+	diskUsageHandler := diskusage.NewHandler(deps.DiskUsageSvc, deps.AuditSvc, deps.Tasks)
 	websiteHandler := website.NewHandler(deps.WebsiteSvc, deps.AuditSvc, deps.Tasks)
 	websiteHandler.SetSSHAccounts(deps.SSHAccountSvc)
 	sshKeyHandler := sshaccount.NewHandler(deps.SSHAccountSvc)
@@ -175,6 +178,14 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/server/hostname", systemHandler.SetHostname)
 			r.With(auth.RequirePermission(deps.RBAC, "server.timezone")).
 				Post("/server/timezone", systemHandler.SetTimezone)
+
+			// Disk usage & cleanup
+			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).
+				Get("/disk/usage", diskUsageHandler.Overview)
+			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).
+				Post("/disk/plan", diskUsageHandler.PlanCleanup)
+			r.With(auth.RequirePermission(deps.RBAC, "disk.manage")).
+				Post("/disk/cleanup", diskUsageHandler.RunCleanup)
 
 			// Services
 			r.Get("/services", serviceHandler.List)

@@ -49,6 +49,7 @@
 			key: 'nav.group.infrastructure',
 			items: [
 				{ href: '/server', permission: 'server.view', labelKey: 'nav.server', icon: 'server' },
+				{ href: '/disk', permission: 'disk.view', labelKey: 'nav.disk', icon: 'disk' },
 				{ href: '/services', permission: 'services.view', labelKey: 'nav.services', icon: 'layers' },
 				{ href: '/nginx', permission: 'nginx.view', labelKey: 'nav.nginx', icon: 'globe' },
 				{ href: '/databases', permission: 'databases.view', labelKey: 'nav.databases', icon: 'database' },
@@ -266,6 +267,9 @@
 									<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
 								{:else if item.icon === 'server'}
 									<path stroke-linecap="round" stroke-linejoin="round" d="M21.75 17.25v-.228a4.5 4.5 0 00-.12-1.03l-2.268-9.64a3.375 3.375 0 00-3.285-2.602H7.923a3.375 3.375 0 00-3.285 2.602l-2.268 9.64a4.5 4.5 0 00-.12 1.03v.228m19.5 0a3 3 0 01-3 3H5.25a3 3 0 01-3-3m19.5 0a3 3 0 00-3-3H5.25a3 3 0 00-3 3m16.5 0h.008v.008h-.008v-.008zm-3 0h.008v.008h-.008v-.008z" />
+								{:else if item.icon === 'disk'}
+									<circle cx="12" cy="12" r="9" />
+									<circle cx="12" cy="12" r="2.5" />
 								{:else if item.icon === 'layers'}
 									<path stroke-linecap="round" stroke-linejoin="round" d="M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3" />
 								{:else if item.icon === 'globe'}

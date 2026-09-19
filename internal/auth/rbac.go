@@ -62,6 +62,8 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"server.reboot", "server"},
 		{"server.hostname", "server"},
 		{"server.timezone", "server"},
+		{"disk.view", "disk"},
+		{"disk.manage", "disk"},
 		{"services.view", "services"},
 		{"services.manage", "services"},
 		{"users.view", "users"},

@@ -18,6 +18,7 @@ import { dict as wl } from './domains/wl';
 import { dict as wssub } from './domains/wssub';
 import { dict as ws } from './domains/ws';
 import { dict as security } from './domains/security';
+import { dict as disk } from './domains/disk';
 
 export const translations: Record<'en' | 'id', Record<string, string>> = {
 	en: {
@@ -36,7 +37,8 @@ export const translations: Record<'en' | 'id', Record<string, string>> = {
 		...wl.en,
 		...wssub.en,
 		...ws.en,
-		...security.en
+		...security.en,
+		...disk.en
 	},
 	id: {
 		...core.id,
@@ -54,6 +56,7 @@ export const translations: Record<'en' | 'id', Record<string, string>> = {
 		...wl.id,
 		...wssub.id,
 		...ws.id,
-		...security.id
+		...security.id,
+		...disk.id
 	}
 };

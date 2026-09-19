@@ -39,6 +39,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
+	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
@@ -240,6 +241,7 @@ func cmdServe() {
 	nginxSvc := nginx.NewService(exec, auditSvc)
 	firewallSvc := firewall.NewService(exec, auditSvc)
 	processSvc := process.NewService(exec)
+	diskUsageSvc := diskusage.NewService(exec)
 	logSvc := system.NewLogService(exec)
 	var acmeEmail string
 	_ = db.QueryRow(`SELECT email FROM users WHERE is_active = 1 ORDER BY created_at LIMIT 1`).Scan(&acmeEmail)
@@ -373,6 +375,7 @@ func cmdServe() {
 		AuditSvc:        auditSvc,
 		SystemInfo:      systemInfo,
 		Metrics:         metricsCollector,
+		DiskUsageSvc:    diskUsageSvc,
 		ServiceMgr:      serviceMgr,
 		SettingsSvc:     settingsSvc,
 		NginxSvc:        nginxSvc,
