@@ -31,6 +31,17 @@ func NewHandler(authSvc *auth.Service, rbac *auth.RBAC, auditSvc *audit.Service,
 	}
 }
 
+// minPasswordLength is the panel-wide floor for panel and SSH passwords.
+const minPasswordLength = 8
+
+// validatePasswordLength enforces the minimum password length.
+func validatePasswordLength(password string) error {
+	if len(password) < minPasswordLength {
+		return model.NewValidationError("password must be at least 8 characters")
+	}
+	return nil
+}
+
 // List returns all users.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	users, err := h.auth.ListUsers(r.Context())
@@ -68,6 +79,10 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	if req.Username == "" || req.Email == "" || req.Password == "" {
 		httputil.HandleError(w, model.NewValidationError("username, email, and password are required"))
+		return
+	}
+	if err := validatePasswordLength(req.Password); err != nil {
+		httputil.HandleError(w, err)
 		return
 	}
 	if req.SSHEnabled && !sshaccount.ValidateUsername(req.Username) {
@@ -296,6 +311,10 @@ func (h *Handler) UpdatePassword(w http.ResponseWriter, r *http.Request) {
 
 	if req.Password == "" {
 		httputil.HandleError(w, model.NewValidationError("password is required"))
+		return
+	}
+	if err := validatePasswordLength(req.Password); err != nil {
+		httputil.HandleError(w, err)
 		return
 	}
 

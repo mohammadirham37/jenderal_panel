@@ -33,6 +33,18 @@ func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Servi
 	return &Service{db: db, exec: exec, audit: auditSvc}
 }
 
+// validateCronFields rejects line breaks and control characters in the
+// schedule and command. A crontab entry is a single line, so embedded
+// newlines would let one job inject extra entries into the site's crontab.
+func validateCronFields(schedule, command string) error {
+	for name, value := range map[string]string{"schedule": schedule, "command": command} {
+		if strings.ContainsAny(value, "\n\r\x00") {
+			return model.NewValidationError(name + " must not contain line breaks or control characters")
+		}
+	}
+	return nil
+}
+
 // Create inserts a new cron job record and writes it to the system crontab.
 func (s *Service) Create(ctx context.Context, req CronJobRequest) (model.CronJob, error) {
 	if req.WebsiteID == "" {
@@ -43,6 +55,9 @@ func (s *Service) Create(ctx context.Context, req CronJobRequest) (model.CronJob
 	}
 	if req.Schedule == "" {
 		return model.CronJob{}, model.NewValidationError("schedule is required")
+	}
+	if err := validateCronFields(req.Schedule, req.Command); err != nil {
+		return model.CronJob{}, err
 	}
 
 	now := time.Now().UTC()
@@ -161,6 +176,9 @@ func (s *Service) Update(ctx context.Context, id string, req CronJobRequest) err
 	}
 	if req.Schedule != "" {
 		job.Schedule = req.Schedule
+	}
+	if err := validateCronFields(job.Schedule, job.Command); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)

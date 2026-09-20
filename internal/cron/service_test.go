@@ -192,3 +192,23 @@ func TestListByWebsiteValidatesWebsiteAndScopesResults(t *testing.T) {
 		t.Fatalf("error = %v, want model.ErrNotFound", err)
 	}
 }
+
+// A crontab entry is a single line; embedded line breaks would let one job
+// inject additional entries into the site's crontab.
+func TestValidateCronFieldsRejectsLineBreaks(t *testing.T) {
+	if err := validateCronFields("*/5 * * * *", "echo ok"); err != nil {
+		t.Errorf("expected a normal job to pass, got %v", err)
+	}
+	if err := validateCronFields("*/5 * * * *\n0 0 * * * curl evil", "echo ok"); err == nil {
+		t.Error("expected a newline in schedule to be rejected")
+	}
+	if err := validateCronFields("*/5 * * * *", "echo ok\ncurl evil"); err == nil {
+		t.Error("expected a newline in command to be rejected")
+	}
+	if err := validateCronFields("*/5 * * * *", "echo \r ok"); err == nil {
+		t.Error("expected a carriage return in command to be rejected")
+	}
+	if err := validateCronFields("@daily", "backup.sh\x00x"); err == nil {
+		t.Error("expected a NUL byte in command to be rejected")
+	}
+}

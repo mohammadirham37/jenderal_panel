@@ -8,12 +8,11 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin: httputil.SameOriginCheckOrigin,
 }
 
 type wsMessage struct {

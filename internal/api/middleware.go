@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -22,6 +23,60 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Request-ID", id)
 		ctx := logging.WithRequestID(r.Context(), id)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// SafeRealIP replaces RemoteAddr with the forwarded client IP, but only when
+// the direct TCP peer is loopback or a private address — i.e. a trusted
+// reverse proxy such as the panel-domain nginx vhost. Direct connections
+// (public peers) keep their real RemoteAddr, so a client cannot forge
+// X-Forwarded-For to rotate its login-throttle key or poison audit logs.
+func SafeRealIP(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if peer, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && isTrustedProxyIP(peer) {
+			if ip := net.ParseIP(strings.TrimSpace(headerClientIP(r))); ip != nil {
+				r.RemoteAddr = ip.String()
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// headerClientIP returns the client IP the proxy reported: X-Real-IP if set,
+// otherwise the first entry of X-Forwarded-For.
+func headerClientIP(r *http.Request) string {
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+	xff := r.Header.Get("X-Forwarded-For")
+	if i := strings.IndexByte(xff, ','); i >= 0 {
+		xff = xff[:i]
+	}
+	return strings.TrimSpace(xff)
+}
+
+func isTrustedProxyIP(host string) bool {
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// SecurityHeaders sets conservative response headers on every panel response.
+// They cannot affect the SPA or API behaviour but blunt common browser-side
+// attacks: MIME sniffing, framing/clickjacking, and referrer leakage. HSTS is
+// only sent on TLS connections because the panel can also run plain HTTP.
+func SecurityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		if r.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/alert"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
@@ -104,10 +103,11 @@ func NewRouter(deps Dependencies) http.Handler {
 	r := chi.NewRouter()
 
 	// Global middleware
-	r.Use(chimiddleware.RealIP)
+	r.Use(SafeRealIP)
 	r.Use(RequestIDMiddleware)
 	r.Use(RecovererMiddleware)
 	r.Use(LoggingMiddleware(deps.Logger))
+	r.Use(SecurityHeaders)
 
 	// Handlers
 	authHandler := auth.NewHandler(deps.AuthSvc, deps.RBAC, deps.AuditSvc)

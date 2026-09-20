@@ -14,15 +14,14 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // logUpgrader is used for WebSocket upgrades in log streaming.
 // Named differently from the upgrader in ws.go to avoid duplicate declarations.
 var logUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+	CheckOrigin: httputil.SameOriginCheckOrigin,
 }
 
 // allowedLogPrefixes contains directory prefixes allowed for log reading.
