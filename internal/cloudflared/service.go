@@ -6,10 +6,12 @@
 package cloudflared
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
@@ -149,4 +151,159 @@ func parseVersion(output string) string {
 		return ""
 	}
 	return m[1]
+}
+
+// Status is the API view of the connector state.
+type Status struct {
+	Installed         bool   `json:"installed"`
+	Version           string `json:"version"`
+	Pinned            string `json:"pinned_version"`
+	TokenInstalled    bool   `json:"token_installed"`
+	ServiceState      string `json:"service_state"` // active|inactive|failed|activating|deactivating|unknown
+	AptServiceRunning bool   `json:"apt_service_running"`
+}
+
+// Status reports binary, token, and unit state. Missing pieces are reported,
+// never treated as errors, so the UI can render each next step.
+func (s *Service) Status(ctx context.Context) (Status, error) {
+	status := Status{Pinned: Version, ServiceState: "unknown"}
+	if result, err := s.exec.Run(ctx, BinaryPath, "version"); err == nil && result != nil && result.ExitCode == 0 {
+		status.Installed = true
+		status.Version = parseVersion(result.Stdout)
+	}
+	if result, err := s.exec.RunSudo(ctx, "test", "-f", TokenEnvPath); err == nil && result != nil && result.ExitCode == 0 {
+		status.TokenInstalled = true
+	}
+	status.ServiceState = activeState(s.sudoOut(ctx, "systemctl", "is-active", UnitName))
+	status.AptServiceRunning = activeState(s.sudoOut(ctx, "systemctl", "is-active", "cloudflared")) == "active"
+	return status, nil
+}
+
+// sudoOut runs a privileged command and returns trimmed stdout, treating any
+// failure as empty output (callers interpret the state themselves).
+func (s *Service) sudoOut(ctx context.Context, name string, args ...string) string {
+	result, err := s.exec.RunSudo(ctx, name, args...)
+	if err != nil || result == nil {
+		return ""
+	}
+	return strings.TrimSpace(result.Stdout)
+}
+
+func activeState(out string) string {
+	switch out {
+	case "active", "inactive", "failed", "activating", "deactivating":
+		return out
+	default:
+		return "unknown"
+	}
+}
+
+// EnsureInstalled reports a precise error when connect is requested before
+// the binary install happened.
+func (s *Service) EnsureInstalled(ctx context.Context) error {
+	status, err := s.Status(ctx)
+	if err != nil {
+		return err
+	}
+	if !status.Installed {
+		return model.NewDomainError("CLOUDFLARED_MISSING",
+			"cloudflared is not installed; install it first on this page", nil)
+	}
+	return nil
+}
+
+// Install downloads, verifies, and installs the pinned binary as a background
+// task. Returns the task ID for polling. Also used to update when the
+// installed version differs from the pin.
+func (s *Service) Install(ctx context.Context) (string, error) {
+	if s.tasks == nil {
+		return "", model.NewDomainError("TASK_RUNNER_UNAVAILABLE", "task runner is not available", nil)
+	}
+	_ = s.audit.Log(ctx, audit.LogEntry{Action: "cloudflared_install", Module: "tunnel", Detail: "installing cloudflared " + Version})
+	return s.tasks.Run("Install cloudflared "+Version, "bash", "-c", installScript()), nil
+}
+
+// Connect writes the root-only token env file, installs the unit, and starts
+// the service. Runs inside a task; log streams progress to the UI. Restart
+// (not start) makes re-connecting with a new token idempotent.
+func (s *Service) Connect(ctx context.Context, token string, log func(string)) error {
+	if err := ValidateToken(token); err != nil {
+		return err
+	}
+	if err := s.EnsureInstalled(ctx); err != nil {
+		return err
+	}
+	token = strings.TrimSpace(token)
+
+	log("Writing connector token to " + TokenEnvPath + "\n")
+	if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", "/etc/cloudflared"); err != nil {
+		return fmt.Errorf("create config directory: %w", err)
+	}
+	if _, err := s.exec.RunSudo(ctx, "chmod", "0750", "/etc/cloudflared"); err != nil {
+		return fmt.Errorf("mode config directory: %w", err)
+	}
+	if _, err := s.exec.RunSudoWithInput(ctx, "TUNNEL_TOKEN="+token+"\n", "tee", TokenEnvPath); err != nil {
+		return fmt.Errorf("write token env file: %w", err)
+	}
+	if _, err := s.exec.RunSudo(ctx, "chmod", "0600", TokenEnvPath); err != nil {
+		return fmt.Errorf("mode token env file: %w", err)
+	}
+
+	log("Writing systemd unit " + unitPath + "\n")
+	unit := RenderUnit()
+	if _, err := s.exec.RunSudo(ctx, "bash", "-c",
+		fmt.Sprintf("cat > %s << 'UNITEOF'\n%sUNITEOF", unitPath, unit)); err != nil {
+		return fmt.Errorf("write systemd unit: %w", err)
+	}
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
+	}
+
+	log("Starting " + UnitName + "\n")
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "enable", UnitName); err != nil {
+		return fmt.Errorf("enable tunnel service: %w", err)
+	}
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "restart", UnitName); err != nil {
+		return fmt.Errorf("start tunnel service: %w", err)
+	}
+	log("Connector started. Check tunnel health in the Cloudflare dashboard.\n")
+	return nil
+}
+
+// Disconnect stops the connector and removes the unit and token. The binary
+// stays installed.
+func (s *Service) Disconnect(ctx context.Context) error {
+	_, _ = s.exec.RunSudo(ctx, "systemctl", "stop", UnitName)
+	_, _ = s.exec.RunSudo(ctx, "systemctl", "disable", UnitName)
+	_, _ = s.exec.RunSudo(ctx, "rm", "-f", unitPath, TokenEnvPath)
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
+	}
+	return nil
+}
+
+// Restart restarts the connector service.
+func (s *Service) Restart(ctx context.Context) error {
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "restart", UnitName); err != nil {
+		return fmt.Errorf("restart tunnel service: %w", err)
+	}
+	return nil
+}
+
+// Logs tails the connector's journald log.
+func (s *Service) Logs(ctx context.Context, lines int) (string, error) {
+	if lines <= 0 {
+		lines = 200
+	}
+	if lines > 1000 {
+		lines = 1000
+	}
+	result, err := s.exec.RunSudo(ctx, "journalctl", "-u", UnitName, "-n", strconv.Itoa(lines), "--no-pager")
+	if err != nil {
+		return "", model.NewDomainError("TUNNEL_LOGS_UNAVAILABLE", "could not read tunnel logs", nil)
+	}
+	if result == nil {
+		return "", nil
+	}
+	return result.Stdout, nil
 }
