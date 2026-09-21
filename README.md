@@ -103,7 +103,7 @@ for Safe-mode setup, verification, and lockout recovery.
 
 ## Requirements
 
-- Ubuntu 22.04 LTS or Ubuntu 24.04 LTS
+- Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, or Ubuntu 26.04 LTS
 - 1 CPU, 1 GB RAM, 10 GB disk (minimum)
 - Root access
 
@@ -140,7 +140,7 @@ bash install.sh --help
 
 ### What the Installer Does
 
-1. Checks OS (Ubuntu 22.04/24.04), architecture, resources
+1. Checks OS (Ubuntu 22.04/24.04/26.04), architecture, resources
 2. Installs dependencies (curl, nginx, ufw, openssl, sqlite3)
 3. Creates `jenderal` system user
 4. Downloads binary from GitHub releases (or builds from source)

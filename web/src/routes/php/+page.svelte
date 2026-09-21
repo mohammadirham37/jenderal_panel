@@ -32,18 +32,13 @@ import { toast } from '$lib/stores/toast';
 	// Uninstall confirm
 	let uninstallConfirmVersion = $state<string | null>(null);
 
-	const allVersions = ['8.1', '8.2', '8.3', '8.4'];
-
 	async function loadPhp() {
 		loading = true;
 		error = '';
 		try {
-			const data = (await api.get<PhpVersion[]>('/api/v1/php')) || [];
-			// Ensure all known versions are represented
-			phpVersions = allVersions.map((v) => {
-				const found = data.find((p) => p.version === v);
-				return found || { version: v, installed: false, running: false };
-			});
+			// The API returns every version manageable on this OS (installed
+			// or not), so the list follows the server's per-release matrix.
+			phpVersions = (await api.get<PhpVersion[]>('/api/v1/php')) || [];
 		} catch (err) {
 			error = err instanceof Error ? err.message : translate($language, 'phpv.loadFailed');
 		} finally {

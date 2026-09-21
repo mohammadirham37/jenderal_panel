@@ -1,6 +1,6 @@
 # AGENTS.md — Jenderal Panel
 
-Open-source VPS control panel for Ubuntu 22.04/24.04. Go backend + SvelteKit 5 frontend shipped as a single binary via `go:embed`. Full details in `CLAUDE.md`; module-specific notes in `docs/`.
+Open-source VPS control panel for Ubuntu 22.04/24.04/26.04. Go backend + SvelteKit 5 frontend shipped as a single binary via `go:embed`. Full details in `CLAUDE.md`; module-specific notes in `docs/`.
 
 ## Layout
 
@@ -49,7 +49,7 @@ After work is pushed to `main`, deploy by clicking **Update** on the panel's Upd
 
 ## Testing policy (important)
 
-The maintainer tests the running panel manually on Ubuntu 24.04. Do NOT launch the app, mock its API, or do browser-based testing. Stop at static validation: `npm run check`, `npm run build`, `npm test`, `go test ./...`. The backend targets Linux (systemd, ufw, nginx) and will not run correctly on macOS.
+The maintainer tests the running panel manually on Ubuntu 24.04 and 26.04. Do NOT launch the app, mock its API, or do browser-based testing. Stop at static validation: `npm run check`, `npm run build`, `npm test`, `go test ./...`. The backend targets Linux (systemd, ufw, nginx) and will not run correctly on macOS.
 
 ## Gotchas
 

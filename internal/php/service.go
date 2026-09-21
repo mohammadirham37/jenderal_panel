@@ -15,8 +15,47 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
-// supportedVersions lists the PHP versions that the panel can manage.
-var supportedVersions = []string{"8.1", "8.2", "8.3", "8.4"}
+// ppaVersions lists the PHP versions the panel manages via the ondrej PPA
+// (Ubuntu jammy/noble).
+var ppaVersions = []string{"8.1", "8.2", "8.3", "8.4"}
+
+// archiveVersions lists the PHP versions available straight from the Ubuntu
+// archive on releases the ondrej PPA does not serve yet. Resolute (26.04)
+// ships 8.5 and does not carry 8.4.
+var archiveVersions = []string{"8.5"}
+
+// VersionsForCodename maps an Ubuntu codename to the PHP versions the panel
+// can manage there. Unknown codenames keep the PPA set, matching the
+// releases the ondrej PPA serves.
+func VersionsForCodename(codename string) []string {
+	if codename == "resolute" {
+		return archiveVersions
+	}
+	return ppaVersions
+}
+
+// parseCodename extracts VERSION_CODENAME from /etc/os-release content.
+func parseCodename(release string) string {
+	for _, line := range strings.Split(release, "\n") {
+		if value, ok := strings.CutPrefix(strings.TrimSpace(line), "VERSION_CODENAME="); ok {
+			return strings.Trim(value, `"`)
+		}
+	}
+	return ""
+}
+
+// Codename reads the running system's VERSION_CODENAME; "" when unreadable
+// (callers then fall back to the default version set).
+func Codename(ctx context.Context, exec executor.CommandExecutor) string {
+	if exec == nil {
+		return ""
+	}
+	result, err := exec.Run(ctx, "/bin/cat", "/etc/os-release")
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return ""
+	}
+	return parseCodename(result.Stdout)
+}
 
 const phpRepositorySetupScript = `set -euo pipefail
 keyring=/usr/share/keyrings/ondrej-php.gpg
@@ -27,6 +66,13 @@ key_url='https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB8DC7E53946656E
 . /etc/os-release
 case "${VERSION_CODENAME:-}" in
     jammy|noble) ;;
+    resolute)
+        # The ondrej PPA does not publish resolute; PHP comes from the Ubuntu
+        # archive instead. Drop any stale PPA list so apt does not 404 on it.
+        rm -f /etc/apt/sources.list.d/ondrej-php.list \
+              /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list \
+              /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources
+        exit 0 ;;
     *) echo "Unsupported Ubuntu codename: ${VERSION_CODENAME:-unknown}" >&2; exit 1 ;;
 esac
 
@@ -84,7 +130,7 @@ func NewService(exec executor.CommandExecutor, auditSvc *audit.Service) *Service
 func (s *Service) ListInstalled(ctx context.Context) ([]model.PHPVersion, error) {
 	var versions []model.PHPVersion
 
-	for _, ver := range supportedVersions {
+	for _, ver := range VersionsForCodename(Codename(ctx, s.exec)) {
 		pv := model.PHPVersion{Version: ver}
 
 		// Check whether /etc/php/{ver} exists.
@@ -128,7 +174,7 @@ func (s *Service) IsInstalled(ctx context.Context, version string) bool {
 
 // Install installs the specified PHP version and common extensions.
 func (s *Service) Install(ctx context.Context, version string) error {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 
@@ -175,7 +221,7 @@ type ExtensionStatus struct {
 // packages apt can still install).
 func (s *Service) Extensions(ctx context.Context, version string) (ExtensionStatus, error) {
 	status := ExtensionStatus{Enabled: []string{}, Disabled: []string{}, Available: []string{}}
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return status, err
 	}
 	if !s.IsInstalled(ctx, version) {
@@ -252,7 +298,7 @@ func (s *Service) Extensions(ctx context.Context, version string) (ExtensionStat
 // EnableExtension loads an installed extension for the version and reloads
 // PHP-FPM so websites pick it up.
 func (s *Service) EnableExtension(ctx context.Context, version, ext string) error {
-	if err := s.validateExtension(version, ext); err != nil {
+	if err := s.validateExtension(ctx, version, ext); err != nil {
 		return err
 	}
 	if err := s.runSudoOK(ctx, "/usr/sbin/phpenmod", "-v", version, ext); err != nil {
@@ -263,7 +309,7 @@ func (s *Service) EnableExtension(ctx context.Context, version, ext string) erro
 
 // DisableExtension unloads an extension for the version and reloads PHP-FPM.
 func (s *Service) DisableExtension(ctx context.Context, version, ext string) error {
-	if err := s.validateExtension(version, ext); err != nil {
+	if err := s.validateExtension(ctx, version, ext); err != nil {
 		return err
 	}
 	if err := s.runSudoOK(ctx, "/usr/sbin/phpdismod", "-v", version, ext); err != nil {
@@ -286,8 +332,8 @@ func (s *Service) installExtensionCommands(version, ext string) [][]string {
 	}
 }
 
-func (s *Service) validateExtension(version, ext string) error {
-	if err := s.validateVersion(version); err != nil {
+func (s *Service) validateExtension(ctx context.Context, version, ext string) error {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 	if !extensionNameRegex.MatchString(ext) {
@@ -388,7 +434,7 @@ func (s *Service) reinstallCommands(version string) [][]string {
 
 // Uninstall removes the specified PHP version packages.
 func (s *Service) Uninstall(ctx context.Context, version string) error {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 
@@ -405,7 +451,7 @@ func (s *Service) Uninstall(ctx context.Context, version string) error {
 
 // Start starts the PHP-FPM service for the given version.
 func (s *Service) Start(ctx context.Context, version string) error {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 	return s.systemctlAction(ctx, "start", version)
@@ -413,7 +459,7 @@ func (s *Service) Start(ctx context.Context, version string) error {
 
 // Stop stops the PHP-FPM service for the given version.
 func (s *Service) Stop(ctx context.Context, version string) error {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 	return s.systemctlAction(ctx, "stop", version)
@@ -421,7 +467,7 @@ func (s *Service) Stop(ctx context.Context, version string) error {
 
 // Restart restarts the PHP-FPM service for the given version.
 func (s *Service) Restart(ctx context.Context, version string) error {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 	return s.systemctlAction(ctx, "restart", version)
@@ -429,7 +475,7 @@ func (s *Service) Restart(ctx context.Context, version string) error {
 
 // GetPHPINI returns the contents of the FPM php.ini for the given version.
 func (s *Service) GetPHPINI(ctx context.Context, version string) (string, error) {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return "", err
 	}
 
@@ -446,7 +492,7 @@ func (s *Service) GetPHPINI(ctx context.Context, version string) (string, error)
 
 // SavePHPINI writes the given content to the FPM php.ini and restarts FPM.
 func (s *Service) SavePHPINI(ctx context.Context, version, content string) error {
-	if err := s.validateVersion(version); err != nil {
+	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
 
@@ -467,9 +513,9 @@ func (s *Service) SavePHPINI(ctx context.Context, version, content string) error
 	return s.systemctlAction(ctx, "restart", version)
 }
 
-// validateVersion checks that the version string is in the supported list.
-func (s *Service) validateVersion(version string) error {
-	for _, v := range supportedVersions {
+// validateVersion checks that the version string is manageable on this OS.
+func (s *Service) validateVersion(ctx context.Context, version string) error {
+	for _, v := range VersionsForCodename(Codename(ctx, s.exec)) {
 		if v == version {
 			return nil
 		}

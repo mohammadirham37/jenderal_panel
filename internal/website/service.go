@@ -21,6 +21,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
+	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
@@ -124,7 +125,7 @@ func (s *Service) Options(ctx context.Context) (WebsiteOptions, error) {
 	options := WebsiteOptions{NodeVersions: []string{"20", "22", "24"}, InertiaAdapters: []string{"react", "vue", "svelte"}, Defaults: CreateRequest{
 		Template: "php", FrameworkVersion: "12", FrontendStack: "blade", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
 	}}
-	for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
+	for _, version := range php.VersionsForCodename(php.Codename(ctx, s.exec)) {
 		installed, err := s.phpRuntimeInstalled(ctx, version)
 		if err != nil {
 			return WebsiteOptions{}, fmt.Errorf("check PHP %s: %w", version, err)

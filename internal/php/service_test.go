@@ -118,7 +118,7 @@ func TestValidateVersion(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		err := svc.validateVersion(tc.version)
+		err := svc.validateVersion(context.Background(), tc.version)
 		if tc.wantErr && err == nil {
 			t.Errorf("validateVersion(%q): expected error, got nil", tc.version)
 		}
@@ -178,6 +178,10 @@ func TestInstallConfiguresPPADirectlyWithoutLaunchpadAPI(t *testing.T) {
 	}
 	var commands []command
 	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// Codename probe (os-release) -> unknown release, default set.
+			return mockResult("", "", 1), nil
+		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			commands = append(commands, command{name: name, args: append([]string(nil), args...)})
 			return mockResult("", "", 0), nil
@@ -237,6 +241,10 @@ func TestPHPRepositorySetupScriptIsValidBash(t *testing.T) {
 func TestInstallAllowsBoundedTimeForAptSteps(t *testing.T) {
 	var shortestDeadline time.Duration
 	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// Codename probe (os-release) -> unknown release, default set.
+			return mockResult("", "", 1), nil
+		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			deadline, ok := ctx.Deadline()
 			if !ok {
@@ -440,5 +448,48 @@ func TestExtensionsRejectsUnknownVersionAndBadNames(t *testing.T) {
 		if !strings.Contains(all, want) {
 			t.Errorf("install commands missing %q:\n%s", want, all)
 		}
+	}
+}
+
+func TestVersionsForCodename(t *testing.T) {
+	resolute := VersionsForCodename("resolute")
+	if len(resolute) != 1 || resolute[0] != "8.5" {
+		t.Fatalf("resolute versions = %v, want [8.5]", resolute)
+	}
+	for _, codename := range []string{"", "jammy", "noble", "unknown"} {
+		got := VersionsForCodename(codename)
+		if len(got) != 4 || got[0] != "8.1" || got[3] != "8.4" {
+			t.Fatalf("%q versions = %v, want 8.1-8.4", codename, got)
+		}
+	}
+}
+
+func TestParseCodename(t *testing.T) {
+	release := "NAME=\"Ubuntu\"\nVERSION=\"26.04 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\n"
+	if got := parseCodename(release); got != "resolute" {
+		t.Fatalf("codename = %q, want resolute", got)
+	}
+	if got := parseCodename("VERSION_CODENAME=\"noble\"\n"); got != "noble" {
+		t.Fatalf("quoted codename = %q, want noble", got)
+	}
+	if got := parseCodename("ID=ubuntu\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n"); got != "" {
+		t.Fatalf("missing codename = %q, want empty", got)
+	}
+}
+
+func TestRepositoryScriptSkipsPPAOnResolute(t *testing.T) {
+	if !strings.Contains(phpRepositorySetupScript, "resolute)") {
+		t.Fatal("repository script has no resolute branch")
+	}
+	// The resolute branch must exit before the ondrej list is written and
+	// must clear stale PPA lists so apt does not 404 on them.
+	resoluteIdx := strings.Index(phpRepositorySetupScript, "resolute)")
+	printfIdx := strings.Index(phpRepositorySetupScript, "printf 'deb [signed-by=")
+	if resoluteIdx < 0 || printfIdx < 0 || resoluteIdx > printfIdx {
+		t.Fatalf("resolute branch (idx %d) must precede the PPA printf (idx %d)", resoluteIdx, printfIdx)
+	}
+	branch := phpRepositorySetupScript[resoluteIdx:printfIdx]
+	if !strings.Contains(branch, "exit 0") || !strings.Contains(branch, "rm -f") {
+		t.Fatalf("resolute branch must rm stale lists and exit before writing PPA:\n%s", branch)
 	}
 }

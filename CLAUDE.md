@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Jenderal Panel is an open-source VPS control panel for Ubuntu Linux (22.04/24.04). Go backend + SvelteKit frontend deployed as a single binary via `go:embed`. Target: manage websites, databases, services, SSL, Docker, and more through a web GUI.
+Jenderal Panel is an open-source VPS control panel for Ubuntu Linux (22.04/24.04/26.04). Go backend + SvelteKit frontend deployed as a single binary via `go:embed`. Target: manage websites, databases, services, SSL, Docker, and more through a web GUI.
 
 ## Build & Run
 
@@ -109,7 +109,7 @@ SvelteKit 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwind CSS v4, adap
 
 ## Testing
 
-- The maintainer tests the running panel manually on Ubuntu 24.04 — do NOT launch the app,
+- The maintainer tests the running panel manually on Ubuntu 24.04 and 26.04 — do NOT launch the app,
   mock its API, or do browser-based testing. Stop at static validation:
   `npm run check`, `npm run build`, `npm test` (frontend) and `go test ./...` (backend).
 

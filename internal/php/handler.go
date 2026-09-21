@@ -49,7 +49,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 // Install installs the specified PHP version via background task.
 func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
-	if err := h.svc.validateVersion(version); err != nil {
+	if err := h.svc.validateVersion(r.Context(), version); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
@@ -65,7 +65,7 @@ func (h *Handler) Install(w http.ResponseWriter, r *http.Request) {
 // — all as one background task.
 func (h *Handler) Reinstall(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
-	if err := h.svc.validateVersion(version); err != nil {
+	if err := h.svc.validateVersion(r.Context(), version); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
@@ -146,7 +146,7 @@ func (h *Handler) DisableExtension(w http.ResponseWriter, r *http.Request) {
 // background task: apt update, install the phpX.Y-<ext> package, enable it.
 func (h *Handler) InstallExtension(w http.ResponseWriter, r *http.Request) {
 	version, ext := chi.URLParam(r, "version"), chi.URLParam(r, "ext")
-	if err := h.svc.validateExtension(version, ext); err != nil {
+	if err := h.svc.validateExtension(r.Context(), version, ext); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}

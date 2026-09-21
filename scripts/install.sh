@@ -2,7 +2,7 @@
 #----------------------------------------------------------#
 #                   Jenderal Panel Installer                #
 #                                                          #
-#  Supports: Ubuntu 22.04 LTS, Ubuntu 24.04 LTS           #
+#  Supports: Ubuntu 22.04 LTS, 24.04 LTS, 26.04 LTS        #
 #                                                          #
 #  Usage:                                                  #
 #    wget https://raw.githubusercontent.com/               #
@@ -73,8 +73,8 @@ preflight() {
     . /etc/os-release
     [[ "$ID" == "ubuntu" ]] || fail "Only Ubuntu supported (detected: $ID)"
     case "$VERSION_ID" in
-        22.04|24.04) log "OS: Ubuntu $VERSION_ID" ;;
-        *) fail "Ubuntu $VERSION_ID not supported (need 22.04 or 24.04)" ;;
+        22.04|24.04|26.04) log "OS: Ubuntu $VERSION_ID" ;;
+        *) fail "Ubuntu $VERSION_ID not supported (need 22.04, 24.04 or 26.04)" ;;
     esac
 
     # Arch

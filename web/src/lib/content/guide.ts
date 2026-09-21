@@ -42,7 +42,7 @@ const en: GuideDoc = {
 			blocks: [
 				{
 					type: 'p',
-					text: 'Jenderal Panel is a control panel for Ubuntu servers (22.04 and 24.04). It puts the everyday jobs of a server administrator behind a friendly web page: hosting websites, running databases, installing SSL certificates, making backups, and keeping the server safe.'
+					text: 'Jenderal Panel is a control panel for Ubuntu servers (22.04, 24.04, and 26.04). It puts the everyday jobs of a server administrator behind a friendly web page: hosting websites, running databases, installing SSL certificates, making backups, and keeping the server safe.'
 				},
 				{ type: 'p', text: 'This guide walks through every page of the panel in the same order you will usually need them — from creating your first website to scheduling backups. Each section explains what the page is for and the exact steps to use it.' },
 				{
@@ -645,7 +645,7 @@ const id: GuideDoc = {
 			blocks: [
 				{
 					type: 'p',
-					text: 'Jenderal Panel adalah panel kontrol untuk server Ubuntu (22.04 dan 24.04). Ia menyatukan pekerjaan sehari-hari seorang administrator server ke dalam satu halaman web yang mudah: menghosting website, menjalankan database, memasang sertifikat SSL, membuat cadangan, dan menjaga keamanan server.'
+					text: 'Jenderal Panel adalah panel kontrol untuk server Ubuntu (22.04, 24.04, dan 26.04). Ia menyatukan pekerjaan sehari-hari seorang administrator server ke dalam satu halaman web yang mudah: menghosting website, menjalankan database, memasang sertifikat SSL, membuat cadangan, dan menjaga keamanan server.'
 				},
 				{ type: 'p', text: 'Panduan ini membahas setiap halaman panel dengan urutan yang sama seperti saat Anda biasanya membutuhkannya — dari membuat website pertama sampai menjadwalkan cadangan. Setiap bagian menjelaskan fungsi halaman tersebut dan langkah-langkah tepat untuk memakainya.' },
 				{
