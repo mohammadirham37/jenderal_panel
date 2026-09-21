@@ -66,6 +66,8 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"disk.manage", "disk"},
 		{"services.view", "services"},
 		{"services.manage", "services"},
+		{"tunnel.view", "tunnel"},
+		{"tunnel.manage", "tunnel"},
 		{"users.view", "users"},
 		{"users.create", "users"},
 		{"users.update", "users"},

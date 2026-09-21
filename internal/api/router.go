@@ -11,10 +11,12 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
+	"github.com/mohammadirham37/jenderal_panel/internal/cloudflared"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
+	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
@@ -37,16 +39,15 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
 	"github.com/mohammadirham37/jenderal_panel/internal/sshserver"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
-	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
-	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
-	"github.com/mohammadirham37/jenderal_panel/internal/websitestaging"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
 	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/user"
+	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
+	"github.com/mohammadirham37/jenderal_panel/internal/websitestaging"
 )
 
 type Dependencies struct {
@@ -95,6 +96,7 @@ type Dependencies struct {
 	SSHAccountSvc   *sshaccount.Service
 	SSHServerSvc    *sshserver.Service
 	FrankenphpSvc   *frankenphp.Service
+	CloudflaredSvc  *cloudflared.Service
 	GoRuntimeSvc    *goruntime.Service
 	StaticHandler   http.Handler
 }
@@ -128,6 +130,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	sshKeyHandler := sshaccount.NewHandler(deps.SSHAccountSvc)
 	sshPortHandler := sshserver.NewHandler(deps.SSHServerSvc)
 	frankenphpHandler := frankenphp.NewHandler(deps.FrankenphpSvc)
+	cloudflaredHandler := cloudflared.NewHandler(deps.CloudflaredSvc, deps.Tasks, deps.AuditSvc)
 	goRuntimeHandler := goruntime.NewHandler(deps.GoRuntimeSvc)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc, deps.Tasks)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
@@ -260,6 +263,20 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/runtimes", runtimeBinHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
 				Post("/runtimes/{runtime}/install", runtimeBinHandler.Install)
+
+			// Cloudflare Tunnel connector (server-wide, admin only)
+			r.With(auth.RequirePermission(deps.RBAC, "tunnel.view")).
+				Get("/cloudflared", cloudflaredHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "tunnel.manage")).
+				Post("/cloudflared/install", cloudflaredHandler.Install)
+			r.With(auth.RequirePermission(deps.RBAC, "tunnel.manage")).
+				Post("/cloudflared/connect", cloudflaredHandler.Connect)
+			r.With(auth.RequirePermission(deps.RBAC, "tunnel.manage")).
+				Post("/cloudflared/disconnect", cloudflaredHandler.Disconnect)
+			r.With(auth.RequirePermission(deps.RBAC, "tunnel.manage")).
+				Post("/cloudflared/restart", cloudflaredHandler.Restart)
+			r.With(auth.RequirePermission(deps.RBAC, "tunnel.view")).
+				Get("/cloudflared/logs", cloudflaredHandler.Logs)
 
 			// Panel domain (admin)
 			r.With(auth.RequirePermission(deps.RBAC, "settings.view")).

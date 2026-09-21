@@ -17,12 +17,14 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
+	"github.com/mohammadirham37/jenderal_panel/internal/cloudflared"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
+	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
 	"github.com/mohammadirham37/jenderal_panel/internal/docker"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/fail2ban"
@@ -39,8 +41,6 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/paneldomain"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
-	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
-	"github.com/mohammadirham37/jenderal_panel/internal/websitestaging"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
 	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
@@ -56,6 +56,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/update"
 	"github.com/mohammadirham37/jenderal_panel/internal/waf"
 	"github.com/mohammadirham37/jenderal_panel/internal/website"
+	"github.com/mohammadirham37/jenderal_panel/internal/websitestaging"
 )
 
 var version = "dev"
@@ -303,6 +304,8 @@ func cmdServe() {
 	goRuntimeSvc.SetTaskRunner(tasks)
 	runtimeBinSvc := runtimebin.NewService(exec, auditSvc)
 	runtimeBinSvc.SetTaskRunner(tasks)
+	cloudflaredSvc := cloudflared.NewService(exec, auditSvc)
+	cloudflaredSvc.SetTaskRunner(tasks)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
@@ -413,6 +416,7 @@ func cmdServe() {
 		SSHAccountSvc:   sshAccountSvc,
 		SSHServerSvc:    sshServerSvc,
 		FrankenphpSvc:   frankenphpSvc,
+		CloudflaredSvc:  cloudflaredSvc,
 		GoRuntimeSvc:    goRuntimeSvc,
 		RuntimeBinSvc:   runtimeBinSvc,
 		PanelDomainSvc:  panelDomainSvc,
