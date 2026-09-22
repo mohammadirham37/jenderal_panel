@@ -6,6 +6,7 @@
 	import { language, translate } from '$lib/stores/language';
 import { toast } from '$lib/stores/toast';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import SshPortCard from '$lib/components/SshPortCard.svelte';
 	import QRCode from 'qrcode';
 
 	let settings = $state<Setting[]>([]);
@@ -761,6 +762,9 @@ import { toast } from '$lib/stores/toast';
 		{/if}
 	</div>
 	{/if}
+
+	<!-- SSH Port Management (self-gating: hidden without ssh.view) -->
+	<SshPortCard />
 
 	<!-- API Tokens -->
 	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
