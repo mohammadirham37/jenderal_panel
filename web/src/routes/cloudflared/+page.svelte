@@ -33,7 +33,7 @@
 	async function load() {
 		error = '';
 		try {
-			status = await api.get<TunnelStatus>('/cloudflared');
+			status = await api.get<TunnelStatus>('/api/v1/cloudflared');
 		} catch (e) {
 			error = e instanceof Error ? e.message : t('cft.loadFailed');
 		} finally {
@@ -44,7 +44,7 @@
 	async function loadLogs() {
 		logsLoading = true;
 		try {
-			const res = await api.get<{ lines: number; output: string }>('/cloudflared/logs?lines=200');
+			const res = await api.get<{ lines: number; output: string }>('/api/v1/cloudflared/logs?lines=200');
 			logs = res.output ?? '';
 		} catch {
 			logs = '';
@@ -56,7 +56,7 @@
 	async function install() {
 		actionError = '';
 		try {
-			const res = await api.post<{ task_id: string }>('/cloudflared/install', {});
+			const res = await api.post<{ task_id: string }>('/api/v1/cloudflared/install', {});
 			installTaskId = res.task_id;
 		} catch (e) {
 			actionError = e instanceof Error ? e.message : t('cft.loadFailed');
@@ -72,7 +72,7 @@
 		}
 		connecting = true;
 		try {
-			const res = await api.post<{ task_id: string }>('/cloudflared/connect', { token: token.trim() });
+			const res = await api.post<{ task_id: string }>('/api/v1/cloudflared/connect', { token: token.trim() });
 			connectTaskId = res.task_id;
 			token = '';
 		} catch (e) {
@@ -86,7 +86,7 @@
 		if (!confirm(t('cft.disconnectConfirm'))) return;
 		actionError = '';
 		try {
-			await api.post('/cloudflared/disconnect', {});
+			await api.post('/api/v1/cloudflared/disconnect', {});
 			await load();
 		} catch (e) {
 			actionError = e instanceof Error ? e.message : t('cft.loadFailed');
@@ -96,7 +96,7 @@
 	async function restart() {
 		actionError = '';
 		try {
-			await api.post('/cloudflared/restart', {});
+			await api.post('/api/v1/cloudflared/restart', {});
 			await load();
 		} catch (e) {
 			actionError = e instanceof Error ? e.message : t('cft.loadFailed');
