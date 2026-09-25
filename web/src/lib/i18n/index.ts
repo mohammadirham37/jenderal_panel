@@ -20,6 +20,7 @@ import { dict as ws } from './domains/ws';
 import { dict as security } from './domains/security';
 import { dict as disk } from './domains/disk';
 import { dict as tunnel } from './domains/tunnel';
+import { dict as supervisor } from './domains/supervisor';
 
 export const translations: Record<'en' | 'id', Record<string, string>> = {
 	en: {
@@ -40,7 +41,8 @@ export const translations: Record<'en' | 'id', Record<string, string>> = {
 		...ws.en,
 		...security.en,
 		...disk.en,
-		...tunnel.en
+		...tunnel.en,
+		...supervisor.en
 	},
 	id: {
 		...core.id,
@@ -60,6 +62,7 @@ export const translations: Record<'en' | 'id', Record<string, string>> = {
 		...ws.id,
 		...security.id,
 		...disk.id,
-		...tunnel.id
+		...tunnel.id,
+		...supervisor.id
 	}
 };
