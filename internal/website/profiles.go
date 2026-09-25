@@ -91,6 +91,15 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 	switch template {
 	case "static":
 		return simpleProfile(req, template, "static", "none", "", "public", setupMode, false)
+	case "reverse-proxy":
+		return Profile{
+			Template:             template,
+			AppType:              "reverse-proxy",
+			NginxProfile:         "reverse-proxy",
+			Framework:            "none",
+			SetupMode:            setupMode,
+			RelativeDocumentRoot: "public",
+		}, nil
 	case "node":
 		if err := noderuntime.ValidateVersion(req.NodeVersion); err != nil {
 			return Profile{}, err
@@ -300,6 +309,9 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 	if appType == "static" {
 		return "static"
 	}
+	if appType == "reverse-proxy" {
+		return "reverse-proxy"
+	}
 	if appType == "laravel" {
 		return "laravel"
 	}
@@ -308,7 +320,7 @@ func NginxProfileFor(framework, frameworkVersion, appType string) string {
 
 // ValidNginxProfiles lists the renderer profiles an operator may force for a
 // website. The empty string means "derive from the app type automatically".
-var ValidNginxProfiles = []string{"", "php", "static", "wordpress", "app-proxy", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
+var ValidNginxProfiles = []string{"", "php", "static", "wordpress", "app-proxy", "reverse-proxy", "laravel", "laravel-octane", "codeigniter3", "codeigniter4"}
 
 // IsValidNginxProfile reports whether profile is an allowed override value.
 func IsValidNginxProfile(profile string) bool {
@@ -354,6 +366,8 @@ func websiteProfileOptions() []ProfileOption {
 			requests = append(requests, CreateRequest{Template: template, PHPVersion: phpVersion, SetupMode: mode})
 		}
 	}
+	// Reverse proxy needs no runtime install, so it is config-only by nature.
+	requests = append(requests, CreateRequest{Template: "reverse-proxy", SetupMode: SetupConfigOnly})
 	for _, version := range []string{"8", "9", "10", "11", "12", "13"} {
 		phpVersion := laravelMinimumPHP[version]
 		for _, mode := range []string{SetupConfigOnly, SetupAutomatic} {
@@ -433,7 +447,7 @@ func websiteProfileOptions() []ProfileOption {
 				option.Prerequisites = append(option.Prerequisites, "node")
 			}
 		}
-		if req.Template != "static" {
+		if req.Template != "static" && req.Template != "reverse-proxy" {
 			for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
 				compatible := option.MinimumPHP == "" || comparePHP(version, option.MinimumPHP) >= 0
 				compatibility := CompatibilityOption{Version: version, Enabled: compatible}

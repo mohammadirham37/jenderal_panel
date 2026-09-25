@@ -186,6 +186,9 @@ type Website struct {
 	AppPort            int       `json:"app_port"`
 	AppStartCommand    string    `json:"app_start_command"`
 	AppBuildCommand    string    `json:"app_build_command"`
+	ProxyScheme        string    `json:"proxy_scheme"`
+	ProxyHost          string    `json:"proxy_host"`
+	ProxyPort          int       `json:"proxy_port"`
 	DeployWebhookToken string    `json:"deploy_webhook_token,omitempty"`
 	CreatedBy          string    `json:"created_by"`
 	OwnerEmail         string    `json:"owner_email,omitempty"`

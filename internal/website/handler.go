@@ -3,6 +3,7 @@ package website
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -581,6 +582,30 @@ func (h *Handler) SetNginxProfile(w http.ResponseWriter, r *http.Request) {
 		"profile":   site.NginxProfile,
 		"effective": NginxProfileForWebsite(site),
 	})
+}
+
+// SetProxy handles PUT /api/websites/{id}/proxy: update the reverse-proxy
+// upstream and regenerate the vhost.
+func (h *Handler) SetProxy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		Scheme string `json:"scheme"`
+		Host   string `json:"host"`
+		Port   int    `json:"port"`
+	}
+	if err := httputil.DecodeJSON(r, &body); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	site, err := h.svc.SetProxy(r.Context(), id, body.Scheme, body.Host, body.Port)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "set_website_proxy", id, fmt.Sprintf("set upstream to %s:%d", site.ProxyHost, site.ProxyPort))
+	httputil.JSON(w, http.StatusOK, site)
 }
 
 // SetForceHTTPS handles PUT /api/websites/{id}/force-https.

@@ -400,3 +400,81 @@ func TestRenderSuspendedVhost(t *testing.T) {
 		t.Error("suspended vhost must not serve PHP")
 	}
 }
+
+func TestRenderVhost_ReverseProxy(t *testing.T) {
+	data := VhostData{
+		Domain:       "app.example.com",
+		DocumentRoot: "/home/web_app_example_com/public",
+		LogDir:       "/home/web_app_example_com/logs",
+		AppType:      "reverse-proxy",
+		Profile:      "reverse-proxy",
+		ProxyScheme:  "http",
+		ProxyHost:    "127.0.0.1",
+		ProxyPort:    3000,
+	}
+
+	output, err := RenderVhost(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	checks := []struct {
+		name     string
+		contains string
+	}{
+		{"proxy_pass", "proxy_pass http://127.0.0.1:3000;"},
+		{"websocket_map", "map $http_upgrade $jenderal_app_app_example_com_ws"},
+		{"forwarded_host", "proxy_set_header Host $host;"},
+		{"forwarded_proto", "proxy_set_header X-Forwarded-Proto $scheme;"},
+		{"upgrade_header", "proxy_set_header Upgrade $http_upgrade;"},
+	}
+	for _, tc := range checks {
+		if !strings.Contains(output, tc.contains) {
+			t.Errorf("%s: expected output to contain %q, got:\n%s", tc.name, tc.contains, output)
+		}
+	}
+	if strings.Contains(output, "try_files $uri $uri/ @app;") {
+		t.Errorf("reverse proxy must not keep the static try_files fallback:\n%s", output)
+	}
+	if strings.Contains(output, "fastcgi_pass") {
+		t.Errorf("reverse proxy must not render a PHP pool:\n%s", output)
+	}
+}
+
+func TestRenderVhost_ReverseProxyIPv6Target(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:       "app.example.com",
+		DocumentRoot: "/home/web_app_example_com/public",
+		LogDir:       "/home/web_app_example_com/logs",
+		AppType:      "reverse-proxy",
+		Profile:      "reverse-proxy",
+		ProxyScheme:  "http",
+		ProxyHost:    "::1",
+		ProxyPort:    3000,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(output, "proxy_pass http://[::1]:3000;") {
+		t.Errorf("expected bracketed IPv6 upstream, got:\n%s", output)
+	}
+}
+
+func TestRenderVhost_ReverseProxyWithoutUpstreamFallsBackToStatic(t *testing.T) {
+	output, err := RenderVhost(VhostData{
+		Domain:       "app.example.com",
+		DocumentRoot: "/home/web_app_example_com/public",
+		LogDir:       "/home/web_app_example_com/logs",
+		AppType:      "reverse-proxy",
+		Profile:      "reverse-proxy",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(output, "proxy_pass") {
+		t.Errorf("missing upstream must not render proxy_pass:\n%s", output)
+	}
+	if !strings.Contains(output, "root /home/web_app_example_com/public;") {
+		t.Errorf("fallback should serve the placeholder docroot, got:\n%s", output)
+	}
+}

@@ -282,6 +282,9 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 		OctanePort:        w.OctanePort,
 		AppPort:           w.AppPort,
+		ProxyScheme:       w.ProxyScheme,
+		ProxyHost:         w.ProxyHost,
+		ProxyPort:         w.ProxyPort,
 	}
 	if result, err := p.exec.RunSudo(ctx, "/usr/bin/install", "-d", "-m", "0755", "/etc/nginx/jenderal/security/sites"); err != nil || result.ExitCode != 0 {
 		p.fail(ctx, websiteID, "create security snippet directory failed")
@@ -769,6 +772,9 @@ type websiteRow struct {
 	NginxProfile     string
 	OctanePort       int
 	OctaneWorkers    int
+	ProxyScheme      string
+	ProxyHost        string
+	ProxyPort        int
 }
 
 // domainRow holds the fields of a domain for provisioning.
@@ -784,11 +790,11 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	err := p.db.QueryRowContext(ctx,
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user, created_by,
 		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, app_port, app_start_command, app_build_command, octane_port, octane_workers
+		        nginx_profile, app_port, app_start_command, app_build_command, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port
 		 FROM websites WHERE id = ?`, id,
 	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.CreatedBy,
 		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &w.OctanePort, &w.OctaneWorkers)
+		&w.NginxProfile, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &w.OctanePort, &w.OctaneWorkers, &w.ProxyScheme, &w.ProxyHost, &w.ProxyPort)
 	if err != nil {
 		return w, err
 	}

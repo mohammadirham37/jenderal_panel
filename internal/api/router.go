@@ -396,6 +396,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/nginx-profile", websiteHandler.SetNginxProfile)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/proxy", websiteHandler.SetProxy)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/force-https", websiteHandler.SetForceHTTPS)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/access", websiteHandler.AccessLog)

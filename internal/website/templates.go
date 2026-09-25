@@ -47,6 +47,10 @@ type VhostData struct {
 	// RedirectDomains is ignored and certified domains keep serving plain
 	// HTTP; visitors opt into HTTPS themselves.
 	ForceHTTPS bool
+	// Reverse-proxy upstream (profile "reverse-proxy" only).
+	ProxyScheme string
+	ProxyHost   string
+	ProxyPort   int
 }
 
 const DefaultACMEChallengeRoot = "/var/lib/jenderal/acme-challenges"
@@ -356,6 +360,27 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
 `, Location: `    location / {
         try_files $uri $uri/ /index.php?$query_string;
     }`, PHP: standardPHP, Hidden: standardHidden}
+	case "reverse-proxy":
+		if data.ProxyHost == "" || data.ProxyPort <= 0 {
+			// Misconfigured site: serve the placeholder docroot instead of
+			// emitting a broken proxy_pass.
+			return nginxProfileDirectives{Index: "index.html index.htm", Hidden: standardHidden}
+		}
+		upstream, err := ValidateUpstream(data.ProxyScheme, data.ProxyHost, data.ProxyPort)
+		if err != nil {
+			return nginxProfileDirectives{Index: "index.html index.htm", Hidden: standardHidden}
+		}
+		mapVar := "$jenderal_app_" + websocketMapSuffix(data.Domain, tls)
+		location := "    location / {\n        proxy_pass " + upstream.Target() + ";\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection " + mapVar + ";\n        proxy_read_timeout 300s;\n        proxy_send_timeout 300s;\n    }"
+		return nginxProfileDirectives{
+			Header: "map $http_upgrade " + mapVar + ` {
+    default upgrade;
+    ''      close;
+}
+`,
+			Location: location,
+			Hidden:   standardHidden,
+		}
 	case "app-proxy":
 		if data.AppPort <= 0 {
 			return nginxProfileDirectives{Index: "index.html index.htm", Hidden: standardHidden}

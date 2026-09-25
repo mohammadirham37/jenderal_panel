@@ -43,6 +43,9 @@ type CreateRequest struct {
 	InertiaAdapter   string `json:"inertia_adapter"`
 	ProjectVariant   string `json:"project_variant"`
 	SetupMode        string `json:"setup_mode"`
+	ProxyScheme      string `json:"proxy_scheme,omitempty"`
+	ProxyHost        string `json:"proxy_host,omitempty"`
+	ProxyPort        int    `json:"proxy_port,omitempty"`
 	// CreatedBy is stamped by the handler from the authenticated user; it is
 	// never accepted from the request body.
 	CreatedBy string `json:"-"`
@@ -233,12 +236,17 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		return model.Website{}, model.NewValidationError("invalid domain name")
 	}
 
-	if req.Template != "static" && req.AppType != "static" && req.PHPVersion == "" {
+	if req.Template != "static" && req.Template != "reverse-proxy" && req.AppType != "static" && req.PHPVersion == "" {
 		req.PHPVersion = "8.2"
 	}
 	profile, err := ResolveProfile(req)
 	if err != nil {
 		return model.Website{}, err
+	}
+	if profile.Template == "reverse-proxy" {
+		if _, err := ValidateUpstream(req.ProxyScheme, req.ProxyHost, req.ProxyPort); err != nil {
+			return model.Website{}, err
+		}
 	}
 	if err := s.validateRuntimeRequirements(ctx, req.PHPVersion, profile); err != nil {
 		return model.Website{}, err
@@ -288,6 +296,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		NginxProfile:     profile.NginxProfile,
 		OctanePort:       octanePort,
 		OctaneWorkers:    4,
+		ProxyScheme:      strings.ToLower(strings.TrimSpace(req.ProxyScheme)),
+		ProxyHost:        strings.ToLower(strings.TrimSpace(req.ProxyHost)),
+		ProxyPort:        req.ProxyPort,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -301,13 +312,14 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		 nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_port, octane_workers, created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port, created_by, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
 		w.NodeVersion,
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
 		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,
 		w.NginxProfile, w.GitRepo, w.GitBranch, w.DeployWebhookToken, w.OctanePort, w.OctaneWorkers,
+		w.ProxyScheme, w.ProxyHost, w.ProxyPort,
 		req.CreatedBy, nowStr, nowStr,
 	)
 	if err != nil {
@@ -351,7 +363,7 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, force_https, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port, created_by, created_at, updated_at
 		 FROM websites WHERE id = ?`, id)
 
 	w, err := scanWebsite(row)
@@ -464,7 +476,7 @@ func (s *Service) GetByWebUser(ctx context.Context, webUser string) (model.Websi
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, force_https, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port, created_by, created_at, updated_at
 		 FROM websites WHERE web_user = ?`, webUser)
 
 	w, err := scanWebsite(row)
@@ -492,7 +504,7 @@ func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]mo
 		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user,
 		        status, error_message, ssl_enabled, force_https, framework, framework_version, frontend_stack,
 		        inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
-		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, created_by, created_at, updated_at
+		        nginx_profile, git_repo, git_branch, deploy_webhook_secret, app_runtime, app_port, app_start_command, app_build_command, octane_enabled, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port, created_by, created_at, updated_at
 		 FROM websites`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list websites: %w", err)
@@ -1070,6 +1082,38 @@ func (s *Service) SetNginxProfile(ctx context.Context, id, profile string) (mode
 	return w, nil
 }
 
+// SetProxy updates the reverse-proxy upstream of a site and regenerates its
+// vhost so the new target goes live immediately.
+func (s *Service) SetProxy(ctx context.Context, id, scheme, host string, port int) (model.Website, error) {
+	upstream, err := ValidateUpstream(scheme, host, port)
+	if err != nil {
+		return model.Website{}, err
+	}
+
+	unlock := s.mutations.Lock(id)
+	defer unlock()
+
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE websites SET proxy_scheme = ?, proxy_host = ?, proxy_port = ?, updated_at = ? WHERE id = ?`,
+		upstream.Scheme, upstream.Host, upstream.Port, time.Now().UTC().Format(time.RFC3339), id)
+	if err != nil {
+		return model.Website{}, fmt.Errorf("update proxy upstream: %w", err)
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return model.Website{}, model.ErrNotFound
+	}
+
+	w, err := s.Get(ctx, id)
+	if err != nil {
+		return model.Website{}, err
+	}
+	if err := s.regenerateConfig(ctx, w, ""); err != nil {
+		return model.Website{}, fmt.Errorf("regenerate vhost for proxy upstream: %w", err)
+	}
+
+	return s.Get(ctx, id)
+}
+
 // AddDomain adds an alias or subdomain to a website and regenerates the nginx config.
 func (s *Service) AddDomain(ctx context.Context, websiteID, name, domainType string) error {
 	unlock := s.mutations.Lock(websiteID)
@@ -1284,6 +1328,9 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 		SecurityInclude:   "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf",
 		OctanePort:        w.OctanePort,
 		AppPort:           w.AppPort,
+		ProxyScheme:       w.ProxyScheme,
+		ProxyHost:         w.ProxyHost,
+		ProxyPort:         w.ProxyPort,
 	}
 
 	content, err := RenderVhost(vhostData)
@@ -1528,7 +1575,7 @@ func scanWebsite(row *sql.Row) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &forceHTTPS, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.ProxyScheme, &w.ProxyHost, &w.ProxyPort, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
@@ -1558,7 +1605,7 @@ func scanWebsiteRows(rows *sql.Rows) (model.Website, error) {
 		&w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.Status, &errorMessage,
 		&sslEnabled, &forceHTTPS, &framework, &frameworkVersion, &frontendStack, &inertiaAdapter,
 		&projectVariant, &setupMode, &provisionStage, &provisionLog,
-		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.CreatedBy, &createdStr, &updatedStr,
+		&w.NginxProfile, &w.GitRepo, &w.GitBranch, &w.DeployWebhookToken, &w.AppRuntime, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &octaneEnabled, &w.OctanePort, &w.OctaneWorkers, &w.ProxyScheme, &w.ProxyHost, &w.ProxyPort, &w.CreatedBy, &createdStr, &updatedStr,
 	)
 	if err != nil {
 		return w, err
