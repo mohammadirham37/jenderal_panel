@@ -449,3 +449,30 @@ type ServerInfo struct {
 	Partitions []DiskPartition    `json:"partitions"`
 	Interfaces []NetworkInterface `json:"interfaces"`
 }
+
+// SupervisorProcess is a custom long-running process managed by the panel's
+// supervisor module. Each process runs as its own systemd unit.
+type SupervisorProcess struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Command     string    `json:"command"`
+	WorkingDir  string    `json:"working_dir"`
+	RunAs       string    `json:"run_as"`
+	Env         string    `json:"env"`
+	AutoRestart bool      `json:"auto_restart"`
+	Status      string    `json:"status"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// SupervisorProcessRequest holds the fields for creating or updating a
+// supervised process.
+type SupervisorProcessRequest struct {
+	Name        string `json:"name"`
+	Command     string `json:"command"`
+	WorkingDir  string `json:"working_dir"`
+	RunAs       string `json:"run_as"`
+	Env         string `json:"env"`
+	AutoRestart *bool  `json:"auto_restart"`
+}

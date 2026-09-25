@@ -50,6 +50,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
 	"github.com/mohammadirham37/jenderal_panel/internal/sshserver"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/supervisor"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/trafficguard"
@@ -306,6 +307,7 @@ func cmdServe() {
 	runtimeBinSvc.SetTaskRunner(tasks)
 	cloudflaredSvc := cloudflared.NewService(exec, auditSvc)
 	cloudflaredSvc.SetTaskRunner(tasks)
+	supervisorSvc := supervisor.NewService(db, exec, auditSvc)
 	websiteSvc := website.NewService(db, exec, auditSvc)
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
@@ -417,6 +419,7 @@ func cmdServe() {
 		SSHServerSvc:    sshServerSvc,
 		FrankenphpSvc:   frankenphpSvc,
 		CloudflaredSvc:  cloudflaredSvc,
+		SupervisorSvc:   supervisorSvc,
 		GoRuntimeSvc:    goRuntimeSvc,
 		RuntimeBinSvc:   runtimeBinSvc,
 		PanelDomainSvc:  panelDomainSvc,

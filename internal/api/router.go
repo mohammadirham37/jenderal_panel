@@ -39,6 +39,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/sshaccount"
 	"github.com/mohammadirham37/jenderal_panel/internal/sshserver"
 	"github.com/mohammadirham37/jenderal_panel/internal/ssl"
+	"github.com/mohammadirham37/jenderal_panel/internal/supervisor"
 	"github.com/mohammadirham37/jenderal_panel/internal/system"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 	"github.com/mohammadirham37/jenderal_panel/internal/terminal"
@@ -97,6 +98,7 @@ type Dependencies struct {
 	SSHServerSvc    *sshserver.Service
 	FrankenphpSvc   *frankenphp.Service
 	CloudflaredSvc  *cloudflared.Service
+	SupervisorSvc   *supervisor.Service
 	GoRuntimeSvc    *goruntime.Service
 	StaticHandler   http.Handler
 }
@@ -131,6 +133,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	sshPortHandler := sshserver.NewHandler(deps.SSHServerSvc)
 	frankenphpHandler := frankenphp.NewHandler(deps.FrankenphpSvc)
 	cloudflaredHandler := cloudflared.NewHandler(deps.CloudflaredSvc, deps.Tasks, deps.AuditSvc)
+	supervisorHandler := supervisor.NewHandler(deps.SupervisorSvc, deps.AuditSvc)
 	goRuntimeHandler := goruntime.NewHandler(deps.GoRuntimeSvc)
 	phpHandler := php.NewHandler(deps.PHPSvc, deps.AuditSvc, deps.Tasks)
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
@@ -277,6 +280,20 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/cloudflared/restart", cloudflaredHandler.Restart)
 			r.With(auth.RequirePermission(deps.RBAC, "tunnel.view")).
 				Get("/cloudflared/logs", cloudflaredHandler.Logs)
+
+			// Supervisor processes (server-wide, admin only)
+			r.With(auth.RequirePermission(deps.RBAC, "supervisor.view")).
+				Get("/supervisor", supervisorHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "supervisor.manage")).
+				Post("/supervisor", supervisorHandler.Create)
+			r.With(auth.RequirePermission(deps.RBAC, "supervisor.view")).
+				Get("/supervisor/{id}/logs", supervisorHandler.Logs)
+			r.With(auth.RequirePermission(deps.RBAC, "supervisor.manage")).
+				Put("/supervisor/{id}", supervisorHandler.Update)
+			r.With(auth.RequirePermission(deps.RBAC, "supervisor.manage")).
+				Delete("/supervisor/{id}", supervisorHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "supervisor.manage")).
+				Post("/supervisor/{id}/{action}", supervisorHandler.Action)
 
 			// Panel domain (admin)
 			r.With(auth.RequirePermission(deps.RBAC, "settings.view")).
