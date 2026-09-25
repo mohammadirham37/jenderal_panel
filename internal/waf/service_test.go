@@ -206,6 +206,36 @@ func TestConfigureDoSValidatesAndWritesRateLimit(t *testing.T) {
 	}
 }
 
+// A per-site toggle is available to non-admin site owners, so it must never
+// change the shared zone rate: an existing zone file is left untouched.
+func TestSiteProtectionNeverReratesSharedZone(t *testing.T) {
+	fake := newFakeExec()
+	fake.files[dosFile] = "# Managed by Jenderal Panel - DoS protection rate limit zone\nlimit_req_zone $binary_remote_addr zone=jenderal_dos:10m rate=60r/m;\n"
+
+	svc := &Service{exec: fake}
+	if err := svc.SetSiteProtection(context.Background(), "01M247E0A6H332PZNCS9AQGXFQ", SiteProtection{DoS: true}, 55555, 20); err != nil {
+		t.Fatalf("SetSiteProtection: %v", err)
+	}
+	if !strings.Contains(fake.files[dosFile], "rate=60r/m") {
+		t.Errorf("per-site toggle rewrote the shared zone rate:\n%s", fake.files[dosFile])
+	}
+}
+
+// First ever enable bootstraps the shared zone with the fallback rate.
+func TestSiteProtectionCreatesMissingZone(t *testing.T) {
+	fake := newFakeExec()
+	svc := &Service{exec: fake}
+	if err := svc.SetSiteProtection(context.Background(), "01M247E0A6H332PZNCS9AQGXFQ", SiteProtection{DoS: true}, 120, 20); err != nil {
+		t.Fatalf("SetSiteProtection: %v", err)
+	}
+	if !strings.Contains(fake.files[dosFile], "rate=120r/m") {
+		t.Errorf("missing zone was not bootstrapped:\n%s", fake.files[dosFile])
+	}
+	if strings.Contains(fake.files[dosFile], "limit_req zone=") {
+		t.Errorf("zone conf must not enforce globally:\n%s", fake.files[dosFile])
+	}
+}
+
 func newFakeService(fake *fakeExec) *Service {
 	return &Service{exec: fake}
 }

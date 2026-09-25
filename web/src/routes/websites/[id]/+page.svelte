@@ -184,10 +184,12 @@ import { toast } from '$lib/stores/toast';
 	let protectionLoaded = $state(false);
 	let protectionBusy = $state('');
 
-	const canManageSecurity = $derived(hasPermission($permissions, 'security.manage'));
+	// Per-site WAF/DoS toggles are website-scoped (ownership enforced by the
+	// backend scope middleware), so website-level update permission suffices.
+	const canManageProtection = $derived(hasPermission($permissions, 'websites.update'));
 
 	async function loadSiteProtection() {
-		if (!website || !canManageSecurity) return;
+		if (!website || !canManageProtection) return;
 		try {
 			siteProtection = await api.get<{ waf: boolean; dos: boolean }>(`/api/v1/security/waf/sites/${website.id}`);
 		} catch { siteProtection = null; }
@@ -1805,7 +1807,7 @@ import { toast } from '$lib/stores/toast';
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 							<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
 								<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.prot.title')}</h3>
-								{#if canManageSecurity}
+								{#if canManageProtection}
 									<div class="flex flex-wrap gap-2">
 										<button
 											type="button"

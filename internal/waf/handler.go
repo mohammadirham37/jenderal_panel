@@ -149,6 +149,12 @@ func (h *Handler) SetSiteProtection(w http.ResponseWriter, r *http.Request) {
 	if req.Burst != nil {
 		burst = *req.Burst
 	}
+	// The DoS rate applies server-wide, so only admins may set it — and they
+	// do so through the DoS defaults endpoint. Site owners (non-admin) toggle
+	// their site's protection with the panel defaults only.
+	if !auth.AdminFromContext(r.Context()) {
+		rate, burst = 120, 20
+	}
 
 	if err := h.svc.SetSiteProtection(r.Context(), siteID, protect, rate, burst); err != nil {
 		httputil.HandleError(w, err)

@@ -221,7 +221,7 @@ func (s *Service) SetSiteProtection(ctx context.Context, siteID string, protect 
 		parts = append(parts, "modsecurity on;\nmodsecurity_rules_file "+rulesFile+";\n")
 	}
 	if protect.DoS {
-		if err := s.writeDoSZone(ctx, dosRate); err != nil {
+		if err := s.ensureDoSZone(ctx, dosRate); err != nil {
 			return err
 		}
 		parts = append(parts, "limit_req_status 403;\nlimit_req zone=jenderal_dos burst="+strconv.Itoa(dosBurst)+" nodelay;\n")
@@ -351,6 +351,17 @@ limit_req_zone $binary_remote_addr zone=jenderal_dos:10m rate=%dr/m;
 		return fmt.Errorf("write DoS zone: %w", err)
 	}
 	return nil
+}
+
+// ensureDoSZone creates the shared limit_req_zone only when it does not exist
+// yet. The zone rate applies server-wide, so a per-site protection toggle —
+// available to non-admin site owners — must never re-rate it; rate changes
+// belong to SetDoSDefaults.
+func (s *Service) ensureDoSZone(ctx context.Context, fallbackRate int) error {
+	if s.fileExists(ctx, dosFile) {
+		return nil
+	}
+	return s.writeDoSZone(ctx, fallbackRate)
 }
 
 // legacyDoSGlobalLimit detects the pre-per-site conf that rate-limited

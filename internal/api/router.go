@@ -958,9 +958,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				Put("/security/waf/modsecurity/mode", wafHandler.SetMode)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
 				Put("/security/waf/dosevasive", wafHandler.ConfigureDoS)
-			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+			// Per-site WAF/DoS toggles (website-scoped; ownership handled by
+			// the scope middleware, so website-level permissions are enough
+			// here — site owners may protect their own sites)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/security/waf/sites/{id}", wafHandler.SiteProtection)
-			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/security/waf/sites/{id}", wafHandler.SetSiteProtection)
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/malware/status", malwareHandler.Status)

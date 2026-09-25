@@ -45,6 +45,13 @@ func (d *Dependencies) ScopeMiddleware(next http.Handler) http.Handler {
 				httputil.HandleError(w, model.ErrForbidden)
 				return
 			}
+		case pattern == "/security/waf/sites/{id}":
+			// Per-site WAF/DoS protection is website-scoped: a non-admin may
+			// only read and toggle the protections of sites it owns.
+			if !d.canManageWebsite(ctx, admin, user.ID, chi.URLParam(r, "id")) {
+				httputil.HandleError(w, model.ErrForbidden)
+				return
+			}
 		case pattern == "/deployments/{id}" || strings.HasPrefix(pattern, "/deployments/{id}/"):
 			deployment, err := d.DeploymentSvc.GetDeployment(ctx, chi.URLParam(r, "id"))
 			if err != nil {
