@@ -26,6 +26,10 @@ func setupDB(t *testing.T) *sql.DB {
 	if err := database.Migrate(db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// The background provision waiter queries concurrently with the test;
+	// pin the pool to one connection so the shared :memory: database (and
+	// its schema) is visible to every query.
+	db.SetMaxOpenConns(1)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -88,7 +92,7 @@ func TestStartCloneCreatesTargetAndRecordsTimeout(t *testing.T) {
 	}
 
 	// The staging site is created as a config-only static site owned by the
-	// caller, with the same PHP version as the source.
+	// caller; static sites carry no PHP version.
 	target, err := svc.websites.Get(ctx, clone.TargetWebsiteID)
 	if err != nil {
 		t.Fatalf("get target site: %v", err)
@@ -96,8 +100,8 @@ func TestStartCloneCreatesTargetAndRecordsTimeout(t *testing.T) {
 	if target.SetupMode != website.SetupConfigOnly || target.AppType != "static" {
 		t.Errorf("expected config-only static staging site, got %s/%s", target.SetupMode, target.AppType)
 	}
-	if target.PHPVersion != "8.2" {
-		t.Errorf("expected source PHP version to carry over, got %s", target.PHPVersion)
+	if target.PHPVersion != "" {
+		t.Errorf("expected static staging site without PHP version, got %q", target.PHPVersion)
 	}
 	if target.CreatedBy != "01CALLER" {
 		t.Errorf("expected caller to own the staging site, got %q", target.CreatedBy)

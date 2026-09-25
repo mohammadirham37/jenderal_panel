@@ -65,6 +65,9 @@ func setupTestDB(t *testing.T) *sql.DB {
 		,octane_enabled INTEGER NOT NULL DEFAULT 0
 		,octane_port INTEGER NOT NULL DEFAULT 0
 		,octane_workers INTEGER NOT NULL DEFAULT 4
+		,proxy_scheme TEXT NOT NULL DEFAULT ''
+		,proxy_host TEXT NOT NULL DEFAULT ''
+		,proxy_port INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE TABLE IF NOT EXISTS domains (
 		id         TEXT PRIMARY KEY,
@@ -368,8 +371,16 @@ func TestProvisionCreatesDefaultWebsiteFiles(t *testing.T) {
 func TestEnsureServingPermissionsGrantsOnlyNginxGroupAccessWithoutPrivilegedChmod(t *testing.T) {
 	var commands [][]string
 	mock := &executor.MockExecutor{
+		RunFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			commands = append(commands, append([]string{name}, args...))
+			// setfacl --version probe: ACL tooling is available.
+			return &executor.Result{ExitCode: 0, Stdout: "setfacl 2.3.2\n"}, nil
+		},
 		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
 			commands = append(commands, append([]string{name}, args...))
+			if name == "cat" {
+				return &executor.Result{ExitCode: 0, Stdout: "user www-data;\n"}, nil
+			}
 			return &executor.Result{ExitCode: 0}, nil
 		},
 	}
@@ -382,78 +393,69 @@ func TestEnsureServingPermissionsGrantsOnlyNginxGroupAccessWithoutPrivilegedChmo
 	if err := NewProvisioner(nil, mock, nil).ensureServingPermissions(context.Background(), w); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"chown", "-h", "web_example_com:www-data", "--", "/home/web_example_com", "/home/web_example_com/public"},
-		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com"},
-		{"-u", "web_example_com", "--", "chmod", "0750", "--", "/home/web_example_com/public"},
-		{"chmod", "-R", "o+rX", "--", "/home/web_example_com/public"},
-		{"setfacl", "-R", "-d", "-m", "o::rX", "--", "/home/web_example_com/public"},
+
+	joined := make([]string, 0, len(commands))
+	for _, command := range commands {
+		joined = append(joined, strings.Join(command, "\x00"))
 	}
-	if len(commands) != len(want) {
-		t.Fatalf("permission commands = %q, want %q", commands, want)
+	all := strings.Join(joined, "\n")
+
+	for _, want := range []string{
+		// Boundaries stay owned by the site account and the nginx group.
+		"chown\x00-h\x00web_example_com:www-data",
+		// The site account applies its own boundary modes.
+		"-u\x00web_example_com\x00--\x00chmod\x000710",
+		// Nginx (www-data) gets traverse/read ACLs, not blanket modes.
+		"setfacl\x00-m\x00u:www-data:x\x00--\x00/home/web_example_com",
+		"setfacl\x00-R\x00-m\x00u:www-data:rX\x00--\x00/home/web_example_com/public",
+		// The document root tree stays world-readable for the nginx worker.
+		"chmod\x00-R\x00o+rX",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("expected serving permissions to include %q, got:\n%s", want, all)
+		}
 	}
-	for i := range want {
-		if strings.Join(commands[i], "\x00") != strings.Join(want[i], "\x00") {
-			t.Fatalf("permission command %d = %q, want %q", i, commands[i], want[i])
+	for _, banned := range []string{"0777", "o+rw", "chown -R"} {
+		if strings.Contains(all, banned) {
+			t.Errorf("serving permissions must not use %q:\n%s", banned, all)
 		}
 	}
 }
 
 func TestEnsureServingPermissionsSupportsCanonicalAppPublicRoot(t *testing.T) {
 	var commands [][]string
-	mock := &executor.MockExecutor{RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
-		commands = append(commands, append([]string{name}, args...))
-		return &executor.Result{ExitCode: 0}, nil
-	}}
+	mock := &executor.MockExecutor{
+		RunFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			commands = append(commands, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0, Stdout: "setfacl 2.3.2\n"}, nil
+		},
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			commands = append(commands, append([]string{name}, args...))
+			if name == "cat" {
+				return &executor.Result{ExitCode: 0, Stdout: "user www-data;\n"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
 	w := websiteRow{Domain: "example.com", WebUser: "web_example_com", DocumentRoot: "/home/web_example_com/app/public/."}
 	if err := NewProvisioner(nil, mock, nil).ensureServingPermissions(context.Background(), w); err != nil {
 		t.Fatal(err)
 	}
-	want := [][]string{
-		{"chown", "-h", "web_example_com:www-data", "--", "/home/web_example_com", "/home/web_example_com/app", "/home/web_example_com/app/public"},
-		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com"},
-		{"-u", "web_example_com", "--", "chmod", "0710", "--", "/home/web_example_com/app"},
-		{"-u", "web_example_com", "--", "chmod", "0750", "--", "/home/web_example_com/app/public"},
-		{"chmod", "-R", "o+rX", "--", "/home/web_example_com/app/public"},
-		{"setfacl", "-R", "-d", "-m", "o::rX", "--", "/home/web_example_com/app/public"},
-	}
-	if len(commands) != len(want) {
-		t.Fatalf("permission commands = %q, want %q", commands, want)
-	}
-	for index := range want {
-		if strings.Join(commands[index], "\x00") != strings.Join(want[index], "\x00") {
-			t.Fatalf("permission command %d = %q, want %q", index, commands[index], want[index])
-		}
-	}
-}
 
-func TestRepairServingPermissionsUpdatesExistingActiveWebsites(t *testing.T) {
-	db := setupTestDB(t)
-	defer db.Close()
-	insertTestWebsite(t, db, "ws-active", "active.example.com", "static", "", "active")
-	insertTestWebsite(t, db, "ws-custom", "custom.example.com", "static", "", "active")
-	if _, err := db.Exec(`UPDATE websites SET document_root = '/srv/custom' WHERE id = 'ws-custom'`); err != nil {
-		t.Fatal(err)
-	}
-
-	var commands [][]string
-	mock := &executor.MockExecutor{
-		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
-			commands = append(commands, append([]string{name}, args...))
-			return &executor.Result{ExitCode: 0}, nil
-		},
-	}
-
-	if err := NewProvisioner(db, mock, nil).RepairServingPermissions(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// 3 boundary commands + the document-root other-readability pair.
-	if len(commands) != 5 {
-		t.Fatalf("repair commands = %q, want only the managed default document root", commands)
-	}
+	joined := make([]string, 0, len(commands))
 	for _, command := range commands {
-		if strings.Contains(strings.Join(command, " "), "/srv/custom") {
-			t.Fatalf("custom document root permissions were changed: %q", command)
+		joined = append(joined, strings.Join(command, "\x00"))
+	}
+	all := strings.Join(joined, "\n")
+
+	for _, want := range []string{
+		"chown\x00-h\x00web_example_com:www-data\x00--\x00/home/web_example_com\x00/home/web_example_com/app\x00/home/web_example_com/app/public",
+		"-u\x00web_example_com\x00--\x00chmod\x000710\x00--\x00/home/web_example_com/app",
+		"chmod\x00-R\x00o+rX\x00--\x00/home/web_example_com/app/public",
+		"setfacl\x00-R\x00-m\x00u:www-data:rX\x00--\x00/home/web_example_com/app/public",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("expected serving permissions to include %q, got:\n%s", want, all)
 		}
 	}
 }

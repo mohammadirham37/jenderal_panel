@@ -52,6 +52,10 @@ func TestOptionsReportsPHPComposerAndNodeChoicesWithoutGlobalNodeProbe(t *testin
 	defer db.Close()
 	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 		switch name {
+		case "/bin/cat":
+			// The Codename probe reads /etc/os-release; answer with a PPA
+			// codename so the default version set applies.
+			return &executor.Result{ExitCode: 0, Stdout: "ID=ubuntu\nVERSION_CODENAME=noble\n"}, nil
 		case "test":
 			path := args[len(args)-1]
 			if path == "/etc/php/8.2" || path == "/usr/bin/php8.2" || path == "/lib/systemd/system/php8.2-fpm.service" ||

@@ -97,13 +97,13 @@ func (s *Service) StartClone(ctx context.Context, sourceID, domain, callerID str
 	}
 
 	// A config-only static site gives the clone its own system user, nginx
-	// vhost and PHP pool without installing any framework into it.
+	// vhost and PHP pool without installing any framework into it. Static
+	// sites carry no PHP version by definition.
 	target, err := s.websites.Create(ctx, website.CreateRequest{
-		Domain:     domain,
-		PHPVersion: src.PHPVersion,
-		Template:   "static",
-		SetupMode:  website.SetupConfigOnly,
-		CreatedBy:  callerID,
+		Domain:    domain,
+		Template:  "static",
+		SetupMode: website.SetupConfigOnly,
+		CreatedBy: callerID,
 	})
 	if err != nil {
 		return StagingClone{}, fmt.Errorf("create staging site: %w", err)
