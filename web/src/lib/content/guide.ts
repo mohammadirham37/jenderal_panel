@@ -174,7 +174,8 @@ const en: GuideDoc = {
 								'Archive: upload a `.zip` or `.tar.gz` of your project with Upload & Extract. The panel extracts it into the site folder.'
 							]
 						},
-						{ type: 'p', text: 'Every deploy is stored in the history list with its log, so you can always check what was deployed and when. Prefer doing it yourself? Connect with the site Terminal over SSH and pull manually.' }
+						{ type: 'p', text: 'Every deploy is stored in the history list with its log, so you can always check what was deployed and when. Prefer doing it yourself? Connect with the site Terminal over SSH and pull manually.' },
+						{ type: 'tip', text: 'Seeing "File not found" right after a deploy? Stay calm — your code is on the server; the web server just lost file access and the panel re-applies it automatically. If the site still misbehaves, run `Run diagnose` on the Overview tab: it names the exact problem and `Repair web server access` fixes it in one click.' }
 					]
 				},
 				{
@@ -596,6 +597,7 @@ const en: GuideDoc = {
 						{ term: 'A new site stays in pending or fails provisioning', def: 'Open the site card and read the provisioning log. The usual causes: DNS not pointing to the server yet, or a missing dependency shown on the create form (with an install link). Fix the cause and press Retry.' },
 						{ term: 'SSL issuing fails', def: 'Almost always DNS: the domain must point to this server before Let\'s Encrypt will issue. Wildcard certificates additionally need a Cloudflare API token. Wait for DNS to spread and try again.' },
 						{ term: 'My Node/Python/Go app returns 502', def: 'The app service is not running or listens on a different port than configured. Open the site\'s App tab, check the port, press Restart, and read the service log.' },
+						{ term: 'My Laravel site shows "File not found" after a deploy', def: 'Don\'t panic — your code deployed fine and nothing was deleted. That message means the web server lost permission to enter the project folder, not that the app is broken. Open the site\'s Overview tab and press `Run diagnose`: the failing check shows the exact reason, including the matching error log lines. Then press `Repair web server access` — permissions are re-applied and the site answers again right away. Current panel versions also re-apply these permissions automatically after every deploy, so this should not come back.' },
 						{ term: 'A website shows the default page instead of my app', def: 'The Nginx template may not match the site type. On the site\'s Config tab pick the matching template (Auto handles this for app sites), then test the Nginx config on the Nginx page.' },
 						{ term: 'Uploads fail for large files', def: 'Three limits can bite: PHP `upload_max_filesize` (site PHP Settings tab), Nginx `client_max_body_size` (Nginx global config), and the app\'s own body limit. Raise the ones that apply.' },
 						{ term: 'A service is stopped', def: 'Dashboard shows which one. Go to Services, press Start, and check its logs if it refuses to stay up. The Security Center report also flags services that fail repeatedly.' },
@@ -777,7 +779,8 @@ const id: GuideDoc = {
 								'Arsip: unggah `.zip` atau `.tar.gz` proyek Anda lewat Upload & Extract. Panel mengekstraknya ke folder situs.'
 							]
 						},
-						{ type: 'p', text: 'Setiap deploy tersimpan di daftar riwayat beserta lognya, jadi Anda selalu bisa memeriksa apa yang dideploy dan kapan. Lebih suka cara manual? Masuk lewat Terminal situs dan tarik kode sendiri.' }
+						{ type: 'p', text: 'Setiap deploy tersimpan di daftar riwayat beserta lognya, jadi Anda selalu bisa memeriksa apa yang dideploy dan kapan. Lebih suka cara manual? Masuk lewat Terminal situs dan tarik kode sendiri.' },
+						{ type: 'tip', text: 'Melihat "File not found" tepat setelah deploy? Tenang — kode Anda sudah ada di server; web server hanya kehilangan akses file dan panel menerapkannya kembali secara otomatis. Bila situs masih bermasalah, jalankan `Jalankan diagnosa` di tab Ringkasan: penyebabnya disebutkan secara tepat dan `Perbaiki akses web server` memperbaikinya sekali klik.' }
 					]
 				},
 				{
@@ -1199,6 +1202,7 @@ const id: GuideDoc = {
 						{ term: 'Situs baru terus pending atau provisioning gagal', def: 'Buka kartu situs dan baca log provisioning. Penyebab paling umum: DNS belum mengarah ke server, atau ada dependensi yang kurang dan ditampilkan di formulir pembuatan (beserta tautan pasangnya). Perbaiki penyebabnya lalu tekan Retry.' },
 						{ term: 'Penerbitan SSL gagal', def: 'Hampir selalu karena DNS: domain harus mengarah ke server ini sebelum Let\'s Encrypt mau menerbitkan. Sertifikat wildcard tambahan butuh API token Cloudflare. Tunggu DNS menyebar lalu coba lagi.' },
 						{ term: 'Aplikasi Node/Python/Go saya mengembalikan 502', def: 'Layanan aplikasinya tidak berjalan atau mendengarkan di port yang berbeda dari yang dikonfigurasi. Buka tab App di situs tersebut, periksa portnya, tekan Restart, lalu baca log layanannya.' },
+						{ term: 'Situs Laravel saya menampilkan "File not found" setelah deploy', def: 'Jangan panik — kode Anda aman ter-deploy dan tidak ada yang terhapus. Pesan itu berarti web server kehilangan izin untuk masuk ke folder proyek, bukan berarti aplikasinya rusak. Buka tab Ringkasan situs lalu tekan `Jalankan diagnosa`: pemeriksaan yang gagal menunjukkan alasannya secara tepat, termasuk baris error log yang terkait. Setelah itu tekan `Perbaiki akses web server` — izin diterapkan kembali dan situs langsung merespons lagi. Versi panel terbaru juga menerapkan ulang izin ini secara otomatis setiap selesai deploy, sehingga masalah ini tidak terulang.' },
 						{ term: 'Website menampilkan halaman bawaan, bukan aplikasi saya', def: 'Template Nginx mungkin tidak cocok dengan jenis situsnya. Di tab Config situs, pilih template yang sesuai (Auto menangani ini untuk situs aplikasi), lalu uji konfigurasi Nginx di halaman Nginx.' },
 						{ term: 'Unggahan gagal untuk file besar', def: 'Tiga batas bisa menjadi penyebab: `upload_max_filesize` PHP (tab PHP Settings situs), `client_max_body_size` Nginx (konfigurasi global Nginx), dan batas body aplikasi itu sendiri. Naikkan yang berlaku.' },
 						{ term: 'Sebuah layanan berhenti', def: 'Dasbor menunjukkan yang mana. Buka Layanan, tekan Start, dan periksa lognya bila menolak bertahan menyala. Laporan Pusat Keamanan juga menandai layanan yang berulang kali gagal.' },

@@ -231,6 +231,33 @@ func (h *Handler) CheckHealthNow(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, hc)
 }
 
+// Diagnose handles POST /api/websites/{id}/diagnose: server-side checks that
+// explain 404/403 answers (vhost, document root, nginx access, PHP-FPM,
+// Laravel layout).
+func (h *Handler) Diagnose(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	report, err := h.svc.Diagnose(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.diagnose", id, "overall: "+report.Overall)
+	httputil.JSON(w, http.StatusOK, report)
+}
+
+// RepairServing handles POST /api/websites/{id}/repair-serving: re-applies
+// the nginx worker's filesystem access after a diagnose found permission
+// problems.
+func (h *Handler) RepairServing(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.RepairServing(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.repair_serving", id, "")
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "repaired"})
+}
+
 // GetAppService handles GET /api/websites/{id}/app.
 func (h *Handler) GetAppService(w http.ResponseWriter, r *http.Request) {
 	status, err := h.svc.GetAppService(r.Context(), chi.URLParam(r, "id"))

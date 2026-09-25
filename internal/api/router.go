@@ -479,6 +479,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/health/check", websiteHandler.CheckHealthNow)
 
+			// Serving diagnostics: explain 404/403 answers and repair the
+			// nginx worker's filesystem access.
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Post("/websites/{id}/diagnose", websiteHandler.Diagnose)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/repair-serving", websiteHandler.RepairServing)
+
 			// App service (node; website-scoped, ownership via scope
 			// middleware)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).

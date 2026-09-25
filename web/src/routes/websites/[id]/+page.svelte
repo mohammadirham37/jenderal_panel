@@ -12,6 +12,7 @@
 	import WebsiteWpToolkitSection from '$lib/components/WebsiteWpToolkitSection.svelte';
 	import WebsitePhpSettingsSection from '$lib/components/WebsitePhpSettingsSection.svelte';
 	import WebsiteAppSection from '$lib/components/WebsiteAppSection.svelte';
+	import WebsiteDiagnosticsSection from '$lib/components/WebsiteDiagnosticsSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
@@ -1579,6 +1580,8 @@ import { toast } from '$lib/stores/toast';
 							{website.error_message}
 						</div>
 					{/if}
+
+					<WebsiteDiagnosticsSection websiteId={website.id} canManage={canUpdateWebsite} />
 
 					{#if pendingStatuses.includes(website.status)}
 						<div class="p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">
