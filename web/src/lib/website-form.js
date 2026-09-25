@@ -1,7 +1,7 @@
 /** @typedef {{ version: string, installed: boolean, running?: boolean }} PHPOption */
 /** @typedef {{ name: string, installed: boolean, version: string, manage_url: string }} DependencyOption */
 /** @typedef {{ version: string, enabled: boolean, reason: string }} CompatibilityOption */
-/** @typedef {{ template: string, php_version: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, node_version?: string }} WebsiteSelection */
+/** @typedef {{ template: string, php_version: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, node_version?: string, proxy_scheme?: string, proxy_host?: string, proxy_port?: string }} WebsiteSelection */
 /** @typedef {{ template: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, enabled: boolean, reason: string, document_root: string, prerequisites: string[], php_compatibility: CompatibilityOption[] }} ProfileOption */
 /** @typedef {{ php_versions: PHPOption[], dependencies: DependencyOption[], profiles: ProfileOption[], inertia_adapters: string[], defaults: WebsiteSelection }} WebsiteFormOptions */
 
@@ -39,11 +39,21 @@ export function normalizeWebsiteSelection(selection, options) {
 		inertia_adapter: selection.inertia_adapter || '',
 		project_variant: selection.project_variant || 'empty',
 		setup_mode: selection.setup_mode || defaults.setup_mode || 'config-only',
-		node_version: normalizeNodeVersion({requires_node: false, setup_mode: ''}, selection.node_version)
+		node_version: normalizeNodeVersion({requires_node: false, setup_mode: ''}, selection.node_version),
+		proxy_scheme: '',
+		proxy_host: '',
+		proxy_port: ''
 	};
 
 	if (normalized.template === 'static') {
 		normalized.php_version = '';
+	}
+	const reverseProxy = normalized.template === 'reverse-proxy';
+	if (reverseProxy) {
+		normalized.php_version = '';
+		normalized.proxy_scheme = selection.proxy_scheme === 'https' ? 'https' : 'http';
+		normalized.proxy_host = (selection.proxy_host || '').trim();
+		normalized.proxy_port = String(selection.proxy_port || '').trim();
 	}
 	const laravelLike = normalized.template === 'laravel' || normalized.template === 'laravel-octane';
 	if (!laravelLike) {

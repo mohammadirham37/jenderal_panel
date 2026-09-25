@@ -280,6 +280,15 @@ const en = {
 	'wd.logs.load_failed': 'Failed to load logs',
 
 	// Config — template engine
+	'wd.config.proxyTitle': 'Reverse Proxy Upstream',
+	'wd.config.proxyHint': 'Forward all traffic for this site to an upstream of your choice — a local app port or another host. Changing it regenerates the vhost immediately.',
+	'wd.config.proxyScheme': 'Scheme',
+	'wd.config.proxyHost': 'Upstream Host',
+	'wd.config.proxyPort': 'Upstream Port',
+	'wd.config.proxySave': 'Save Upstream',
+	'wd.config.proxySaving': 'Saving...',
+	'wd.config.proxySaved': 'Upstream updated and vhost reloaded',
+	'wd.config.proxyError': 'Failed to update upstream',
 	'wd.config.template_title': 'Template Engine',
 	'wd.config.template_hint': 'Choose which nginx template generates this site\'s vhost. Applying a template regenerates the configuration below — manual edits will be overwritten.',
 	'wd.config.template': 'Template',
@@ -662,6 +671,15 @@ const id: Record<keyof typeof en, string> = {
 	'wd.logs.load_failed': 'Gagal memuat log',
 
 	// Config — template engine
+	'wd.config.proxyTitle': 'Upstream Reverse Proxy',
+	'wd.config.proxyHint': 'Teruskan seluruh trafik situs ini ke upstream pilihan Anda — port app lokal atau host lain. Mengubahnya langsung me-regenerate vhost.',
+	'wd.config.proxyScheme': 'Skema',
+	'wd.config.proxyHost': 'Host Upstream',
+	'wd.config.proxyPort': 'Port Upstream',
+	'wd.config.proxySave': 'Simpan Upstream',
+	'wd.config.proxySaving': 'Menyimpan...',
+	'wd.config.proxySaved': 'Upstream diperbarui dan vhost di-reload',
+	'wd.config.proxyError': 'Gagal memperbarui upstream',
 	'wd.config.template_title': 'Mesin Template',
 	'wd.config.template_hint': 'Pilih template nginx yang menghasilkan vhost situs ini. Menerapkan template akan membuat ulang konfigurasi di bawah — edit manual akan tertimpa.',
 	'wd.config.template': 'Template',

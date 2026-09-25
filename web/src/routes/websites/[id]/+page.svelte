@@ -41,6 +41,9 @@ import { toast } from '$lib/stores/toast';
 		octane_enabled?: boolean;
 		octane_port?: number;
 		octane_workers?: number;
+		proxy_scheme?: string;
+		proxy_host?: string;
+		proxy_port?: number;
 		error_message?: string;
 		domains?: WebsiteDomain[];
 		created_at: string;
@@ -636,6 +639,12 @@ import { toast } from '$lib/stores/toast';
 	let configError = $state('');
 	let configSaveMsg = $state('');
 	let configInitialized = $state(false);
+	let proxyScheme = $state('http');
+	let proxyHost = $state('');
+	let proxyPort = $state('');
+	let proxySaving = $state(false);
+	let proxyMsg = $state('');
+	let proxyError = $state('');
 
 	// Nginx template engine
 	let profileChoice = $state('');
@@ -1198,6 +1207,26 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	// Config
+
+	async function saveProxyUpstream() {
+		if (!website) return;
+		proxySaving = true;
+		proxyMsg = '';
+		proxyError = '';
+		try {
+			website = await api.put<{ id: string }>(`/api/v1/websites/${website.id}/proxy`, {
+				scheme: proxyScheme,
+				host: proxyHost.trim(),
+				port: Number(proxyPort)
+			}) as never;
+			proxyMsg = translate($language, 'wd.config.proxySaved');
+		} catch (err) {
+			proxyError = err instanceof Error ? err.message : translate($language, 'wd.config.proxyError');
+		} finally {
+			proxySaving = false;
+		}
+	}
+
 	async function loadConfig() {
 		if (!website) return;
 		configLoading = true;
@@ -1332,6 +1361,9 @@ import { toast } from '$lib/stores/toast';
 		if (activeTab === 'Config' && !configInitialized && website) {
 			configInitialized = true;
 			profileChoice = website.nginx_profile || '';
+			proxyScheme = website.proxy_scheme || 'http';
+			proxyHost = website.proxy_host || '';
+			proxyPort = website.proxy_port ? String(website.proxy_port) : '';
 			loadConfig();
 		}
 	});
@@ -2581,6 +2613,42 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Config'}
 				<div class="space-y-4">
+					<!-- Reverse proxy upstream -->
+					{#if website.app_type === 'reverse-proxy'}
+						<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+							<h3 class="mb-1 text-lg font-semibold text-white">{translate($language, 'wd.config.proxyTitle')}</h3>
+							<p class="mb-4 text-sm text-gray-400">{translate($language, 'wd.config.proxyHint')}</p>
+
+							{#if proxyMsg}
+								<div class="mb-3 rounded-lg border border-green-700 bg-green-900/50 p-3 text-sm text-green-300">{proxyMsg}</div>
+							{/if}
+							{#if proxyError}
+								<div class="mb-3 rounded-lg border border-red-700 bg-red-900/50 p-3 text-sm text-red-300">{proxyError}</div>
+							{/if}
+
+							<div class="grid grid-cols-1 gap-3 sm:grid-cols-6">
+								<div class="sm:col-span-2">
+									<label for="proxy-scheme" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wd.config.proxyScheme')}</label>
+									<select id="proxy-scheme" bind:value={proxyScheme} disabled={proxySaving} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30">
+										<option value="http">HTTP</option>
+										<option value="https">HTTPS</option>
+									</select>
+								</div>
+								<div class="sm:col-span-2">
+									<label for="proxy-host" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wd.config.proxyHost')}</label>
+									<input id="proxy-host" type="text" bind:value={proxyHost} disabled={proxySaving} placeholder="127.0.0.1" class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+								</div>
+								<div class="sm:col-span-2">
+									<label for="proxy-port" class="mb-1.5 block text-xs font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wd.config.proxyPort')}</label>
+									<input id="proxy-port" type="number" min="1" max="65535" bind:value={proxyPort} disabled={proxySaving} placeholder="3000" class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30" />
+								</div>
+							</div>
+							<button onclick={saveProxyUpstream} disabled={proxySaving || !proxyHost.trim() || !proxyPort} class="mt-4 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+								{proxySaving ? translate($language, 'wd.config.proxySaving') : translate($language, 'wd.config.proxySave')}
+							</button>
+						</div>
+					{/if}
+
 					<!-- Template Engine -->
 					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
 						<div class="mb-1 flex items-center gap-2.5">

@@ -35,6 +35,7 @@ import { language, translate } from '$lib/stores/language';
 		node_version: string;
 		template: string; php_version: string; framework_version: string; frontend_stack: string;
 		inertia_adapter: string; project_variant: string; setup_mode: string;
+		proxy_scheme: string; proxy_host: string; proxy_port: string;
 	}
 	interface WebsiteOptions {
 		node_versions: string[];
@@ -96,7 +97,7 @@ import { language, translate } from '$lib/stores/language';
 	// Create form
 	let showCreateForm = $state(false);
 	let createDomain = $state('');
-	let selection = $state<WebsiteSelection>({ template: 'php', php_version: '', framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only', node_version: '' });
+	let selection = $state<WebsiteSelection>({ template: 'php', php_version: '', framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only', node_version: '', proxy_scheme: 'http', proxy_host: '', proxy_port: '' });
 	let creating = $state(false);
 	let installedPHP = $derived(options ? availablePHPVersions(options) as RuntimeOption[] : []);
 	let combination = $derived(options ? selectedCombination(options, selection) : null);
@@ -339,6 +340,7 @@ import { language, translate } from '$lib/stores/language';
 								class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 							>
 								<option value="static">{translate($language, 'wl.optStatic')}</option>
+								<option value="reverse-proxy">{translate($language, 'wl.optReverseProxy')}</option>
 								<option value="php">{translate($language, 'wl.optPhp')}</option>
 								<option value="codeigniter3">{translate($language, 'wl.optCi3')}</option>
 								<option value="codeigniter4">{translate($language, 'wl.optCi4')}</option>
@@ -351,7 +353,7 @@ import { language, translate } from '$lib/stores/language';
 								<option value="bun">{translate($language, 'wl.optBun')}</option>
 							</select>
 						</div>
-						{#if selection.template !== 'static'}
+						{#if selection.template !== 'static' && selection.template !== 'reverse-proxy'}
 							<div>
 								<label for="create-php-version" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelPhpVersion')}</label>
 								<select
@@ -406,6 +408,48 @@ import { language, translate } from '$lib/stores/language';
 							{/if}
 							{/if}
 						{/if}
+
+						{#if selection.template === 'reverse-proxy'}
+							<div class="sm:col-span-2 grid grid-cols-1 gap-3 sm:grid-cols-6">
+								<p class="sm:col-span-6 text-xs text-gray-500">{translate($language, 'wl.proxyHint')}</p>
+								<div class="sm:col-span-2">
+									<label for="create-proxy-scheme" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelProxyScheme')}</label>
+									<select
+										id="create-proxy-scheme"
+										value={selection.proxy_scheme}
+										onchange={(event) => { selection.proxy_scheme = event.currentTarget.value; normalizeSelection(); }}
+										class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+									>
+										<option value="http">HTTP</option>
+										<option value="https">HTTPS</option>
+									</select>
+								</div>
+								<div class="sm:col-span-2">
+									<label for="create-proxy-host" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelProxyHost')}</label>
+									<input
+										id="create-proxy-host"
+										type="text"
+										value={selection.proxy_host}
+										onchange={(event) => { selection.proxy_host = event.currentTarget.value; normalizeSelection(); }}
+										placeholder="127.0.0.1"
+										class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+									/>
+								</div>
+								<div class="sm:col-span-2">
+									<label for="create-proxy-port" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelProxyPort')}</label>
+									<input
+										id="create-proxy-port"
+										type="number"
+										min="1"
+										max="65535"
+										value={selection.proxy_port}
+										onchange={(event) => { selection.proxy_port = event.currentTarget.value; normalizeSelection(); }}
+										placeholder="3000"
+										class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-600 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+									/>
+								</div>
+							</div>
+						{/if}
 					</div>
 				</fieldset>
 
@@ -453,7 +497,7 @@ import { language, translate } from '$lib/stores/language';
 					</button>
 					<button
 						onclick={createWebsite}
-						disabled={creating || !createDomain.trim() || !options || !combination?.enabled || (selection.template !== 'static' && !selection.php_version)}
+						disabled={creating || !createDomain.trim() || !options || !combination?.enabled || (selection.template !== 'static' && selection.template !== 'reverse-proxy' && !selection.php_version) || (selection.template === 'reverse-proxy' && (!selection.proxy_host.trim() || !selection.proxy_port.trim()))}
 						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 					>
 						{creating ? translate($language, 'wl.creating') : translate($language, 'wl.createWebsite')}
