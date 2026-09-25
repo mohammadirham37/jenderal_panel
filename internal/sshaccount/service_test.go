@@ -136,6 +136,7 @@ type fakeSSHExecutor struct {
 	canEnter      bool
 	chmodN        int
 	calls         [][]string
+	teeWrites     []string
 }
 
 func (f *fakeSSHExecutor) Run(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -197,9 +198,12 @@ func (f *fakeSSHExecutor) RunSudo(ctx context.Context, name string, args ...stri
 }
 
 func (f *fakeSSHExecutor) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
-	if name == "chpasswd" {
+	switch name {
+	case "chpasswd":
 		f.chpasswdN++
 		f.chpasswdInput = input
+	case "tee":
+		f.teeWrites = append(f.teeWrites, input+" -> "+args[len(args)-1])
 	}
 	return f.RunSudo(ctx, name, args...)
 }
@@ -430,8 +434,10 @@ func TestGrantWebsiteInstallsAclWhenMissing(t *testing.T) {
 	if !fake.aclInstalled {
 		t.Error("missing setfacl must trigger the acl package installation")
 	}
-	if fake.chmodN != 0 {
-		t.Errorf("chmod fallback must not run once acl is installed, ran %d times", fake.chmodN)
+	for _, call := range fake.calls {
+		if call[0] == "chmod" && strings.Contains(strings.Join(call, " "), "g+rwX") {
+			t.Errorf("group-write fallback must not run once acl is installed: %v", call)
+		}
 	}
 	// The chown must set the OWNER only: the www-data group on the managed
 	// directories is the nginx worker's access path and must survive.
@@ -439,5 +445,53 @@ func TestGrantWebsiteInstallsAclWhenMissing(t *testing.T) {
 		if call[0] == "chown" && strings.Contains(call[len(call)-1], "web_acl_example_com:") {
 			t.Errorf("chown overwrote the group: %v", call)
 		}
+	}
+}
+
+func TestGrantWebsiteAppliesGroupCooperationAndUmask(t *testing.T) {
+	db := setupSSHTestDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, created_by, created_at, updated_at)
+		 VALUES ('w-1', 'cooperation.example.com', 'php', '8.2', '/home/web_coop_example/public', 'web_coop_example', 'active', 'u-admin', ?, ?)`,
+		now, now,
+	); err != nil {
+		t.Fatalf("seed website: %v", err)
+	}
+	fake := &fakeSSHExecutor{setfaclPre: true}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+
+	if err := svc.Provision(context.Background(), "u-admin"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	var setgidDirs, groupWriteFiles, umaskLine, profileOwned bool
+	for _, call := range fake.calls {
+		joined := strings.Join(call, " ")
+		if call[0] == "/usr/bin/find" {
+			if strings.Contains(joined, "-name .ssh -prune -o -type d -exec chmod g+rwxs") {
+				setgidDirs = true
+			}
+			if strings.Contains(joined, "-name .ssh -prune -o -type f -exec chmod g+rw") {
+				groupWriteFiles = true
+			}
+		}
+		if call[0] == "chown" && strings.Contains(joined, "admin:admin /home/admin/.bash_profile") {
+			profileOwned = true
+		}
+	}
+	for _, write := range fake.teeWrites {
+		if strings.Contains(write, "umask 0002") && strings.Contains(write, "/home/admin/.bash_profile") {
+			umaskLine = true
+		}
+	}
+	if !setgidDirs || !groupWriteFiles {
+		t.Errorf("group cooperation finds missing: setgidDirs=%v groupWriteFiles=%v", setgidDirs, groupWriteFiles)
+	}
+	if !umaskLine {
+		t.Errorf("umask 0002 was not written to the SSH profile, writes=%v", fake.teeWrites)
+	}
+	if !profileOwned {
+		t.Error("the umask profile must be owned by the SSH account")
 	}
 }

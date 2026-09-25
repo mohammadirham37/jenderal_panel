@@ -461,9 +461,61 @@ func (s *Service) GrantWebsite(ctx context.Context, username, webUser string) er
 		if err := s.runSudoOK(ctx, "setfacl", "-R", "-d", "-m", "u:"+username+":rwX", siteHome); err != nil {
 			return fmt.Errorf("grant default site ACL: %w", err)
 		}
+	} else {
+		if err := s.runSudoOK(ctx, "chmod", "-R", "g+rwX", siteHome); err != nil {
+			return fmt.Errorf("grant site group access: %w", err)
+		}
+	}
+
+	// Two identities write a site: PHP-FPM runs as the site account, SSH as
+	// the panel account. setgid on every directory pins new files to the
+	// shared site group and group-write bits let the other identity keep
+	// editing them (uploads, storage/logs) without waiting for a resync.
+	// .ssh is excluded: sshd is strict about its permissions.
+	if err := s.runSudoOK(ctx, "/usr/bin/find", siteHome, "-name", ".ssh", "-prune", "-o", "-type", "d", "-exec", "chmod", "g+rwxs", "{}", "+"); err != nil {
+		return fmt.Errorf("apply shared group-write directories: %w", err)
+	}
+	if err := s.runSudoOK(ctx, "/usr/bin/find", siteHome, "-name", ".ssh", "-prune", "-o", "-type", "f", "-exec", "chmod", "g+rw", "{}", "+"); err != nil {
+		return fmt.Errorf("apply shared group-write files: %w", err)
+	}
+	return s.ensureUmaskProfile(ctx, username)
+}
+
+// ensureUmaskProfile makes the panel account's login shell use umask 0002 so
+// files created over SSH stay group-writable for the site account (PHP-FPM).
+// The profile is owned by the account and the line is written once.
+func (s *Service) ensureUmaskProfile(ctx context.Context, username string) error {
+	profile := HomeDir(username) + "/.bash_profile"
+	const marker = "umask 0002"
+	if content, ok := s.readFile(ctx, profile); ok && strings.Contains(content, marker) {
 		return nil
 	}
-	return s.runSudoOK(ctx, "chmod", "-R", "g+rwX", siteHome)
+	snippet := "\n# Managed by Jenderal Panel - keep files group-writable for site accounts\numask 0002\n"
+	result, err := s.exec.RunSudoWithInput(ctx, snippet, "tee", "-a", profile)
+	if err != nil {
+		return fmt.Errorf("write umask profile: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = fmt.Sprintf("exit status %d", result.ExitCode)
+		}
+		return fmt.Errorf("write umask profile %s: %s", profile, detail)
+	}
+	if err := s.runSudoOK(ctx, "chown", username+":"+username, profile); err != nil {
+		return err
+	}
+	return s.runSudoOK(ctx, "chmod", "600", profile)
+}
+
+// readFile returns the content of a root-owned file; ok is false when the
+// file cannot be read.
+func (s *Service) readFile(ctx context.Context, path string) (string, bool) {
+	result, err := s.exec.RunSudo(ctx, "cat", path)
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return "", false
+	}
+	return result.Stdout, true
 }
 
 // RevokeWebsite removes a panel account's access to a website after an
