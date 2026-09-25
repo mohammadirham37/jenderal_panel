@@ -530,8 +530,73 @@ const en: GuideDoc = {
 			]
 		},
 		{
+			id: 'reverse-proxy',
+			title: '19. Reverse Proxy: Expose Any App',
+			blocks: [
+				{ type: 'p', text: 'Not every application is PHP or Node managed by the panel. A reverse-proxy website forwards an entire domain to any target: an app listening on another local port, a service on another machine in your LAN, or a host on the internet. Nginx stays in front — it terminates HTTPS, adds security headers and answers the visitor — while your app just speaks plain HTTP.' },
+				{ type: 'p', text: 'You get the full website toolkit for free: the domain (and addon domains), a Let\'s Encrypt certificate, the Force-HTTPS toggle, ownership and access control — all the machinery a normal site uses.' },
+				{
+					type: 'steps',
+					items: [
+						'Open Websites and press Create Website.',
+						'In the Application section pick the Reverse Proxy type.',
+						'Three new fields appear: Scheme (http or https — what your upstream speaks), Host (an IP or hostname, e.g. 127.0.0.1) and Port (e.g. 3000).',
+						'Enter the domain as usual, create the site, and it immediately proxies all traffic — including websockets — to the upstream.'
+					]
+				},
+				{
+					type: 'tip',
+					text: 'Running an app on this same server? Use 127.0.0.1 as the Host and the app\'s port as the Port — the traffic never leaves the machine. For services on another machine, use that machine\'s LAN IP or hostname.'
+				},
+				{ type: 'p', text: 'To change the target later, open the website and go to the Config tab: the Upstream card shows the current scheme/host/port with an edit form. Saving rewrites the Nginx vhost and reloads it automatically. The site list marks these sites with a Reverse Proxy badge.' },
+				{
+					type: 'warning',
+					text: 'The upstream must actually be reachable from the server, otherwise every request returns 502 Bad Gateway. Start the app first, then create the proxy site.'
+				},
+				{
+					type: 'terms',
+					items: [
+						{ term: 'Typical uses', def: 'A Docker container publishing port 8080, a Python/Go/Rust app with no panel runtime, an internal admin panel on another box, or a second web server during a migration.' },
+						{ term: 'Health checking', def: 'After creating the site, open its URL once. A 502 means the upstream is down or the address is wrong; a 404 comes from the app itself and means the proxy works.' }
+					]
+				}
+			]
+		},
+		{
+			id: 'cloudflare-tunnel',
+			title: '20. Cloudflare Tunnel',
+			blocks: [
+				{ type: 'p', text: 'A Cloudflare Tunnel (cloudflared) publishes your sites without opening any inbound port on the server: an outgoing connection to Cloudflare carries visitor traffic back to Nginx. The server can sit behind a home internet connection or a strict firewall — as long as it can reach the internet, your sites are reachable.' },
+				{ type: 'terms', items: [
+					{ term: 'Why a tunnel', def: 'No port forwarding, no exposed 80/443, your server\'s IP stays hidden behind Cloudflare, and DDoS protection plus caching come for free.' },
+					{ term: 'What you need', def: 'A domain whose DNS is managed by Cloudflare (free plan is enough) and an account where you can create a Tunnel.' }
+				] },
+				{
+					type: 'steps',
+					items: [
+						'Open the Cloudflare Tunnel page in the sidebar and press Install — the panel downloads the pinned cloudflared release and sets up its systemd service.',
+						'In the Cloudflare dashboard (Zero Trust → Networks → Tunnels) create a Tunnel and copy the connector token it shows you.',
+						'Paste the token into the Connect form on the panel page. The connector registers itself and the status turns connected.',
+						'Back in the Cloudflare dashboard, add a Public Hostname for each site: pick your domain, and point the service to http://localhost:80 (Nginx). Nginx then routes by Host header to the right website — exactly like direct traffic.',
+						'HTTPS between the visitor and Cloudflare is handled by Cloudflare; keep your sites\' own certificates for the Nginx hop, or serve plain HTTP on localhost — both work.'
+					]
+				},
+				{
+					type: 'list',
+					items: [
+						'The panel page shows the service status, the last log lines, and Restart/Disconnect controls; Disconnect keeps the installation but stops serving traffic.',
+						'Tunnel traffic counts towards Cloudflare\'s terms — heavy non-web traffic (large downloads, streaming) belongs on direct connections instead.'
+					]
+				},
+				{
+					type: 'tip',
+					text: 'Great combination: put your Node/Python app behind a Reverse Proxy site (section 19), then publish that site through the tunnel — no inbound ports open at all, end to end.'
+				}
+			]
+		},
+		{
 			id: 'settings',
-			title: '19. Settings',
+			title: '21. Settings',
 			blocks: [
 				{ type: 'p', text: 'The Settings page collects the panel\'s own configuration:' },
 				{
@@ -550,7 +615,7 @@ const en: GuideDoc = {
 		},
 		{
 			id: 'update',
-			title: '20. Updating the Panel',
+			title: '22. Updating the Panel',
 			blocks: [
 				{ type: 'p', text: 'The Update page keeps the panel itself current. It shows your version against the latest published version, with an Update available or Up to date badge and a Check again button.' },
 				{
@@ -569,7 +634,7 @@ const en: GuideDoc = {
 		},
 		{
 			id: 'audit',
-			title: '21. Audit Logs',
+			title: '23. Audit Logs',
 			blocks: [
 				{ type: 'p', text: 'Every important action in the panel is written down: who did it, what, when, and with what data. The Audit Logs page is that record.' },
 				{
@@ -588,7 +653,7 @@ const en: GuideDoc = {
 		},
 		{
 			id: 'faq',
-			title: '22. FAQ & Troubleshooting',
+			title: '24. FAQ & Troubleshooting',
 			blocks: [
 				{
 					type: 'terms',
@@ -610,7 +675,7 @@ const en: GuideDoc = {
 		},
 		{
 			id: 'glossary',
-			title: '23. Glossary',
+			title: '25. Glossary',
 			blocks: [
 				{
 					type: 'terms',
@@ -1135,8 +1200,74 @@ const id: GuideDoc = {
 			]
 		},
 		{
+			id: 'reverse-proxy',
+			title: '19. Reverse Proxy: Membuka Akses Aplikasi apa Pun',
+			blocks: [
+				{ type: 'p', text: 'Tidak semua aplikasi berupa PHP atau Node yang dikelola panel. Website reverse-proxy meneruskan satu domain utuh ke target mana pun: aplikasi yang berjalan di port lokal lain, service di mesin lain dalam LAN Anda, atau host di internet. Nginx tetap di depan — mengakhiri HTTPS, menambahkan security header, dan menjawab pengunjung — sementara aplikasi Anda cukup berbicara HTTP biasa.' },
+				{ type: 'p', text: "Anda mendapat perangkat website lengkap secara gratis: domain (dan addon domain), sertifikat Let's Encrypt, saklar Force-HTTPS, kepemilikan serta kontrol akses — semua mekanisme yang dipakai situs biasa." },
+				{
+					type: 'steps',
+					items: [
+						'Buka halaman Websites dan tekan Create Website.',
+						'Pada bagian Application pilih tipe Reverse Proxy.',
+						'Tiga field baru muncul: Scheme (http atau https — protokol yang diucapkan upstream Anda), Host (IP atau hostname, mis. 127.0.0.1) dan Port (mis. 3000).',
+						'Isi domain seperti biasa, buat situsnya, dan seketika semua trafik — termasuk websocket — diteruskan ke upstream.'
+					]
+				},
+				{
+					type: 'tip',
+					text: 'Aplikasi Anda berjalan di server yang sama? Gunakan 127.0.0.1 sebagai Host dan port aplikasinya sebagai Port — trafik tidak pernah meninggalkan mesin. Untuk service di mesin lain, gunakan IP LAN atau hostname mesin tersebut.'
+				},
+				{ type: 'p', text: 'Untuk mengubah target nanti, buka website lalu masuk ke tab Config: kartu Upstream menampilkan scheme/host/port saat ini beserta form suntingan. Menyimpan akan menulis ulang vhost Nginx dan me-reload-nya otomatis. Daftar situs menandai situs-situs ini dengan badge Reverse Proxy.' },
+				{
+					type: 'warning',
+					text: 'Upstream harus benar-benar dapat dijangkau dari server, jika tidak setiap permintaan menghasilkan 502 Bad Gateway. Nyalakan aplikasinya dulu, baru buat situs proxy-nya.'
+				},
+				{
+					type: 'terms',
+					items: [
+						{ term: 'Pemakaian khas', def: 'Container Docker yang mempublish port 8080, aplikasi Python/Go/Rust tanpa runtime panel, panel admin internal di mesin lain, atau web server kedua saat migrasi.' },
+						{ term: 'Mengecek kesehatan', def: 'Setelah membuat situs, buka URL-nya sekali. 502 berarti upstream mati atau alamatnya salah; 404 datang dari aplikasinya sendiri dan justru menandakan proxy berfungsi.' }
+					]
+				}
+			]
+		},
+		{
+			id: 'cloudflare-tunnel',
+			title: '20. Cloudflare Tunnel',
+			blocks: [
+				{ type: 'p', text: 'Cloudflare Tunnel (cloudflared) mempublish situs Anda tanpa membuka satu pun port inbound di server: koneksi keluar ke Cloudflare membawa trafik pengunjung kembali ke Nginx. Server boleh berada di belakang koneksi rumahan atau firewall yang ketat — selama ia bisa mengakses internet, situs Anda tetap dapat dijangkau.' },
+				{ type: 'terms', items: [
+					{ term: 'Kenapa tunnel', def: 'Tanpa port forwarding, tanpa 80/443 yang terbuka, IP server Anda tersembunyi di belakang Cloudflare, dan proteksi DDoS plus caching didapat gratis.' },
+					{ term: 'Yang dibutuhkan', def: 'Domain yang DNS-nya dikelola Cloudflare (paket gratis sudah cukup) dan akun yang bisa membuat Tunnel.' }
+				] },
+				{
+					type: 'steps',
+					items: [
+						'Buka halaman Cloudflare Tunnel di sidebar dan tekan Install — panel mengunduh rilis cloudflared yang di-pin dan menyiapkan service systemd-nya.',
+						'Di dashboard Cloudflare (Zero Trust → Networks → Tunnels) buat sebuah Tunnel dan salin connector token yang ditampilkan.',
+						'Tempel token tersebut ke form Connect di halaman panel. Connector mendaftarkan dirinya dan status berubah menjadi connected.',
+						'Kembali ke dashboard Cloudflare, tambahkan Public Hostname untuk setiap situs: pilih domain Anda, dan arahkan service ke http://localhost:80 (Nginx). Nginx kemudian membagi rute berdasarkan Host header ke website yang tepat — persis seperti trafik langsung.',
+						"HTTPS antara pengunjung dan Cloudflare ditangani Cloudflare; sertifikat situs Anda sendiri tetap dipakai untuk hop ke Nginx, atau sajikan HTTP biasa di localhost — keduanya bisa."
+					]
+				},
+				{
+					type: 'list',
+					items: [
+						'Halaman panel menampilkan status service, baris log terakhir, serta kontrol Restart/Disconnect; Disconnect tetap meninggalkan instalasi tetapi menghentikan penyajian trafik.',
+						'Trafik tunnel tunduk pada ketentuan Cloudflare — trafik non-web yang berat (unduhan besar, streaming) sebaiknya lewat koneksi langsung.'
+					]
+				},
+				{
+					type: 'tip',
+					text: 'Kombinasi yang bagus: letakkan aplikasi Node/Python Anda di belakang situs Reverse Proxy (bagian 19), lalu publish situs itu melalui tunnel — tanpa satu pun port inbound terbuka, dari ujung ke ujung.'
+				}
+			]
+		},
+		{
 			id: 'settings',
-			title: '19. Pengaturan',
+
+			title: '21. Pengaturan',
 			blocks: [
 				{ type: 'p', text: 'Halaman Pengaturan mengumpulkan konfigurasi panel itu sendiri:' },
 				{
@@ -1155,7 +1286,7 @@ const id: GuideDoc = {
 		},
 		{
 			id: 'update',
-			title: '20. Memperbarui Panel',
+			title: '22. Memperbarui Panel',
 			blocks: [
 				{ type: 'p', text: 'Halaman Pembaruan menjaga panel itu sendiri tetap mutakhir. Ia menampilkan versi Anda dibanding versi terbaru yang dipublikasikan, dengan badge Pembaruan tersedia atau Sudah mutakhir serta tombol Periksa lagi.' },
 				{
@@ -1174,7 +1305,7 @@ const id: GuideDoc = {
 		},
 		{
 			id: 'audit',
-			title: '21. Log Audit',
+			title: '23. Log Audit',
 			blocks: [
 				{ type: 'p', text: 'Setiap aksi penting di panel dicatat: siapa yang melakukannya, apa, kapan, dan dengan data apa. Halaman Log Audit adalah catatan itu.' },
 				{
@@ -1193,7 +1324,7 @@ const id: GuideDoc = {
 		},
 		{
 			id: 'faq',
-			title: '22. FAQ & Pemecahan Masalah',
+			title: '24. FAQ & Pemecahan Masalah',
 			blocks: [
 				{
 					type: 'terms',
@@ -1215,7 +1346,7 @@ const id: GuideDoc = {
 		},
 		{
 			id: 'glossary',
-			title: '23. Glosarium',
+			title: '25. Glosarium',
 			blocks: [
 				{
 					type: 'terms',
