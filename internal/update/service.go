@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -35,15 +36,24 @@ type Service struct {
 	httpClient *http.Client
 	updateMu   sync.Mutex
 	updateTask string
+	aptMu      sync.Mutex
+	aptRunning bool
+	// runSudoStream indirection exists for tests; production always streams
+	// through exec.RunSudoStream.
+	runSudoStream func(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
 }
 
 func NewService(exec executor.CommandExecutor, version string, tasks *taskrunner.Runner) *Service {
-	return &Service{
+	s := &Service{
 		exec:       exec,
 		currentVer: version,
 		tasks:      tasks,
 		httpClient: &http.Client{Timeout: httpTimeout},
 	}
+	if exec != nil {
+		s.runSudoStream = exec.RunSudoStream
+	}
+	return s
 }
 
 // Current reports the revision served by this running process without making
@@ -147,6 +157,118 @@ func (s *Service) Update(ctx context.Context) (string, error) {
 func RestartPending(execPath string) bool {
 	_, err := os.Stat(execPath + restartScriptSuffix)
 	return err == nil
+}
+
+// aptOpTimeout bounds one apt run. Package upgrades can legitimately take far
+// longer than the executor's default timeout, so the task carries its own
+// generous deadline (the executor only applies its default when the context
+// has none).
+const aptOpTimeout = 2 * time.Hour
+
+// beginApt serializes apt operations — concurrent apt-get runs would fight
+// over the dpkg lock. The returned release func marks the slot free again.
+func (s *Service) beginApt() (func(), error) {
+	s.aptMu.Lock()
+	defer s.aptMu.Unlock()
+	if s.aptRunning {
+		return nil, model.NewValidationError("another package operation is already running")
+	}
+	s.aptRunning = true
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			s.aptMu.Lock()
+			s.aptRunning = false
+			s.aptMu.Unlock()
+		})
+	}, nil
+}
+
+// AptUpdate refreshes the Ubuntu package index (apt-get update) as a task.
+func (s *Service) AptUpdate() (string, error) {
+	release, err := s.beginApt()
+	if err != nil {
+		return "", err
+	}
+	taskID := s.tasks.RunFuncWithOptions(taskrunner.Options{Name: "apt-get update", Timeout: aptOpTimeout}, func(ctx context.Context, log func(string)) error {
+		defer release()
+		return s.runApt(ctx, log, "update")
+	})
+	return taskID, nil
+}
+
+// AptUpgrade installs pending Ubuntu package upgrades (apt-get upgrade) as a
+// task. Local configuration files are kept when packages ship changed
+// defaults, so a server upgrade never silently rewrites hand-edited configs.
+func (s *Service) AptUpgrade() (string, error) {
+	release, err := s.beginApt()
+	if err != nil {
+		return "", err
+	}
+	taskID := s.tasks.RunFuncWithOptions(taskrunner.Options{Name: "apt-get upgrade", Timeout: aptOpTimeout}, func(ctx context.Context, log func(string)) error {
+		defer release()
+		return s.runApt(ctx, log, "upgrade")
+	})
+	return taskID, nil
+}
+
+// runApt streams one apt-get operation into the task log. DEBIAN_FRONTEND and
+// the confold policy keep non-interactive runs from hanging on prompts, and
+// the lock timeout avoids failing instantly when another apt process holds
+// the dpkg lock.
+func (s *Service) runApt(ctx context.Context, log func(string), action string) error {
+	ctx, cancel := context.WithTimeout(ctx, aptOpTimeout)
+	defer cancel()
+	output := &taskLogWriter{log: log}
+	defer output.flush()
+	args := []string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", action}
+	if action == "upgrade" {
+		args = append(args,
+			"-y",
+			"--with-new-pkgs",
+			"-o", "Dpkg::Lock::Timeout=120",
+			"-o", "Dpkg::Options::=--force-confdef",
+			"-o", "Dpkg::Options::=--force-confold",
+		)
+	}
+	exit, err := s.runSudoStream(ctx, output, args[0], args[1:]...)
+	if err != nil {
+		return fmt.Errorf("apt-get %s: %w", action, err)
+	}
+	if exit != 0 {
+		return fmt.Errorf("apt-get %s exited with code %d", action, exit)
+	}
+	log("apt-get " + action + " finished.")
+	return nil
+}
+
+// taskLogWriter forwards command output to the task log line by line so the
+// UI shows progress while apt is still running.
+type taskLogWriter struct {
+	log     func(string)
+	pending []byte
+}
+
+func (w *taskLogWriter) Write(p []byte) (int, error) {
+	w.pending = append(w.pending, p...)
+	for {
+		idx := bytes.IndexByte(w.pending, '\n')
+		if idx < 0 {
+			break
+		}
+		if line := strings.TrimRight(string(w.pending[:idx]), "\r"); line != "" {
+			w.log(line)
+		}
+		w.pending = w.pending[idx+1:]
+	}
+	return len(p), nil
+}
+
+func (w *taskLogWriter) flush() {
+	if line := strings.TrimRight(string(w.pending), "\r"); line != "" {
+		w.log(line)
+	}
+	w.pending = nil
 }
 
 // UpdateScript renders the one-shot self-update — pull source, rebuild the

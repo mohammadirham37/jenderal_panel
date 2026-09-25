@@ -4,6 +4,8 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { cacheBustedURL, classifyUpdateRecovery, waitForUpdatedPanel } from '$lib/update-readiness.js';
 	import { language, translate } from '$lib/stores/language';
+	import { permissions, hasPermission } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
 
 	interface UpdateInfo {
 		current_version: string;
@@ -130,6 +132,50 @@
 		window.location.replace(cacheBustedURL(window.location.href));
 	}
 
+	// ─── Ubuntu package updates (apt) ────────────────────────────────
+
+	let aptUpdateTaskId = $state('');
+	let aptUpgradeTaskId = $state('');
+	let aptBusy = $state(false);
+	let confirmAptUpgrade = $state(false);
+	const canManageOS = $derived(hasPermission($permissions, 'update.perform'));
+	const aptInProgress = $derived(!!aptUpdateTaskId || !!aptUpgradeTaskId);
+
+	async function startApt(kind: 'update' | 'upgrade') {
+		if (aptBusy || aptInProgress) {
+			toast.error(translate($language, 'upd.os.running'));
+			return;
+		}
+		confirmAptUpgrade = false;
+		aptBusy = true;
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/server/apt/${kind}`);
+			if (kind === 'update') {
+				aptUpdateTaskId = result.task_id;
+				toast.success(translate($language, 'upd.os.update_started'));
+			} else {
+				aptUpgradeTaskId = result.task_id;
+				toast.success(translate($language, 'upd.os.upgrade_started'));
+			}
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'upd.os.start_failed'));
+		} finally {
+			aptBusy = false;
+		}
+	}
+
+	function onAptComplete(_task: { status?: string }) {
+		// TaskProgress renders the outcome (including failures) itself; here we
+		// only release the buttons.
+		aptUpdateTaskId = '';
+		aptUpgradeTaskId = '';
+	}
+
+	function onAptMissing() {
+		aptUpdateTaskId = '';
+		aptUpgradeTaskId = '';
+	}
+
 	onMount(() => {
 		expectedUpdateVersion = localStorage.getItem(updateTargetStorageKey) || '';
 		currentTaskId = localStorage.getItem(updateTaskStorageKey) || '';
@@ -240,4 +286,62 @@
 	{/if}
 
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_update_task" onComplete={onTaskComplete} onMissing={onTaskMissing} />
+
+	{#if canManageOS}
+		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+			<div class="flex flex-wrap items-center justify-between gap-2">
+				<h3 class="text-sm font-semibold text-white">{translate($language, 'upd.os.title')}</h3>
+				<span class="text-xs text-gray-500">{aptInProgress ? translate($language, 'upd.os.running') : ''}</span>
+			</div>
+			<p class="mt-1 text-xs text-gray-500">{translate($language, 'upd.os.desc')}</p>
+
+			{#if confirmAptUpgrade}
+				<div class="mt-3 p-4 bg-yellow-950 border border-yellow-700 rounded-lg">
+					<p class="text-yellow-300 text-sm font-medium mb-1">{translate($language, 'upd.os.confirm_upgrade')}</p>
+					<p class="text-yellow-400 text-xs mb-3">{translate($language, 'upd.os.confirm_upgrade_desc')}</p>
+					<div class="flex gap-2">
+						<button
+							type="button"
+							onclick={() => startApt('upgrade')}
+							disabled={aptBusy}
+							class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 text-white text-sm font-medium rounded transition-colors cursor-pointer disabled:opacity-50"
+						>
+							{translate($language, 'upd.os.upgrade')}
+						</button>
+						<button
+							type="button"
+							onclick={() => (confirmAptUpgrade = false)}
+							class="px-4 py-2 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
+						>
+							{translate($language, 'upd.cancel')}
+						</button>
+					</div>
+				</div>
+			{:else}
+				<div class="mt-3 flex flex-wrap gap-2">
+					<button
+						type="button"
+						onclick={() => startApt('update')}
+						disabled={aptBusy || aptInProgress}
+						title={translate($language, 'upd.os.update_hint')}
+						class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+					>
+						{translate($language, 'upd.os.update')}
+					</button>
+					<button
+						type="button"
+						onclick={() => (confirmAptUpgrade = true)}
+						disabled={aptBusy || aptInProgress}
+						title={translate($language, 'upd.os.upgrade_hint')}
+						class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm font-medium rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+					>
+						{translate($language, 'upd.os.upgrade')}
+					</button>
+				</div>
+			{/if}
+
+			<TaskProgress bind:taskId={aptUpdateTaskId} storageKey="jenderal_apt_update_task" onComplete={onAptComplete} onMissing={onAptMissing} />
+			<TaskProgress bind:taskId={aptUpgradeTaskId} storageKey="jenderal_apt_upgrade_task" onComplete={onAptComplete} onMissing={onAptMissing} />
+		</div>
+	{/if}
 </div>

@@ -50,3 +50,34 @@ func (h *Handler) Perform(w http.ResponseWriter, r *http.Request) {
 
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
+
+// AptUpdate handles POST /api/v1/server/apt/update: refresh the Ubuntu
+// package index.
+func (h *Handler) AptUpdate(w http.ResponseWriter, r *http.Request) {
+	h.runApt(w, r, "apt_update", h.svc.AptUpdate)
+}
+
+// AptUpgrade handles POST /api/v1/server/apt/upgrade: install pending Ubuntu
+// package upgrades.
+func (h *Handler) AptUpgrade(w http.ResponseWriter, r *http.Request) {
+	h.runApt(w, r, "apt_upgrade", h.svc.AptUpgrade)
+}
+
+// runApt starts an apt task and writes the audit entry shared by both apt
+// actions.
+func (h *Handler) runApt(w http.ResponseWriter, r *http.Request, action string, start func() (string, error)) {
+	user, _ := auth.UserFromContext(r.Context())
+	taskID, err := start()
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: action + "_started",
+		Module: "update",
+		Detail: "task:" + taskID,
+		IP:     r.RemoteAddr,
+	})
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}

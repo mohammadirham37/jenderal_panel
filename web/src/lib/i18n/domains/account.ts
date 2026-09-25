@@ -59,6 +59,19 @@ const en = {
 	'upd.failed': 'Panel update failed.',
 	'upd.completedWaiting': 'Update completed. Waiting for the updated panel to restart...',
 	'upd.completedUnconfirmed': 'Update completed, but the target version could not be confirmed.',
+	// Ubuntu package updates (apt)
+	'upd.os.title': 'Ubuntu packages (apt)',
+	'upd.os.desc': 'Refresh the package index or install pending Ubuntu security and package updates without opening a terminal. Upgrades keep your local configuration files.',
+	'upd.os.update': 'apt update',
+	'upd.os.update_hint': 'Refresh package index',
+	'upd.os.upgrade': 'apt upgrade',
+	'upd.os.upgrade_hint': 'Install pending package upgrades',
+	'upd.os.confirm_upgrade': 'Run apt upgrade now?',
+	'upd.os.confirm_upgrade_desc': 'Pending Ubuntu package updates will be installed (non-interactive; local configuration files are kept). This can take several minutes and some services may restart during the upgrade.',
+	'upd.os.running': 'A package operation is already running.',
+	'upd.os.update_started': 'apt update started. See progress below.',
+	'upd.os.upgrade_started': 'apt upgrade started. See progress below.',
+	'upd.os.start_failed': 'Failed to start the package operation',
 
 	// ─── Settings page: general ───────────────────────────────────
 	'set.title': 'Settings',
@@ -245,6 +258,19 @@ const id: Record<keyof typeof en, string> = {
 	'upd.failed': 'Pembaruan panel gagal.',
 	'upd.completedWaiting': 'Pembaruan selesai. Menunggu panel yang diperbarui dimulai ulang...',
 	'upd.completedUnconfirmed': 'Pembaruan selesai, tetapi versi target tidak dapat dikonfirmasi.',
+	// Pembaruan paket Ubuntu (apt)
+	'upd.os.title': 'Paket Ubuntu (apt)',
+	'upd.os.desc': 'Perbarui indeks paket atau pasang pembaruan keamanan dan paket Ubuntu yang tertunda tanpa membuka terminal. Upgrade mempertahankan file konfigurasi lokal Anda.',
+	'upd.os.update': 'apt update',
+	'upd.os.update_hint': 'Perbarui indeks paket',
+	'upd.os.upgrade': 'apt upgrade',
+	'upd.os.upgrade_hint': 'Pasang peningkatan paket yang tertunda',
+	'upd.os.confirm_upgrade': 'Jalankan apt upgrade sekarang?',
+	'upd.os.confirm_upgrade_desc': 'Pembaruan paket Ubuntu yang tertunda akan dipasang (non-interaktif; file konfigurasi lokal dipertahankan). Proses ini bisa memakan waktu beberapa menit dan sebagian layanan dapat dimulai ulang saat upgrade.',
+	'upd.os.running': 'Ada operasi paket yang sedang berjalan.',
+	'upd.os.update_started': 'apt update dimulai. Lihat progres di bawah.',
+	'upd.os.upgrade_started': 'apt upgrade dimulai. Lihat progres di bawah.',
+	'upd.os.start_failed': 'Gagal memulai operasi paket',
 
 	// ─── Settings page: general ───────────────────────────────────
 	'set.title': 'Pengaturan',

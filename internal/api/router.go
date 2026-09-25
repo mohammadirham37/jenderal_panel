@@ -201,8 +201,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/disk-usage", diskUsageHandler.WebsiteBreakdown)
 
 			// Services
-			r.Get("/services", serviceHandler.List)
-			r.Get("/services/dependencies", dependencyHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "services.view")).
+				Get("/services", serviceHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "services.view")).
+				Get("/services/dependencies", dependencyHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
 				Post("/services/composer/install", dependencyHandler.InstallComposer)
 			r.With(auth.RequirePermission(deps.RBAC, "services.manage")).
@@ -915,6 +917,12 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/update/check", updateHandler.Check)
 			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
 				Post("/update/perform", updateHandler.Perform)
+
+			// Ubuntu package updates (apt) — admin-only via update.perform.
+			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
+				Post("/server/apt/update", updateHandler.AptUpdate)
+			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
+				Post("/server/apt/upgrade", updateHandler.AptUpgrade)
 
 			// Security Center
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
