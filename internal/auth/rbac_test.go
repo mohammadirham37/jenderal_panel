@@ -132,8 +132,14 @@ func TestGetUserPermissions(t *testing.T) {
 		t.Fatalf("get permissions: %v", err)
 	}
 
-	if len(perms) != 67 {
-		t.Errorf("expected 67 permissions for admin, got %d", len(perms))
+	// The admin role must hold every seeded permission; deriving the count
+	// from the table keeps this test stable as permissions are added.
+	var seeded int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM permissions`).Scan(&seeded); err != nil {
+		t.Fatalf("count permissions: %v", err)
+	}
+	if len(perms) != seeded {
+		t.Errorf("expected %d permissions for admin (all seeded), got %d", seeded, len(perms))
 	}
 }
 
@@ -177,18 +183,25 @@ func TestSeedIdempotent(t *testing.T) {
 	if err := rbac.Seed(ctx); err != nil {
 		t.Fatalf("first seed: %v", err)
 	}
-	if err := rbac.Seed(ctx); err != nil {
-		t.Fatalf("second seed: %v", err)
-	}
-
-	// Verify still correct number of permissions
 	var count int
 	err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM permissions`).Scan(&count)
 	if err != nil {
 		t.Fatalf("count permissions: %v", err)
 	}
-	if count != 67 {
-		t.Errorf("expected 67 permissions after double seed, got %d", count)
+
+	if err := rbac.Seed(ctx); err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+
+	// Verify the second seed adds nothing: the permission count is stable
+	// no matter how many permissions new panel versions introduce.
+	var countAfterSecond int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM permissions`).Scan(&countAfterSecond)
+	if err != nil {
+		t.Fatalf("count permissions after second seed: %v", err)
+	}
+	if countAfterSecond != count {
+		t.Errorf("expected %d permissions after double seed, got %d", count, countAfterSecond)
 	}
 
 	var roleCount int

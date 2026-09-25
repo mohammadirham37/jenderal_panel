@@ -66,7 +66,14 @@ echo "Installing Node $version"
 . "$NVM_DIR/nvm.sh"
 if [ -f "$NVM_DIR/alias/default" ]; then IFS= read -r previous_default < "$NVM_DIR/alias/default"; previous_default_exists=true; fi
 rollback_armed=true
-nvm install "$version"
+# The Node tarball download has no built-in timeout inside nvm; a stalled
+# nodejs.org connection would hang the whole update. Bound it: the tarball is
+# cached by nvm, so a retry resumes from the package index without redoing
+# the alias rollback.
+if ! timeout --signal=TERM --kill-after=5s 600 bash -c '. "'"$NVM_DIR"'/nvm.sh" && nvm install "'"$version"'"'; then
+  echo "Installing Node $version failed or timed out downloading from nodejs.org; retry the update" >&2
+  exit 72
+fi
 node_version=$(NODE_VERSION="$version" "$NVM_DIR/nvm-exec" node --version)
 npm_version=$(NODE_VERSION="$version" "$NVM_DIR/nvm-exec" npm --version)
 case "$node_version" in "v$version."*) ;; *) echo "Installed Node verification failed: $node_version" >&2; exit 70;; esac
