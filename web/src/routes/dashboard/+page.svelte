@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import { connectMetrics, disconnectMetrics, currentMetrics } from '$lib/stores/metrics';
 	import { language, translate } from '$lib/stores/language';
+	import { permissions, hasPermission } from '$lib/stores/auth';
 	import type { DashboardData, ServerInfo, ServerMetrics, ServiceStatus } from '$lib/types';
 
 	interface SSLCertLite {
@@ -175,6 +176,14 @@
 		}
 	}
 
+	// Admin-only dashboard sections mirror the sidebar permission keys: a
+	// regular user's dashboard shows only what it owns, and server-wide
+	// cards (certificates, alerts, all services) stay hidden.
+	const canViewServices = $derived(hasPermission($permissions, 'services.view'));
+	const canViewSSL = $derived(hasPermission($permissions, 'ssl.view'));
+	const canViewAlerts = $derived(hasPermission($permissions, 'alerts.view'));
+	const showRightColumn = $derived(canViewSSL || canViewAlerts);
+
 	function pushHistory(point: ServerMetrics) {
 		const last = history[history.length - 1];
 		if (last && last.timestamp === point.timestamp) return;
@@ -204,12 +213,12 @@
 
 		const [recent, svc, sites, dbs, bks, certs, alerts] = await Promise.all([
 			getSafe<ServerMetrics[]>('/api/v1/dashboard/metrics'),
-			getSafe<ServiceStatus[]>('/api/v1/services'),
+			canViewServices ? getSafe<ServiceStatus[]>('/api/v1/services') : Promise.resolve(null),
 			getSafe<WebsiteLite[]>('/api/v1/websites'),
 			getSafe<unknown[]>('/api/v1/databases'),
 			getSafe<unknown[]>('/api/v1/backups'),
-			getSafe<SSLCertLite[]>('/api/v1/ssl'),
-			getSafe<AlertEventLite[]>('/api/v1/alert-history?limit=50')
+			canViewSSL ? getSafe<SSLCertLite[]>('/api/v1/ssl') : Promise.resolve(null),
+			canViewAlerts ? getSafe<AlertEventLite[]>('/api/v1/alert-history?limit=50') : Promise.resolve(null)
 		]);
 
 		history = (recent ?? []).slice().reverse().slice(-60);
@@ -818,33 +827,38 @@
 				'/backups',
 				'M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H2.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z'
 			)}
-			{@render statTile(
-				translate($language, 'dash.certificates'),
-				certificates ? certificates.length : null,
-				certificates
-					? sslAttention.length > 0
-						? `${sslAttention.length} ${translate($language, 'dash.ssl.need_attention')}`
-						: translate($language, 'dash.ssl_ok')
-					: '',
-				'/security',
-				'M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z'
-			)}
-			{@render statTile(
-				translate($language, 'dash.alerts'),
-				alertEvents ? alertEvents.length : null,
-				alertEvents
-					? unresolvedAlerts > 0
-						? `${unresolvedAlerts} ${translate($language, 'dash.alerts.unresolved')}`
-						: translate($language, 'dash.alerts.none')
-					: '',
-				'/alerts',
-				'M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0'
-			)}
+			{#if canViewSSL}
+				{@render statTile(
+					translate($language, 'dash.certificates'),
+					certificates ? certificates.length : null,
+					certificates
+						? sslAttention.length > 0
+							? `${sslAttention.length} ${translate($language, 'dash.ssl.need_attention')}`
+							: translate($language, 'dash.ssl_ok')
+						: '',
+					'/security',
+					'M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z'
+				)}
+			{/if}
+			{#if canViewAlerts}
+				{@render statTile(
+					translate($language, 'dash.alerts'),
+					alertEvents ? alertEvents.length : null,
+					alertEvents
+						? unresolvedAlerts > 0
+							? `${unresolvedAlerts} ${translate($language, 'dash.alerts.unresolved')}`
+							: translate($language, 'dash.alerts.none')
+						: '',
+					'/alerts',
+					'M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0'
+				)}
+			{/if}
 		</div>
 
-		<!-- Services + SSL + Alerts -->
-		<div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
-			<div class="rounded-2xl border border-white/5 bg-gray-800/60 p-5 xl:col-span-2">
+		<!-- Services + SSL + Alerts (admin-only sections are permission-gated) -->
+		<div class="grid grid-cols-1 gap-4 {showRightColumn ? 'xl:grid-cols-3' : ''}">
+			{#if canViewServices}
+			<div class="rounded-2xl border border-white/5 bg-gray-800/60 p-5 {showRightColumn ? 'xl:col-span-2' : ''}">
 				<div class="flex flex-wrap items-center justify-between gap-2">
 					<div class="flex items-center gap-3">
 						<h3 class="text-sm font-semibold text-white">{translate($language, 'dash.services')}</h3>
@@ -913,8 +927,11 @@
 					</div>
 				{/if}
 			</div>
+			{/if}
 
+			{#if showRightColumn}
 			<div class="space-y-4">
+				{#if canViewSSL}
 				<!-- SSL attention -->
 				<div class="rounded-2xl border border-white/5 bg-gray-800/60 p-5">
 					<div class="flex items-center justify-between gap-3">
@@ -972,7 +989,9 @@
 						</ul>
 					{/if}
 				</div>
+				{/if}
 
+				{#if canViewAlerts}
 				<!-- Recent alerts -->
 				<div class="rounded-2xl border border-white/5 bg-gray-800/60 p-5">
 					<div class="flex items-center justify-between gap-3">
@@ -1034,11 +1053,14 @@
 										</p>
 									</div>
 								</li>
-							{/each}
-						</ul>
+								{/each}
+							</ul>
+						{/if}
+					</div>
 					{/if}
 				</div>
+				{/if}
 			</div>
-		</div>
-	{/if}
-</div>
+		{/if}
+	</div>
+
