@@ -135,7 +135,7 @@
 	</ul>
 {/snippet}
 
-<div class="mx-auto max-w-6xl space-y-6">
+<div class="mx-auto max-w-7xl space-y-6">
 	<div>
 		<h2 class="text-2xl font-bold text-white">{doc.title}</h2>
 		<p class="mt-1 text-sm text-gray-400">{doc.subtitle}</p>
