@@ -28,6 +28,7 @@ type Service struct {
 	mu          sync.Mutex
 	runners     map[string]context.CancelFunc
 	sshAccounts sshAccountSyncer
+	serving     servingAccessRestorer
 }
 
 // NewService creates a new deployment service with a buffered work queue.
@@ -47,10 +48,24 @@ type sshAccountSyncer interface {
 	SyncOwnedWebsites(ctx context.Context, userID string) error
 }
 
+// servingAccessRestorer re-applies the web server's filesystem access after a
+// deploy. A deploy recreates the project directory and chowns it, which loses
+// the nginx group/default ACLs established during provisioning — without a
+// re-application nginx answers every request with "File not found".
+type servingAccessRestorer interface {
+	RestoreServingAccess(ctx context.Context, websiteID string) error
+}
+
 // SetSSHAccounts wires the SSH account service so finished deployments can
 // re-apply the owning panel user's site access.
 func (s *Service) SetSSHAccounts(svc sshAccountSyncer) {
 	s.sshAccounts = svc
+}
+
+// SetServingAccessRestorer wires the website provisioner so finished
+// deployments re-apply the nginx worker's access to the rewritten project.
+func (s *Service) SetServingAccessRestorer(svc servingAccessRestorer) {
+	s.serving = svc
 }
 
 // Start launches a background goroutine that processes queued deployments.
@@ -346,6 +361,16 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		if !appendLog("chown document root", res, err) {
 			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
 			return
+		}
+	}
+
+	// The clone + chown above recreated the project tree without the nginx
+	// group and serving ACLs; re-apply them so the site does not 404
+	// ("File not found") after a successful deploy. Logged, not fatal: the
+	// code is deployed either way and the diagnose page can repair it.
+	if s.serving != nil {
+		if err := s.serving.RestoreServingAccess(ctx, d.WebsiteID); err != nil {
+			appendLog("restore serving permissions", nil, err)
 		}
 	}
 

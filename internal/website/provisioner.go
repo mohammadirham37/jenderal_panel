@@ -526,6 +526,13 @@ func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow
 	if _, err := p.exec.RunSudo(ctx, "setfacl", "-R", "-d", "-m", "o::rX", "--", docRootPath); err != nil {
 		return fmt.Errorf("set document root default other ACL: %w", err)
 	}
+	// Belt and braces for the nginx worker account itself: its group access
+	// can be lost to later chowns or ACL masks, so it also gets named-user
+	// ACLs (traverse on boundaries, read on the document root and Laravel's
+	// public storage).
+	if err := p.grantNginxACLs(ctx, w); err != nil {
+		return fmt.Errorf("grant nginx ACLs: %w", err)
+	}
 	return nil
 }
 

@@ -315,6 +315,7 @@ func cmdServe() {
 	stagingSvc := websitestaging.NewService(db, exec, websiteSvc, dbManagerSvc, tasks, auditSvc)
 	provisioner.SetSSHAccounts(sshAccountSvc)
 	deploySvc.SetSSHAccounts(sshAccountSvc)
+	deploySvc.SetServingAccessRestorer(provisioner)
 	websiteSvc.SetTLSVhostRegenerator(sslSvc)
 	panelDomainSvc := paneldomain.NewService(db, exec, auditSvc)
 	if cfg.Server.TLS.Enabled {
