@@ -373,11 +373,12 @@
 				structure = [];
 				browse = null;
 			}
-			confirmAction = null;
 			await loadTables();
 		} catch (err) {
 				toast(err instanceof Error ? err.message : translate($language, 'dbm.action_failed'), true);
 		} finally {
+			// Close the modal whatever the outcome so the toast is visible.
+			confirmAction = null;
 			confirmBusy = false;
 		}
 	}
@@ -466,7 +467,6 @@
 				throw new Error(json?.error?.message || translate($language, 'dbm.request_failed_http').replace('{code}', String(res.status)));
 			}
 			toast(translate($language, 'dbm.restored').replace('{db}', selectedDb));
-			restoreConfirmOpen = false;
 			restoreFile = null;
 			selectedTable = '';
 			structure = [];
@@ -475,6 +475,9 @@
 		} catch (err) {
 			toast(err instanceof Error ? err.message : translate($language, 'dbm.restore_failed'), true);
 		} finally {
+			// Close the modal whatever the outcome so the success/error toast
+			// underneath is visible.
+			restoreConfirmOpen = false;
 			restoreBusy = false;
 		}
 	}
