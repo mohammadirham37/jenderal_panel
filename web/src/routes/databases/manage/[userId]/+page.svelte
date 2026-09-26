@@ -44,6 +44,7 @@
 
 	const userId = page.params.userId;
 	const tokenKey = `dbmanage-token-${userId}`;
+	const lastDbKey = `dbmanage-db-${userId}`;
 
 	let token = $state(sessionStorage.getItem(tokenKey) || '');
 	let unlockedUser = $state<{ username: string; engine: string } | null>(null);
@@ -80,7 +81,7 @@
 	let tableFilter = $state('');
 
 	// Selection
-	let selectedDb = $state('');
+	let selectedDb = $state(sessionStorage.getItem(lastDbKey) || '');
 	let selectedTable = $state('');
 	let viewMode = $state<'tables' | 'sql'>('tables');
 	let tableTab = $state<'browse' | 'structure'>('browse');
@@ -133,6 +134,10 @@
 	let confirmBusy = $state(false);
 	let toastMsg = $state('');
 	let toastError = $state('');
+
+	// Bulk table selection (checkboxes in the sidebar table list)
+	let selectedTables = $state<string[]>([]);
+	let bulkConfirm = $state<'empty' | 'drop' | null>(null);
 
 	// Restore
 	let restoreFileInput: HTMLInputElement | undefined = $state();
@@ -230,9 +235,13 @@
 	async function loadDatabases() {
 		databases = await mapi<string[]>('/databases');
 		if (databases.length > 0) {
-			// Keep the current selection when it still exists — reloading the
-			// list must not jump the operator back to the first database.
-			if (!databases.includes(selectedDb)) selectedDb = databases[0];
+			// Keep the current selection when it still exists; otherwise prefer
+			// the last database picked in this browser (survives refresh), then
+			// fall back to the first entry.
+			if (!databases.includes(selectedDb)) {
+				const stored = sessionStorage.getItem(lastDbKey) || '';
+				selectedDb = databases.includes(stored) ? stored : databases[0];
+			}
 			await loadTables();
 		}
 	}
@@ -253,7 +262,9 @@
 
 	function pickDatabase(name: string) {
 		selectedDb = name;
+		sessionStorage.setItem(lastDbKey, name);
 		selectedTable = '';
+		selectedTables = [];
 		viewMode = 'tables';
 		tables = [];
 		objects = null;
@@ -369,6 +380,61 @@
 		} finally {
 			confirmBusy = false;
 		}
+	}
+
+	// ─── Bulk table actions (checkboxes) ─────────────────────────────
+
+	function toggleTableSelect(name: string, checked: boolean) {
+		selectedTables = checked
+			? [...selectedTables, name]
+			: selectedTables.filter((n) => n !== name);
+	}
+
+	function toggleSelectAllTables(checked: boolean) {
+		selectedTables = checked ? filteredTables.map((t) => t.name) : [];
+	}
+
+	// Runs the single-table endpoint for each checked table, keeps going on
+	// failures, and reports the totals at the end.
+	async function runBulkTableAction(action: 'empty' | 'drop') {
+		if (!bulkConfirm || confirmBusy) return;
+		confirmBusy = true;
+		const targets = [...selectedTables];
+		let ok = 0;
+		const failed: string[] = [];
+		for (const table of targets) {
+			try {
+				await mapi(action === 'empty' ? '/empty-table' : '/drop-table', {
+					method: 'POST',
+					body: { database: selectedDb, table }
+				});
+				ok++;
+			} catch (err) {
+				failed.push(`${table}: ${err instanceof Error ? err.message : String(err)}`);
+			}
+		}
+		confirmBusy = false;
+		bulkConfirm = null;
+		selectedTables = [];
+		if (targets.includes(selectedTable)) {
+			selectedTable = '';
+			structure = [];
+			browse = null;
+		}
+		if (failed.length > 0) {
+			toast(
+				translate($language, 'dbm.bulk_partial')
+					.replace('{ok}', String(ok))
+					.replace('{failed}', String(failed.length)) +
+					' — ' +
+					failed.join('; '),
+				true
+			);
+		} else if (ok > 0) {
+			toast(translate($language, 'dbm.bulk_done').replace('{ok}', String(ok)));
+		}
+		await loadTables().catch((err) => toast(err.message, true));
+		loadObjects().catch(() => undefined);
 	}
 
 	function pickRestoreFile(e: Event) {
@@ -624,6 +690,10 @@
 		return q ? tables.filter((t) => t.name.toLowerCase().includes(q)) : tables;
 	});
 
+	let allTablesSelected = $derived(
+		filteredTables.length > 0 && filteredTables.every((t) => selectedTables.includes(t.name))
+	);
+
 	let pkColumns = $derived(structure.filter((c) => c.key === 'PRI').map((c) => c.name));
 	let rowActionsVisible = $derived(pkColumns.length > 0 && !objects?.views.includes(selectedTable));
 
@@ -640,7 +710,7 @@
 
 <svelte:window
 	onkeydown={(e) => {
-		if (e.key === 'Escape') { if (confirmAction) confirmAction = null; if (editingRow) editingRow = null; if (columnForm) columnForm = null; if (objectDefinition) objectDefinition = null; if (pendingDeleteRow) pendingDeleteRow = null; }
+		if (e.key === 'Escape') { if (confirmAction) confirmAction = null; if (bulkConfirm) bulkConfirm = null; if (editingRow) editingRow = null; if (columnForm) columnForm = null; if (objectDefinition) objectDefinition = null; if (pendingDeleteRow) pendingDeleteRow = null; }
 	}}
 />
 
@@ -779,26 +849,77 @@
 			</div>
 
 			<div class="px-3 py-2.5">
-				<input
-					type="text"
-					bind:value={tableFilter}
-					placeholder={translate($language, 'dbm.filter_tables')}
-					aria-label={translate($language, 'dbm.filter_tables')}
-					class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
-				/>
+				<div class="flex items-center gap-2">
+					<input
+						type="checkbox"
+						checked={allTablesSelected}
+						onchange={(e) => toggleSelectAllTables(e.currentTarget.checked)}
+						disabled={filteredTables.length === 0}
+						aria-label={translate($language, 'dbm.select_all_tables')}
+						title={translate($language, 'dbm.select_all_tables')}
+						class="shrink-0 accent-blue-500"
+					/>
+					<input
+						type="text"
+						bind:value={tableFilter}
+						placeholder={translate($language, 'dbm.filter_tables')}
+						aria-label={translate($language, 'dbm.filter_tables')}
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+					/>
+				</div>
+				{#if selectedTables.length > 0}
+					<div class="mt-2 rounded-lg border border-yellow-700/40 bg-yellow-900/10 p-2">
+						<p class="text-[11px] font-semibold text-yellow-300">
+							{translate($language, 'dbm.tables_selected').replace('{count}', String(selectedTables.length))}
+						</p>
+						<div class="mt-1.5 flex items-center gap-1.5">
+							<button
+								type="button"
+								onclick={() => (bulkConfirm = 'empty')}
+								class="flex-1 cursor-pointer rounded-md bg-yellow-600 px-2 py-1.5 text-[10px] font-semibold text-white transition hover:bg-yellow-500"
+							>
+								{translate($language, 'dbm.bulk_empty')}
+							</button>
+							<button
+								type="button"
+								onclick={() => (bulkConfirm = 'drop')}
+								class="flex-1 cursor-pointer rounded-md bg-red-600 px-2 py-1.5 text-[10px] font-semibold text-white transition hover:bg-red-500"
+							>
+								{translate($language, 'dbm.bulk_drop')}
+							</button>
+							<button
+								type="button"
+								onclick={() => (selectedTables = [])}
+								title={translate($language, 'dbm.clear_selection')}
+								aria-label={translate($language, 'dbm.clear_selection')}
+								class="cursor-pointer rounded-md px-1.5 py-1.5 text-[10px] text-gray-400 transition hover:bg-white/5 hover:text-gray-200"
+							>
+								✕
+							</button>
+						</div>
+					</div>
+				{/if}
 			</div>
 
 			<nav class="flex-1 overflow-y-auto px-2 pb-2" aria-label={translate($language, 'dbm.tables_aria')}>
 				{#each filteredTables as t (t.name)}
-					<button
-						type="button"
-						onclick={() => pickTable(t.name)}
-						class="mb-0.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition
-						{selectedTable === t.name && viewMode === 'tables' ? 'bg-blue-500/15 text-blue-100' : 'text-gray-300 hover:bg-white/5'}"
-					>
-						<span class="min-w-0 truncate font-mono text-xs">{t.name}</span>
-						<span class="shrink-0 text-[10px] tabular-nums text-gray-500">{t.rows > 0 ? t.rows : ''}</span>
-					</button>
+					<div class="mb-0.5 flex w-full items-center gap-1 rounded-lg pr-2 transition {selectedTable === t.name && viewMode === 'tables' ? 'bg-blue-500/15' : 'hover:bg-white/5'}">
+						<input
+							type="checkbox"
+							checked={selectedTables.includes(t.name)}
+							onchange={(e) => toggleTableSelect(t.name, e.currentTarget.checked)}
+							aria-label="{translate($language, 'dbm.select_table')} {t.name}"
+							class="ml-2.5 shrink-0 accent-blue-500"
+						/>
+						<button
+							type="button"
+							onclick={() => pickTable(t.name)}
+							class="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-lg px-1.5 py-2 text-left {selectedTable === t.name && viewMode === 'tables' ? 'text-blue-100' : 'text-gray-300'}"
+						>
+							<span class="min-w-0 truncate font-mono text-xs">{t.name}</span>
+							<span class="shrink-0 text-[10px] tabular-nums text-gray-500">{t.rows > 0 ? t.rows : ''}</span>
+						</button>
+					</div>
 				{:else}
 					<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? translate($language, 'dbm.no_tables_match') : translate($language, 'dbm.no_tables')}</p>
 				{/each}
@@ -1157,6 +1278,40 @@
 						class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
 					>
 						{confirmBusy ? translate($language, 'dbm.working') : confirmAction === 'drop' ? translate($language, 'dbm.drop_table') : translate($language, 'dbm.empty_table')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Bulk confirm modal for Empty / Drop of selected tables -->
+	{#if bulkConfirm}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={translate($language, 'dbm.confirm_aria')}>
+			<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">
+					{bulkConfirm === 'drop'
+						? translate($language, 'dbm.bulk_drop_confirm').replace('{count}', String(selectedTables.length))
+						: translate($language, 'dbm.bulk_empty_confirm').replace('{count}', String(selectedTables.length))}
+				</h4>
+				<p class="mt-2 text-sm text-gray-400">
+					{bulkConfirm === 'drop' ? translate($language, 'dbm.drop_warning') : translate($language, 'dbm.empty_warning')}
+				</p>
+				<p class="mt-2 max-h-24 overflow-y-auto rounded-lg bg-gray-900 px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-gray-300">
+					{selectedTables.join(', ')}
+				</p>
+				<div class="mt-4 flex justify-end gap-2">
+					<button type="button" onclick={() => (bulkConfirm = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'db.cancel')}</button>
+					<button
+						type="button"
+						onclick={() => runBulkTableAction(bulkConfirm!)}
+						disabled={confirmBusy}
+						class="cursor-pointer rounded-lg px-3.5 py-2 text-sm font-semibold text-white transition disabled:opacity-50 {bulkConfirm === 'drop' ? 'bg-red-600 hover:bg-red-700' : 'bg-yellow-600 hover:bg-yellow-500'}"
+					>
+						{confirmBusy
+							? translate($language, 'dbm.working')
+							: bulkConfirm === 'drop'
+								? translate($language, 'dbm.bulk_drop')
+								: translate($language, 'dbm.bulk_empty')}
 					</button>
 				</div>
 			</div>
