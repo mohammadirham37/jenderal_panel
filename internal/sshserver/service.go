@@ -60,6 +60,7 @@ type PortShift struct {
 // CurrentPort returns the effective sshd port parsed from `sshd -T`, which
 // reflects all included configuration without a restart.
 func (s *Service) CurrentPort(ctx context.Context) (int, error) {
+	s.ensurePrivSepDir(ctx)
 	result, err := s.exec.RunSudo(ctx, "sshd", "-T")
 	if err != nil {
 		return 0, fmt.Errorf("read sshd config: %w", err)
@@ -333,9 +334,19 @@ func (s *Service) writeDropIn(ctx context.Context, content string) error {
 	return nil
 }
 
+// ensurePrivSepDir creates sshd's privilege separation directory. With
+// socket-activated ssh (Ubuntu's ssh.socket) or a stopped ssh service it may
+// not exist, and every sshd invocation — even a read-only config dump — then
+// fails with "Missing privilege separation directory: /run/sshd". Best
+// effort: a failure here leaves the original sshd error to surface.
+func (s *Service) ensurePrivSepDir(ctx context.Context) {
+	_, _ = s.exec.RunSudo(ctx, "mkdir", "-p", "--", "/run/sshd")
+}
+
 // testConfig runs sshd -t and restores previous content on failure so a bad
 // port never leaves the server unable to boot sshd.
 func (s *Service) testConfig(ctx context.Context, rollback string) error {
+	s.ensurePrivSepDir(ctx)
 	result, err := s.exec.RunSudo(ctx, "sshd", "-t")
 	if err != nil {
 		return fmt.Errorf("test sshd config: %w", err)
