@@ -493,7 +493,25 @@ func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow
 		boundaries = []string{homeDir, appRoot, appPublicRoot}
 		permissions = []struct{ mode, path string }{{"0710", homeDir}, {"0710", appRoot}, {"0750", appPublicRoot}}
 	default:
-		return nil
+		// Custom document roots inside the managed home get the same
+		// treatment, component by component: home and intermediates stay
+		// traverse-only (0710), the document root itself is servable (0750).
+		if !pathStrictlyBelow(homeDir, documentRoot) {
+			return nil
+		}
+		boundaries = append(boundaries, homeDir)
+		rel, _ := filepath.Rel(homeDir, documentRoot)
+		current := homeDir
+		parts := strings.Split(rel, string(filepath.Separator))
+		for i, part := range parts {
+			current = filepath.Join(current, part)
+			boundaries = append(boundaries, current)
+			if i == len(parts)-1 {
+				permissions = append(permissions, struct{ mode, path string }{"0750", current})
+			} else {
+				permissions = append(permissions, struct{ mode, path string }{"0710", current})
+			}
+		}
 	}
 	result, err := p.exec.RunSudo(ctx, "chown", append([]string{"-h", w.WebUser + ":www-data", "--"}, boundaries...)...)
 	if err != nil {
@@ -516,14 +534,10 @@ func (p *Provisioner) ensureServingPermissions(ctx context.Context, w websiteRow
 	// "other" permission class (SSH grants put named-user ACLs on these
 	// files whose default "other" entry is ---), so keep the whole tree
 	// world-readable and make future files inherit that.
-	docRootPath := publicRoot
-	if documentRoot == appPublicRoot {
-		docRootPath = appPublicRoot
-	}
-	if _, err := p.exec.RunSudo(ctx, "chmod", "-R", "o+rX", "--", docRootPath); err != nil {
+	if _, err := p.exec.RunSudo(ctx, "chmod", "-R", "o+rX", "--", documentRoot); err != nil {
 		return fmt.Errorf("chmod document root other-readable: %w", err)
 	}
-	if _, err := p.exec.RunSudo(ctx, "setfacl", "-R", "-d", "-m", "o::rX", "--", docRootPath); err != nil {
+	if _, err := p.exec.RunSudo(ctx, "setfacl", "-R", "-d", "-m", "o::rX", "--", documentRoot); err != nil {
 		return fmt.Errorf("set document root default other ACL: %w", err)
 	}
 	// Belt and braces for the nginx worker account itself: its group access

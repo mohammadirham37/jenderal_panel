@@ -86,8 +86,24 @@ func (p *Provisioner) grantNginxACLs(ctx context.Context, w websiteRow) error {
 		traverse = []string{storage, filepath.Join(storage, "app")}
 		readable = []string{documentRoot, filepath.Join(storage, "app", "public")}
 	default:
-		// Custom document roots are intentionally left untouched.
-		return nil
+		// Custom document roots are served just as much as the standard
+		// layouts — as long as they live inside the managed home. Traverse
+		// on every intermediate directory, read on the document root itself,
+		// and follow a Laravel public/storage symlink so uploads stay
+		// servable.
+		if !pathStrictlyBelow(homeDir, documentRoot) {
+			return nil
+		}
+		boundaries, traverse, readable = servingLayout(homeDir, documentRoot)
+		if target, ok := p.symlinkTarget(ctx, filepath.Join(documentRoot, "storage")); ok {
+			sBoundaries, sTraverse, sReadable := servingLayout(homeDir, target)
+			boundaries = append(boundaries, sBoundaries...)
+			traverse = append(traverse, sTraverse...)
+			readable = append(readable, sReadable...)
+		}
+		boundaries = dedupePaths(boundaries)
+		traverse = dedupePaths(traverse)
+		readable = dedupePaths(readable)
 	}
 
 	result, err := p.exec.Run(ctx, "setfacl", "--version")
@@ -147,4 +163,65 @@ func (p *Provisioner) existingDirs(ctx context.Context, paths []string) []string
 		found = append(found, path)
 	}
 	return found
+}
+
+// pathStrictlyBelow reports whether target lies strictly below root (not
+// equal, not outside). Used to keep serve grants inside the managed home.
+func pathStrictlyBelow(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	return err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// servingLayout plans the serve grants for a path strictly below homeDir:
+// traverse on homeDir and every intermediate directory, read on the final
+// component. The .env and project sources stay private because intermediates
+// only ever receive traverse (x), never read.
+func servingLayout(homeDir, target string) (boundaries, traverse, readable []string) {
+	if !pathStrictlyBelow(homeDir, target) {
+		return nil, nil, nil
+	}
+	rel, _ := filepath.Rel(homeDir, target)
+	current := homeDir
+	boundaries = append(boundaries, homeDir)
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		if i == len(parts)-1 {
+			readable = append(readable, current)
+		} else {
+			traverse = append(traverse, current)
+		}
+	}
+	return boundaries, traverse, readable
+}
+
+// symlinkTarget resolves a symlink to its absolute target. ok is false when
+// the path is not a symlink or cannot be resolved.
+func (p *Provisioner) symlinkTarget(ctx context.Context, path string) (string, bool) {
+	if result, err := p.exec.RunSudo(ctx, "test", "-L", "--", path); err != nil || result == nil || result.ExitCode != 0 {
+		return "", false
+	}
+	result, err := p.exec.RunSudo(ctx, "readlink", "-f", "--", path)
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return "", false
+	}
+	target := strings.TrimSpace(result.Stdout)
+	if !strings.HasPrefix(target, "/") {
+		return "", false
+	}
+	return target, true
+}
+
+// dedupePaths removes duplicate paths while preserving order.
+func dedupePaths(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	out := paths[:0]
+	for _, path := range paths {
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
 }

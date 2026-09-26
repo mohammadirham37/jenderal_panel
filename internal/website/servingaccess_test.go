@@ -117,7 +117,53 @@ func TestGrantNginxACLsUsesConfiguredWorkerUser(t *testing.T) {
 	}
 }
 
-func TestGrantNginxACLsCustomDocumentRootUntouched(t *testing.T) {
+func TestGrantNginxACLsCustomDocumentRootInsideHome(t *testing.T) {
+	var calls [][]string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil // setfacl --version present
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	w := websiteRow{
+		WebUser:      "web_example_com",
+		Domain:       "example.com",
+		DocumentRoot: "/home/web_example_com/app/backend/public",
+	}
+	if err := NewProvisioner(nil, mock, nil).grantNginxACLs(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+
+	entries := strings.Join(nginxACLEntries(calls), "\n")
+	for _, want := range []string{
+		// Traverse on home and every intermediate, read on the docroot.
+		"setfacl -m u:www-data:x -- /home/web_example_com",
+		"setfacl -m u:www-data:x -- /home/web_example_com/app",
+		"setfacl -m u:www-data:x -- /home/web_example_com/app/backend",
+		"setfacl -R -m u:www-data:rX -- /home/web_example_com/app/backend/public",
+		"setfacl -R -d -m u:www-data:rX -- /home/web_example_com/app/backend/public",
+	} {
+		if !strings.Contains(entries, want) {
+			t.Fatalf("missing ACL grant %q in:\n%s", want, entries)
+		}
+	}
+	// Intermediates must stay traverse-only: no read grants on app/ or
+	// app/backend (project sources and .env remain private).
+	for _, entry := range nginxACLEntries(calls) {
+		if !strings.Contains(entry, "rX") {
+			continue
+		}
+		target := entry[strings.LastIndex(entry, "-- ")+3:]
+		if target == "/home/web_example_com/app" || target == "/home/web_example_com/app/backend" {
+			t.Fatalf("worker account got read access to private boundary %s", target)
+		}
+	}
+}
+
+func TestGrantNginxACLsArbitraryNestedDocumentRoot(t *testing.T) {
 	var calls [][]string
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
@@ -131,14 +177,47 @@ func TestGrantNginxACLsCustomDocumentRootUntouched(t *testing.T) {
 	w := websiteRow{
 		WebUser:      "web_example_com",
 		Domain:       "example.com",
-		DocumentRoot: "/home/web_example_com/web/current",
+		DocumentRoot: "/home/web_example_com/sites/main/web/htdocs",
+	}
+	if err := NewProvisioner(nil, mock, nil).grantNginxACLs(context.Background(), w); err != nil {
+		t.Fatal(err)
+	}
+	entries := strings.Join(nginxACLEntries(calls), "\n")
+	for _, want := range []string{
+		"setfacl -m u:www-data:x -- /home/web_example_com",
+		"setfacl -m u:www-data:x -- /home/web_example_com/sites",
+		"setfacl -m u:www-data:x -- /home/web_example_com/sites/main",
+		"setfacl -m u:www-data:x -- /home/web_example_com/sites/main/web",
+		"setfacl -R -m u:www-data:rX -- /home/web_example_com/sites/main/web/htdocs",
+	} {
+		if !strings.Contains(entries, want) {
+			t.Fatalf("missing ACL grant %q in:\n%s", want, entries)
+		}
+	}
+}
+
+func TestGrantNginxACLsDocumentRootOutsideHomeUntouched(t *testing.T) {
+	var calls [][]string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	w := websiteRow{
+		WebUser:      "web_example_com",
+		Domain:       "example.com",
+		DocumentRoot: "/srv/exambro/public",
 	}
 	if err := NewProvisioner(nil, mock, nil).grantNginxACLs(context.Background(), w); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range nginxACLEntries(calls) {
 		if strings.HasPrefix(entry, "setfacl -m") || strings.HasPrefix(entry, "setfacl -R") || strings.HasPrefix(entry, "chmod") {
-			t.Fatalf("custom document root was modified: %s", entry)
+			t.Fatalf("document root outside the managed home was modified: %s", entry)
 		}
 	}
 }

@@ -142,13 +142,21 @@ func (s *Service) diagnoseWebsite(ctx context.Context, w model.Website) Diagnost
 		}
 	}
 
-	// Laravel project sanity: artisan, .env, public/storage symlink.
+	// Laravel project sanity: artisan, .env, public/storage symlink. The
+	// project root sits at app/ in the standard layout, but custom document
+	// roots (e.g. app/backend/public) keep it one level above the docroot.
 	if isLaravel {
-		artisan := homeDir + "/app/artisan"
+		projectRoot := homeDir + "/app"
+		if docRoot != filepath.Join(homeDir, "app", "public") {
+			if res, err := s.exec.RunSudo(ctx, "test", "-f", filepath.Join(filepath.Dir(docRoot), "artisan")); err == nil && res.ExitCode == 0 {
+				projectRoot = filepath.Dir(docRoot)
+			}
+		}
+		artisan := filepath.Join(projectRoot, "artisan")
 		if res, err := s.exec.RunSudo(ctx, "test", "-f", artisan); err != nil || res.ExitCode != 0 {
 			add("laravel_project", DiagFail, artisan+" does not exist", "wd.diag.hint_deploy")
-		} else if res, err := s.exec.RunSudo(ctx, "test", "-f", homeDir+"/app/.env"); err != nil || res.ExitCode != 0 {
-			add("laravel_project", DiagWarn, homeDir+"/app/.env does not exist", "wd.diag.hint_env")
+		} else if res, err := s.exec.RunSudo(ctx, "test", "-f", projectRoot+"/.env"); err != nil || res.ExitCode != 0 {
+			add("laravel_project", DiagWarn, projectRoot+"/.env does not exist", "wd.diag.hint_env")
 		} else if res, err := s.exec.RunSudo(ctx, "test", "-L", docRoot+"/storage"); err != nil || res.ExitCode != 0 {
 			add("laravel_project", DiagWarn, docRoot+"/storage symlink is missing (uploaded files 404)", "wd.diag.hint_storage_link")
 		} else {
