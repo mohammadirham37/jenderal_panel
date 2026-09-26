@@ -38,6 +38,31 @@ func (r *Repository) CommitBuckets(ctx context.Context, buckets []MinuteBucket, 
 		return err
 	}
 	defer tx.Rollback()
+
+	// Sum the freshly parsed values for the monthly bandwidth table before
+	// the merge loop below folds in any existing bucket row — the monthly
+	// totals must count each parsed line exactly once.
+	monthly := map[string]struct {
+		bytes    int64
+		requests int
+	}{}
+	for _, b := range buckets {
+		month := b.BucketAt.UTC().Format("2006-01")
+		m := monthly[month]
+		m.bytes += b.Bytes
+		m.requests += b.Requests
+		monthly[month] = m
+	}
+	for month, m := range monthly {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO website_bandwidth_monthly(website_id,month,bytes,requests,updated_at) VALUES(?,?,?,?,?)
+			 ON CONFLICT(website_id,month) DO UPDATE SET bytes=bytes+excluded.bytes, requests=requests+excluded.requests, updated_at=excluded.updated_at`,
+			c.WebsiteID, month, m.bytes, m.requests, ts(c.UpdatedAt))
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, b := range buckets {
 		var requests, status4xx, status5xx, status429, peakRPS int
 		var bytes int64

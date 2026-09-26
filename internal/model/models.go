@@ -192,9 +192,12 @@ type Website struct {
 	DeployWebhookToken string    `json:"deploy_webhook_token,omitempty"`
 	CreatedBy          string    `json:"created_by"`
 	OwnerEmail         string    `json:"owner_email,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	Domains            []Domain  `json:"domains,omitempty"`
+	// BandwidthBytes is the traffic served this month (UTC), accumulated
+	// from access logs by the traffic collector. Populated on list queries.
+	BandwidthBytes int64     `json:"bandwidth_bytes"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	Domains        []Domain  `json:"domains,omitempty"`
 }
 
 type Domain struct {

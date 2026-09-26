@@ -21,6 +21,7 @@ import { language, translate } from '$lib/stores/language';
 		setup_mode: string;
 		provision_stage: string;
 		provision_log: string;
+		bandwidth_bytes: number;
 		created_at: string;
 		owner_email?: string;
 	}
@@ -165,6 +166,15 @@ import { language, translate } from '$lib/stores/language';
 	function frameworkLabel(website: Website): string {
 		const base = website.framework && website.framework !== 'none' ? website.framework : website.app_type;
 		return website.framework_version ? `${base} ${website.framework_version}` : base;
+	}
+
+	function formatBytes(bytes: number): string {
+		if (!bytes || bytes <= 0) return '0 B';
+		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+		let i = 0;
+		let size = bytes;
+		while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 	}
 
 	function shouldPoll(sites: Website[]): boolean {
@@ -622,6 +632,12 @@ import { language, translate } from '$lib/stores/language';
 						<div class="min-w-0">
 							<dt class="text-gray-500">{translate($language, 'wl.labelOwner')}</dt>
 							<dd class="truncate font-medium text-gray-300" title={website.owner_email}>{website.owner_email || translate($language, 'wl.ownerLegacy')}</dd>
+						</div>
+						<div class="col-span-2 flex items-center justify-between gap-2 border-t border-gray-700/50 pt-1.5">
+							<dt class="text-gray-500">{translate($language, 'wl.bandwidthMonth')}</dt>
+							<dd class="font-medium tabular-nums text-gray-300" title={translate($language, 'wl.bandwidthMonthHint')}>
+								{formatBytes(website.bandwidth_bytes)}
+							</dd>
 						</div>
 					</dl>
 

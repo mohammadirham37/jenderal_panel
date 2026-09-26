@@ -72,3 +72,41 @@ func TestRepeatedBucketCommitMergesTopEvidence(t *testing.T) {
 		t.Fatalf("bucket=%#v", got)
 	}
 }
+
+// Buckets committed once must accumulate into the monthly bandwidth table
+// exactly once, split by the bucket's UTC month, regardless of traffic
+// bucket retention.
+func TestCommitBucketsAccumulatesMonthlyBandwidth(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	late := time.Date(2026, 10, 1, 0, 30, 0, 0, time.UTC)
+	early := late.Add(-time.Hour) // still 2026-09 in UTC
+
+	if err := r.CommitBuckets(ctx, []MinuteBucket{
+		{WebsiteID: "site", BucketAt: late, Requests: 4, Bytes: 400, TopIPs: map[string]int{}, TopPaths: map[string]int{}, TopAgents: map[string]int{}},
+		{WebsiteID: "site", BucketAt: early, Requests: 2, Bytes: 200, TopIPs: map[string]int{}, TopPaths: map[string]int{}, TopAgents: map[string]int{}},
+	}, LogCursor{WebsiteID: "site", Inode: 1, Offset: 10, UpdatedAt: late}); err != nil {
+		t.Fatal(err)
+	}
+	// Re-committing the same month must add, not replace.
+	if err := r.CommitBuckets(ctx, []MinuteBucket{
+		{WebsiteID: "site", BucketAt: late, Requests: 1, Bytes: 100, TopIPs: map[string]int{}, TopPaths: map[string]int{}, TopAgents: map[string]int{}},
+	}, LogCursor{WebsiteID: "site", Inode: 1, Offset: 20, UpdatedAt: late}); err != nil {
+		t.Fatal(err)
+	}
+
+	var sepBytes, sepRequests int
+	if err := r.db.QueryRow(`SELECT bytes, requests FROM website_bandwidth_monthly WHERE website_id='site' AND month='2026-09'`).Scan(&sepBytes, &sepRequests); err != nil {
+		t.Fatal(err)
+	}
+	if sepBytes != 200 || sepRequests != 2 {
+		t.Fatalf("september = (%d bytes, %d requests), want (200, 2)", sepBytes, sepRequests)
+	}
+	var octBytes, octRequests int
+	if err := r.db.QueryRow(`SELECT bytes, requests FROM website_bandwidth_monthly WHERE website_id='site' AND month='2026-10'`).Scan(&octBytes, &octRequests); err != nil {
+		t.Fatal(err)
+	}
+	if octBytes != 500 || octRequests != 5 {
+		t.Fatalf("october = (%d bytes, %d requests), want (500, 5)", octBytes, octRequests)
+	}
+}

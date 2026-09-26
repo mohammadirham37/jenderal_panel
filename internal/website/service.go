@@ -577,8 +577,47 @@ func (s *Service) listWhere(ctx context.Context, where string, args []any) ([]mo
 	}
 
 	s.attachOwnerEmails(ctx, websites)
+	s.attachMonthlyBandwidth(ctx, websites)
 
 	return websites, nil
+}
+
+// attachMonthlyBandwidth fills the display-only bandwidth_bytes field with
+// the traffic served in the current UTC month, accumulated from access logs
+// by the traffic collector. One batched query; a missing row means no
+// traffic was recorded yet.
+func (s *Service) attachMonthlyBandwidth(ctx context.Context, websites []model.Website) {
+	if len(websites) == 0 {
+		return
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(websites)), ",")
+	args := make([]any, 0, len(websites)+1)
+	args = append(args, time.Now().UTC().Format("2006-01"))
+	for _, w := range websites {
+		args = append(args, w.ID)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT website_id, bytes FROM website_bandwidth_monthly WHERE month = ? AND website_id IN (`+placeholders+`)`,
+		args...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	used := map[string]int64{}
+	for rows.Next() {
+		var id string
+		var bytes int64
+		if err := rows.Scan(&id, &bytes); err != nil {
+			return
+		}
+		used[id] = bytes
+	}
+	if err := rows.Err(); err != nil {
+		return
+	}
+	for i := range websites {
+		websites[i].BandwidthBytes = used[websites[i].ID]
+	}
 }
 
 // attachOwnerEmails fills the display-only owner email for each website in
