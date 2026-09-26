@@ -66,6 +66,14 @@ html[data-theme='light'] {
 	--color-yellow-400: #a16207;
 	--color-yellow-300: #854d0e;
 	--color-yellow-200: #854d0e;
+	--color-indigo-950: #eef2ff;
+	--color-indigo-900: #e0e7ff;
+	--color-indigo-700: #4338ca;
+	--color-indigo-600: #4f46e5;
+	--color-indigo-500: #4f46e5;
+	--color-indigo-400: #4338ca;
+	--color-indigo-300: #3730a3;
+	--color-indigo-200: #3730a3;
 }
 
 html {
@@ -95,6 +103,7 @@ html[data-theme='light'] :is(
 	[class*='bg-red-'],
 	[class*='bg-green-'],
 	[class*='bg-yellow-'],
+	[class*='bg-indigo-'],
 	[class*='bg-gray-600']
 ).text-white {
 	color: #ffffff;
