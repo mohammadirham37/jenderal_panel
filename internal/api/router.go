@@ -919,6 +919,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/update/current", updateHandler.Current)
 			r.With(auth.RequirePermission(deps.RBAC, "update.view")).
 				Get("/update/check", updateHandler.Check)
+			r.With(auth.RequirePermission(deps.RBAC, "update.view")).
+				Get("/update/changelog", updateHandler.Changelog)
 			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
 				Post("/update/perform", updateHandler.Perform)
 

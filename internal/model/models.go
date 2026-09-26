@@ -444,6 +444,15 @@ type UpdateInfo struct {
 	ReleaseURL     string `json:"release_url"`
 }
 
+// CommitInfo is one repository commit shown in the update changelog.
+type CommitInfo struct {
+	SHA     string `json:"sha"`
+	Message string `json:"message"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+	URL     string `json:"url"`
+}
+
 type ServerInfo struct {
 	Hostname   string             `json:"hostname"`
 	IP         string             `json:"ip"`

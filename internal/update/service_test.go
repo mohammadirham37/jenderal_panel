@@ -222,3 +222,42 @@ func TestUpdateRejectsConcurrentSelfUpdate(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestChangelogReturnsCommitSubjects(t *testing.T) {
+	svc := NewService(nil, "0.1.0", nil)
+	svc.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.Query().Get("per_page") != "2" {
+			t.Errorf("per_page = %q, want 2", req.URL.Query().Get("per_page"))
+		}
+		body := `[
+			{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","html_url":"https://github.com/example/commit/a","commit":{"message":"fix(dbmanager): grant tracking\n\nLong body that must be dropped","author":{"name":"Dev","date":"2026-09-25T10:00:00Z"}}},
+			{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","html_url":"https://github.com/example/commit/b","commit":{"message":"feat(ui): modal","author":{"name":"Dev","date":"2026-09-26T10:00:00Z"}}}
+		]`
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+
+	commits, err := svc.Changelog(context.Background(), 2)
+	if err != nil {
+		t.Fatalf("Changelog() error = %v", err)
+	}
+	if len(commits) != 2 {
+		t.Fatalf("Changelog() returned %d commits, want 2", len(commits))
+	}
+	if commits[0].SHA != "aaaaaaaa" || commits[0].Message != "fix(dbmanager): grant tracking" || commits[0].Author != "Dev" {
+		t.Errorf("first commit = %+v, want short sha, subject line and author", commits[0])
+	}
+	if commits[1].Message != "feat(ui): modal" || commits[1].URL == "" {
+		t.Errorf("second commit = %+v, want subject and url", commits[1])
+	}
+}
+
+func TestChangelogSurfacesGitHubErrors(t *testing.T) {
+	svc := NewService(nil, "0.1.0", nil)
+	svc.httpClient = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusForbidden, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("rate limited"))}, nil
+	})}
+
+	if _, err := svc.Changelog(context.Background(), 15); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("expected the GitHub status code to surface, got %v", err)
+	}
+}

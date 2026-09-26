@@ -2,6 +2,7 @@ package update
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
@@ -30,6 +31,23 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.JSON(w, http.StatusOK, info)
+}
+
+// Changelog returns recent commit messages from the repository.
+func (h *Handler) Changelog(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	limit := 0
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	commits, err := h.svc.Changelog(r.Context(), limit)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, commits)
 }
 
 func (h *Handler) Perform(w http.ResponseWriter, r *http.Request) {

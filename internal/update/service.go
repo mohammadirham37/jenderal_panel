@@ -107,8 +107,65 @@ func (s *Service) Check(ctx context.Context) (model.UpdateInfo, error) {
 	return info, nil
 }
 
-func displayVersion(value string) string {
-	value = strings.TrimSpace(value)
+// Changelog returns the most recent commits on main from GitHub so the panel
+// can show what each update contains. Message is the commit subject line.
+func (s *Service) Changelog(ctx context.Context, limit int) ([]model.CommitInfo, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 15
+	}
+	url := fmt.Sprintf("%s?sha=main&per_page=%d", githubAPIURL, limit)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "jenderal-panel/"+s.currentVer)
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch changelog: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var commits []struct {
+		SHA     string `json:"sha"`
+		HTMLURL string `json:"html_url"`
+		Commit  struct {
+			Message string `json:"message"`
+			Author  struct {
+				Name string `json:"name"`
+				Date string `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&commits); err != nil {
+		return nil, err
+	}
+
+	out := make([]model.CommitInfo, 0, len(commits))
+	for _, c := range commits {
+		subject := c.Commit.Message
+		if idx := strings.IndexByte(subject, '\n'); idx >= 0 {
+			subject = subject[:idx]
+		}
+		out = append(out, model.CommitInfo{
+			SHA:     displayVersion(c.SHA),
+			Message: strings.TrimSpace(subject),
+			Author:  c.Commit.Author.Name,
+			Date:    c.Commit.Author.Date,
+			URL:     c.HTMLURL,
+		})
+	}
+	return out, nil
+}
+
+func displayVersion(value string) string {	value = strings.TrimSpace(value)
 	if len(value) > 8 && isHexRevision(value) {
 		return value[:8]
 	}
