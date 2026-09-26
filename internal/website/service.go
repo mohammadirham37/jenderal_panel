@@ -1,10 +1,12 @@
 package website
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +33,43 @@ var domainRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\
 var webUserRegex = regexp.MustCompile(`^[a-z_][a-z0-9_-]*$`)
 var phpVersionRegex = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
 
+// FlexInt decodes a JSON value that may arrive as a number, a numeric
+// string, an empty string, or null — older clients send the proxy port as
+// a string, and empty optionals must not fail body decoding.
+type FlexInt int
+
+// UnmarshalJSON implements json.Unmarshaler with the lenient rules above.
+func (f *FlexInt) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*f = 0
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			*f = 0
+			return nil
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return fmt.Errorf("cannot parse %q as a port number", s)
+		}
+		*f = FlexInt(n)
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(trimmed, &n); err != nil {
+		return err
+	}
+	*f = FlexInt(n)
+	return nil
+}
+
 // CreateRequest holds the data for creating a new website.
 type CreateRequest struct {
 	Domain           string `json:"domain"`
@@ -45,7 +84,7 @@ type CreateRequest struct {
 	SetupMode        string `json:"setup_mode"`
 	ProxyScheme      string `json:"proxy_scheme,omitempty"`
 	ProxyHost        string `json:"proxy_host,omitempty"`
-	ProxyPort        int    `json:"proxy_port,omitempty"`
+	ProxyPort        FlexInt `json:"proxy_port,omitempty"`
 	// CreatedBy is stamped by the handler from the authenticated user; it is
 	// never accepted from the request body.
 	CreatedBy string `json:"-"`
@@ -244,7 +283,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		return model.Website{}, err
 	}
 	if profile.Template == "reverse-proxy" {
-		if _, err := ValidateUpstream(req.ProxyScheme, req.ProxyHost, req.ProxyPort); err != nil {
+		if _, err := ValidateUpstream(req.ProxyScheme, req.ProxyHost, int(req.ProxyPort)); err != nil {
 			return model.Website{}, err
 		}
 	}
@@ -298,7 +337,7 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		OctaneWorkers:    4,
 		ProxyScheme:      strings.ToLower(strings.TrimSpace(req.ProxyScheme)),
 		ProxyHost:        strings.ToLower(strings.TrimSpace(req.ProxyHost)),
-		ProxyPort:        req.ProxyPort,
+		ProxyPort:        int(req.ProxyPort),
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}

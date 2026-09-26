@@ -210,7 +210,17 @@ import { language, translate } from '$lib/stores/language';
 	async function createWebsite() {
 		creating = true;
 		try {
-			const body: Record<string, string> = { domain: createDomain, ...selection };
+			const body: Record<string, unknown> = { domain: createDomain, ...selection };
+			// proxy_port must travel as a number and only for reverse-proxy
+			// sites: the backend decodes it as int, and an empty string (sent
+			// for every other template) fails JSON decoding outright.
+			if (selection.template === 'reverse-proxy') {
+				body.proxy_port = Number(selection.proxy_port) || 0;
+			} else {
+				delete body.proxy_scheme;
+				delete body.proxy_host;
+				delete body.proxy_port;
+			}
 			await api.post('/api/v1/websites', body);
 			toast.success(translate($language, 'wl.toastCreateStarted').replace('{domain}', createDomain));
 			showCreateForm = false;

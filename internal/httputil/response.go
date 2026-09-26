@@ -86,7 +86,9 @@ func domainErrorToStatus(code string) int {
 
 func DecodeJSON(r *http.Request, v any) error {
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		return model.NewValidationError("invalid JSON body")
+		// Include the decoder's reason (field name, type mismatch) so the
+		// caller sees which part of the body was rejected.
+		return model.NewValidationError("invalid JSON body: " + err.Error())
 	}
 	return nil
 }

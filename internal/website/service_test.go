@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
@@ -892,5 +893,32 @@ func TestUpdateDocumentRootRegeneratesTLSVhost(t *testing.T) {
 	}
 	if len(tlsRegen.ids) != before {
 		t.Error("TLS vhost must not be regenerated for a rejected update")
+	}
+}
+
+// The create form sends proxy fields as strings (and leaves proxy_port
+// empty for non-reverse-proxy templates); decoding must not fail on them.
+func TestCreateRequestAcceptsStringProxyPort(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want FlexInt
+	}{
+		{"empty string", `{"domain":"a.example.com","proxy_port":""}`, 0},
+		{"numeric string", `{"domain":"a.example.com","proxy_port":"8080"}`, 8080},
+		{"number", `{"domain":"a.example.com","proxy_port":3000}`, 3000},
+		{"null", `{"domain":"a.example.com","proxy_port":null}`, 0},
+		{"absent", `{"domain":"a.example.com"}`, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var req CreateRequest
+			if err := json.Unmarshal([]byte(tc.body), &req); err != nil {
+				t.Fatalf("Unmarshal() error = %v", err)
+			}
+			if req.ProxyPort != tc.want {
+				t.Fatalf("ProxyPort = %d, want %d", req.ProxyPort, tc.want)
+			}
+		})
 	}
 }
