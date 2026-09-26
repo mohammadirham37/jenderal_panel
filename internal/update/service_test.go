@@ -226,6 +226,11 @@ func TestUpdateRejectsConcurrentSelfUpdate(t *testing.T) {
 func TestChangelogReturnsCommitSubjects(t *testing.T) {
 	svc := NewService(nil, "0.1.0", nil)
 	svc.httpClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		// The list endpoint must be used: the single-commit endpoint returns
+		// an object, which cannot unmarshal into a slice.
+		if req.URL.Path != "/repos/mohammadirham37/jenderal_panel/commits" {
+			t.Errorf("endpoint = %s, want the commit list endpoint", req.URL.Path)
+		}
 		if req.URL.Query().Get("per_page") != "2" {
 			t.Errorf("per_page = %q, want 2", req.URL.Query().Get("per_page"))
 		}

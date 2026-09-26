@@ -20,9 +20,13 @@ import (
 
 const (
 	githubAPIURL = "https://api.github.com/repos/mohammadirham37/jenderal_panel/commits/main"
-	repoURL      = "https://github.com/mohammadirham37/jenderal_panel.git"
-	sourceDir    = "/opt/jenderal/source"
-	httpTimeout  = 30 * time.Second
+	// githubCommitsAPIURL is the list endpoint; it returns an array of
+	// commits and accepts per_page, unlike githubAPIURL which is the
+	// single-commit endpoint.
+	githubCommitsAPIURL = "https://api.github.com/repos/mohammadirham37/jenderal_panel/commits"
+	repoURL             = "https://github.com/mohammadirham37/jenderal_panel.git"
+	sourceDir           = "/opt/jenderal/source"
+	httpTimeout         = 30 * time.Second
 
 	// restartScriptSuffix marks an installed binary whose self-update has
 	// scheduled a verified service restart that has not completed yet.
@@ -113,7 +117,7 @@ func (s *Service) Changelog(ctx context.Context, limit int) ([]model.CommitInfo,
 	if limit <= 0 || limit > 50 {
 		limit = 15
 	}
-	url := fmt.Sprintf("%s?sha=main&per_page=%d", githubAPIURL, limit)
+	url := fmt.Sprintf("%s?sha=main&per_page=%d", githubCommitsAPIURL, limit)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
