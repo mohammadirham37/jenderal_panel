@@ -45,7 +45,12 @@ func newTestService(t *testing.T, exec executor.CommandExecutor) *Service {
 }
 
 func TestCurrentPortParsesSshdTOutput(t *testing.T) {
+	var calls []string
 	svc := newTestService(t, &executor.MockExecutor{RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		calls = append(calls, name)
+		if name == "mkdir" {
+			return &executor.Result{ExitCode: 0}, nil // ensure /run/sshd
+		}
 		if name != "sshd" || args[0] != "-T" {
 			t.Fatalf("expected sshd -T, got %s %v", name, args)
 		}
@@ -59,6 +64,11 @@ func TestCurrentPortParsesSshdTOutput(t *testing.T) {
 	}
 	if port != 2222 {
 		t.Errorf("CurrentPort = %d, want 2222", port)
+	}
+	// The privilege separation directory must be ensured before sshd runs:
+	// sshd fails outright when /run/sshd is missing.
+	if len(calls) != 2 || calls[0] != "mkdir" || calls[1] != "sshd" {
+		t.Fatalf("expected mkdir before sshd -T, got %v", calls)
 	}
 }
 
