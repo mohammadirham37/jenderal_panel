@@ -693,6 +693,26 @@
 		return q ? tables.filter((t) => t.name.toLowerCase().includes(q)) : tables;
 	});
 
+	// For PostgreSQL sessions, group tables under their schema headers —
+	// non-public tables arrive as "schema.table" names. Null keeps the flat
+	// list for engines without schemas (MySQL).
+	let tableGroups = $derived.by(() => {
+		if (unlockedUser?.engine !== 'postgresql') return null;
+		const order: string[] = [];
+		const map: Record<string, ManagedTable[]> = {};
+		for (const t of filteredTables) {
+			const idx = t.name.indexOf('.');
+			const schema = idx > 0 ? t.name.slice(0, idx) : 'public';
+			if (!map[schema]) {
+				map[schema] = [];
+				order.push(schema);
+			}
+			map[schema].push(t);
+		}
+		order.sort((a, b) => (a === 'public' ? -1 : b === 'public' ? 1 : a.localeCompare(b)));
+		return order.map((schema) => ({ schema, tables: map[schema] }));
+	});
+
 	let allTablesSelected = $derived(
 		filteredTables.length > 0 && filteredTables.every((t) => selectedTables.includes(t.name))
 	);
@@ -905,7 +925,7 @@
 			</div>
 
 			<nav class="flex-1 overflow-y-auto px-2 pb-2" aria-label={translate($language, 'dbm.tables_aria')}>
-				{#each filteredTables as t (t.name)}
+				{#snippet tableRow(t: ManagedTable)}
 					<div class="mb-0.5 flex w-full items-center gap-1 rounded-lg pr-2 transition {selectedTable === t.name && viewMode === 'tables' ? 'bg-blue-500/15' : 'hover:bg-white/5'}">
 						<input
 							type="checkbox"
@@ -923,9 +943,34 @@
 							<span class="shrink-0 text-[10px] tabular-nums text-gray-500">{t.rows > 0 ? t.rows : ''}</span>
 						</button>
 					</div>
+				{/snippet}
+
+				{#if tableGroups}
+					{#if tableGroups.length === 0}
+						<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? translate($language, 'dbm.no_tables_match') : translate($language, 'dbm.no_tables')}</p>
+					{:else}
+						{#each tableGroups as g (g.schema)}
+							<div class="mb-1.5">
+								<span class="mb-0.5 flex items-center gap-1 px-2.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">
+									<svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+										<path d="M4 6a8 3 0 1016 0 8 3 0 00-16 0" />
+										<path d="M4 6v12a8 3 0 0016 0V6" />
+									</svg>
+									{g.schema}
+								</span>
+								{#each g.tables as t (t.name)}
+									{@render tableRow(t)}
+								{/each}
+							</div>
+						{/each}
+					{/if}
 				{:else}
-					<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? translate($language, 'dbm.no_tables_match') : translate($language, 'dbm.no_tables')}</p>
-				{/each}
+					{#each filteredTables as t (t.name)}
+						{@render tableRow(t)}
+					{:else}
+						<p class="px-2 py-4 text-xs text-gray-500">{tableFilter ? translate($language, 'dbm.no_tables_match') : translate($language, 'dbm.no_tables')}</p>
+					{/each}
+				{/if}
 
 				{#if objects}
 					{#if objects.views.length}
