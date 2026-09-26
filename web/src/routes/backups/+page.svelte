@@ -4,6 +4,7 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
+import { roles } from '$lib/stores/auth';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface Backup {
@@ -109,6 +110,22 @@ import { language, translate } from '$lib/stores/language';
 	let pruneBusy = $state(false);
 
 	const backupTypes = ['website', 'database', 'config', 'full'];
+
+	// Server-wide backup types (config/full) are admin-only — the backend
+	// rejects them for regular users, so the forms only offer website and
+	// database backups to them.
+	const isAdmin = $derived($roles.some((r) => r.name === 'admin'));
+	const availableBackupTypes = $derived(
+		isAdmin ? backupTypes : backupTypes.filter((t) => t === 'website' || t === 'database')
+	);
+
+	$effect(() => {
+		if (isAdmin) return;
+		if (createType === 'config' || createType === 'full') createType = 'website';
+		if (importType === 'config' || importType === 'full') importType = 'website';
+		if (scheduleType === 'config' || scheduleType === 'full') scheduleType = 'website';
+		if (editScheduleType === 'config' || editScheduleType === 'full') editScheduleType = 'website';
+	});
 	const schedulePresets = [
 		{ label: 'bk.presetHourly', value: '0 * * * *' },
 		{ label: 'bk.presetDaily', value: '0 0 * * *' },
@@ -503,7 +520,7 @@ import { language, translate } from '$lib/stores/language';
 				<div>
 					<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="sched-type">{translate($language, 'bk.labelType')}</label>
 					<select id="sched-type" bind:value={scheduleType} onchange={() => (scheduleTarget = '')} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
-						{#each backupTypes as t}<option value={t}>{t}</option>{/each}
+						{#each availableBackupTypes as t (t)}<option value={t}>{t}</option>{/each}
 					</select>
 				</div>
 				<div>
@@ -569,7 +586,7 @@ import { language, translate } from '$lib/stores/language';
 				<div>
 					<label for="backup-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.createType')}</label>
 					<select id="backup-type" bind:value={createType} onchange={() => (createTarget = '')} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
-						{#each backupTypes as t}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
+						{#each availableBackupTypes as t (t)}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
 					</select>
 				</div>
 				{#if needsTarget(createType)}
@@ -625,7 +642,7 @@ import { language, translate } from '$lib/stores/language';
 				<div>
 					<label for="import-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.importType')}</label>
 					<select id="import-type" bind:value={importType} onchange={() => (importTarget = '')} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
-						{#each backupTypes as t}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
+						{#each availableBackupTypes as t (t)}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
 					</select>
 				</div>
 				{#if importType === 'website' || importType === 'database'}
@@ -825,7 +842,7 @@ import { language, translate } from '$lib/stores/language';
 							{#if editingScheduleId === s.id}
 								<div class="grid w-full gap-2 sm:grid-cols-6">
 									<select bind:value={editScheduleType} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
-										{#each backupTypes as t}<option value={t}>{t}</option>{/each}
+										{#each availableBackupTypes as t (t)}<option value={t}>{t}</option>{/each}
 									</select>
 									<select bind:value={editScheduleTarget} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
 										<option value="">{translate($language, 'bk.targetPlaceholder')}</option>
