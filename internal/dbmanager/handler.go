@@ -370,6 +370,54 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// RevokePrivileges removes the grant of a database user on a managed
+// database.
+func (h *Handler) RevokePrivileges(w http.ResponseWriter, r *http.Request) {
+	var req grantPrivilegesRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	if !h.canManageDatabase(r, req.DatabaseID) || !h.canManageDBUser(r, req.UserID) {
+		httputil.HandleError(w, model.ErrForbidden)
+		return
+	}
+
+	if err := h.svc.RevokePrivileges(r.Context(), req.UserID, req.DatabaseID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "revoke_privileges",
+		Module: "dbmanager",
+		Target: fmt.Sprintf("user=%s db=%s", req.UserID, req.DatabaseID),
+		Detail: fmt.Sprintf("revoked privileges on database %s from user %s", req.DatabaseID, req.UserID),
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ListGrants returns the recorded database grants (admins) or the grants
+// visible to the caller (user role).
+func (h *Handler) ListGrants(w http.ResponseWriter, r *http.Request) {
+	ownerID := ""
+	if !auth.AdminFromContext(r.Context()) {
+		user, _ := auth.UserFromContext(r.Context())
+		ownerID = user.ID
+	}
+	grants, err := h.svc.ListGrants(r.Context(), ownerID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, grants)
+}
+
 // ─── Database management (phpMyAdmin-like) ────────────────────────
 
 // canManageDatabase reports whether the caller may act on the database:

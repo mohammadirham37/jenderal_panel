@@ -21,5 +21,6 @@ type DatabaseEngine interface {
 	DropUser(ctx context.Context, username string) error
 	ListUsers(ctx context.Context) ([]string, error)
 	GrantPrivileges(ctx context.Context, username, database string) error
+	RevokePrivileges(ctx context.Context, username, database string) error
 	ResetPassword(ctx context.Context, username, password string) error
 }

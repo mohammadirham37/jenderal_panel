@@ -28,14 +28,25 @@ import { toast } from '$lib/stores/toast';
 		engine: string;
 	}
 
+	interface Grant {
+		user_id: string;
+		database_id: string;
+		username: string;
+		database_name: string;
+		engine: string;
+		created_at: string;
+	}
+
 	// ── State ──────────────────────────────────────────────────────
 	let engines = $state<EngineStatus[]>([]);
 	let databases = $state<Database[]>([]);
 	let dbUsers = $state<DbUser[]>([]);
+	let grants = $state<Grant[]>([]);
 
 	let loadingEngines = $state(true);
 	let loadingDatabases = $state(true);
 	let loadingUsers = $state(true);
+	let loadingGrants = $state(true);
 
 	let error = $state('');
 	let actionInProgress = $state<string | null>(null);
@@ -77,6 +88,10 @@ import { toast } from '$lib/stores/toast';
 	// Grant privileges state
 	let grantUserId = $state<string | null>(null);
 	let grantDatabase = $state('');
+
+	// Revoke confirm state
+	let revokeConfirm = $state<{ userId: string; databaseId: string } | null>(null);
+	let revoking = $state(false);
 
 	// Copy feedback
 	let copiedField = $state('');
@@ -258,6 +273,25 @@ import { toast } from '$lib/stores/toast';
 		return q ? dbUsers.filter((u) => u.username.toLowerCase().includes(q)) : dbUsers;
 	});
 
+	function grantsForUser(userId: string): Grant[] {
+		return grants.filter((g) => g.user_id === userId);
+	}
+
+	function grantCountForDb(databaseId: string): number {
+		return grants.filter((g) => g.database_id === databaseId).length;
+	}
+
+	function grantNamesForDb(databaseId: string): string {
+		return grants
+			.filter((g) => g.database_id === databaseId)
+			.map((g) => g.username)
+			.join(', ');
+	}
+
+	function isGranted(userId: string, databaseId: string): boolean {
+		return grants.some((g) => g.user_id === userId && g.database_id === databaseId);
+	}
+
 	function flash(msg: string) {
 		toast.success(msg);
 	}
@@ -300,9 +334,20 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
+	async function loadGrants() {
+		loadingGrants = true;
+		try {
+			grants = (await api.get<Grant[]>('/api/v1/databases/grants')) || [];
+		} catch (err) {
+			if (!error) error = err instanceof Error ? err.message : translate($language, 'db.load_grants_failed');
+		} finally {
+			loadingGrants = false;
+		}
+	}
+
 	async function refreshAll() {
 		error = '';
-		await Promise.all([loadEngines(), loadDatabases(), loadUsers()]);
+		await Promise.all([loadEngines(), loadDatabases(), loadUsers(), loadGrants()]);
 	}
 
 	// ── Engine actions ────────────────────────────────────────────
@@ -417,8 +462,26 @@ import { toast } from '$lib/stores/toast';
 			flash(translate($language, 'db.granted').replace('{name}', dbName));
 			grantUserId = null;
 			grantDatabase = '';
+			await loadGrants();
 		} catch (err) {
 			fail(err, translate($language, 'db.grant_failed'));
+		}
+	}
+
+	async function revokePrivileges(userId: string, databaseId: string) {
+		if (revoking) return;
+		revoking = true;
+		try {
+			await api.post(`/api/v1/databases/users/${userId}/revoke`, {
+				database_id: databaseId
+			});
+			flash(translate($language, 'db.revoked').replace('{name}', databases.find((d) => d.id === databaseId)?.name || databaseId));
+			revokeConfirm = null;
+			await loadGrants();
+		} catch (err) {
+			fail(err, translate($language, 'db.revoke_failed'));
+		} finally {
+			revoking = false;
 		}
 	}
 
@@ -442,6 +505,7 @@ import { toast } from '$lib/stores/toast';
 		loadEngines();
 		loadDatabases();
 		loadUsers();
+		loadGrants();
 	});
 </script>
 
@@ -471,13 +535,13 @@ import { toast } from '$lib/stores/toast';
 		<button
 			type="button"
 			onclick={refreshAll}
-			disabled={loadingEngines || loadingDatabases || loadingUsers}
+			disabled={loadingEngines || loadingDatabases || loadingUsers || loadingGrants}
 			class="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-white/8 bg-white/[0.035]
 			px-3.5 py-2 text-xs font-medium text-gray-300 transition
 			hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white disabled:opacity-50"
 		>
 			<svg
-				class="h-3.5 w-3.5 {(loadingEngines || loadingDatabases || loadingUsers) ? 'animate-spin' : ''}"
+				class="h-3.5 w-3.5 {(loadingEngines || loadingDatabases || loadingUsers || loadingGrants) ? 'animate-spin' : ''}"
 				fill="none"
 				stroke="currentColor"
 				viewBox="0 0 24 24"
@@ -692,6 +756,17 @@ import { toast } from '$lib/stores/toast';
 						<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(db.engine)}">
 							{engineLabel(db.engine)}
 						</span>
+						{#if grantCountForDb(db.id) > 0}
+							<span
+								class="hidden shrink-0 items-center gap-1 rounded-md border border-gray-700 bg-gray-900/60 px-2 py-0.5 text-[11px] font-medium text-gray-400 lg:inline-flex"
+								title={translate($language, 'db.granted_users_title').replace('{names}', grantNamesForDb(db.id))}
+							>
+								<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+									<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+								</svg>
+								{grantCountForDb(db.id)}
+							</span>
+						{/if}
 						<div class="flex shrink-0 items-center justify-end gap-1 relative">
 							{#if db.engine !== 'redis'}
 								<button
@@ -979,9 +1054,53 @@ import { toast } from '$lib/stores/toast';
 								>
 									{u.username}
 								</button>
-								<p class="text-[11px] text-gray-500">
-									{copiedField === `user-${u.id}` ? translate($language, 'db.copied_hint') : translate($language, 'db.click_to_copy')}
-								</p>
+								<div class="mt-1 flex flex-wrap items-center gap-1.5">
+									{#each grantsForUser(u.id) as g (g.database_id)}
+										{#if revokeConfirm?.userId === u.id && revokeConfirm?.databaseId === g.database_id}
+											<span class="inline-flex items-center gap-1.5 rounded-md border border-red-700/60 bg-red-900/30 px-2 py-0.5 text-[11px] text-red-300">
+												{translate($language, 'db.revoke_confirm').replace('{name}', g.database_name)}
+												<button
+													type="button"
+													onclick={() => revokePrivileges(u.id, g.database_id)}
+													disabled={revoking}
+													class="cursor-pointer font-semibold text-red-200 transition hover:text-white disabled:opacity-50"
+												>
+													{translate($language, 'db.yes')}
+												</button>
+												<button
+													type="button"
+													onclick={() => (revokeConfirm = null)}
+													class="cursor-pointer text-gray-400 transition hover:text-gray-200"
+												>
+													{translate($language, 'db.no')}
+												</button>
+											</span>
+										{:else}
+											<span class="inline-flex items-center gap-1 rounded-md border border-indigo-700/40 bg-indigo-900/20 px-2 py-0.5 text-[11px] font-medium text-indigo-300">
+												<svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+													<ellipse cx="12" cy="5" rx="8" ry="3" />
+													<path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
+												</svg>
+												{g.database_name}
+												<button
+													type="button"
+													onclick={() => (revokeConfirm = { userId: u.id, databaseId: g.database_id })}
+													title={translate($language, 'db.revoke')}
+													aria-label="{translate($language, 'db.revoke')} {g.database_name}"
+													class="-mr-0.5 cursor-pointer rounded px-0.5 text-indigo-400/70 transition hover:bg-red-500/20 hover:text-red-300"
+												>
+													<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
+														<path stroke-linecap="round" d="M6 18L18 6M6 6l12 12" />
+													</svg>
+												</button>
+											</span>
+										{/if}
+									{:else}
+										<p class="text-[11px] text-gray-500">
+											{copiedField === `user-${u.id}` ? translate($language, 'db.copied_hint') : translate($language, 'db.click_to_copy')}
+										</p>
+									{/each}
+								</div>
 							</div>
 							<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(u.engine)}">
 								{engineLabel(u.engine)}
@@ -1133,7 +1252,9 @@ import { toast } from '$lib/stores/toast';
 									>
 										<option value="">{translate($language, 'db.select_database')}</option>
 										{#each databases.filter((d) => d.engine === u.engine) as db (db.id)}
-											<option value={db.id}>{db.name}</option>
+											<option value={db.id} disabled={isGranted(u.id, db.id)}>
+												{db.name}{isGranted(u.id, db.id) ? ` — ${translate($language, 'db.already_granted')}` : ''}
+											</option>
 										{/each}
 									</select>
 									<button

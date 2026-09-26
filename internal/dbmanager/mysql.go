@@ -226,6 +226,19 @@ func (m *MySQLEngine) GrantPrivileges(ctx context.Context, username, database st
 	return nil
 }
 
+// RevokePrivileges removes all privileges a user holds on a database.
+func (m *MySQLEngine) RevokePrivileges(ctx context.Context, username, database string) error {
+	stmt := fmt.Sprintf("REVOKE ALL PRIVILEGES ON `%s`.* FROM '%s'@'localhost'; FLUSH PRIVILEGES", database, username)
+	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
+	if err != nil {
+		return fmt.Errorf("mysql revoke privileges: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("MYSQL_ERROR", "failed to revoke privileges: "+result.Stderr, nil)
+	}
+	return nil
+}
+
 // ResetPassword changes the password for an existing MySQL user.
 func (m *MySQLEngine) ResetPassword(ctx context.Context, username, password string) error {
 	stmt := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", username, password)

@@ -137,6 +137,12 @@ func (r *RedisEngine) GrantPrivileges(_ context.Context, _, _ string) error {
 	return model.NewValidationError("redis does not support privilege management")
 }
 
+// RevokePrivileges returns a validation error because Redis does not support
+// traditional privilege management.
+func (r *RedisEngine) RevokePrivileges(_ context.Context, _, _ string) error {
+	return model.NewValidationError("redis does not support privilege management")
+}
+
 // ResetPassword returns a validation error because Redis does not support
 // traditional user management.
 func (r *RedisEngine) ResetPassword(_ context.Context, _, _ string) error {

@@ -296,6 +296,16 @@ type DBUser struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// DBGrant is one recorded grant of a database user onto a managed database.
+type DBGrant struct {
+	UserID       string `json:"user_id"`
+	DatabaseID   string `json:"database_id"`
+	Username     string `json:"username"`
+	DatabaseName string `json:"database_name"`
+	Engine       string `json:"engine"`
+	CreatedAt    string `json:"created_at"`
+}
+
 type DockerStatus struct {
 	Installed  bool   `json:"installed"`
 	Running    bool   `json:"running"`

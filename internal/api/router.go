@@ -714,6 +714,10 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/users/{id}/grant", dbHandler.GrantPrivileges)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
+				Post("/databases/users/{id}/revoke", dbHandler.RevokePrivileges)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/grants", dbHandler.ListGrants)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/users/{id}/manage/unlock", dbHandler.UnlockManage)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Post("/databases/manage/{token}/lock", dbHandler.LockManage)

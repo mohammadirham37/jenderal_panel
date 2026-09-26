@@ -212,16 +212,18 @@ func (p *PostgreSQLEngine) ListUsers(ctx context.Context) ([]string, error) {
 	return users, nil
 }
 
-// GrantPrivileges grants all privileges on a database to a user. The user
-// also becomes the database owner: since PostgreSQL 15 the public schema no
-// longer grants CREATE to PUBLIC, so a plain GRANT ALL ON DATABASE leaves
-// application migrations failing with "permission denied for schema public".
-// On modern versions the public schema is owned by pg_database_owner, which
-// maps to the database owner; the explicit schema grant additionally covers
-// databases where it is not (restored dumps, older clusters).
+// GrantPrivileges grants all privileges on a database to a user without
+// transferring ownership: ALTER DATABASE ... OWNER TO would silently strip
+// the previous owner's access every time the same database is granted to
+// someone else. Since PostgreSQL 15 the public schema no longer grants
+// CREATE to PUBLIC, so the explicit schema grant below is what keeps
+// application migrations working. On modern versions the public schema is
+// owned by pg_database_owner, which maps to the database owner; the schema
+// grant also covers databases where it is not (restored dumps, older
+// clusters).
 func (p *PostgreSQLEngine) GrantPrivileges(ctx context.Context, username, database string) error {
-	ownerStmt := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", database, username)
-	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", ownerStmt)
+	dbStmt := fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", database, username)
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", dbStmt)
 	if err != nil {
 		return fmt.Errorf("postgresql grant privileges: %w", err)
 	}
@@ -238,6 +240,55 @@ func (p *PostgreSQLEngine) GrantPrivileges(ctx context.Context, username, databa
 		return model.NewDomainError("POSTGRESQL_ERROR", "failed to grant schema privileges: "+result.Stderr, nil)
 	}
 	return nil
+}
+
+// RevokePrivileges removes every privilege a user holds on a database. If
+// the user still owns the database (legacy grants transferred ownership),
+// ownership moves back to postgres first — an owner cannot be stripped of
+// their own database privileges.
+func (p *PostgreSQLEngine) RevokePrivileges(ctx context.Context, username, database string) error {
+	owner, err := p.databaseOwner(ctx, database)
+	if err != nil {
+		return err
+	}
+	if owner == username {
+		transferStmt := fmt.Sprintf("ALTER DATABASE %s OWNER TO postgres", database)
+		result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", transferStmt)
+		if err != nil {
+			return fmt.Errorf("postgresql revoke privileges: %w", err)
+		}
+		if result.ExitCode != 0 {
+			return model.NewDomainError("POSTGRESQL_ERROR", "failed to transfer database ownership: "+result.Stderr, nil)
+		}
+	}
+
+	revokeStmt := fmt.Sprintf(
+		"REVOKE ALL PRIVILEGES ON DATABASE %s FROM %s; "+
+			"REVOKE ALL ON SCHEMA public FROM %s; "+
+			"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %s; "+
+			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %s",
+		database, username, username, username, username)
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-d", database, "-c", revokeStmt)
+	if err != nil {
+		return fmt.Errorf("postgresql revoke privileges: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("POSTGRESQL_ERROR", "failed to revoke privileges: "+result.Stderr, nil)
+	}
+	return nil
+}
+
+// databaseOwner returns the role name that owns a database.
+func (p *PostgreSQLEngine) databaseOwner(ctx context.Context, database string) (string, error) {
+	stmt := fmt.Sprintf("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '%s'", database)
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-tAc", stmt)
+	if err != nil {
+		return "", fmt.Errorf("postgresql database owner: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", model.NewDomainError("POSTGRESQL_ERROR", "failed to look up database owner: "+result.Stderr, nil)
+	}
+	return strings.TrimSpace(result.Stdout), nil
 }
 
 // ResetPassword changes the password for an existing PostgreSQL user.

@@ -164,6 +164,9 @@ func (s *Service) DropDatabase(ctx context.Context, id string) error {
 		return err
 	}
 
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM db_grants WHERE database_id = ?`, id); err != nil {
+		return fmt.Errorf("delete grants for dropped database: %w", err)
+	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM managed_databases WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete managed database: %w", err)
@@ -294,6 +297,9 @@ func (s *Service) DropDBUser(ctx context.Context, id string) error {
 		return err
 	}
 
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM db_grants WHERE user_id = ?`, id); err != nil {
+		return fmt.Errorf("delete grants for dropped user: %w", err)
+	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM db_users WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete db user: %w", err)
@@ -387,31 +393,11 @@ func (s *Service) ResetPassword(ctx context.Context, id, password string) error 
 
 // GrantPrivileges grants all privileges on the specified database to the
 // specified user. Both must exist in the panel DB and share the same engine.
+// The grant is recorded in the panel DB so it can be listed and revoked.
 func (s *Service) GrantPrivileges(ctx context.Context, userID, databaseID string) error {
-	var username, userEngine string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT username, engine FROM db_users WHERE id = ?`, userID,
-	).Scan(&username, &userEngine)
-	if err == sql.ErrNoRows {
-		return model.NewValidationError("user not found")
-	}
+	username, userEngine, dbName, err := s.grantPair(ctx, userID, databaseID)
 	if err != nil {
-		return fmt.Errorf("query db user: %w", err)
-	}
-
-	var dbName, dbEngine string
-	err = s.db.QueryRowContext(ctx,
-		`SELECT name, engine FROM managed_databases WHERE id = ?`, databaseID,
-	).Scan(&dbName, &dbEngine)
-	if err == sql.ErrNoRows {
-		return model.NewValidationError("database not found")
-	}
-	if err != nil {
-		return fmt.Errorf("query managed database: %w", err)
-	}
-
-	if userEngine != dbEngine {
-		return model.NewValidationError("user and database must use the same engine")
+		return err
 	}
 
 	eng, err := s.engine(userEngine)
@@ -419,7 +405,107 @@ func (s *Service) GrantPrivileges(ctx context.Context, userID, databaseID string
 		return err
 	}
 
-	return eng.GrantPrivileges(ctx, username, dbName)
+	if err := eng.GrantPrivileges(ctx, username, dbName); err != nil {
+		return err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO db_grants (id, user_id, database_id, created_at) VALUES (?, ?, ?, ?)
+		 ON CONFLICT(user_id, database_id) DO NOTHING`,
+		ulid.Make().String(), userID, databaseID, now)
+	if err != nil {
+		return fmt.Errorf("record grant: %w", err)
+	}
+	return nil
+}
+
+// RevokePrivileges removes the grant of a database user on a managed
+// database: privileges are revoked on the engine and the panel record is
+// deleted.
+func (s *Service) RevokePrivileges(ctx context.Context, userID, databaseID string) error {
+	username, userEngine, dbName, err := s.grantPair(ctx, userID, databaseID)
+	if err != nil {
+		return err
+	}
+
+	eng, err := s.engine(userEngine)
+	if err != nil {
+		return err
+	}
+
+	if err := eng.RevokePrivileges(ctx, username, dbName); err != nil {
+		return err
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM db_grants WHERE user_id = ? AND database_id = ?`, userID, databaseID)
+	if err != nil {
+		return fmt.Errorf("delete grant record: %w", err)
+	}
+	return nil
+}
+
+// grantPair loads and validates the user/database pair behind a grant:
+// both must exist and share the same engine.
+func (s *Service) grantPair(ctx context.Context, userID, databaseID string) (username, engine, dbName string, err error) {
+	err = s.db.QueryRowContext(ctx,
+		`SELECT username, engine FROM db_users WHERE id = ?`, userID,
+	).Scan(&username, &engine)
+	if err == sql.ErrNoRows {
+		return "", "", "", model.NewValidationError("user not found")
+	}
+	if err != nil {
+		return "", "", "", fmt.Errorf("query db user: %w", err)
+	}
+
+	var dbEngine string
+	err = s.db.QueryRowContext(ctx,
+		`SELECT name, engine FROM managed_databases WHERE id = ?`, databaseID,
+	).Scan(&dbName, &dbEngine)
+	if err == sql.ErrNoRows {
+		return "", "", "", model.NewValidationError("database not found")
+	}
+	if err != nil {
+		return "", "", "", fmt.Errorf("query managed database: %w", err)
+	}
+
+	if engine != dbEngine {
+		return "", "", "", model.NewValidationError("user and database must use the same engine")
+	}
+	return username, engine, dbName, nil
+}
+
+// ListGrants returns recorded grants joined with the user and database
+// names. An empty ownerID returns every grant; otherwise only grants where
+// both the database user and the database belong to that panel user.
+func (s *Service) ListGrants(ctx context.Context, ownerID string) ([]model.DBGrant, error) {
+	query := `SELECT g.user_id, g.database_id, u.username, d.name, u.engine, g.created_at
+		FROM db_grants g
+		JOIN db_users u ON u.id = g.user_id
+		JOIN managed_databases d ON d.id = g.database_id`
+	args := []any{}
+	if ownerID != "" {
+		query += ` WHERE u.created_by = ? AND d.created_by = ?`
+		args = append(args, ownerID, ownerID)
+	}
+	query += ` ORDER BY g.created_at`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query db grants: %w", err)
+	}
+	defer rows.Close()
+
+	grants := []model.DBGrant{}
+	for rows.Next() {
+		var g model.DBGrant
+		if err := rows.Scan(&g.UserID, &g.DatabaseID, &g.Username, &g.DatabaseName, &g.Engine, &g.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan db grant: %w", err)
+		}
+		grants = append(grants, g)
+	}
+	return grants, rows.Err()
 }
 
 // Count returns the total number of managed databases.
