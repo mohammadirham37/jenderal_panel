@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { api, getCSRFToken } from '$lib/api';
 	import { language, translate } from '$lib/stores/language';
@@ -56,10 +57,15 @@
 	}
 	unlockedUser = restoreStoredUser();
 	// A stored token survives refresh — reload the workspace instead of
-	// forcing the operator back to the unlock gate.
-	$effect(() => {
-		if (token) loadDatabases().catch((err) => toast(err.message, true));
-		if (token) loadObjects().catch(() => undefined);
+	// forcing the operator back to the unlock gate. Deliberately onMount, not
+	// $effect: loadDatabases/loadObjects read selectedDb, so a reactive effect
+	// would re-run on every database switch and reset the selection back to
+	// the first database in the list.
+	onMount(() => {
+		if (token) {
+			loadDatabases().catch((err) => toast(err.message, true));
+			loadObjects().catch(() => undefined);
+		}
 	});
 	let sessionError = $state('');
 
@@ -224,7 +230,9 @@
 	async function loadDatabases() {
 		databases = await mapi<string[]>('/databases');
 		if (databases.length > 0) {
-			selectedDb = databases[0];
+			// Keep the current selection when it still exists — reloading the
+			// list must not jump the operator back to the first database.
+			if (!databases.includes(selectedDb)) selectedDb = databases[0];
 			await loadTables();
 		}
 	}
@@ -807,38 +815,6 @@
 						<div class="mt-2.5 border-t border-white/5 pt-2.5">
 							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.routines')}</span>
 							{#each objects.procedures as p (p)}
-								<button type="button" onclick={() => viewObjectDefinition('procedure', p)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
-									<span class="min-w-0 truncate font-mono text-xs">{p}</span>
-									<span class="shrink-0 text-[9px] uppercase text-gray-500">proc</span>
-								</button>
-							{/each}
-							{#each objects.functions as fn (fn)}
-								<button type="button" onclick={() => viewObjectDefinition('function', fn)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
-									<span class="min-w-0 truncate font-mono text-xs">{fn}</span>
-									<span class="shrink-0 text-[9px] uppercase text-gray-500">fn</span>
-								</button>
-							{/each}
-							{#each objects.triggers as tg (tg)}
-								<button type="button" onclick={() => viewObjectDefinition('trigger', tg)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
-									<span class="min-w-0 truncate font-mono text-xs">{tg}</span>
-									<span class="shrink-0 text-[9px] uppercase text-gray-500">trg</span>
-								</button>
-							{/each}
-				{#if objects}
-					{#if objects.views.length}
-						<div class="mt-2.5 border-t border-white/5 pt-2.5">
-							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.views')}</span>
-							{#each objects.views as v (v)}
-								<button type="button" onclick={() => pickTable(v)} class="mb-0.5 flex w-full cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left transition {selectedTable === v && viewMode === 'tables' ? 'bg-blue-500/15 text-blue-100' : 'text-gray-300 hover:bg-white/5'}">
-									<span class="min-w-0 truncate font-mono text-xs">{v}</span>
-								</button>
-							{/each}
-						</div>
-					{/if}
-					{#if objects.procedures.length || objects.functions.length || objects.triggers.length}
-						<div class="mt-2.5 border-t border-white/5 pt-2.5">
-							<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.routines')}</span>
-							{#each objects.procedures as p (p)}
 								<button type="button" onclick={() => viewObjectDefinition('procedure', p)} class="mb-0.5 flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left transition text-gray-300 hover:bg-white/5">
 									<span class="min-w-0 truncate font-mono text-xs">{p}</span>
 									<span class="shrink-0 text-[9px] uppercase text-gray-500">proc</span>
@@ -856,9 +832,6 @@
 									<span class="shrink-0 text-[9px] uppercase text-gray-500">trg</span>
 								</button>
 							{/each}
-						</div>
-					{/if}
-				{/if}
 						</div>
 					{/if}
 				{/if}
@@ -1016,14 +989,6 @@
 						>
 							{translate($language, 'dbm.insert_row')}
 						</button>
-									<button
-										type="button"
-										onclick={openInsertRow}
-										disabled={!browse}
-										class="cursor-pointer rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-blue-700 disabled:opacity-40"
-									>
-										{translate($language, 'dbm.insert_row')}
-									</button>
 						<button
 							type="button"
 							onclick={exportCsv}
