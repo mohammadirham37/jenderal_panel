@@ -26,6 +26,7 @@ const (
 
 type manageSession struct {
 	PanelUserID string
+	UserID      string
 	Engine      string
 	Username    string
 	Password    string
@@ -164,6 +165,7 @@ func (s *Service) UnlockManage(ctx context.Context, userID, password, panelUserI
 
 	token = manageSessions.put(&manageSession{
 		PanelUserID: panelUserID,
+		UserID:      userID,
 		Engine:      storedEngine,
 		Username:    username,
 		Password:    password,
@@ -221,7 +223,44 @@ func (s *Service) ManageDatabases(ctx context.Context, token string) ([]string, 
 		}
 		names = append(names, name)
 	}
-	return names, nil
+	return s.filterGrantedDatabases(ctx, session, names), nil
+}
+
+// filterGrantedDatabases restricts the listing to databases explicitly
+// granted to this user in the panel: PostgreSQL lists every database in the
+// cluster regardless of privileges, and MySQL may expose more than the panel
+// intended. An empty session UserID (defensive) keeps the list unfiltered.
+func (s *Service) filterGrantedDatabases(ctx context.Context, session *manageSession, names []string) []string {
+	if session.UserID == "" {
+		return names
+	}
+	granted := map[string]bool{}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT d.name FROM db_grants g JOIN managed_databases d ON d.id = g.database_id WHERE g.user_id = ?`,
+		session.UserID)
+	if err != nil {
+		// The panel DB being unavailable must not break the manage session;
+		// fall back to the engine's own listing.
+		return names
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return names
+		}
+		granted[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return names
+	}
+	filtered := []string{}
+	for _, name := range names {
+		if granted[name] {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered
 }
 
 func systemDatabase(engine, name string) bool {

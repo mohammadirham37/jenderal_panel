@@ -735,6 +735,9 @@
 						<option value={name}>{name}</option>
 					{/each}
 				</select>
+				{#if databases.length === 0}
+					<p class="mt-1.5 text-[11px] leading-snug text-yellow-300">{translate($language, 'dbm.no_granted_databases')}</p>
+				{/if}
 				<button
 					type="button"
 					onclick={() => { viewMode = 'sql'; }}

@@ -2,6 +2,7 @@ package dbmanager
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -394,3 +395,40 @@ func TestValidateColumnSpec(t *testing.T) {
 }
 
 func ptrString(v string) *string { return &v }
+
+// ManageDatabases must only surface databases explicitly granted to the
+// session's user in the panel: PostgreSQL lists every cluster database
+// regardless of privileges.
+func TestManageDatabasesFiltersToGrantedOnly(t *testing.T) {
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+	for _, stmt := range []string{
+		`CREATE TABLE managed_databases (id TEXT PRIMARY KEY, name TEXT, engine TEXT)`,
+		`CREATE TABLE db_grants (id TEXT PRIMARY KEY, user_id TEXT, database_id TEXT)`,
+		`INSERT INTO managed_databases VALUES ('1','app_db','postgresql'),('2','shop','postgresql'),('3','other','postgresql')`,
+		`INSERT INTO db_grants VALUES ('g1','user-1','1')`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	mock := stubManageExec(map[string]string{
+		"pg_database": "datname\napp_db\nshop\nother\npostgres\n",
+	})
+	svc := &Service{db: db, exec: mock}
+
+	token := manageSessions.put(&manageSession{UserID: "user-1", Engine: "postgresql", Username: "app_user", Password: "pw"})
+	defer manageSessions.drop(token)
+
+	got, err := svc.ManageDatabases(context.Background(), token)
+	if err != nil {
+		t.Fatalf("ManageDatabases: %v", err)
+	}
+	if len(got) != 1 || got[0] != "app_db" {
+		t.Fatalf("databases = %v, want only the granted [app_db]", got)
+	}
+}
