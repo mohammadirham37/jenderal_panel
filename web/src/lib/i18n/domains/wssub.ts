@@ -4,6 +4,21 @@
 // TypeScript enforces that `id` has exactly the keys of `en`.
 
 const en = {
+	// Bandwidth usage page
+	'wsbw.loading': 'Loading website...',
+	'wsbw.subtitle': 'Monthly bandwidth served since access-log tracking began',
+	'wsbw.error.website_id_required': 'Website ID is required.',
+	'wsbw.error.load_website': 'Failed to load website',
+	'wsbw.error.load_bandwidth': 'Failed to load bandwidth usage',
+	'wsbw.empty': 'No bandwidth recorded yet.',
+	'wsbw.empty_hint': 'Usage appears here once this website serves traffic and the access-log collector runs.',
+	'wsbw.total_bandwidth': 'Total bandwidth',
+	'wsbw.total_requests': 'Total requests',
+	'wsbw.monthly_title': 'Monthly breakdown',
+	'wsbw.col_month': 'Month',
+	'wsbw.col_requests': 'Requests',
+	'wsbw.col_bandwidth': 'Bandwidth',
+	'wsbw.total': 'Total',
 	// Cron jobs page
 	'wscronp.loading_website': 'Loading website...',
 	'wscronp.back_to_websites': 'Websites',
@@ -121,6 +136,21 @@ const en = {
 } as const;
 
 const id: Record<keyof typeof en, string> = {
+	// Bandwidth usage page
+	'wsbw.loading': 'Memuat situs web...',
+	'wsbw.subtitle': 'Bandwidth bulanan sejak pelacakan access log dimulai',
+	'wsbw.error.website_id_required': 'ID website wajib ada.',
+	'wsbw.error.load_website': 'Gagal memuat website',
+	'wsbw.error.load_bandwidth': 'Gagal memuat pemakaian bandwidth',
+	'wsbw.empty': 'Belum ada bandwidth tercatat.',
+	'wsbw.empty_hint': 'Pemakaian muncul di sini setelah website ini melayani trafik dan collector access log berjalan.',
+	'wsbw.total_bandwidth': 'Total bandwidth',
+	'wsbw.total_requests': 'Total permintaan',
+	'wsbw.monthly_title': 'Rincian per bulan',
+	'wsbw.col_month': 'Bulan',
+	'wsbw.col_requests': 'Permintaan',
+	'wsbw.col_bandwidth': 'Bandwidth',
+	'wsbw.total': 'Total',
 	// Cron jobs page
 	'wscronp.loading_website': 'Memuat situs web...',
 	'wscronp.back_to_websites': 'Situs Web',

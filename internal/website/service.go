@@ -428,6 +428,46 @@ func (s *Service) Get(ctx context.Context, id string) (model.Website, error) {
 	return w, nil
 }
 
+// BandwidthMonth is one month of accumulated traffic for a website, as
+// collected from its nginx access log.
+type BandwidthMonth struct {
+	Month    string `json:"month"` // 'YYYY-MM' (UTC)
+	Bytes    int64  `json:"bytes"`
+	Requests int64  `json:"requests"`
+}
+
+// BandwidthMonthly returns the per-month bandwidth of a website, oldest
+// first. Counting starts when the access-log collector began tracking the
+// site; months before that have no row.
+func (s *Service) BandwidthMonthly(ctx context.Context, websiteID string) ([]BandwidthMonth, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM websites WHERE id = ?)`, websiteID).Scan(&exists)
+	if err != nil {
+		return nil, fmt.Errorf("check website: %w", err)
+	}
+	if !exists {
+		return nil, model.ErrNotFound
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT month, bytes, requests FROM website_bandwidth_monthly WHERE website_id = ? ORDER BY month`,
+		websiteID)
+	if err != nil {
+		return nil, fmt.Errorf("query website bandwidth: %w", err)
+	}
+	defer rows.Close()
+
+	months := []BandwidthMonth{}
+	for rows.Next() {
+		var m BandwidthMonth
+		if err := rows.Scan(&m.Month, &m.Bytes, &m.Requests); err != nil {
+			return nil, fmt.Errorf("scan website bandwidth: %w", err)
+		}
+		months = append(months, m)
+	}
+	return months, rows.Err()
+}
+
 // ConfigureDeployWebhook stores the repository, branch, and a freshly
 // generated webhook secret; it returns the secret so the owner can configure
 // the git host.

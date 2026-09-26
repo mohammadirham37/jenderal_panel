@@ -17,6 +17,7 @@
 		Overview: 'wsnav.overview',
 		Deployments: 'wsnav.deployments',
 		SSL: 'wsnav.ssl',
+		Bandwidth: 'wsnav.bandwidth',
 		'Cron Jobs': 'wsnav.cron',
 		'Queue Workers': 'wsnav.queue'
 	};

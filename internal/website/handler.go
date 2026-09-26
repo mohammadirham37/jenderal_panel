@@ -76,6 +76,18 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, website)
 }
 
+// Bandwidth handles GET /api/websites/{id}/bandwidth: the per-month traffic
+// the site has served since access-log tracking began.
+func (h *Handler) Bandwidth(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	months, err := h.svc.BandwidthMonthly(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, months)
+}
+
 // List handles GET /api/websites.
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	websites, err := h.listScoped(r)

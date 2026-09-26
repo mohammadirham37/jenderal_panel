@@ -7,6 +7,7 @@ const en = {
 	'wsnav.overview': 'Overview',
 	'wsnav.deployments': 'Deployments',
 	'wsnav.ssl': 'SSL',
+	'wsnav.bandwidth': 'Bandwidth',
 	'wsnav.cron': 'Cron Jobs',
 	'wsnav.queue': 'Queue Workers',
 
@@ -187,6 +188,7 @@ const id: Record<keyof typeof en, string> = {
 	'wsnav.overview': 'Ringkasan',
 	'wsnav.deployments': 'Deployment',
 	'wsnav.ssl': 'SSL',
+	'wsnav.bandwidth': 'Bandwidth',
 	'wsnav.cron': 'Tugas Cron',
 	'wsnav.queue': 'Antrean Worker',
 

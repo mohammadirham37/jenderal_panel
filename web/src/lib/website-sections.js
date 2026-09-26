@@ -2,6 +2,7 @@ const sections = [
 	{ label: 'Overview', suffix: '' },
 	{ label: 'Deployments', suffix: '/deployments' },
 	{ label: 'SSL', suffix: '/ssl' },
+	{ label: 'Bandwidth', suffix: '/bandwidth' },
 	{ label: 'Cron Jobs', suffix: '/cron' },
 	{ label: 'Queue Workers', suffix: '/queue-workers' }
 ];

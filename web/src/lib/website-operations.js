@@ -12,6 +12,7 @@ export function websiteOperationAPI(websiteID) {
 		sslIssue: `${website}/ssl/issue`,
 		sslCustom: `${website}/ssl/custom`,
 		cronJobs: `${website}/cron-jobs`,
-		queueWorkers: `${website}/queue-workers`
+		queueWorkers: `${website}/queue-workers`,
+		bandwidth: `${website}/bandwidth`
 	};
 }

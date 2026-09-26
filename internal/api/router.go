@@ -419,6 +419,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/force-https", websiteHandler.SetForceHTTPS)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/bandwidth", websiteHandler.Bandwidth)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/access", websiteHandler.AccessLog)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/error", websiteHandler.ErrorLog)
