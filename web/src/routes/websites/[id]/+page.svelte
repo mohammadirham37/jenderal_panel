@@ -13,6 +13,7 @@
 	import WebsitePhpSettingsSection from '$lib/components/WebsitePhpSettingsSection.svelte';
 	import WebsiteAppSection from '$lib/components/WebsiteAppSection.svelte';
 	import WebsiteDiagnosticsSection from '$lib/components/WebsiteDiagnosticsSection.svelte';
+	import WebsiteBandwidthSection from '$lib/components/WebsiteBandwidthSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
@@ -83,7 +84,7 @@ import { toast } from '$lib/stores/toast';
 
 	// ─── Tabs ─────────────────────────────────────────────────────────
 
-	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'App', 'Benchmark', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
+	const allTabs = ['Overview', 'Deployment', 'SSL', 'Commands', 'PHP Settings', 'App', 'Benchmark', 'Bandwidth', 'WP Toolkit', 'Cron Jobs', 'Files', 'Terminal', 'Logs', 'Config', 'Domains', 'Queue'] as const;
 	type Tab = typeof allTabs[number];
 	// Display labels are translated; the values in `allTabs` stay English (used in URLs and logic).
 	const tabKeys: Record<Tab, string> = {
@@ -94,6 +95,7 @@ import { toast } from '$lib/stores/toast';
 		'PHP Settings': 'wd.tab.php_settings',
 		App: 'wd.tab.app',
 		Benchmark: 'wd.tab.benchmark',
+		Bandwidth: 'wd.tab.bandwidth',
 		'WP Toolkit': 'wd.tab.wp_toolkit',
 		'Cron Jobs': 'wd.tab.cron',
 		Files: 'wd.tab.files',
@@ -2527,6 +2529,9 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			<!-- ============================================================ -->
 			<!-- FILES TAB                                                     -->
 			<!-- ============================================================ -->
+			{:else if activeTab === 'Bandwidth'}
+				<WebsiteBandwidthSection websiteId={website.id} />
+
 			{:else if activeTab === 'Files'}
 				<WebsiteFilesSection {website} />
 
