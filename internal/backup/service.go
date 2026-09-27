@@ -285,11 +285,14 @@ func (s *Service) backupWebsite(ctx context.Context, b model.Backup) error {
 		webUser = user
 	}
 
-	result, err := s.exec.RunSudo(ctx, "tar", "-czf", b.Path, "-C", "/home/"+webUser, ".")
+	// --warning=no-file-changed: on a live site (sessions, cache, logs) files
+	// change while tar reads them; GNU tar then exits 1 even though the
+	// archive is complete, so exit 1 is accepted and only >=2 fails.
+	result, err := s.exec.RunSudo(ctx, "tar", "--warning=no-file-changed", "-czf", b.Path, "-C", "/home/"+webUser, ".")
 	if err != nil {
 		return fmt.Errorf("tar website: %w", err)
 	}
-	if result.ExitCode != 0 {
+	if result.ExitCode > 1 {
 		return fmt.Errorf("tar website failed (exit %d): %s", result.ExitCode, result.Stderr)
 	}
 	return nil
