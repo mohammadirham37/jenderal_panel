@@ -3,6 +3,7 @@ package dbmanager
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -154,6 +155,36 @@ func (p *PostgreSQLEngine) ListDatabases(ctx context.Context) ([]string, error) 
 		databases = append(databases, db)
 	}
 	return databases, nil
+}
+
+// DatabaseSizes reports pg_database_size in bytes for the named databases.
+func (p *PostgreSQLEngine) DatabaseSizes(ctx context.Context, names []string) (map[string]int64, error) {
+	sizes := map[string]int64{}
+	if len(names) == 0 {
+		return sizes, nil
+	}
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = "'" + strings.ReplaceAll(name, "'", "''") + "'"
+	}
+	stmt := fmt.Sprintf("SELECT datname, pg_database_size(datname) FROM pg_database WHERE datname IN (%s)", strings.Join(quoted, ","))
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-tAc", stmt)
+	if err != nil {
+		return nil, fmt.Errorf("postgresql database sizes: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return nil, model.NewDomainError("POSTGRESQL_ERROR", "failed to read database sizes: "+result.Stderr, nil)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
+		parts := strings.SplitN(line, "|", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64); err == nil {
+			sizes[strings.TrimSpace(parts[0])] = n
+		}
+	}
+	return sizes, nil
 }
 
 // CreateUser creates a new PostgreSQL user with a password.

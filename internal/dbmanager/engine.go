@@ -23,4 +23,8 @@ type DatabaseEngine interface {
 	GrantPrivileges(ctx context.Context, username, database string) error
 	RevokePrivileges(ctx context.Context, username, database string) error
 	ResetPassword(ctx context.Context, username, password string) error
+	// DatabaseSizes reports the on-disk size in bytes of the named
+	// databases. Engines that cannot measure sizes return an empty map;
+	// names without a result simply have no entry.
+	DatabaseSizes(ctx context.Context, names []string) (map[string]int64, error)
 }

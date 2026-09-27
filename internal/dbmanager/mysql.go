@@ -3,6 +3,7 @@ package dbmanager
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -161,6 +162,39 @@ func (m *MySQLEngine) ListDatabases(ctx context.Context) ([]string, error) {
 		databases = append(databases, db)
 	}
 	return databases, nil
+}
+
+// DatabaseSizes reports the data+index size in bytes of the named MySQL
+// databases in one information_schema query.
+func (m *MySQLEngine) DatabaseSizes(ctx context.Context, names []string) (map[string]int64, error) {
+	sizes := map[string]int64{}
+	if len(names) == 0 {
+		return sizes, nil
+	}
+	quoted := make([]string, len(names))
+	for i, name := range names {
+		quoted[i] = "'" + strings.ReplaceAll(name, "'", "''") + "'"
+	}
+	stmt := fmt.Sprintf(
+		"SELECT table_schema, COALESCE(SUM(data_length+index_length),0) FROM information_schema.TABLES WHERE table_schema IN (%s) GROUP BY table_schema",
+		strings.Join(quoted, ","))
+	result, err := m.exec.RunSudo(ctx, "mysql", "--batch", "--skip-column-names", "-e", stmt)
+	if err != nil {
+		return nil, fmt.Errorf("mysql database sizes: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return nil, model.NewDomainError("MYSQL_ERROR", "failed to read database sizes: "+result.Stderr, nil)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(result.Stdout), "\n") {
+		parts := strings.SplitN(line, "\t", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if n, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64); err == nil {
+			sizes[strings.TrimSpace(parts[0])] = n
+		}
+	}
+	return sizes, nil
 }
 
 // CreateUser creates a new MySQL user identified by password.

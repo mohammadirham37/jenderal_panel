@@ -287,6 +287,9 @@ type ManagedDatabase struct {
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// SizeBytes is the on-disk size reported by the engine at listing time;
+	// 0 when the engine cannot measure it or the lookup failed.
+	SizeBytes int64 `json:"size_bytes"`
 }
 
 type DBUser struct {

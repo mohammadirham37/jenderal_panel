@@ -20,6 +20,7 @@ import { toast } from '$lib/stores/toast';
 		engine: string;
 		charset: string;
 		created_at: string;
+		size_bytes: number;
 	}
 
 	interface DbUser {
@@ -200,6 +201,15 @@ import { toast } from '$lib/stores/toast';
 
 	function engineInitial(engine: string): string {
 		return engineMeta[engine]?.initial || engine.charAt(0).toUpperCase();
+	}
+
+	function formatSize(bytes: number): string {
+		if (!bytes || bytes <= 0) return '';
+		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+		let size = bytes;
+		let i = 0;
+		while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
+		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 	}
 
 	function formatDate(dateStr: string): string {
@@ -750,7 +760,7 @@ import { toast } from '$lib/stores/toast';
 								{db.name}
 							</button>
 							<p class="text-[11px] text-gray-500">
-								{db.charset || '—'} · {translate($language, 'db.created_at').replace('{date}', formatDate(db.created_at))}
+								{db.charset || '—'}{formatSize(db.size_bytes) ? ` · ${formatSize(db.size_bytes)}` : ''} · {translate($language, 'db.created_at').replace('{date}', formatDate(db.created_at))}
 							</p>
 						</div>
 						<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(db.engine)}">

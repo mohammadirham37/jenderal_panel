@@ -113,6 +113,12 @@ func (r *RedisEngine) ListDatabases(_ context.Context) ([]string, error) {
 	return nil, model.NewValidationError("redis does not support named databases")
 }
 
+// DatabaseSizes is not applicable to Redis: logical DB indexes carry no
+// meaningful on-disk size, so an empty map is returned.
+func (r *RedisEngine) DatabaseSizes(_ context.Context, _ []string) (map[string]int64, error) {
+	return map[string]int64{}, nil
+}
+
 // CreateUser returns a validation error because Redis does not support
 // traditional user management.
 func (r *RedisEngine) CreateUser(_ context.Context, _, _ string) error {

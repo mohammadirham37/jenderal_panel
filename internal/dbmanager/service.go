@@ -207,8 +207,33 @@ func (s *Service) listDatabasesWhere(ctx context.Context, where string, args []a
 		d.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 		dbs = append(dbs, d)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate managed databases: %w", err)
+	}
 
-	return dbs, rows.Err()
+	// Attach on-disk sizes per engine. A failed size lookup must never
+	// break the listing: the page simply shows no size for those rows.
+	byEngine := map[string][]string{}
+	for _, d := range dbs {
+		byEngine[d.Engine] = append(byEngine[d.Engine], d.Name)
+	}
+	for engineName, names := range byEngine {
+		eng, err := s.engine(engineName)
+		if err != nil {
+			continue
+		}
+		sizes, err := eng.DatabaseSizes(ctx, names)
+		if err != nil {
+			continue
+		}
+		for i := range dbs {
+			if dbs[i].Engine == engineName {
+				dbs[i].SizeBytes = sizes[dbs[i].Name]
+			}
+		}
+	}
+
+	return dbs, nil
 }
 
 // GetDatabase loads one managed database record.
