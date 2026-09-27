@@ -126,6 +126,10 @@
 	let diagram = $state<ManagedSchemaDiagram | null>(null);
 	let diagramLoading = $state(false);
 	let diagramError = $state('');
+	// True only once mermaid has finished and the <svg> is actually in the DOM.
+	// The fetch can complete seconds before the render does, and the download
+	// button must not offer a PNG that does not exist yet.
+	let diagramRendered = $state(false);
 	let diagramContainer: HTMLDivElement | undefined = $state();
 	let diagramStage: HTMLDivElement | undefined = $state();
 	let diagramFullscreen = $state(false);
@@ -300,6 +304,7 @@
 		objects = null;
 		diagram = null;
 		diagramError = '';
+		diagramRendered = false;
 		diagramRenderToken++;
 		loadTables().catch((err) => toast(err.message, true));
 		loadObjects().catch((err) => toast(err.message, true));
@@ -334,6 +339,7 @@
 		if (!selectedDb) return;
 		diagramLoading = true;
 		diagramError = '';
+		diagramRendered = false;
 		const myToken = ++diagramRenderToken;
 		try {
 			const data = await mapi<ManagedSchemaDiagram>(`/schema?database=${encodeURIComponent(selectedDb)}`);
@@ -350,13 +356,17 @@
 
 	async function renderDiagram() {
 		if (!diagram || !diagramContainer) return;
+		diagramRendered = false;
 		const mermaid = (await import('mermaid')).default;
 		// htmlLabels: false keeps every label as plain <text>. Mermaid's default
 		// foreignObject labels cannot be rasterized when the SVG is loaded into
 		// an <img> for the PNG export, which produced empty downloads.
 		mermaid.initialize({ startOnLoad: false, theme: 'dark', htmlLabels: false });
 		const { svg } = await mermaid.render('dbm-er-' + Date.now(), buildErDiagram(diagram));
-		if (diagramContainer) diagramContainer.innerHTML = svg;
+		if (diagramContainer) {
+			diagramContainer.innerHTML = svg;
+			diagramRendered = true;
+		}
 	}
 
 	function toggleDiagramFullscreen() {
@@ -370,10 +380,46 @@
 		}
 	}
 
+	// Canvas limits (Chromium): a side above ~16k px or an area above ~268 MP
+	// makes toBlob silently return null, which used to surface as a generic
+	// export failure on large schemas. Pick the largest scale that fits.
+	const PNG_MAX_SIDE = 16384;
+	const PNG_MAX_AREA = 268_435_456;
+
+	function pngScale(width: number, height: number): number {
+		const bySide = PNG_MAX_SIDE / Math.max(width, height);
+		const byArea = Math.sqrt(PNG_MAX_AREA / (width * height));
+		return Math.max(0.25, Math.min(2, bySide, byArea));
+	}
+
+	function svgToPngBlob(img: HTMLImageElement, width: number, height: number, scale: number): Promise<Blob | null> {
+		const canvas = document.createElement('canvas');
+		canvas.width = Math.max(1, Math.round(width * scale));
+		canvas.height = Math.max(1, Math.round(height * scale));
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return Promise.resolve(null);
+		ctx.fillStyle = '#111827';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+		return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+	}
+
+	function svgToPngDataURL(img: HTMLImageElement, width: number, height: number, scale: number): string | null {
+		const canvas = document.createElement('canvas');
+		canvas.width = Math.max(1, Math.round(width * scale));
+		canvas.height = Math.max(1, Math.round(height * scale));
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return null;
+		ctx.fillStyle = '#111827';
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+		return canvas.toDataURL('image/png');
+	}
+
 	async function downloadDiagramPng() {
 		if (!diagramContainer) return;
 		const svgEl = diagramContainer.querySelector('svg');
-		if (!svgEl) throw new Error(translate($language, 'dbm.diagram_png_error'));
+		if (!svgEl) throw new Error(translate($language, 'dbm.diagram_not_ready'));
 		const viewbox = (svgEl.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
 		const width = viewbox.length === 4 && viewbox[2] > 0 ? viewbox[2] : svgEl.clientWidth;
 		const height = viewbox.length === 4 && viewbox[3] > 0 ? viewbox[3] : svgEl.clientHeight;
@@ -382,9 +428,11 @@
 		// Give the SVG explicit pixel dimensions so the rasterizer knows its
 		// natural size; the inline style carries a max-width that would clip it.
 		const clone = svgEl.cloneNode(true) as SVGSVGElement;
-		clone.setAttribute('width', String(width));
-		clone.setAttribute('height', String(height));
+		clone.setAttribute('width', String(Math.round(width)));
+		clone.setAttribute('height', String(Math.round(height)));
 		clone.removeAttribute('style');
+		clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+		clone.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink');
 
 		// Safety net: rasterizing foreignObject content inside an <img> yields
 		// a blank image, so flatten any leftover HTML labels into plain text.
@@ -401,32 +449,43 @@
 		}
 
 		const svgText = new XMLSerializer().serializeToString(clone);
-		const url = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }));
+		const blobUrl = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }));
 		try {
+			// Decode the SVG through an <img>. If the blob URL is refused (some
+			// browsers/extension contexts are strict about SVG sources), retry
+			// once with a data: URL before giving up.
 			const img = new Image();
 			await new Promise<void>((resolve, reject) => {
 				img.onload = () => resolve();
 				img.onerror = () => reject(new Error(translate($language, 'dbm.diagram_png_error')));
-				img.src = url;
+				img.src = blobUrl;
+			}).catch(async (err) => {
+				const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
+				await new Promise<void>((resolve, reject) => {
+					img.onload = () => resolve();
+					img.onerror = () => reject(err);
+					img.src = dataUrl;
+				});
 			});
-			const scale = 2;
-			const canvas = document.createElement('canvas');
-			canvas.width = Math.round(width * scale);
-			canvas.height = Math.round(height * scale);
-			const ctx = canvas.getContext('2d');
-			if (!ctx) throw new Error(translate($language, 'dbm.diagram_png_error'));
-			ctx.fillStyle = '#111827';
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-			const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
-			if (!blob) throw new Error(translate($language, 'dbm.diagram_png_error'));
+
+			const scale = pngScale(width, height);
+			let blob = await svgToPngBlob(img, width, height, scale);
+			if (!blob && scale > 1) {
+				// Extremely large diagrams can still fail at the computed scale;
+				// one step down usually fits.
+				blob = await svgToPngBlob(img, width, height, 1);
+			}
+			const href = blob
+				? URL.createObjectURL(blob)
+				: svgToPngDataURL(img, width, height, Math.min(scale, 1));
+			if (!href) throw new Error(translate($language, 'dbm.diagram_png_error'));
 			const a = document.createElement('a');
-			a.href = URL.createObjectURL(blob);
+			a.href = href;
 			a.download = `${selectedDb}-diagram.png`;
 			a.click();
-			URL.revokeObjectURL(a.href);
+			URL.revokeObjectURL(href);
 		} finally {
-			URL.revokeObjectURL(url);
+			URL.revokeObjectURL(blobUrl);
 		}
 	}
 
@@ -1206,7 +1265,7 @@
 						<button
 							type="button"
 							onclick={() => downloadDiagramPng().catch((err) => toast(err instanceof Error ? err.message : String(err), true))}
-							disabled={!diagram || !!diagramError || diagramLoading}
+							disabled={!diagram || !!diagramError || diagramLoading || !diagramRendered}
 							class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40"
 						>
 							{translate($language, 'dbm.diagram_download_png')}
