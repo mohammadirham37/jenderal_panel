@@ -380,6 +380,11 @@ func (h *Handler) RevokePrivileges(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
+	// The route already names the db user; some clients send only the
+	// database_id in the body.
+	if req.UserID == "" {
+		req.UserID = chi.URLParam(r, "id")
+	}
 
 	if !h.canManageDatabase(r, req.DatabaseID) {
 		httputil.HandleError(w, model.ErrForbidden)
