@@ -223,8 +223,8 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
         # must match the panel's own restore upload cap
-        client_max_body_size 512m;
-        proxy_read_timeout 3600s;
+        client_max_body_size 2g;
+        proxy_read_timeout 7200s;
     }
 }
 `
@@ -257,8 +257,8 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
         # must match the panel's own restore upload cap
-        client_max_body_size 512m;
-        proxy_read_timeout 3600s;
+        client_max_body_size 2g;
+        proxy_read_timeout 7200s;
     }
 }
 
@@ -282,8 +282,8 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
         # must match the panel's own restore upload cap
-        client_max_body_size 512m;
-        proxy_read_timeout 3600s;
+        client_max_body_size 2g;
+        proxy_read_timeout 7200s;
         proxy_send_timeout 300s;
     }
 }

@@ -20,15 +20,15 @@ func Run(cfg config.ServerConfig, handler http.Handler, logger *slog.Logger) err
 
 	srv := &http.Server{
 		Handler: handler,
-		// Large database uploads (up to 512 MB) and long restores or exports
-		// legitimately run for many minutes: ReadTimeout covers the whole
+		// Large database uploads (up to 2 GB) and long restores or exports
+		// legitimately run for a long time: ReadTimeout covers the whole
 		// request body and WriteTimeout the whole handler, so both need
-		// generous bounds — a 60s write deadline aborts the connection
+		// generous bounds — a short write deadline aborts the connection
 		// mid-import and surfaces as 502 behind the panel domain proxy.
 		// ReadHeaderTimeout stays tight to keep slow-header clients out.
 		ReadHeaderTimeout: 15 * time.Second,
-		ReadTimeout:       15 * time.Minute,
-		WriteTimeout:      60 * time.Minute,
+		ReadTimeout:       30 * time.Minute,
+		WriteTimeout:      2 * time.Hour,
 		IdleTimeout:       120 * time.Second,
 	}
 

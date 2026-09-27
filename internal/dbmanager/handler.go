@@ -476,11 +476,11 @@ func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 // maxRestoreBytes caps the uploaded dump size for restores.
-const maxRestoreBytes = 512 << 20
+const maxRestoreBytes = 2 << 30
 
 // restoreMultipartMemory bounds how much of the uploaded dump ParseMultipart
 // keeps in RAM; larger file parts spill to temp files and are streamed into
-// the engine from there (the 512 MB cap itself is MaxBytesReader's job).
+// the engine from there (the 2 GB cap itself is MaxBytesReader's job).
 const restoreMultipartMemory = 32 << 20
 
 // RestoreDatabase handles POST /databases/{id}/restore. Expects a multipart
@@ -494,7 +494,7 @@ func (h *Handler) RestoreDatabase(w http.ResponseWriter, r *http.Request) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
-				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 512 MB limit")
+				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 2 GB limit")
 			return
 		}
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")
@@ -719,7 +719,7 @@ func (h *Handler) ManageRestore(w http.ResponseWriter, r *http.Request) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
-				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 512 MB limit")
+				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 2 GB limit")
 			return
 		}
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")

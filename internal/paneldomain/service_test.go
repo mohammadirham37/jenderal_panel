@@ -12,9 +12,9 @@ func TestRenderHTTPVhost(t *testing.T) {
 		"proxy_pass http://127.0.0.1:8443",
 		"/var/lib/jenderal/acme-challenges",
 		"$jenderal_ws_panel_example_com",
-		// Restores upload up to 512 MB through this vhost.
-		"client_max_body_size 512m",
-		"proxy_read_timeout 3600s",
+		// Restores upload up to 2 GB through this vhost.
+		"client_max_body_size 2g",
+		"proxy_read_timeout 7200s",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("http vhost missing %q", want)
@@ -33,9 +33,9 @@ func TestRenderTLSVhost(t *testing.T) {
 		"proxy_pass http://127.0.0.1:8443",
 		"/webroot",
 		"$jenderal_ws_panel_example_com_wss",
-		// Restores upload up to 512 MB through this vhost.
-		"client_max_body_size 512m",
-		"proxy_read_timeout 3600s",
+		// Restores upload up to 2 GB through this vhost.
+		"client_max_body_size 2g",
+		"proxy_read_timeout 7200s",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("tls vhost missing %q", want)
