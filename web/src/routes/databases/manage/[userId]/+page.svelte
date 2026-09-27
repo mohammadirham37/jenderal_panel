@@ -192,7 +192,12 @@
 			toastError = '';
 		}
 		clearTimeout(toastTimer);
-		toastTimer = setTimeout(() => { toastMsg = ''; toastError = ''; }, 4000);
+		// Errors persist until dismissed: restore/import failures carry the
+		// engine's stderr and disappear with an auto-refresh before they can
+		// be read. Only success messages auto-clear.
+		if (!isError) {
+			toastTimer = setTimeout(() => { toastMsg = ''; toastError = ''; }, 4000);
+		}
 	}
 
 	async function mapi<T>(path: string, opts?: { method?: string; body?: unknown }): Promise<T> {
