@@ -2872,7 +2872,7 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 		aria-modal="true"
 		aria-label={translate($language, 'wd.cmd.progress_title')}
 	>
-		<div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+		<div class="w-full max-w-3xl rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
 			<div class="flex items-center justify-between gap-3">
 				<h4 class="text-base font-semibold text-white">{translate($language, 'wd.cmd.progress_title')}</h4>
 				<button
