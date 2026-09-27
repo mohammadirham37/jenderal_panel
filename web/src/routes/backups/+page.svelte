@@ -451,12 +451,23 @@ import { roles } from '$lib/stores/auth';
 
 <div class="space-y-6">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-2xl font-bold text-white">{translate($language, 'bk.title')}</h2>
-		<div class="flex items-center gap-2">
+		<div class="flex items-center gap-3">
+			<span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-blue-500/10 text-blue-400">
+				<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+				</svg>
+			</span>
+			<div>
+				<h2 class="text-2xl font-bold text-white">{translate($language, 'bk.title')}</h2>
+				<p class="text-xs text-gray-400">{translate($language, 'bk.subtitle')}</p>
+			</div>
+		</div>
+		<div class="flex flex-wrap items-center gap-2">
 			<button
 				type="button"
 				onclick={pruneNow}
 				disabled={pruneBusy}
+				title={translate($language, 'bk.titlePrune')}
 				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
 			>
 				{pruneBusy ? translate($language, 'bk.pruning') : translate($language, 'bk.pruneNow')}
@@ -464,14 +475,14 @@ import { roles } from '$lib/stores/auth';
 			<button
 				type="button"
 				onclick={() => (showImportForm = !showImportForm)}
-				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
+				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 {showImportForm ? 'ring-2 ring-blue-500/40' : ''}"
 			>
 				{showImportForm ? translate($language, 'bk.importClose') : translate($language, 'bk.importBackup')}
 			</button>
 			<button
 				type="button"
 				onclick={() => (showScheduleForm = !showScheduleForm)}
-				class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
+				class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 {showScheduleForm ? 'ring-2 ring-blue-500/40' : ''}"
 			>
 				{showScheduleForm ? translate($language, 'bk.closeScheduleForm') : translate($language, 'bk.newSchedule')}
 			</button>
@@ -482,20 +493,48 @@ import { roles } from '$lib/stores/auth';
 	<!-- Summary cards -->
 	<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
-			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statCompleted')}</p>
-			<p class="mt-1 text-xl font-bold text-white">{stats?.count ?? '—'}</p>
+			<div class="flex items-center gap-2">
+				<span class="flex h-7 w-7 items-center justify-center rounded-lg bg-green-500/10 text-green-400">
+					<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+					</svg>
+				</span>
+				<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statCompleted')}</p>
+			</div>
+			<p class="mt-2 text-xl font-bold text-white">{stats?.count ?? '—'}</p>
 		</div>
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
-			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statTotalSize')}</p>
-			<p class="mt-1 text-xl font-bold text-white">{formatSize(stats?.total_bytes ?? 0)}</p>
+			<div class="flex items-center gap-2">
+				<span class="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-500/10 text-blue-400">
+					<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+					</svg>
+				</span>
+				<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statTotalSize')}</p>
+			</div>
+			<p class="mt-2 text-xl font-bold text-white">{formatSize(stats?.total_bytes ?? 0)}</p>
 		</div>
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
-			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statDiskFree')}</p>
-			<p class="mt-1 text-xl font-bold text-white">{formatSize(stats?.disk_free ?? 0)}</p>
+			<div class="flex items-center gap-2">
+				<span class="flex h-7 w-7 items-center justify-center rounded-lg bg-purple-500/10 text-purple-400">
+					<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M21.75 17.25v-.228a4.5 4.5 0 00-.12-1.03l-2.268-9.64a3.375 3.375 0 00-3.285-2.602H7.923a3.375 3.375 0 00-3.285 2.602l-2.268 9.64a4.5 4.5 0 00-.12 1.03v.228m19.5 0a3 3 0 01-3 3H5.25a3 3 0 01-3-3m19.5 0a3 3 0 00-3-3H5.25a3 3 0 00-3 3" />
+					</svg>
+				</span>
+				<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statDiskFree')}</p>
+			</div>
+			<p class="mt-2 text-xl font-bold text-white">{formatSize(stats?.disk_free ?? 0)}</p>
 		</div>
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
-			<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statLastBackup')}</p>
-			<p class="mt-1 truncate text-sm font-semibold text-white">{lastSuccessful ? formatDate(lastSuccessful) : '—'}</p>
+			<div class="flex items-center gap-2">
+				<span class="flex h-7 w-7 items-center justify-center rounded-lg bg-yellow-500/10 text-yellow-400">
+					<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+					</svg>
+				</span>
+				<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-500">{translate($language, 'bk.statLastBackup')}</p>
+			</div>
+			<p class="mt-2 truncate text-sm font-semibold text-white">{lastSuccessful ? formatDate(lastSuccessful) : '—'}</p>
 		</div>
 	</div>
 
@@ -565,16 +604,16 @@ import { roles } from '$lib/stores/auth';
 		</div>
 	{/if}
 
-	<div class="flex gap-1">
+	<div class="inline-flex rounded-xl border border-gray-700 bg-gray-800 p-1">
 		<button
 			type="button"
 			onclick={() => (activeTab = 'backups')}
-			class="cursor-pointer rounded-t-lg px-4 py-2 text-sm font-semibold transition {activeTab === 'backups' ? 'bg-blue-500/15 text-blue-200' : 'text-gray-400 hover:bg-white/5'}"
+			class="cursor-pointer rounded-lg px-4 py-1.5 text-xs font-semibold transition {activeTab === 'backups' ? 'bg-blue-500/20 text-blue-200' : 'text-gray-400 hover:text-gray-200'}"
 		>{translate($language, 'bk.title')}</button>
 		<button
 			type="button"
 			onclick={() => { activeTab = 'schedules'; loadSchedules(); }}
-			class="cursor-pointer rounded-t-lg px-4 py-2 text-sm font-semibold transition {activeTab === 'schedules' ? 'bg-blue-500/15 text-blue-200' : 'text-gray-400 hover:bg-white/5'}"
+			class="cursor-pointer rounded-lg px-4 py-1.5 text-xs font-semibold transition {activeTab === 'schedules' ? 'bg-blue-500/20 text-blue-200' : 'text-gray-400 hover:text-gray-200'}"
 		>{translate($language, 'bk.tabSchedules')}</button>
 	</div>
 
@@ -584,20 +623,20 @@ import { roles } from '$lib/stores/auth';
 
 			<div class="flex flex-wrap items-end gap-3">
 				<div>
-					<label for="backup-type" class="mb-1 block text-sm text-gray-400">{translate($language, 'bk.createType')}</label>
-					<select id="backup-type" bind:value={createType} onchange={() => (createTarget = '')} class="w-40 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200">
+					<label for="backup-type" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'bk.createType')}</label>
+					<select id="backup-type" bind:value={createType} onchange={() => (createTarget = '')} class="w-44 cursor-pointer rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none">
 						{#each availableBackupTypes as t (t)}<option value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>{/each}
 					</select>
 				</div>
 				{#if needsTarget(createType)}
 					<div>
-						<label for="backup-target" class="mb-1 block text-sm text-gray-400">
+						<label for="backup-target" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">
 							{createType === 'website' ? translate($language, 'bk.createDomain') : translate($language, 'bk.createDatabase')}
 						</label>
 						<select
 							id="backup-target"
 							bind:value={createTarget}
-							class="w-56 rounded border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200"
+							class="w-60 cursor-pointer rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
 						>
 							<option value="" disabled>{translate($language, 'bk.selectPlaceholder')}</option>
 							{#if createType === 'website'}
@@ -618,7 +657,7 @@ import { roles } from '$lib/stores/auth';
 					type="button"
 					onclick={createBackup}
 					disabled={creatingBackup || (needsTarget(createType) && !createTarget.trim())}
-					class="rounded bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+					class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
 				>
 					{creatingBackup ? translate($language, 'bk.creating') : translate($language, 'bk.createNow')}
 				</button>
@@ -711,6 +750,11 @@ import { roles } from '$lib/stores/auth';
 				<div class="m-5 rounded-lg border border-red-700 bg-red-900/30 p-3.5 text-sm text-red-300">{backupError}</div>
 			{:else if filteredBackups.length === 0}
 				<div class="p-10 text-center">
+					<span class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-700/50 text-gray-500">
+						<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+						</svg>
+					</span>
 					<p class="text-sm text-gray-400">{filterType !== 'all' || filterStatus !== 'all' ? translate($language, 'bk.emptyFiltered') : translate($language, 'bk.emptyNone')}</p>
 					<p class="mt-1 text-xs text-gray-500">{translate($language, 'bk.emptyHint')}</p>
 				</div>
@@ -832,6 +876,11 @@ import { roles } from '$lib/stores/auth';
 				<div class="m-5 rounded-lg border border-red-700 bg-red-900/30 p-3.5 text-sm text-red-300">{scheduleError}</div>
 			{:else if schedules.length === 0}
 				<div class="p-10 text-center">
+					<span class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-700/50 text-gray-500">
+						<svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+						</svg>
+					</span>
 					<p class="text-sm text-gray-400">{translate($language, 'bk.emptyNoSchedules')}</p>
 					<p class="mt-1 text-xs text-gray-500">{translate($language, 'bk.emptyScheduleHint')}</p>
 				</div>
@@ -840,26 +889,50 @@ import { roles } from '$lib/stores/auth';
 					{#each schedules as s (s.id)}
 						<div class="flex flex-wrap items-center gap-3 px-5 py-3">
 							{#if editingScheduleId === s.id}
-								<div class="grid w-full gap-2 sm:grid-cols-6">
-									<select bind:value={editScheduleType} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
-										{#each availableBackupTypes as t (t)}<option value={t}>{t}</option>{/each}
-									</select>
-									<select bind:value={editScheduleTarget} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
-										<option value="">{translate($language, 'bk.targetPlaceholder')}</option>
-										{#if editScheduleType === 'website'}
-											{#each websites as w (w.id)}<option value={w.domain}>{w.domain}</option>{/each}
-										{:else}
-											{#each databases as d (d.id)}<option value={d.name}>{d.name}</option>{/each}
-										{/if}
-									</select>
-									<select bind:value={editScheduleCron} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200">
-										{#each schedulePresets as p}<option value={p.value}>{translate($language, p.label)}</option>{/each}
-									</select>
-									<input type="number" min="1" bind:value={editScheduleRetention} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200" title={translate($language, 'bk.keepDays')} />
-									<input type="number" min="0" bind:value={editScheduleKeep} class="rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200" title={translate($language, 'bk.keepLastN')} />
-									<div class="flex gap-1">
-										<button type="button" onclick={() => saveScheduleEdit(s.id)} disabled={savingSchedule} class="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{translate($language, 'bk.save')}</button>
-										<button type="button" onclick={cancelEditSchedule} class="cursor-pointer rounded-md bg-gray-700 px-2.5 py-1.5 text-[11px] text-gray-200 hover:bg-gray-600">{translate($language, 'bk.cancel')}</button>
+								<div class="w-full rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+									<p class="mb-3 text-[11px] font-semibold uppercase tracking-wider text-blue-300">{translate($language, 'bk.editScheduleTitle')}</p>
+									<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+										<div>
+											<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="edit-type-{s.id}">{translate($language, 'bk.labelType')}</label>
+											<select id="edit-type-{s.id}" bind:value={editScheduleType} onchange={() => (editScheduleTarget = '')} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none">
+												{#each availableBackupTypes as t (t)}<option value={t}>{t}</option>{/each}
+											</select>
+										</div>
+										<div>
+											<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="edit-target-{s.id}">{translate($language, 'bk.labelTarget')}</label>
+											{#if needsTarget(editScheduleType)}
+												<select id="edit-target-{s.id}" bind:value={editScheduleTarget} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none">
+													<option value="">{translate($language, 'bk.selectPlaceholder')}</option>
+													{#if editScheduleType === 'website'}
+														{#each websites as w (w.id)}<option value={w.domain}>{w.domain}</option>{/each}
+													{:else}
+														{#each databases as d (d.id)}<option value={d.name}>{d.name}</option>{/each}
+													{/if}
+												</select>
+											{:else}
+												<input disabled value={translate($language, 'bk.targetAll')} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-500" />
+											{/if}
+										</div>
+										<div>
+											<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="edit-cron-{s.id}">{translate($language, 'bk.labelSchedule')}</label>
+											<select id="edit-cron-{s.id}" bind:value={editScheduleCron} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none">
+												{#each schedulePresets as p}<option value={p.value}>{translate($language, p.label)}</option>{/each}
+											</select>
+										</div>
+										<div>
+											<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="edit-days-{s.id}">{translate($language, 'bk.keepDays')}</label>
+											<input id="edit-days-{s.id}" type="number" min="1" bind:value={editScheduleRetention} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
+											<p class="mt-1 text-[10px] text-gray-500">{translate($language, 'bk.keepDaysHint')}</p>
+										</div>
+										<div>
+											<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="edit-keep-{s.id}">{translate($language, 'bk.keepLastN')}</label>
+											<input id="edit-keep-{s.id}" type="number" min="0" bind:value={editScheduleKeep} class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
+											<p class="mt-1 text-[10px] text-gray-500">{translate($language, 'bk.zeroOff')}</p>
+										</div>
+										<div class="flex items-end gap-2">
+											<button type="button" onclick={() => saveScheduleEdit(s.id)} disabled={savingSchedule} class="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-blue-700 disabled:opacity-50">{translate($language, 'bk.save')}</button>
+											<button type="button" onclick={cancelEditSchedule} class="cursor-pointer rounded-md bg-gray-700 px-2.5 py-1.5 text-[11px] text-gray-200 hover:bg-gray-600">{translate($language, 'bk.cancel')}</button>
+										</div>
 									</div>
 								</div>
 							{:else}

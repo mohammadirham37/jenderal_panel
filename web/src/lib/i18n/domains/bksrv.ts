@@ -5,9 +5,11 @@
 const en = {
 	// ── Backups page ──────────────────────────────────────────────
 	'bk.title': 'Backups',
+	'bk.subtitle': 'Create, restore, and schedule backups for websites, databases, and panel configuration.',
 	'bk.tabSchedules': 'Schedules',
 	'bk.pruneNow': 'Prune now',
 	'bk.pruning': 'Pruning…',
+	'bk.titlePrune': 'Delete expired backups that exceed their retention policy',
 	'bk.newSchedule': 'New schedule',
 	'bk.closeScheduleForm': 'Close schedule form',
 
@@ -21,6 +23,8 @@ const en = {
 
 	// Schedule form
 	'bk.newScheduleTitle': 'New backup schedule',
+	'bk.editScheduleTitle': 'Edit schedule',
+	'bk.keepDaysHint': 'backups older than this are removed',
 	'bk.labelType': 'Type',
 	'bk.labelTarget': 'Target',
 	'bk.labelSchedule': 'Schedule',
@@ -198,9 +202,11 @@ const en = {
 const id: Record<keyof typeof en, string> = {
 	// ── Backups page ──────────────────────────────────────────────
 	'bk.title': 'Cadangan',
+	'bk.subtitle': 'Buat, pulihkan, dan jadwalkan cadangan untuk website, database, dan konfigurasi panel.',
 	'bk.tabSchedules': 'Jadwal',
 	'bk.pruneNow': 'Bersihkan sekarang',
 	'bk.pruning': 'Membersihkan…',
+	'bk.titlePrune': 'Hapus cadangan yang sudah melewati masa simpannya',
 	'bk.newSchedule': 'Jadwal baru',
 	'bk.closeScheduleForm': 'Tutup formulir jadwal',
 
@@ -214,6 +220,8 @@ const id: Record<keyof typeof en, string> = {
 
 	// Schedule form
 	'bk.newScheduleTitle': 'Jadwal cadangan baru',
+	'bk.editScheduleTitle': 'Edit jadwal',
+	'bk.keepDaysHint': 'cadangan lebih lama dari ini dihapus',
 	'bk.labelType': 'Tipe',
 	'bk.labelTarget': 'Target',
 	'bk.labelSchedule': 'Jadwal',
