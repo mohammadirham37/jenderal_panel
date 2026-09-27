@@ -107,6 +107,7 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"databases.create", "databases"},
 		{"databases.delete", "databases"},
 		{"databases.users", "databases"},
+		{"databases.config", "databases"},
 		{"docker.view", "docker"},
 		{"docker.manage", "docker"},
 		{"backups.view", "backups"},

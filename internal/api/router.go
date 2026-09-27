@@ -13,6 +13,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
 	"github.com/mohammadirham37/jenderal_panel/internal/cloudflared"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
+	"github.com/mohammadirham37/jenderal_panel/internal/dbconfig"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
@@ -73,6 +74,7 @@ type Dependencies struct {
 	DeploymentSvc   *deployment.Service
 	DependencySvc   *dependency.Service
 	CronSvc         *cron.Service
+	DBConfigSvc     *dbconfig.Service
 	QueueSvc        *queue.Service
 	NodeSvc         *nodejs.Service
 	DBManagerSvc    *dbmanager.Service
@@ -139,6 +141,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	sslHandler := ssl.NewHandler(deps.SSLSvc, deps.AuditSvc)
 	deployHandler := deployment.NewHandler(deps.DeploymentSvc, deps.AuditSvc)
 	cronHandler := cron.NewHandler(deps.CronSvc, deps.AuditSvc)
+	dbConfigHandler := dbconfig.NewHandler(deps.DBConfigSvc, deps.AuditSvc)
 	queueHandler := queue.NewHandler(deps.QueueSvc, deps.AuditSvc)
 	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc, deps.Tasks)
 	taskHandler := taskrunner.NewHandler(deps.Tasks)
@@ -721,6 +724,13 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/databases/users/{id}/grant", dbHandler.GrantPrivileges)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/users/{id}/revoke", dbHandler.RevokePrivileges)
+
+			// Database server configuration (my.cnf / postgresql.conf) —
+			// server-wide, admin-only via databases.config.
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+				Get("/db-config/{engine}", dbConfigHandler.GetConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+				Put("/db-config/{engine}", dbConfigHandler.SaveConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/grants", dbHandler.ListGrants)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).

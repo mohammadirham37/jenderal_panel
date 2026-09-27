@@ -234,7 +234,23 @@ const en = {
 	'dbm.save': 'Save',
 	'dbm.definition': 'Definition',
 	'dbm.saving': 'Saving…',
-	'dbm.save_row': 'Save row'
+	'dbm.save_row': 'Save row',
+
+	// Database server configuration page (db-config)
+	'dbc.title': 'Database Configuration',
+	'dbc.subtitle': 'Server-wide MySQL and PostgreSQL settings. Apply restarts the service; a broken config is rolled back automatically.',
+	'dbc.engine.mysql': 'MySQL',
+	'dbc.engine.postgresql': 'PostgreSQL',
+	'dbc.mode.form': 'Form',
+	'dbc.mode.manual': 'Manual',
+	'dbc.not_available': 'No configuration file found for this engine (it is probably not installed).',
+	'dbc.invalid_values': 'These directives currently hold values outside the expected format:',
+	'dbc.apply': 'Apply & restart',
+	'dbc.applying': 'Applying…',
+	'dbc.restart_note': 'Applying restarts the database service and takes a moment.',
+	'dbc.toast.applied': 'Database configuration applied.',
+	'dbc.error.load': 'Failed to load database configuration',
+	'dbc.error.apply': 'Failed to apply database configuration'
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -469,7 +485,23 @@ const id: Record<keyof typeof en, string> = {
 	'dbm.save': 'Simpan',
 	'dbm.definition': 'Definisi',
 	'dbm.saving': 'Menyimpan…',
-	'dbm.save_row': 'Simpan baris'
+	'dbm.save_row': 'Simpan baris',
+
+	// Database server configuration page (db-config)
+	'dbc.title': 'Konfigurasi Database',
+	'dbc.subtitle': 'Pengaturan MySQL dan PostgreSQL tingkat server. Menerapkan konfigurasi akan me-restart layanan; config yang rusak otomatis dikembalikan.',
+	'dbc.engine.mysql': 'MySQL',
+	'dbc.engine.postgresql': 'PostgreSQL',
+	'dbc.mode.form': 'Formulir',
+	'dbc.mode.manual': 'Manual',
+	'dbc.not_available': 'File konfigurasi untuk engine ini tidak ditemukan (mungkin belum terinstal).',
+	'dbc.invalid_values': 'Direktif berikut saat ini berisi nilai di luar format yang diharapkan:',
+	'dbc.apply': 'Terapkan & restart',
+	'dbc.applying': 'Menerapkan…',
+	'dbc.restart_note': 'Menerapkan konfigurasi akan me-restart layanan database dan butuh beberapa saat.',
+	'dbc.toast.applied': 'Konfigurasi database diterapkan.',
+	'dbc.error.load': 'Gagal memuat konfigurasi database',
+	'dbc.error.apply': 'Gagal menerapkan konfigurasi database'
 };
 
 export const dict = { en, id };

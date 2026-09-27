@@ -58,6 +58,7 @@
 				{ href: '/cloudflared', permission: 'tunnel.view', labelKey: 'nav.cloudflared', icon: 'cloud' },
 				{ href: '/nginx', permission: 'nginx.view', labelKey: 'nav.nginx', icon: 'globe' },
 				{ href: '/databases', permission: 'databases.view', labelKey: 'nav.databases', icon: 'database' },
+				{ href: '/db-config', permission: 'databases.config', labelKey: 'nav.db_config', icon: 'database' },
 				{ href: '/docker', permission: 'docker.view', labelKey: 'nav.docker', icon: 'cube' },
 			]
 		},

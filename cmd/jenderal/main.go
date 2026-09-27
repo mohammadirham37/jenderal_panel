@@ -20,6 +20,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/cloudflared"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
+	"github.com/mohammadirham37/jenderal_panel/internal/dbconfig"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
@@ -253,6 +254,7 @@ func cmdServe() {
 	renewalWorker := ssl.NewRenewalWorker(sslSvc)
 	deploySvc := deployment.NewService(db, exec, auditSvc)
 	cronSvc := cron.NewService(db, exec, auditSvc)
+	dbConfigSvc := dbconfig.NewService(exec, auditSvc)
 	queueSvc := queue.NewService(db, exec, auditSvc)
 	nodeSvc := nodejs.NewService(db, exec, auditSvc)
 	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
@@ -398,6 +400,7 @@ func cmdServe() {
 		DeploymentSvc:   deploySvc,
 		DependencySvc:   dependencySvc,
 		CronSvc:         cronSvc,
+		DBConfigSvc:     dbConfigSvc,
 		QueueSvc:        queueSvc,
 		NodeSvc:         nodeSvc,
 		DBManagerSvc:    dbManagerSvc,
