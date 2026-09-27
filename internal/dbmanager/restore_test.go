@@ -150,6 +150,9 @@ func TestManageRestoreMySQLGunzipsDump(t *testing.T) {
 
 	var fedInput string
 	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Stdout: "utf8mb4_general_ci\nutf8mb4_0900_ai_ci\n"}, nil
+		},
 		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
 			if name != "mysql" {
 				t.Errorf("engine binary = %q, want mysql", name)
@@ -227,6 +230,50 @@ func TestRestorePrivilegeHint(t *testing.T) {
 	unrelated := "ERROR:  relation \"bed.t_hutang\" does not exist"
 	if got := restorePrivilegeHint(unrelated); got != "" {
 		t.Errorf("unrelated errors must not produce a hint, got %q", got)
+	}
+}
+
+func TestManageRestoreRewritesUnsupportedCollations(t *testing.T) {
+	token := manageSessions.put(&manageSession{
+		Engine: "mysql", Username: "dbuser", Password: "p",
+	})
+	defer manageSessions.drop(token)
+
+	var queryArgs []string
+	var fedInput string
+	mock := &executor.MockExecutor{
+		// The target is MySQL: it knows 0900 variants but not uca1400.
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			queryArgs = append([]string{name}, args...)
+			return &executor.Result{ExitCode: 0, Stdout: "utf8mb4_general_ci\nutf8mb4_0900_ai_ci\n"}, nil
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			raw, _ := io.ReadAll(stdin)
+			fedInput = string(raw)
+			return 0, nil
+		},
+	}
+	svc := NewService(nil, mock, nil)
+
+	dump := "CREATE TABLE t (c int) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;\n" +
+		"INSERT INTO `t` VALUES ('literal utf8mb4_uca1400_ai_ci inside data');\n"
+	if err := svc.ManageRestore(context.Background(), token, "mydb", strings.NewReader(dump)); err != nil {
+		t.Fatalf("ManageRestore() error = %v", err)
+	}
+
+	if !strings.Contains(fedInput, "COLLATE=utf8mb4_0900_ai_ci;") {
+		t.Errorf("unsupported collation must be rewritten to the closest supported one, got %q", fedInput)
+	}
+	if !strings.Contains(fedInput, "'literal utf8mb4_uca1400_ai_ci inside data'") {
+		t.Errorf("INSERT lines must never be rewritten, got %q", fedInput)
+	}
+	if strings.Contains(fedInput, "COLLATE=utf8mb4_uca1400_ai_ci;") {
+		t.Errorf("DDL must not keep the unsupported collation, got %q", fedInput)
+	}
+	// The collation probe must run with the session credentials.
+	joined := strings.Join(queryArgs, " ")
+	if !strings.Contains(joined, "--user=dbuser") || !strings.Contains(joined, "COLLATIONS") {
+		t.Errorf("collation probe must query the target as the session user, got %q", joined)
 	}
 }
 

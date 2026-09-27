@@ -68,6 +68,13 @@ func (s *Service) RestoreDatabase(ctx context.Context, id string, dump io.Reader
 		in = zr
 	}
 
+	// Dumps produced on MariaDB 11 carry UCA 14.0 collations that other
+	// targets reject mid-file (ERROR 1273); rewrite them to the closest
+	// collation the target actually supports.
+	if engineName == "mysql" {
+		in = newCollationCompatReader(in, s.supportedCollations(ctx))
+	}
+
 	bin, args, err := restoreCommand(engineName, name)
 	if err != nil {
 		return err
@@ -122,6 +129,14 @@ func (s *Service) ManageRestore(ctx context.Context, token, database string, dum
 		}
 		defer zr.Close()
 		in = zr
+	}
+
+	// Dumps produced on MariaDB 11 carry UCA 14.0 collations that other
+	// targets reject mid-file (ERROR 1273); rewrite them to the closest
+	// collation the target actually supports.
+	if session.Engine == "mysql" {
+		in = newCollationCompatReader(in, s.supportedCollations(ctx,
+			"--user="+session.Username, "--password="+session.Password))
 	}
 
 	var bin string
