@@ -15,18 +15,58 @@ import { language, translate } from '$lib/stores/language';
 		key: string;
 		labelKey: string;
 		phpName: string;
-		placeholder: string;
+		presets: string[];
 	}
 
-	// Managed settings and the php.ini names they map to.
+	// Managed settings and the php.ini names they map to. Values are picked
+	// from the presets so entries stay predictable; a value currently set on
+	// the site that is not in the list is offered as an extra option so it is
+	// never silently replaced.
 	const fields: Field[] = [
-		{ key: 'memory_limit', labelKey: 'wsphp.field.memory_limit', phpName: 'memory_limit', placeholder: '256M' },
-		{ key: 'upload_max_filesize', labelKey: 'wsphp.field.upload_max_filesize', phpName: 'upload_max_filesize', placeholder: '64M' },
-		{ key: 'post_max_size', labelKey: 'wsphp.field.post_max_size', phpName: 'post_max_size', placeholder: '64M' },
-		{ key: 'max_execution_time', labelKey: 'wsphp.field.max_execution_time', phpName: 'max_execution_time', placeholder: '60' },
-		{ key: 'max_input_time', labelKey: 'wsphp.field.max_input_time', phpName: 'max_input_time', placeholder: '60' },
-		{ key: 'max_input_vars', labelKey: 'wsphp.field.max_input_vars', phpName: 'max_input_vars', placeholder: '3000' }
+		{
+			key: 'memory_limit',
+			labelKey: 'wsphp.field.memory_limit',
+			phpName: 'memory_limit',
+			presets: ['64M', '128M', '256M', '512M', '1024M', '2048M']
+		},
+		{
+			key: 'upload_max_filesize',
+			labelKey: 'wsphp.field.upload_max_filesize',
+			phpName: 'upload_max_filesize',
+			presets: ['8M', '16M', '32M', '64M', '128M', '256M', '512M', '1024M']
+		},
+		{
+			key: 'post_max_size',
+			labelKey: 'wsphp.field.post_max_size',
+			phpName: 'post_max_size',
+			presets: ['8M', '16M', '32M', '64M', '128M', '256M', '512M', '1024M']
+		},
+		{
+			key: 'max_execution_time',
+			labelKey: 'wsphp.field.max_execution_time',
+			phpName: 'max_execution_time',
+			presets: ['30', '60', '120', '300', '600', '1800', '3600']
+		},
+		{
+			key: 'max_input_time',
+			labelKey: 'wsphp.field.max_input_time',
+			phpName: 'max_input_time',
+			presets: ['60', '120', '300', '600']
+		},
+		{
+			key: 'max_input_vars',
+			labelKey: 'wsphp.field.max_input_vars',
+			phpName: 'max_input_vars',
+			presets: ['1000', '2000', '3000', '5000', '10000']
+		}
 	];
+
+	function optionsFor(field: Field, current: string): string[] {
+		if (current !== '' && !field.presets.includes(current)) {
+			return [current, ...field.presets];
+		}
+		return field.presets;
+	}
 
 	let values = $state<Record<string, string>>({});
 	let loading = $state(false);
@@ -106,13 +146,16 @@ import { language, translate } from '$lib/stores/language';
 						<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for={f.key}>
 							{translate($language, f.labelKey)}
 						</label>
-						<input
+						<select
 							id={f.key}
-							type="text"
 							bind:value={values[f.key]}
-							placeholder={f.placeholder}
-							class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
-						/>
+							class="w-full cursor-pointer rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+						>
+							<option value="">{translate($language, 'wsphp.select.default')}</option>
+							{#each optionsFor(f, values[f.key] ?? '') as opt (opt)}
+								<option value={opt}>{opt}</option>
+							{/each}
+						</select>
 					</div>
 				{/each}
 			</div>
