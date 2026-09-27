@@ -25,6 +25,15 @@ export function createFileManagerAPI(api, websiteID) {
 		},
 		rename(/** @type {string} */ oldPath, /** @type {string} */ newPath) {
 			return api.post(`${base}/rename`, { old_path: oldPath, new_path: newPath });
+		},
+		chmod(/** @type {string} */ path, /** @type {string} */ mode, /** @type {boolean} */ recursive) {
+			return api.post(`${base}/chmod`, { path, mode, recursive });
+		},
+		zip(/** @type {string} */ path, /** @type {string} */ target) {
+			return api.post(`${base}/zip`, { path, target });
+		},
+		unzip(/** @type {string} */ path, /** @type {string} */ dest) {
+			return api.post(`${base}/unzip`, { path, target: dest });
 		}
 	};
 }

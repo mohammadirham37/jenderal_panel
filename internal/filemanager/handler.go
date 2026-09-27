@@ -229,8 +229,9 @@ func (h *Handler) Chmod(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Path string `json:"path"`
-		Mode string `json:"mode"`
+		Path      string `json:"path"`
+		Mode      string `json:"mode"`
+		Recursive bool   `json:"recursive"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
@@ -241,13 +242,83 @@ func (h *Handler) Chmod(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.Chmod(r.Context(), basePath, req.Path, req.Mode); err != nil {
+	if err := h.svc.Chmod(r.Context(), basePath, req.Path, req.Mode, req.Recursive); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	h.logAction(r, "chmod_file", req.Path, fmt.Sprintf("chmod %s %s", req.Mode, req.Path))
+	detail := fmt.Sprintf("chmod %s %s", req.Mode, req.Path)
+	if req.Recursive {
+		detail += " (recursive)"
+	}
+	h.logAction(r, "chmod_file", req.Path, detail)
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// ZipRequest carries the JSON body for creating a zip archive.
+type ZipRequest struct {
+	Path   string `json:"path"`
+	Target string `json:"target"`
+}
+
+// Zip handles POST /api/websites/{websiteID}/files/zip. It archives a file
+// or directory into a .zip archive; an empty target defaults to a sibling
+// <basename>.zip.
+func (h *Handler) Zip(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	var req ZipRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.Path == "" {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "path is required")
+		return
+	}
+
+	created, err := h.svc.Zip(r.Context(), basePath, req.Path, req.Target)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "zip_path", req.Path, fmt.Sprintf("archived %s into %s", req.Path, created))
+	httputil.JSON(w, http.StatusOK, map[string]string{"archive": created})
+}
+
+// Unzip handles POST /api/websites/{websiteID}/files/unzip. It extracts a
+// .zip archive into dest (its own directory when empty), overwriting
+// existing files.
+func (h *Handler) Unzip(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	var req ZipRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.Path == "" {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "path is required")
+		return
+	}
+
+	dest, err := h.svc.Unzip(r.Context(), basePath, req.Path, req.Target)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "unzip_path", req.Path, fmt.Sprintf("extracted %s into %s", req.Path, dest))
+	httputil.JSON(w, http.StatusOK, map[string]string{"dest": dest})
 }
 
 // Upload handles POST /api/websites/{websiteID}/files/upload

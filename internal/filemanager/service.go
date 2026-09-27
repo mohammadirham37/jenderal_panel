@@ -395,8 +395,10 @@ func (s *Service) CreateDir(ctx context.Context, basePath, dirPath string) error
 	return nil
 }
 
-// Chmod changes the permissions of a file within the website's base path.
-func (s *Service) Chmod(ctx context.Context, basePath, filePath, mode string) error {
+// Chmod changes the permissions of a file or directory within the website's
+// base path. When recursive is true, the mode is applied to a directory and
+// everything inside it.
+func (s *Service) Chmod(ctx context.Context, basePath, filePath, mode string, recursive bool) error {
 	if err := rejectWebsiteRoot(basePath, filePath); err != nil {
 		return err
 	}
@@ -407,7 +409,14 @@ func (s *Service) Chmod(ctx context.Context, basePath, filePath, mode string) er
 	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, full); err != nil {
 		return err
 	}
-	result, err := s.runAsWebsiteUser(ctx, basePath, "chmod", "--", mode, full)
+	if _, err := strconv.ParseUint(mode, 8, 32); err != nil {
+		return model.NewValidationError("mode must be an octal number such as 0644 or 755")
+	}
+	args := []string{"--", mode, full}
+	if recursive {
+		args = []string{"-R", "--", mode, full}
+	}
+	result, err := s.runAsWebsiteUser(ctx, basePath, "chmod", args...)
 	if err != nil {
 		return fmt.Errorf("chmod: %w", err)
 	}
@@ -416,6 +425,126 @@ func (s *Service) Chmod(ctx context.Context, basePath, filePath, mode string) er
 	}
 
 	return nil
+}
+
+// zipScript archives a source file or directory into a zip archive. A
+// directory is stored with its own basename at the root of the archive.
+// python3 is used instead of the zip binary because it ships with every
+// supported Ubuntu release, while zip/unzip are often absent on minimal
+// installs.
+const zipScript = `import os, sys, zipfile
+dest, source = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as archive:
+    if os.path.isdir(source) and not os.path.islink(source):
+        base = os.path.dirname(source.rstrip(os.sep))
+        for root, dirs, files in os.walk(source):
+            for name in sorted(dirs + files):
+                path = os.path.join(root, name)
+                archive.write(path, os.path.relpath(path, base))
+    else:
+        archive.write(source, os.path.basename(source.rstrip(os.sep)))
+`
+
+// unzipScript extracts a zip archive into a destination directory. Unix mode
+// bits stored by zip are re-applied so executables and Laravel storage
+// permissions survive extraction. Python's extract already refuses absolute
+// paths and ".." components (zip slip); the explicit skip is defense in
+// depth.
+const unzipScript = `import os, sys, zipfile
+archive_path, dest = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(archive_path) as archive:
+    for info in archive.infolist():
+        name = info.filename
+        if name.startswith("/") or ".." in name.split("/"):
+            continue
+        archive.extract(info, dest)
+        mode = (info.external_attr >> 16) & 0o7777
+        if mode:
+            try:
+                os.chmod(os.path.join(dest, name), mode)
+            except OSError:
+                pass
+`
+
+// Zip archives a file or directory within the website home into a .zip
+// archive. An empty targetPath defaults to a sibling archive named after the
+// source (<basename>.zip). Runs as the website user.
+func (s *Service) Zip(ctx context.Context, basePath, sourcePath, targetPath string) (string, error) {
+	if err := rejectWebsiteRoot(basePath, sourcePath); err != nil {
+		return "", err
+	}
+	source, err := s.resolveWebsitePath(ctx, basePath, sourcePath, false)
+	if err != nil {
+		return "", err
+	}
+
+	if targetPath == "" {
+		targetPath = filepath.Join(filepath.Dir(sourcePath), filepath.Base(filepath.Clean(sourcePath))+".zip")
+	}
+	if err := rejectWebsiteRoot(basePath, targetPath); err != nil {
+		return "", err
+	}
+	target, err := s.resolveWebsitePath(ctx, basePath, targetPath, true)
+	if err != nil {
+		return "", err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, target); err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(strings.ToLower(target), ".zip") {
+		return "", model.NewValidationError("the archive target must end with .zip")
+	}
+	if filepath.Clean(target) == filepath.Clean(source) {
+		return "", model.NewValidationError("the archive target must differ from the source")
+	}
+
+	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", zipScript, "--", target, source)
+	if err != nil {
+		return "", fmt.Errorf("zip: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", model.NewDomainError("FILE_ERROR", "failed to create zip archive: "+strings.TrimSpace(result.Stderr), nil)
+	}
+	return target, nil
+}
+
+// Unzip extracts a .zip archive within the website home into destPath (the
+// archive's own directory when empty). Existing files are overwritten. Runs
+// as the website user.
+func (s *Service) Unzip(ctx context.Context, basePath, archivePath, destPath string) (string, error) {
+	if err := rejectWebsiteRoot(basePath, archivePath); err != nil {
+		return "", err
+	}
+	archive, err := s.resolveWebsitePath(ctx, basePath, archivePath, false)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(strings.ToLower(archive), ".zip") {
+		return "", model.NewValidationError("only .zip archives can be extracted")
+	}
+
+	if destPath == "" {
+		destPath = filepath.Dir(archivePath)
+	}
+	if err := rejectWebsiteRoot(basePath, destPath); err != nil {
+		return "", err
+	}
+	dest, err := s.resolveWebsitePath(ctx, basePath, destPath, true)
+	if err != nil {
+		return "", err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, dest); err != nil {
+		return "", err
+	}
+
+	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", unzipScript, "--", archive, dest)
+	if err != nil {
+		return "", fmt.Errorf("unzip: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", model.NewDomainError("FILE_ERROR", "failed to extract zip archive: "+strings.TrimSpace(result.Stderr), nil)
+	}
+	return dest, nil
 }
 
 // parseLsOutput parses the output of `ls -la` into FileEntry models.

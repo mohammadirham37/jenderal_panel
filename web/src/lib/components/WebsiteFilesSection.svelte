@@ -57,6 +57,20 @@ import { language, translate } from '$lib/stores/language';
 	// Delete confirmation
 	let pendingDelete = $state<FileEntry | null>(null);
 
+	// Permissions editor
+	let chmodEntry = $state<FileEntry | null>(null);
+	let chmodMode = $state('');
+	let chmodRecursive = $state(false);
+	let chmodBusy = $state(false);
+
+	// Zip / unzip
+	let zipEntry = $state<FileEntry | null>(null);
+	let zipTarget = $state('');
+	let zipBusy = $state(false);
+	let unzipEntry = $state<FileEntry | null>(null);
+	let unzipDest = $state('');
+	let unzipBusy = $state(false);
+
 	// Bulk selection
 	let selectedNames = $state<string[]>([]);
 	let pendingBulkDelete = $state(false);
@@ -336,6 +350,90 @@ import { language, translate } from '$lib/stores/language';
 
 	function downloadFile(entry: FileEntry) {
 		window.open(`/api/v1/websites/${website.id}/files/download?path=${encodeURIComponent(joinPath(entry.name))}`, '_blank');
+	}
+
+	// ─── Permissions ──────────────────────────────────────────────────
+
+	// Converts the ls-style rwx string (e.g. drwxr-xr-x) to its octal digits.
+	function octalFromPermissions(perms: string): string {
+		let mode = '';
+		for (const triplet of [perms.slice(1, 4), perms.slice(4, 7), perms.slice(7, 10)]) {
+			let value = 0;
+			if (triplet.includes('r')) value += 4;
+			if (triplet.includes('w')) value += 2;
+			if (triplet.includes('x') || triplet.includes('s') || triplet.includes('t')) value += 1;
+			mode += String(value);
+		}
+		return mode;
+	}
+
+	function isOctalMode(value: string): boolean {
+		return /^[0-7]{3,4}$/.test(value.trim());
+	}
+
+	function openChmod(entry: FileEntry) {
+		chmodEntry = entry;
+		chmodMode = octalFromPermissions(entry.permissions);
+		chmodRecursive = false;
+	}
+
+	async function applyChmod() {
+		if (!chmodEntry || chmodBusy) return;
+		const mode = chmodMode.trim();
+		if (!/^[0-7]{3,4}$/.test(mode)) return;
+		chmodBusy = true;
+		try {
+			await fm.chmod(joinPath(chmodEntry.name), mode, chmodRecursive);
+			flash(translate($language, 'wsf.permissionsSaved').replace('{name}', chmodEntry.name));
+			chmodEntry = null;
+			await loadFiles(currentPath);
+		} catch (err) {
+			fail(err, translate($language, 'wsf.errPermissions'));
+		} finally {
+			chmodBusy = false;
+		}
+	}
+
+	// ─── Zip / unzip ──────────────────────────────────────────────────
+
+	function openZip(entry: FileEntry) {
+		zipEntry = entry;
+		zipTarget = entry.name + '.zip';
+	}
+
+	async function applyZip() {
+		if (!zipEntry || zipBusy) return;
+		zipBusy = true;
+		try {
+			await fm.zip(joinPath(zipEntry.name), zipTarget.trim() ? joinPath(zipTarget.trim()) : '');
+			flash(translate($language, 'wsf.zipCreated').replace('{name}', zipEntry.name));
+			zipEntry = null;
+			await loadFiles(currentPath);
+		} catch (err) {
+			fail(err, translate($language, 'wsf.errZip'));
+		} finally {
+			zipBusy = false;
+		}
+	}
+
+	function openUnzip(entry: FileEntry) {
+		unzipEntry = entry;
+		unzipDest = '';
+	}
+
+	async function applyUnzip() {
+		if (!unzipEntry || unzipBusy) return;
+		unzipBusy = true;
+		try {
+			await fm.unzip(joinPath(unzipEntry.name), unzipDest.trim() ? joinPath(unzipDest.trim()) : '');
+			flash(translate($language, 'wsf.unzipped').replace('{name}', unzipEntry.name));
+			unzipEntry = null;
+			await loadFiles(currentPath);
+		} catch (err) {
+			fail(err, translate($language, 'wsf.errUnzip'));
+		} finally {
+			unzipBusy = false;
+		}
 	}
 
 	function handleEditorKeydown(e: KeyboardEvent) {
@@ -622,6 +720,20 @@ import { language, translate } from '$lib/stores/language';
 								<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} title={translate($language, 'wsf.rename')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
 								</button>
+								<button onclick={() => openChmod(entry)} title={translate($language, 'wsf.permissions')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+								</button>
+								{#if entry.is_dir || fileExt(entry.name).toLowerCase() === 'zip'}
+									{#if entry.is_dir}
+										<button onclick={() => openZip(entry)} title={translate($language, 'wsf.zip')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+											<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+										</button>
+									{:else}
+										<button onclick={() => openUnzip(entry)} title={translate($language, 'wsf.unzip')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+											<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5m8.25 3v6.75m0 0l-3-3m3 3l3-3M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" /></svg>
+										</button>
+									{/if}
+								{/if}
 								<button onclick={() => (pendingDelete = entry)} title={translate($language, 'wsf.delete')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white">
 									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>
 								</button>
@@ -687,6 +799,90 @@ import { language, translate } from '$lib/stores/language';
 				<div class="mt-4 flex justify-end gap-2">
 					<button onclick={() => (pendingBulkDelete = false)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
 					<button onclick={confirmBulkDelete} disabled={bulkDeleting} class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'wsf.delete')}</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Permissions editor -->
+	{#if chmodEntry}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="{translate($language, 'wsf.permissions')} {chmodEntry.name}">
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">{translate($language, 'wsf.permissionsTitle')} <span class="font-mono">{chmodEntry.name}</span></h4>
+				<p class="mt-1 truncate font-mono text-xs text-gray-500">{chmodEntry.permissions}</p>
+				<div class="mt-4 flex items-center gap-3">
+					<label for="chmod-mode" class="text-sm text-gray-400">{translate($language, 'wsf.modeLabel')}</label>
+					<input
+						id="chmod-mode"
+						bind:value={chmodMode}
+						type="text"
+						spellcheck="false"
+						maxlength="4"
+						class="w-24 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-center font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+					/>
+				</div>
+				{#if chmodEntry.is_dir}
+					<label class="mt-3 flex cursor-pointer items-center gap-2 text-sm text-gray-300">
+						<input type="checkbox" bind:checked={chmodRecursive} class="h-4 w-4 cursor-pointer rounded border-gray-600 bg-gray-900 text-blue-600 focus:ring-blue-500" />
+						{translate($language, 'wsf.recursive')}
+					</label>
+				{/if}
+				<div class="mt-4 flex justify-end gap-2">
+					<button onclick={() => (chmodEntry = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
+					<button onclick={applyChmod} disabled={chmodBusy || !isOctalMode(chmodMode)} class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+						{chmodBusy ? translate($language, 'wsf.saving') : translate($language, 'wsf.save')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Zip confirmation -->
+	{#if zipEntry}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="{translate($language, 'wsf.zip')} {zipEntry.name}">
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">{translate($language, 'wsf.zipTitle')} <span class="font-mono">{zipEntry.name}</span></h4>
+				<div class="mt-4">
+					<label for="zip-target" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wsf.zipNameLabel')}</label>
+					<input
+						id="zip-target"
+						bind:value={zipTarget}
+						type="text"
+						spellcheck="false"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+					/>
+				</div>
+				<div class="mt-4 flex justify-end gap-2">
+					<button onclick={() => (zipEntry = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
+					<button onclick={applyZip} disabled={zipBusy || !zipTarget.trim()} class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+						{zipBusy ? translate($language, 'wsf.working') : translate($language, 'wsf.zip')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Unzip confirmation -->
+	{#if unzipEntry}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label="{translate($language, 'wsf.unzip')} {unzipEntry.name}">
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">{translate($language, 'wsf.unzipTitle')} <span class="font-mono">{unzipEntry.name}</span></h4>
+				<div class="mt-4">
+					<label for="unzip-dest" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wsf.unzipDestLabel')}</label>
+					<input
+						id="unzip-dest"
+						bind:value={unzipDest}
+						type="text"
+						placeholder={translate($language, 'wsf.unzipDestPlaceholder')}
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none"
+					/>
+					<p class="mt-1.5 text-[11px] text-gray-500">{translate($language, 'wsf.unzipOverwrite')}</p>
+				</div>
+				<div class="mt-4 flex justify-end gap-2">
+					<button onclick={() => (unzipEntry = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
+					<button onclick={applyUnzip} disabled={unzipBusy} class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+						{unzipBusy ? translate($language, 'wsf.working') : translate($language, 'wsf.unzip')}
+					</button>
 				</div>
 			</div>
 		</div>

@@ -2,6 +2,7 @@ package filemanager
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -427,5 +428,142 @@ func TestParseLsLine(t *testing.T) {
 				t.Fatalf("expected size %d, got %d", tt.size, entry.Size)
 			}
 		})
+	}
+}
+
+// ---------- zip / unzip ----------
+
+// RecordingExec captures sudo commands while answering like the site owner's
+// filesystem would for the simple cases the zip tests rely on.
+type recordingExec struct {
+	commands [][]string
+	missing  map[string]bool // paths reported as non-existent
+}
+
+func (r *recordingExec) Run(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+	return &executor.Result{ExitCode: 0}, nil
+}
+
+func (r *recordingExec) RunSudo(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+	r.commands = append(r.commands, append([]string{name}, args...))
+	return r.answer(append([]string{name}, args...))
+}
+
+func (r *recordingExec) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+	r.commands = append(r.commands, append([]string{name}, args...))
+	return &executor.Result{ExitCode: 0}, nil
+}
+
+func (r *recordingExec) RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
+	return 0, nil
+}
+
+func (r *recordingExec) RunSudoStreamSplit(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error) {
+	return 0, nil
+}
+
+func (r *recordingExec) RunSudoWithInputStream(ctx context.Context, input io.Reader, w io.Writer, name string, args ...string) (int, error) {
+	return 0, nil
+}
+
+func (r *recordingExec) answer(args []string) (*executor.Result, error) {
+	// args begin with "-u <user> --" before the real command.
+	rest := args
+	for i, arg := range args {
+		if arg == "--" {
+			rest = args[i+1:]
+			break
+		}
+	}
+	if len(rest) < 2 {
+		return &executor.Result{ExitCode: 0}, nil
+	}
+	path := rest[len(rest)-1]
+	switch {
+	case rest[0] == "test" && rest[1] == "-L":
+		return &executor.Result{ExitCode: 1}, nil // no symlinks
+	case rest[0] == "test" && (rest[1] == "-d" || rest[1] == "-e"):
+		if r.missing[path] {
+			return &executor.Result{ExitCode: 1}, nil
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	case rest[0] == "realpath":
+		// Echo the path back; good enough for in-home targets.
+		return &executor.Result{ExitCode: 0, Stdout: path + "\n"}, nil
+	}
+	return &executor.Result{ExitCode: 0}, nil
+}
+
+func TestZipBuildsPythonInvocation(t *testing.T) {
+	exec := &recordingExec{}
+	svc := &Service{exec: exec}
+
+	created, err := svc.Zip(context.Background(), "/home/web_site", "app", "")
+	if err != nil {
+		t.Fatalf("Zip: %v", err)
+	}
+	if created != "/home/web_site/app.zip" {
+		t.Fatalf("default archive = %q, want /home/web_site/app.zip", created)
+	}
+
+	var pyArgs []string
+	for _, cmd := range exec.commands {
+		// Recorded as ["-u", user, "--", "python3", ...].
+		if len(cmd) > 3 && cmd[3] == "python3" {
+			pyArgs = cmd[4:]
+		}
+	}
+	if pyArgs == nil {
+		t.Fatalf("zip never invoked python3: %v", exec.commands)
+	}
+	// python3 -c <script> -- <dest> <source>
+	if pyArgs[0] != "-c" || pyArgs[2] != "--" || pyArgs[3] != "/home/web_site/app.zip" || pyArgs[4] != "/home/web_site/app" {
+		t.Fatalf("unexpected python3 invocation: %v", pyArgs)
+	}
+}
+
+func TestZipRejectsUnsafeTargets(t *testing.T) {
+	svc := &Service{exec: &recordingExec{}}
+
+	if _, err := svc.Zip(context.Background(), "/home/web_site", "", ""); err == nil {
+		t.Fatal("zipping the website root must be rejected")
+	}
+	if _, err := svc.Zip(context.Background(), "/home/web_site", "app", "archive.tar"); err == nil {
+		t.Fatal("a non-.zip target must be rejected")
+	}
+}
+
+func TestUnzipBuildsPythonInvocation(t *testing.T) {
+	exec := &recordingExec{}
+	svc := &Service{exec: exec}
+
+	dest, err := svc.Unzip(context.Background(), "/home/web_site", "uploads/release.zip", "public")
+	if err != nil {
+		t.Fatalf("Unzip: %v", err)
+	}
+	if dest != "/home/web_site/public" {
+		t.Fatalf("dest = %q, want /home/web_site/public", dest)
+	}
+
+	var pyArgs []string
+	for _, cmd := range exec.commands {
+		// Recorded as ["-u", user, "--", "python3", ...].
+		if len(cmd) > 3 && cmd[3] == "python3" {
+			pyArgs = cmd[4:]
+		}
+	}
+	if pyArgs == nil {
+		t.Fatalf("unzip never invoked python3: %v", exec.commands)
+	}
+	if pyArgs[3] != "/home/web_site/uploads/release.zip" || pyArgs[4] != "/home/web_site/public" {
+		t.Fatalf("unexpected python3 invocation: %v", pyArgs)
+	}
+}
+
+func TestUnzipRejectsNonZipArchives(t *testing.T) {
+	svc := &Service{exec: &recordingExec{}}
+
+	if _, err := svc.Unzip(context.Background(), "/home/web_site", "uploads/backup.tar.gz", ""); err == nil {
+		t.Fatal("a non-.zip archive must be rejected")
 	}
 }
