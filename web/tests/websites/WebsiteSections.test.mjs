@@ -30,6 +30,7 @@ test('builds encoded links for every website section', () => {
 			'/websites/site%2Fa',
 			'/websites/site%2Fa/deployments',
 			'/websites/site%2Fa/ssl',
+			'/websites/site%2Fa/bandwidth',
 			'/websites/site%2Fa/cron',
 			'/websites/site%2Fa/queue-workers'
 		]
