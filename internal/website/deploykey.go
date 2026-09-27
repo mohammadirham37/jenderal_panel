@@ -52,7 +52,11 @@ func (s *Service) GenerateDeployKey(ctx context.Context, websiteID string) (stri
 		return "", fmt.Errorf("write SSH config: %s", strings.TrimSpace(result.Stderr))
 	}
 
-	// Set correct permissions.
+	// Set correct permissions. ssh refuses to read a config or key that is
+	// group/other-accessible ("Bad owner or permissions"), so the directory
+	// is 700 and every file inside is 600. The owner is normalized without
+	// touching the group: the site group (www-data serving path) is managed
+	// elsewhere and chowning user:user would fail or clobber it.
 	if err := s.runSudoOK(ctx, "chmod", "700", sshDir); err != nil {
 		return "", fmt.Errorf("chmod .ssh directory: %w", err)
 	}
@@ -60,8 +64,8 @@ func (s *Service) GenerateDeployKey(ctx context.Context, websiteID string) (stri
 		return "", fmt.Errorf("chmod .ssh files: %w", err)
 	}
 
-	// Set ownership.
-	if err := s.runSudoOK(ctx, "chown", "-R", w.WebUser+":"+w.WebUser, sshDir); err != nil {
+	// Set ownership (owner only — keep the managed group).
+	if err := s.runSudoOK(ctx, "chown", "-R", w.WebUser, sshDir); err != nil {
 		return "", fmt.Errorf("chown .ssh directory: %w", err)
 	}
 

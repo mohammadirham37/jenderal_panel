@@ -478,6 +478,25 @@ func (s *Service) GrantWebsite(ctx context.Context, username, webUser string) er
 	if err := s.runSudoOK(ctx, "/usr/bin/find", siteHome, "-name", ".ssh", "-prune", "-o", "-type", "f", "-exec", "chmod", "g+rw", "{}", "+"); err != nil {
 		return fmt.Errorf("apply shared group-write files: %w", err)
 	}
+
+	// .ssh must stay strictly private: ssh refuses to read a config or key
+	// that is group/other-accessible ("Bad owner or permissions") and git
+	// pull over the deploy key then fails. Undo any ACL entries the
+	// recursive grants above placed there and re-pin the strict modes.
+	sshDir := siteHome + "/.ssh"
+	if probe, err := s.exec.RunSudo(ctx, "test", "-d", sshDir); err == nil && probe != nil && probe.ExitCode == 0 {
+		if s.setfaclAvailable(ctx) {
+			if err := s.runSudoOK(ctx, "setfacl", "-R", "-b", sshDir); err != nil {
+				return fmt.Errorf("strip .ssh ACLs: %w", err)
+			}
+		}
+		if err := s.runSudoOK(ctx, "chmod", "700", sshDir); err != nil {
+			return fmt.Errorf("enforce .ssh directory mode: %w", err)
+		}
+		if err := s.runSudoOK(ctx, "/usr/bin/find", sshDir, "-type", "f", "-exec", "chmod", "600", "{}", "+"); err != nil {
+			return fmt.Errorf("enforce .ssh file modes: %w", err)
+		}
+	}
 	return s.ensureUmaskProfile(ctx, username)
 }
 

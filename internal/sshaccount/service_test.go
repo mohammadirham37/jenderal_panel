@@ -495,3 +495,45 @@ func TestGrantWebsiteAppliesGroupCooperationAndUmask(t *testing.T) {
 		t.Error("the umask profile must be owned by the SSH account")
 	}
 }
+
+func TestGrantWebsiteEnforcesStrictSshDirPermissions(t *testing.T) {
+	db := setupSSHTestDB(t)
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, php_version, document_root, web_user, status, created_by, created_at, updated_at)
+		 VALUES ('w-1', 'sshdir.example.com', 'php', '8.2', '/home/web_sshdir_example/public', 'web_sshdir_example', 'active', 'u-admin', ?, ?)`,
+		now, now,
+	); err != nil {
+		t.Fatalf("seed website: %v", err)
+	}
+	fake := &fakeSSHExecutor{setfaclPre: true, canEnter: true}
+	svc := NewService(db, fake, audit.NewService(setupSSHTestDB(t)))
+
+	if err := svc.Provision(context.Background(), "u-admin"); err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+
+	const sshDir = "/home/web_sshdir_example/.ssh"
+	var strippedACL, strictDir, strictFiles bool
+	for _, call := range fake.calls {
+		joined := strings.Join(call, " ")
+		if call[0] == "setfacl" && strings.Contains(joined, "-R -b "+sshDir) {
+			strippedACL = true
+		}
+		if call[0] == "chmod" && strings.Contains(joined, "700 "+sshDir) {
+			strictDir = true
+		}
+		if call[0] == "/usr/bin/find" && strings.HasPrefix(joined, "/usr/bin/find "+sshDir+" -type f -exec chmod 600") {
+			strictFiles = true
+		}
+	}
+	if !strippedACL {
+		t.Errorf("panel ACLs were not stripped from %s, calls=%v", sshDir, fake.calls)
+	}
+	if !strictDir {
+		t.Errorf("the .ssh directory was not re-pinned to 700, calls=%v", fake.calls)
+	}
+	if !strictFiles {
+		t.Errorf(".ssh files were not re-pinned to 600, calls=%v", fake.calls)
+	}
+}
