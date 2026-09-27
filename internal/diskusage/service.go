@@ -45,12 +45,13 @@ var analyzedPaths = []analyzedPath{
 
 // FilesystemStat is one mounted filesystem from df.
 type FilesystemStat struct {
-	Source      string `json:"source"`
-	SizeBytes   int64  `json:"size_bytes"`
-	UsedBytes   int64  `json:"used_bytes"`
-	AvailBytes  int64  `json:"avail_bytes"`
-	UsePercent  int64  `json:"use_percent"`
-	MountedOn   string `json:"mounted_on"`
+	Source     string `json:"source"`
+	FSType     string `json:"fstype"`
+	SizeBytes  int64  `json:"size_bytes"`
+	UsedBytes  int64  `json:"used_bytes"`
+	AvailBytes int64  `json:"avail_bytes"`
+	UsePercent int64  `json:"use_percent"`
+	MountedOn  string `json:"mounted_on"`
 }
 
 // DirUsage is the measured size of one analyzed path.
@@ -101,7 +102,7 @@ type CleanupOptions struct {
 
 // CleanupAction describes one planned cleanup step for the dry-run preview.
 type CleanupAction struct {
-	Name     string   `json:"name"`
+	Name     string     `json:"name"`
 	Commands [][]string `json:"commands"`
 }
 
@@ -110,10 +111,11 @@ type CleanupAction struct {
 // remaining data.
 func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	overview := Overview{
-		OldKernels: []string{},
-		Docker:     []DockerUsage{},
-		Websites:   []SiteUsage{},
-		RootDirs:   []DirUsage{},
+		Filesystems: []FilesystemStat{},
+		OldKernels:  []string{},
+		Docker:      []DockerUsage{},
+		Websites:    []SiteUsage{},
+		RootDirs:    []DirUsage{},
 	}
 
 	if err := s.collectFilesystems(ctx, &overview); err != nil {
@@ -129,11 +131,20 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	return overview, nil
 }
 
+// collectFilesystems lists real mounted filesystems. The pseudo-filesystem
+// excludes keep the report to actual partitions (tmpfs/devtmpfs/autofs-style
+// mounts carry no data and only add noise).
 func (s *Service) collectFilesystems(ctx context.Context, o *Overview) error {
 	res, err := s.exec.RunSudo(ctx, "df", "-B1", "-x", "tmpfs", "-x", "devtmpfs", "-x", "squashfs",
-		"--output=source,fsize,used,avail,pcent,target")
+		"-x", "efivarfs", "-x", "overlay",
+		"--output=source,fstype,size,used,avail,pcent,target")
 	if err != nil {
 		return fmt.Errorf("df: %w", err)
+	}
+	if res.ExitCode != 0 {
+		// df prints usage errors on stderr with an empty stdout; surfacing the
+		// stderr beats reporting an empty filesystem list as if it were real.
+		return fmt.Errorf("df exited %d: %s", res.ExitCode, strings.TrimSpace(res.Stderr))
 	}
 	o.Filesystems = parseDF(res.Stdout)
 	return nil
@@ -439,25 +450,29 @@ func parseDuSizes(out string) map[string]int64 {
 	return byPath
 }
 
-// parseDF parses `df --output=...` output, skipping the header line.
-func parseDF(out string) []FilesystemStat {	var stats []FilesystemStat
+// parseDF parses `df --output=...` output, skipping the header line. Field
+// order follows the --output list in collectFilesystems:
+// source,fstype,size,used,avail,pcent,target.
+func parseDF(out string) []FilesystemStat {
+	var stats []FilesystemStat
 	for i, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || i == 0 {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) < 6 {
+		if len(fields) < 7 {
 			continue
 		}
 		stat := FilesystemStat{
 			Source:    fields[0],
-			MountedOn: fields[5],
+			FSType:    fields[1],
+			MountedOn: fields[6],
 		}
-		stat.SizeBytes, _ = strconv.ParseInt(fields[1], 10, 64)
-		stat.UsedBytes, _ = strconv.ParseInt(fields[2], 10, 64)
-		stat.AvailBytes, _ = strconv.ParseInt(fields[3], 10, 64)
-		stat.UsePercent, _ = strconv.ParseInt(strings.TrimSuffix(fields[4], "%"), 10, 64)
+		stat.SizeBytes, _ = strconv.ParseInt(fields[2], 10, 64)
+		stat.UsedBytes, _ = strconv.ParseInt(fields[3], 10, 64)
+		stat.AvailBytes, _ = strconv.ParseInt(fields[4], 10, 64)
+		stat.UsePercent, _ = strconv.ParseInt(strings.TrimSuffix(fields[5], "%"), 10, 64)
 		stats = append(stats, stat)
 	}
 	return stats

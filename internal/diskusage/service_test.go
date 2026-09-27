@@ -10,10 +10,10 @@ import (
 )
 
 func TestParseDF(t *testing.T) {
-	out := "Filesystem 1024-blocks Used Available Capacity Mounted on\n" +
-		"/dev/vda1 41234567000 21000000000 19000000000 53% /\n" +
-		"tmpfs 1000 0 1000 0% /dev/shm\n" +
-		"/dev/vda1 41234567000 21000000000 19000000000 53% /boot\n"
+	out := "Filesystem Type 1024-blocks Used Available Capacity Mounted on\n" +
+		"/dev/vda1 ext4 41234567000 21000000000 19000000000 53% /\n" +
+		"tmpfs tmpfs 1000 0 1000 0% /dev/shm\n" +
+		"/dev/vdb1 xfs 41234567000 21000000000 19000000000 53% /boot\n"
 
 	stats := parseDF(out)
 	// parseDF skips only the header; tmpfs rows are filtered by df's -x flags
@@ -25,11 +25,30 @@ func TestParseDF(t *testing.T) {
 	if root.Source != "/dev/vda1" || root.MountedOn != "/" {
 		t.Errorf("unexpected source/mount: %+v", root)
 	}
+	if root.FSType != "ext4" {
+		t.Errorf("unexpected fstype: %+v", root)
+	}
 	if root.SizeBytes != 41234567000 || root.UsedBytes != 21000000000 || root.AvailBytes != 19000000000 {
 		t.Errorf("unexpected byte fields: %+v", root)
 	}
 	if root.UsePercent != 53 {
 		t.Errorf("expected 53%%, got %d", root.UsePercent)
+	}
+}
+
+func TestCollectFilesystemsRejectsFailedDF(t *testing.T) {
+	exec := &executor.MockExecutor{}
+	exec.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name != "df" {
+			return nil, errors.New("unexpected sudo command " + name)
+		}
+		// df usage errors exit non-zero with empty stdout and a message on
+		// stderr; the collector must surface that instead of an empty list.
+		return &executor.Result{ExitCode: 1, Stderr: "df: bad field\n"}, nil
+	}
+	svc := NewService(nil, exec)
+	if err := svc.collectFilesystems(context.Background(), &Overview{}); err == nil {
+		t.Fatal("expected an error for a non-zero df exit")
 	}
 }
 
@@ -182,7 +201,7 @@ func TestOverviewCollectsReport(t *testing.T) {
 	exec.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 		switch name {
 		case "df":
-			return &executor.Result{Stdout: "Filesystem 1-blocks Used Available Capacity Mounted on\n/dev/vda1 100 60 40 60% /\n"}, nil
+			return &executor.Result{Stdout: "Filesystem Type 1-blocks Used Available Capacity Mounted on\n/dev/vda1 ext4 100 60 40 60% /\n"}, nil
 		case "du":
 			// The labeled-paths scan passes "-sb" plus the path list; the
 			// root filesystem scan passes "-B1 --max-depth=1 -x /".
