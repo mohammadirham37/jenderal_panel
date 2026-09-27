@@ -4,40 +4,148 @@
  * whole file. MySQL uses my.cnf INI sections, PostgreSQL uses flat
  * `key = value` lines with commented template defaults.
  *
- * @type {Record<string, Record<string, {pattern: RegExp, placeholder: string}>>}
+ * Fields with `presets` render as a select; others as free text (e.g. port).
+ *
+ * @type {Record<string, Record<string, {pattern: RegExp, placeholder: string, presets?: string[]}>>}
  */
 export const dbConfigFields = {
 	mysql: {
 		port: { pattern: /^[1-9]\d*$/, placeholder: '3306' },
-		'bind-address': { pattern: /^[0-9a-zA-Z.]+$/, placeholder: '127.0.0.1' },
-		max_connections: { pattern: /^[1-9]\d*$/, placeholder: '151' },
-		innodb_buffer_pool_size: { pattern: /^\d+[KMG]?$/i, placeholder: '128M' },
-		max_allowed_packet: { pattern: /^\d+[KMG]?$/i, placeholder: '64M' },
-		tmp_table_size: { pattern: /^\d+[KMG]?$/i, placeholder: '32M' },
-		max_heap_table_size: { pattern: /^\d+[KMG]?$/i, placeholder: '32M' },
-		wait_timeout: { pattern: /^[1-9]\d*$/, placeholder: '600' },
-		slow_query_log: { pattern: /^(on|off|0|1)$/i, placeholder: 'OFF' },
-		long_query_time: { pattern: /^\d+(\.\d+)?$/, placeholder: '2' },
-		'character-set-server': { pattern: /^[A-Za-z0-9_-]+$/, placeholder: 'utf8mb4' },
-		'collation-server': { pattern: /^[A-Za-z0-9_-]+$/, placeholder: 'utf8mb4_general_ci' }
+		'bind-address': {
+			pattern: /^[0-9a-zA-Z.:]+$/,
+			placeholder: '127.0.0.1',
+			presets: ['127.0.0.1', '0.0.0.0', '::']
+		},
+		max_connections: {
+			pattern: /^[1-9]\d*$/,
+			placeholder: '151',
+			presets: ['50', '100', '151', '200', '300', '500', '1000']
+		},
+		innodb_buffer_pool_size: {
+			pattern: /^\d+[KMG]?$/i,
+			placeholder: '128M',
+			presets: ['128M', '256M', '512M', '1G', '2G', '4G', '8G']
+		},
+		max_allowed_packet: {
+			pattern: /^\d+[KMG]?$/i,
+			placeholder: '64M',
+			presets: ['16M', '32M', '64M', '128M', '256M', '512M', '1G']
+		},
+		tmp_table_size: {
+			pattern: /^\d+[KMG]?$/i,
+			placeholder: '32M',
+			presets: ['16M', '32M', '64M', '128M', '256M']
+		},
+		max_heap_table_size: {
+			pattern: /^\d+[KMG]?$/i,
+			placeholder: '32M',
+			presets: ['16M', '32M', '64M', '128M', '256M']
+		},
+		wait_timeout: {
+			pattern: /^[1-9]\d*$/,
+			placeholder: '600',
+			presets: ['60', '300', '600', '1800', '3600', '28800']
+		},
+		slow_query_log: { pattern: /^(on|off|0|1)$/i, placeholder: 'OFF', presets: ['ON', 'OFF'] },
+		long_query_time: {
+			pattern: /^\d+(\.\d+)?$/,
+			placeholder: '2',
+			presets: ['0.1', '0.5', '1', '2', '5', '10']
+		},
+		'character-set-server': {
+			pattern: /^[A-Za-z0-9_-]+$/,
+			placeholder: 'utf8mb4',
+			presets: ['utf8mb4', 'latin1']
+		},
+		'collation-server': {
+			pattern: /^[A-Za-z0-9_-]+$/,
+			placeholder: 'utf8mb4_general_ci',
+			presets: ['utf8mb4_general_ci', 'utf8mb4_unicode_ci', 'utf8mb4_0900_ai_ci', 'latin1_swedish_ci']
+		}
 	},
 	postgresql: {
 		port: { pattern: /^[1-9]\d*$/, placeholder: '5432' },
-		listen_addresses: { pattern: /^[0-9a-zA-Z*,.\s]+$/, placeholder: 'localhost' },
-		max_connections: { pattern: /^[1-9]\d*$/, placeholder: '100' },
-		shared_buffers: { pattern: /^\d+[KMGT]B?$/i, placeholder: '128MB' },
-		effective_cache_size: { pattern: /^\d+[KMGT]B?$/i, placeholder: '4GB' },
-		work_mem: { pattern: /^\d+[KMGT]B?$/i, placeholder: '4MB' },
-		maintenance_work_mem: { pattern: /^\d+[KMGT]B?$/i, placeholder: '64MB' },
-		wal_buffers: { pattern: /^-1|\d+[KMGT]B?$/i, placeholder: '-1' },
-		min_wal_size: { pattern: /^\d+[KMGT]B?$/i, placeholder: '80MB' },
-		max_wal_size: { pattern: /^\d+[KMGT]B?$/i, placeholder: '1GB' },
-		checkpoint_completion_target: { pattern: /^(0(\.\d+)?|1(\.0+)?)$/, placeholder: '0.9' },
-		random_page_cost: { pattern: /^\d+(\.\d+)?$/, placeholder: '4.0' },
-		log_min_duration_statement: { pattern: /^-1|\d+$/, placeholder: '-1' },
-		synchronous_commit: { pattern: /^(on|off|local|remote_write|remote_apply)$/i, placeholder: 'on' }
+		listen_addresses: {
+			pattern: /^[0-9a-zA-Z*,.\s]+$/,
+			placeholder: 'localhost',
+			presets: ['localhost', '*']
+		},
+		max_connections: {
+			pattern: /^[1-9]\d*$/,
+			placeholder: '100',
+			presets: ['50', '100', '200', '300', '500']
+		},
+		shared_buffers: {
+			pattern: /^\d+[KMGT]B?$/i,
+			placeholder: '128MB',
+			presets: ['128MB', '256MB', '512MB', '1GB', '2GB', '4GB', '8GB']
+		},
+		effective_cache_size: {
+			pattern: /^\d+[KMGT]B?$/i,
+			placeholder: '4GB',
+			presets: ['1GB', '2GB', '4GB', '8GB', '16GB']
+		},
+		work_mem: {
+			pattern: /^\d+[KMGT]B?$/i,
+			placeholder: '4MB',
+			presets: ['4MB', '8MB', '16MB', '32MB', '64MB']
+		},
+		maintenance_work_mem: {
+			pattern: /^\d+[KMGT]B?$/i,
+			placeholder: '64MB',
+			presets: ['64MB', '128MB', '256MB', '512MB', '1GB']
+		},
+		wal_buffers: {
+			pattern: /^-1|\d+[KMGT]B?$/i,
+			placeholder: '-1',
+			presets: ['-1', '16MB', '32MB', '64MB', '128MB']
+		},
+		min_wal_size: {
+			pattern: /^\d+[KMGT]B?$/i,
+			placeholder: '80MB',
+			presets: ['80MB', '256MB', '512MB', '1GB']
+		},
+		max_wal_size: {
+			pattern: /^\d+[KMGT]B?$/i,
+			placeholder: '1GB',
+			presets: ['1GB', '2GB', '4GB']
+		},
+		checkpoint_completion_target: {
+			pattern: /^(0(\.\d+)?|1(\.0+)?)$/,
+			placeholder: '0.9',
+			presets: ['0.5', '0.8', '0.9', '1.0']
+		},
+		random_page_cost: {
+			pattern: /^\d+(\.\d+)?$/,
+			placeholder: '4.0',
+			presets: ['4.0', '2.0', '1.5', '1.1']
+		},
+		log_min_duration_statement: {
+			pattern: /^-1|\d+$/,
+			placeholder: '-1',
+			presets: ['-1', '0', '100', '500', '1000', '5000']
+		},
+		synchronous_commit: {
+			pattern: /^(on|off|local|remote_write|remote_apply)$/i,
+			placeholder: 'on',
+			presets: ['on', 'off', 'local', 'remote_write', 'remote_apply']
+		}
 	}
 };
+
+/**
+ * Options for a field's select: the presets, plus the value currently set in
+ * the config when it is not among them so nothing is silently replaced.
+ * Returns null for free-input fields.
+ * @param {{presets?: string[]}} def
+ * @param {string} current
+ * @returns {string[] | null}
+ */
+export function dbConfigOptions(def, current) {
+	if (!def.presets) return null;
+	if (current !== '' && !def.presets.includes(current)) return [current, ...def.presets];
+	return def.presets;
+}
 
 /**
  * Parse an `key = value` or bare `key` entry (a bare flag is ON).

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyDbConfig, buildConfigFromForm, parseDbConfig } from '../../src/lib/db-config.js';
+import { applyDbConfig, buildConfigFromForm, dbConfigFields, dbConfigOptions, parseDbConfig } from '../../src/lib/db-config.js';
 
 const mysqlConfig = `[mysqld]
 user		= mysql
@@ -111,4 +111,14 @@ test('builds config from form values touching only changed directives', () => {
 	assert.match(next, /slow_query_log = ON/);
 	// Untouched directives keep their original formatting.
 	assert.match(next, /port\s*=\s*3306/);
+});
+
+test('select options come from presets and keep unknown current values', () => {
+	const toggle = dbConfigFields.mysql.slow_query_log;
+	assert.deepEqual(dbConfigOptions(toggle, ''), ['ON', 'OFF']);
+	assert.deepEqual(dbConfigOptions(toggle, 'OFF'), ['ON', 'OFF']);
+	// A value set outside the panel (e.g. 1) must stay selectable.
+	assert.deepEqual(dbConfigOptions(toggle, '1'), ['1', 'ON', 'OFF']);
+	// Free-input fields (port) have no presets and stay text inputs.
+	assert.equal(dbConfigOptions(dbConfigFields.mysql.port, '3306'), null);
 });

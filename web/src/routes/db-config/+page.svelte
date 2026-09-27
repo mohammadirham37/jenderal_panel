@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api } from '$lib/api';
-	import { dbConfigFields, parseDbConfig, buildConfigFromForm } from '$lib/db-config.js';
+	import { dbConfigFields, dbConfigOptions, parseDbConfig, buildConfigFromForm } from '$lib/db-config.js';
 	import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 
@@ -167,13 +167,26 @@
 							<label class="mb-1 block font-mono text-[11px] font-medium text-gray-300" for={key}>
 								{key}
 							</label>
-							<input
-								id={key}
-								type="text"
-								bind:value={formValues[engine][key]}
-								placeholder={def.placeholder}
-								class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
-							/>
+							{#if dbConfigOptions(def, formValues[engine][key] ?? '') !== null}
+								<select
+									id={key}
+									bind:value={formValues[engine][key]}
+									class="w-full cursor-pointer rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+								>
+									<option value="">{translate($language, 'dbc.select.default')}</option>
+									{#each dbConfigOptions(def, formValues[engine][key] ?? '') as opt (opt)}
+										<option value={opt}>{opt}</option>
+									{/each}
+								</select>
+							{:else}
+								<input
+									id={key}
+									type="text"
+									bind:value={formValues[engine][key]}
+									placeholder={def.placeholder}
+									class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none"
+								/>
+							{/if}
 						</div>
 					{/each}
 				</div>
