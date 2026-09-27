@@ -819,11 +819,16 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		}
 	}
 
-	// Remove FPM pool config.
+	// Remove FPM pool config and bounce FPM right away so the pool's
+	// workers exit before the user is deleted: userdel refuses to run
+	// while the user still owns processes.
 	if w.PHPVersion != "" {
 		poolPath := filepath.Join("/etc/php", w.PHPVersion, "fpm/pool.d", w.Domain+".conf")
 		if err := s.runSudoOK(ctx, "rm", "-f", poolPath); err != nil {
 			return fmt.Errorf("delete website PHP-FPM config: %w", err)
+		}
+		if err := s.runSudoOK(ctx, "systemctl", "restart", "php"+w.PHPVersion+"-fpm"); err != nil {
+			return fmt.Errorf("restart PHP-FPM after removing pool: %w", err)
 		}
 	}
 
@@ -836,6 +841,13 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 			return fmt.Errorf("delete website Octane config: %w", err)
 		}
 	}
+
+	// userdel refuses while the user still owns processes (lingering FPM
+	// workers, cron jobs, terminal or SSH sessions): terminate them
+	// explicitly — politely first, then hard-kill whatever survived.
+	_, _ = s.exec.RunSudo(ctx, "pkill", "-TERM", "-u", w.WebUser)
+	time.Sleep(time.Second)
+	_, _ = s.exec.RunSudo(ctx, "pkill", "-KILL", "-u", w.WebUser)
 
 	// Remove the website user home, including all application files.
 	homeDir := filepath.Join("/home", w.WebUser)
@@ -859,13 +871,6 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	// Reload nginx.
 	if err := s.reloadNginx(ctx); err != nil {
 		return fmt.Errorf("delete website: %w", err)
-	}
-
-	// Restart PHP-FPM if applicable.
-	if w.PHPVersion != "" {
-		if err := s.runSudoOK(ctx, "systemctl", "restart", "php"+w.PHPVersion+"-fpm"); err != nil {
-			return fmt.Errorf("restart PHP-FPM after deleting website: %w", err)
-		}
 	}
 
 	// Delete DB records (domains cascade).
