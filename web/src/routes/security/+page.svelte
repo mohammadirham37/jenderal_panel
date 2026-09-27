@@ -4,6 +4,7 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import FirewallPanel from '$lib/components/FirewallPanel.svelte';
 	import { hasPermission, permissions } from '$lib/stores/auth';
+	import { serverHostname } from '$lib/stores/server';
 	import {
 		buildSafeFail2banSettings,
 		conditionTone,
@@ -593,7 +594,7 @@ import { toast } from '$lib/stores/toast';
 	onMount(() => void loadData());
 </script>
 
-<svelte:head><title>{translate($language, 'sec.title')} · Jenderal Panel</title></svelte:head>
+<svelte:head><title>{translate($language, 'sec.title')} · {$serverHostname || 'Jenderal Panel'}</title></svelte:head>
 
 <div class="space-y-6">
 	<div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">

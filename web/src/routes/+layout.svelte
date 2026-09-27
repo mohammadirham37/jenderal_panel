@@ -7,6 +7,9 @@
 	import Toaster from '$lib/components/Toaster.svelte';
 	import { isAuthenticated, user, roles, permissions, logout, checkAuth } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
+	import { serverHostname } from '$lib/stores/server';
+	import { api } from '$lib/api';
+	import type { ServerInfo } from '$lib/types';
 	import '../app.css';
 
 	let { children } = $props();
@@ -131,6 +134,16 @@
 		loading = false;
 		if (!authed && page.url.pathname !== '/login') {
 			goto('/login');
+			return;
+		}
+		if (authed) {
+			// Permission-safe: a 403 must not break the page, title just stays default.
+			try {
+				const info = await api.get<ServerInfo>('/api/v1/server/info');
+				serverHostname.set(info.hostname);
+			} catch {
+				// Hostname unavailable — keep the default title.
+			}
 		}
 	});
 
@@ -157,7 +170,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <svelte:head>
-	<title>Jenderal Panel</title>
+	<title>{$serverHostname || 'Jenderal Panel'}</title>
 </svelte:head>
 
 {#if loading}
