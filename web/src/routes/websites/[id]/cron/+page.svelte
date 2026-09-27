@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import WebsiteSectionNav from '$lib/components/WebsiteSectionNav.svelte';
 	import { websiteOperationAPI } from '$lib/website-operations.js';
 import { toast } from '$lib/stores/toast';
@@ -46,6 +47,10 @@ import { language, translate } from '$lib/stores/language';
 	let saving = $state(false);
 	let deleteConfirmId = $state<string | null>(null);
 	let websiteLoadGeneration = 0;
+
+	// Test run: one job at a time, output streamed via TaskProgress.
+	let testJobId = $state<string | null>(null);
+	let testTaskId = $state('');
 
 	const schedulePresets = [
 		{ label: translate($language, 'wscronp.preset.every_minute'), value: '* * * * *' },
@@ -96,6 +101,8 @@ import { language, translate } from '$lib/stores/language';
 		editSchedule = '';
 		saving = false;
 		deleteConfirmId = null;
+		testJobId = null;
+		testTaskId = '';
 	}
 
 	async function loadWebsite(requestedWebsiteID: string) {
@@ -238,6 +245,33 @@ import { language, translate } from '$lib/stores/language';
 		}
 	}
 
+	async function testCronJob(job: CronJob) {
+		const requestedWebsiteID = websiteID;
+		const generation = websiteLoadGeneration;
+		const scopedAPI = operationAPI;
+		if (!isCurrentRouteWebsite(requestedWebsiteID, generation) || testJobId) return;
+		try {
+			const res = await api.post<{ task_id: string }>(`${scopedAPI.cronJobs}/${job.id}/test`);
+			if (!isCurrentRouteWebsite(requestedWebsiteID, generation)) return;
+			testJobId = job.id;
+			testTaskId = res.task_id;
+			toast.success(translate($language, 'wscronp.toast.test_started'));
+		} catch (err) {
+			if (isCurrentRouteWebsite(requestedWebsiteID, generation)) {
+				toast.error(err instanceof Error ? err.message : translate($language, 'wscronp.error.test'));
+			}
+		}
+	}
+
+	function onTestComplete(task: { status?: string; error?: string }) {
+		const succeeded = task?.status === 'completed';
+		if (succeeded) toast.success(translate($language, 'wscronp.toast.test_success'));
+		else toast.error(task?.error || translate($language, 'wscronp.toast.test_failed'));
+		testJobId = null;
+		testTaskId = '';
+		loadCronJobs().catch((err) => toast.error(err instanceof Error ? err.message : String(err)));
+	}
+
 	$effect(() => {
 		void loadWebsite(websiteID);
 	});
@@ -327,10 +361,17 @@ import { language, translate } from '$lib/stores/language';
 								{:else if deleteConfirmId === job.id}
 									<span class="text-xs text-red-400">{translate($language, 'wscronp.delete_confirm')}</span><button onclick={() => deleteCronJob(job.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.yes')}</button><button onclick={() => (deleteConfirmId = null)} class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.cancel')}</button>
 								{:else}
-									<button onclick={() => startEdit(job)} class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.edit')}</button><button onclick={() => (deleteConfirmId = job.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.delete')}</button>
+									<button onclick={() => startEdit(job)} class="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.edit')}</button><button onclick={() => testCronJob(job)} disabled={!!testJobId} class="px-2.5 py-1 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.test')}</button><button onclick={() => (deleteConfirmId = job.id)} class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer">{translate($language, 'wscronp.delete')}</button>
 								{/if}
 							</div></td>
 						</tr>
+						{#if testJobId === job.id}
+							<tr>
+								<td colspan="6" class="px-4 pb-4">
+									<TaskProgress bind:taskId={testTaskId} onComplete={onTestComplete} />
+								</td>
+							</tr>
+						{/if}
 					{/each}
 				</tbody>
 			</table></div></div>

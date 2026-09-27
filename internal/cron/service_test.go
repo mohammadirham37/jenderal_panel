@@ -4,13 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -210,5 +213,143 @@ func TestValidateCronFieldsRejectsLineBreaks(t *testing.T) {
 	}
 	if err := validateCronFields("@daily", "backup.sh\x00x"); err == nil {
 		t.Error("expected a NUL byte in command to be rejected")
+	}
+}
+
+// waitForTask polls the task runner until the task leaves the running state.
+func waitForTask(t *testing.T, tr *taskrunner.Runner, taskID string) *taskrunner.Task {
+	t.Helper()
+	for i := 0; i < 250; i++ {
+		task, ok := tr.Get(taskID)
+		if !ok {
+			t.Fatalf("task %s not found", taskID)
+		}
+		if task.Status != "running" {
+			return task
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("task did not finish in time")
+	return nil
+}
+
+func TestTestJobWithoutRunner(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "web-001", "testuser")
+	svc := NewService(db, mockExecutor(), nil)
+
+	job, err := svc.Create(context.Background(), CronJobRequest{
+		WebsiteID: "web-001",
+		Command:   "echo ok",
+		Schedule:  "* * * * *",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := svc.TestJob(context.Background(), job.ID); err == nil {
+		t.Fatal("expected an error without a task runner")
+	}
+}
+
+func TestTestJobRunsCommandAndRecordsSuccess(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "web-001", "testuser")
+
+	var gotCmd []string
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			gotCmd = append([]string{name}, args...)
+			return &executor.Result{ExitCode: 0, Stdout: "hello\n"}, nil
+		},
+	}
+	svc := NewService(db, exec, nil)
+	tr := taskrunner.New()
+	svc.SetTaskRunner(tr)
+
+	job, err := svc.Create(context.Background(), CronJobRequest{
+		WebsiteID: "web-001",
+		Command:   "php artisan schedule:run",
+		Schedule:  "* * * * *",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	taskID, err := svc.TestJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("TestJob: %v", err)
+	}
+
+	task := waitForTask(t, tr, taskID)
+	if task.Status != "completed" {
+		t.Fatalf("task status = %s (%s), want completed", task.Status, task.Error)
+	}
+
+	// The command must run as the website's user, from its home directory,
+	// with a POSIX shell like cron uses.
+	joined := strings.Join(gotCmd, " ")
+	for _, want := range []string{"-H", "-u", "testuser", "sh", "-c", "cd ~ && php artisan schedule:run"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("command %q missing %q", joined, want)
+		}
+	}
+
+	updated, err := svc.Get(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.LastStatus != "success" {
+		t.Errorf("last_status = %q, want success", updated.LastStatus)
+	}
+	if updated.LastRun.IsZero() {
+		t.Error("last_run must be stamped after a test")
+	}
+}
+
+func TestTestJobRecordsFailure(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "web-001", "testuser")
+
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 1, Stderr: "command not found"}, nil
+		},
+	}
+	svc := NewService(db, exec, nil)
+	tr := taskrunner.New()
+	svc.SetTaskRunner(tr)
+
+	job, err := svc.Create(context.Background(), CronJobRequest{
+		WebsiteID: "web-001",
+		Command:   "nope",
+		Schedule:  "* * * * *",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	taskID, err := svc.TestJob(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("TestJob: %v", err)
+	}
+
+	task := waitForTask(t, tr, taskID)
+	if task.Status != "failed" {
+		t.Fatalf("task status = %s, want failed", task.Status)
+	}
+
+	updated, err := svc.Get(context.Background(), job.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if updated.LastStatus != "failed" {
+		t.Errorf("last_status = %q, want failed", updated.LastStatus)
 	}
 }

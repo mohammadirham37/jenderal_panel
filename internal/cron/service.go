@@ -12,6 +12,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // CronJobRequest holds the parameters for creating or updating a cron job.
@@ -26,12 +27,16 @@ type Service struct {
 	db    *sql.DB
 	exec  executor.CommandExecutor
 	audit *audit.Service
+	tasks *taskrunner.Runner
 }
 
 // NewService creates a new cron Service.
 func NewService(db *sql.DB, exec executor.CommandExecutor, auditSvc *audit.Service) *Service {
 	return &Service{db: db, exec: exec, audit: auditSvc}
 }
+
+// SetTaskRunner wires the task runner so test runs show up as visible tasks.
+func (s *Service) SetTaskRunner(tr *taskrunner.Runner) { s.tasks = tr }
 
 // validateCronFields rejects line breaks and control characters in the
 // schedule and command. A crontab entry is a single line, so embedded
@@ -234,6 +239,72 @@ func (s *Service) setEnabled(ctx context.Context, id string, enabled bool) error
 	}
 
 	return s.rebuildCrontab(ctx, job.WebsiteID)
+}
+
+// TestJob runs the job's command once as the website user — from the user's
+// home directory, like a real cron run — as a background task, and records
+// the outcome in last_run/last_status so the page shows how the job behaved
+// even after the task output is gone.
+func (s *Service) TestJob(ctx context.Context, id string) (string, error) {
+	job, err := s.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if s.tasks == nil {
+		return "", model.NewDomainError("TASK_RUNNER_UNAVAILABLE", "task runner is not available", nil)
+	}
+
+	var webUser, domain string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT web_user, domain FROM websites WHERE id = ?`, job.WebsiteID,
+	).Scan(&webUser, &domain); err != nil {
+		if err == sql.ErrNoRows {
+			return "", model.NewDomainError("NOT_FOUND", "website not found", nil)
+		}
+		return "", fmt.Errorf("query website: %w", err)
+	}
+
+	return s.tasks.RunFuncWithOptions(
+		taskrunner.Options{Name: "Test cron: " + job.Command + " (" + domain + ")", Module: "cron", Timeout: 15 * time.Minute},
+		func(taskCtx context.Context, write func(string)) error {
+			return s.runCronTest(taskCtx, job, webUser, write)
+		}), nil
+}
+
+// runCronTest executes the command as the web user and stamps the result on
+// the job row.
+func (s *Service) runCronTest(ctx context.Context, job model.CronJob, webUser string, write func(string)) error {
+	write("Running as " + webUser + ": " + job.Command)
+	// Cron starts entries in the user's home with /bin/sh; -H makes sudo set
+	// HOME to the web user's home so "~" expands like it does under cron.
+	result, err := s.exec.RunSudo(ctx, "sudo", "-H", "-u", webUser, "sh", "-c", "cd ~ && "+job.Command)
+	if err != nil {
+		s.recordTestResult(ctx, job.ID, "failed")
+		return fmt.Errorf("run cron command: %w", err)
+	}
+	if result.Stdout != "" {
+		write(strings.TrimSpace(result.Stdout))
+	}
+	if result.ExitCode != 0 {
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = fmt.Sprintf("exit status %d", result.ExitCode)
+		}
+		write(detail)
+		s.recordTestResult(ctx, job.ID, "failed")
+		return model.NewDomainError("CRON_TEST_FAILED", detail, nil)
+	}
+	write("Exit code 0 — command succeeded.")
+	s.recordTestResult(ctx, job.ID, "success")
+	return nil
+}
+
+// recordTestResult stamps last_run/last_status on the job row.
+func (s *Service) recordTestResult(ctx context.Context, id, status string) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.db.ExecContext(ctx,
+		`UPDATE cron_jobs SET last_run = ?, last_status = ?, updated_at = ? WHERE id = ?`,
+		now, status, now, id)
 }
 
 // rebuildCrontab collects all enabled cron jobs for a website, resolves the

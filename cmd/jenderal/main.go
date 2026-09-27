@@ -312,6 +312,7 @@ func cmdServe() {
 	provisioner := website.NewProvisioner(db, exec, auditSvc)
 	websiteSvc.SetProvisioner(provisioner)
 	websiteSvc.SetTaskRunner(tasks)
+	cronSvc.SetTaskRunner(tasks)
 	stagingSvc := websitestaging.NewService(db, exec, websiteSvc, dbManagerSvc, tasks, auditSvc)
 	provisioner.SetSSHAccounts(sshAccountSvc)
 	deploySvc.SetSSHAccounts(sshAccountSvc)

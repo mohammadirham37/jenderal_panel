@@ -245,3 +245,35 @@ func (h *Handler) DisableForWebsite(w http.ResponseWriter, r *http.Request) {
 	h.logAction(r, "disable_cron_job", job.ID, "disabled cron job for website "+job.WebsiteID)
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// Test handles POST /api/cron-jobs/{id}/test.
+func (h *Handler) Test(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	taskID, err := h.svc.TestJob(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "test_cron_job", id, "ran cron job test")
+	httputil.JSON(w, http.StatusOK, map[string]string{"task_id": taskID})
+}
+
+// TestForWebsite handles POST /api/websites/{id}/cron-jobs/{jobId}/test.
+func (h *Handler) TestForWebsite(w http.ResponseWriter, r *http.Request) {
+	job, err := h.scopedJob(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	taskID, err := h.svc.TestJob(r.Context(), job.ID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "test_cron_job", job.ID, "ran cron job test for website "+job.WebsiteID)
+	httputil.JSON(w, http.StatusOK, map[string]string{"task_id": taskID})
+}

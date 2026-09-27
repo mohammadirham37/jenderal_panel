@@ -608,6 +608,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/cron-jobs/{jobId}/enable", cronHandler.EnableForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/cron-jobs/{jobId}/disable", cronHandler.DisableForWebsite)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/cron-jobs/{jobId}/test", cronHandler.TestForWebsite)
 			r.With(auth.RequirePermission(deps.RBAC, "cron.view")).
 				Get("/cron-jobs", cronHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
@@ -622,6 +624,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/cron-jobs/{id}/enable", cronHandler.Enable)
 			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
 				Post("/cron-jobs/{id}/disable", cronHandler.Disable)
+			r.With(auth.RequirePermission(deps.RBAC, "cron.manage")).
+				Post("/cron-jobs/{id}/test", cronHandler.Test)
 
 			// Queue Workers (website-scoped; ownership handled by the scope
 			// middleware, so website-level permissions are enough here)
