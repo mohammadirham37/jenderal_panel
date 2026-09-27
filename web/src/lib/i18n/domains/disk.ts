@@ -10,11 +10,16 @@ const en = {
 	'dku.loadFailed': 'Failed to load disk usage',
 	'dku.filesystems': 'Filesystems',
 	'dku.fs.source': 'Device',
+	'dku.fs.type': 'Type',
 	'dku.fs.mount': 'Mount',
 	'dku.fs.size': 'Size',
 	'dku.fs.used': 'Used',
 	'dku.fs.avail': 'Available',
 	'dku.fs.use': 'Use',
+	'dku.fs.empty': 'No mounted filesystems reported.',
+	'dku.summary.primary': 'Primary filesystem',
+	'dku.summary.usedOf': 'of',
+	'dku.summary.free': 'free',
 	'dku.dirs': 'Space by Location',
 	'dku.dirs.desc': 'Bounded scan of the usual growth suspects on a web server.',
 	'dku.dir.path': 'Path',
@@ -61,7 +66,15 @@ const en = {
 	'dku.cleanup.started': 'Cleanup started. Progress is shown below.',
 	'dku.cleanup.plan': 'Planned commands',
 	'dku.cleanup.journalHint': '50–1024 MB',
-	'dku.cleanup.tmpHint': '1–365 days'
+	'dku.cleanup.tmpHint': '1–365 days',
+	'dku.cleanup.actions': 'actions selected',
+	'dku.cleanup.details': 'Command details',
+	'dku.cleanup.danger': 'The selected commands run with root privileges. The preview below shows exactly what will execute.',
+	'dku.cleanup.aptClean.desc': 'Deletes downloaded .deb archives from /var/cache/apt.',
+	'dku.cleanup.aptAutoremove.desc': 'Removes packages that are no longer needed, including old kernels.',
+	'dku.cleanup.dockerPrune.desc': 'Removes stopped containers plus unused images, networks, and build cache.',
+	'dku.cleanup.journalVacuum.desc': 'Caps the systemd journal at the given size.',
+	'dku.cleanup.tmpClean.desc': 'Deletes files under /tmp not modified for the given number of days.'
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -72,11 +85,16 @@ const id: Record<keyof typeof en, string> = {
 	'dku.loadFailed': 'Gagal memuat penggunaan disk',
 	'dku.filesystems': 'Filesystem',
 	'dku.fs.source': 'Perangkat',
+	'dku.fs.type': 'Tipe',
 	'dku.fs.mount': 'Mount',
 	'dku.fs.size': 'Ukuran',
 	'dku.fs.used': 'Terpakai',
 	'dku.fs.avail': 'Tersedia',
 	'dku.fs.use': 'Pemakaian',
+	'dku.fs.empty': 'Tidak ada filesystem yang ter-mount.',
+	'dku.summary.primary': 'Filesystem utama',
+	'dku.summary.usedOf': 'dari',
+	'dku.summary.free': 'bebas',
 	'dku.dirs': 'Ruang per Lokasi',
 	'dku.dirs.desc': 'Pemindaian terbatas pada lokasi yang biasanya membesar di server web.',
 	'dku.dir.path': 'Path',
@@ -123,7 +141,15 @@ const id: Record<keyof typeof en, string> = {
 	'dku.cleanup.started': 'Pembersihan dimulai. Progres ditampilkan di bawah.',
 	'dku.cleanup.plan': 'Perintah yang direncanakan',
 	'dku.cleanup.journalHint': '50–1024 MB',
-	'dku.cleanup.tmpHint': '1–365 hari'
+	'dku.cleanup.tmpHint': '1–365 hari',
+	'dku.cleanup.actions': 'aksi dipilih',
+	'dku.cleanup.details': 'Detail perintah',
+	'dku.cleanup.danger': 'Perintah terpilih dijalankan dengan hak root. Pratinjau di bawah menampilkan persis apa yang akan dieksekusi.',
+	'dku.cleanup.aptClean.desc': 'Menghapus arsip .deb yang sudah terunduh di /var/cache/apt.',
+	'dku.cleanup.aptAutoremove.desc': 'Menghapus paket yang tidak lagi dibutuhkan, termasuk kernel lama.',
+	'dku.cleanup.dockerPrune.desc': 'Menghapus kontainer yang berhenti serta image, jaringan, dan build cache yang tidak terpakai.',
+	'dku.cleanup.journalVacuum.desc': 'Membatasi jurnal systemd pada ukuran yang diberikan.',
+	'dku.cleanup.tmpClean.desc': 'Menghapus file di /tmp yang tidak dimodifikasi selama jumlah hari yang diberikan.'
 };
 
 export const dict = { en, id };
