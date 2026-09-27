@@ -17,6 +17,7 @@
 	let loading = $state(true);
 	let sidebarOpen = $state(true);
 	let mobileSidebarOpen = $state(false);
+	let showLogoutConfirm = $state(false);
 	let isMobile = $state(false);
 	let mobileMenuButton: HTMLButtonElement | undefined = $state();
 	let mobileCloseButton: HTMLButtonElement | undefined = $state();
@@ -107,6 +108,7 @@
 	}
 
 	async function handleLogout() {
+		showLogoutConfirm = false;
 		await logout();
 		goto('/login');
 	}
@@ -124,8 +126,12 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape' && mobileSidebarOpen) {
-			closeMobileSidebar();
+		if (event.key === 'Escape') {
+			if (showLogoutConfirm) {
+				showLogoutConfirm = false;
+				return;
+			}
+			if (mobileSidebarOpen) closeMobileSidebar();
 		}
 	}
 
@@ -381,8 +387,8 @@
 				<div class="flex items-center gap-2">
 					<ThemeToggle />
 					<button
-						onclick={handleLogout}
-						class="cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] px-3.5 py-2 text-xs font-medium text-gray-300 transition hover:border-blue-400/20 hover:bg-blue-500/8 hover:text-white"
+						onclick={() => (showLogoutConfirm = true)}
+						class="cursor-pointer rounded-xl border border-white/8 bg-white/[0.035] px-3.5 py-2 text-xs font-medium text-gray-300 transition hover:border-red-400/30 hover:bg-red-500/10 hover:text-red-200"
 					>
 						{translate($language, 'nav.logout')}
 					</button>
@@ -396,4 +402,44 @@
 		</div>
 		<Toaster />
 	</div>
+
+	<!-- Logout confirmation modal -->
+	{#if showLogoutConfirm}
+		<div
+			class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+			role="dialog"
+			aria-modal="true"
+			aria-label={translate($language, 'nav.logout_title')}
+		>
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<div class="flex items-start gap-3">
+					<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-500/10 text-red-400">
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15m3 0l3-3m0 0l-3-3m3 3H9" />
+						</svg>
+					</span>
+					<div class="min-w-0">
+						<h4 class="text-base font-semibold text-white">{translate($language, 'nav.logout_title')}</h4>
+						<p class="mt-1 text-sm text-gray-400">{translate($language, 'nav.logout_body')}</p>
+					</div>
+				</div>
+				<div class="mt-4 flex justify-end gap-2">
+					<button
+						type="button"
+						onclick={() => (showLogoutConfirm = false)}
+						class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
+					>
+						{translate($language, 'nav.cancel')}
+					</button>
+					<button
+						type="button"
+						onclick={handleLogout}
+						class="cursor-pointer rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+					>
+						{translate($language, 'nav.logout_yes')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 {/if}
