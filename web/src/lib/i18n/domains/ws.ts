@@ -253,6 +253,9 @@ const en = {
 	'wd.cmd.starting': 'Starting…',
 	'wd.cmd.yes_run': 'Yes, run it',
 	'wd.cmd.run': 'Run command',
+	'wd.cmd.progress_title': 'Command progress',
+	'wd.cmd.progress_hint': 'You can close this dialog — the command keeps running in the background and the page reloads automatically when it finishes.',
+	'wd.cmd.progress_close': 'Close progress dialog',
 
 	// Laravel .env
 	'wd.env.mode_label': 'Edit mode',
@@ -676,6 +679,9 @@ const id: Record<keyof typeof en, string> = {
 	'wd.cmd.starting': 'Memulai…',
 	'wd.cmd.yes_run': 'Ya, jalankan',
 	'wd.cmd.run': 'Jalankan perintah',
+	'wd.cmd.progress_title': 'Progres perintah',
+	'wd.cmd.progress_hint': 'Dialog ini boleh ditutup — perintah tetap berjalan di latar belakang dan halaman dimuat ulang otomatis saat selesai.',
+	'wd.cmd.progress_close': 'Tutup dialog progres',
 
 	// Laravel .env
 	'wd.env.mode_label': 'Mode edit',

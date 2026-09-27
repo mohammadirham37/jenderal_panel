@@ -453,6 +453,7 @@ import { toast } from '$lib/stores/toast';
 	let commandsLoading = $state(false);
 	let commandsError = $state('');
 	let commandTaskId = $state('');
+	let showCommandModal = $state(false);
 	let commandsInitialized = $state(false);
 	let pendingCommand = $state<CommandPreset | null>(null);
 	let commandConfirmBusy = $state(false);
@@ -1073,12 +1074,13 @@ import { toast } from '$lib/stores/toast';
 
 	async function runCommand(preset: CommandPreset) {
 		if (!website) return;
-		
+
 		try {
 			const data = await api.post<{ task_id: string }>(`/api/v1/websites/${website.id}/run-command`, {
 				command: preset.label
 			});
 			commandTaskId = data.task_id || '';
+			showCommandModal = true;
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'wd.cmd.run_failed'));
 		}
@@ -1144,6 +1146,7 @@ import { toast } from '$lib/stores/toast';
 				command: 'cp .env.example .env'
 			});
 			commandTaskId = data.task_id || '';
+			showCommandModal = true;
 			envMsg = translate($language, 'wd.env.copying');
 			await pollEnvAfterCreate();
 		} catch (err) {
@@ -1384,7 +1387,10 @@ import { toast } from '$lib/stores/toast';
 
 <svelte:window
 	onkeydown={(e) => {
-		if (e.key === 'Escape' && pendingCommand && !commandConfirmBusy) pendingCommand = null;
+		if (e.key === 'Escape') {
+			if (pendingCommand && !commandConfirmBusy) pendingCommand = null;
+			if (showCommandModal) showCommandModal = false;
+		}
 	}}
 />
 
@@ -2322,19 +2328,6 @@ import { toast } from '$lib/stores/toast';
 						{/if}
 						</div>
 					{/if}
-
-					<TaskProgress
-						bind:taskId={commandTaskId}
-						storageKey="cmd-task-{website.id}"
-						onComplete={(task) => {
-							// Reload only on success so every section reflects the
-							// post-command state. On failure the output stays put so
-							// the error can be read; the user dismisses it by hand.
-							if (task?.status === 'completed') {
-								setTimeout(() => window.location.reload(), 800);
-							}
-						}}
-					/>
 				</div>
 
 			<!-- ============================================================ -->
@@ -2866,6 +2859,47 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 				>
 					{commandConfirmBusy ? translate($language, 'wd.cmd.starting') : pendingCommand.danger ? translate($language, 'wd.cmd.yes_run') : translate($language, 'wd.cmd.run')}
 				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+<!-- Command progress modal -->
+{#if commandTaskId && showCommandModal}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		aria-label={translate($language, 'wd.cmd.progress_title')}
+	>
+		<div class="w-full max-w-lg rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="flex items-center justify-between gap-3">
+				<h4 class="text-base font-semibold text-white">{translate($language, 'wd.cmd.progress_title')}</h4>
+				<button
+					type="button"
+					onclick={() => (showCommandModal = false)}
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-white/5 hover:text-white"
+					aria-label={translate($language, 'wd.cmd.progress_close')}
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<p class="mt-1 text-xs leading-relaxed text-gray-500">{translate($language, 'wd.cmd.progress_hint')}</p>
+			<div class="mt-4 rounded-xl border border-gray-700 bg-gray-900/40 p-4">
+				<TaskProgress
+					bind:taskId={commandTaskId}
+					storageKey="cmd-task-{website?.id}"
+					onComplete={(task) => {
+						// Reload only on success so every section reflects the
+						// post-command state. On failure the output stays put so
+						// the error can be read; the user dismisses it by hand.
+						if (task?.status === 'completed') {
+							setTimeout(() => window.location.reload(), 800);
+						}
+					}}
+				/>
 			</div>
 		</div>
 	</div>
