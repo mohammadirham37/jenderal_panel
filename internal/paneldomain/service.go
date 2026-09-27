@@ -222,7 +222,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
-        proxy_read_timeout 300s;
+        # must match the panel's own restore upload cap
+        client_max_body_size 512m;
+        proxy_read_timeout 3600s;
     }
 }
 `
@@ -254,7 +256,9 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
-        proxy_read_timeout 300s;
+        # must match the panel's own restore upload cap
+        client_max_body_size 512m;
+        proxy_read_timeout 3600s;
     }
 }
 
@@ -277,7 +281,9 @@ server {
         proxy_set_header X-Forwarded-Proto https;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
-        proxy_read_timeout 300s;
+        # must match the panel's own restore upload cap
+        client_max_body_size 512m;
+        proxy_read_timeout 3600s;
         proxy_send_timeout 300s;
     }
 }
@@ -547,9 +553,13 @@ func (s *Service) Renew(ctx context.Context) (string, error) {
 }
 
 // Start launches the daily renewal sweep: when the installed certificate
-// expires within 30 days, it is renewed automatically.
+// expires within 30 days, it is renewed automatically. On startup it also
+// re-renders an existing vhost when it no longer matches the current
+// template, so panel updates that change vhost directives take effect
+// without a manual re-setup.
 func (s *Service) Start(ctx context.Context) {
 	go func() {
+		s.refreshVhost(context.Background())
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
 		for {
@@ -561,6 +571,42 @@ func (s *Service) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// refreshVhost rewrites the panel domain vhost when it differs from the
+// currently rendered template (HTTP-only while no certificate exists, TLS
+// otherwise). A vhost that was never written by Setup is left alone.
+func (s *Service) refreshVhost(ctx context.Context) {
+	domain, _, enabled, err := s.loadConfig(ctx)
+	if err != nil || !enabled || domain == "" {
+		return
+	}
+	path := vhostAvailablePath(domain)
+	result, err := s.exec.RunSudo(ctx, "cat", path)
+	if err != nil || result.ExitCode != 0 || result.Stdout == "" {
+		return
+	}
+	upstream := s.upstreamURL()
+	desired := renderHTTPVhost(domain, acmeWebroot, upstream)
+	if _, err := os.Stat(certFile); err == nil {
+		desired = renderTLSVhost(domain, upstream, certFile, keyFile, acmeWebroot)
+	}
+	if strings.TrimSpace(result.Stdout) == strings.TrimSpace(desired) {
+		return
+	}
+	if err := s.writeVhostTested(ctx, path, desired); err != nil {
+		log.Printf("panel domain vhost refresh: %v", err)
+		return
+	}
+	if err := s.enableVhost(ctx, domain); err != nil {
+		log.Printf("panel domain vhost refresh: %v", err)
+		return
+	}
+	if err := s.reloadNginx(ctx); err != nil {
+		log.Printf("panel domain vhost refresh: %v", err)
+		return
+	}
+	log.Printf("panel domain vhost refreshed for %s", domain)
 }
 
 func (s *Service) renewIfDue(ctx context.Context) {

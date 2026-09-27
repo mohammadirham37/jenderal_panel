@@ -476,6 +476,11 @@ func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
 // maxRestoreBytes caps the uploaded dump size for restores.
 const maxRestoreBytes = 512 << 20
 
+// restoreMultipartMemory bounds how much of the uploaded dump ParseMultipart
+// keeps in RAM; larger file parts spill to temp files and are streamed into
+// the engine from there (the 512 MB cap itself is MaxBytesReader's job).
+const restoreMultipartMemory = 32 << 20
+
 // RestoreDatabase handles POST /databases/{id}/restore. Expects a multipart
 // form with a "file" field holding a plain or gzipped SQL dump; the dump
 // replaces the current contents of the database.
@@ -483,7 +488,7 @@ func (h *Handler) RestoreDatabase(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreBytes)
-	if err := r.ParseMultipartForm(maxRestoreBytes); err != nil {
+	if err := r.ParseMultipartForm(restoreMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
@@ -708,7 +713,7 @@ func (h *Handler) ManageEmptyTable(w http.ResponseWriter, r *http.Request) {
 // selected database using the management session's credentials.
 func (h *Handler) ManageRestore(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreBytes)
-	if err := r.ParseMultipartForm(maxRestoreBytes); err != nil {
+	if err := r.ParseMultipartForm(restoreMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
