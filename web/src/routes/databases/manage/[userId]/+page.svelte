@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { api, getCSRFToken } from '$lib/api';
 	import { language, translate } from '$lib/stores/language';
+	import { buildErDiagram } from '$lib/erdiagram.js';
 
 	// ─── Types ────────────────────────────────────────────────────────
 
@@ -20,6 +21,26 @@
 		nullable: boolean;
 		key: string;
 		default: string;
+		fk_table?: string;
+		fk_column?: string;
+	}
+
+	interface DiagramTable {
+		name: string;
+		columns: ManagedColumn[];
+	}
+
+	interface DiagramRelation {
+		from_table: string;
+		from_column: string;
+		to_table: string;
+		to_column: string;
+	}
+
+	interface ManagedSchemaDiagram {
+		engine: string;
+		tables: DiagramTable[];
+		relations: DiagramRelation[];
 	}
 
 	interface ManagedRows {
@@ -83,7 +104,7 @@
 	// Selection
 	let selectedDb = $state(sessionStorage.getItem(lastDbKey) || '');
 	let selectedTable = $state('');
-	let viewMode = $state<'tables' | 'sql'>('tables');
+	let viewMode = $state<'tables' | 'sql' | 'uml'>('tables');
 	let tableTab = $state<'browse' | 'structure'>('browse');
 
 	// Browse state
@@ -100,6 +121,13 @@
 	// Structure
 	let structure = $state<ManagedColumn[]>([]);
 	let structureLoading = $state(false);
+
+	// Schema diagram (ER/UML)
+	let diagram = $state<ManagedSchemaDiagram | null>(null);
+	let diagramLoading = $state(false);
+	let diagramError = $state('');
+	let diagramContainer: HTMLDivElement | undefined = $state();
+	let diagramRenderToken = 0;
 
 	// SQL console
 	let sqlText = $state('');
@@ -268,6 +296,9 @@
 		viewMode = 'tables';
 		tables = [];
 		objects = null;
+		diagram = null;
+		diagramError = '';
+		diagramRenderToken++;
 		loadTables().catch((err) => toast(err.message, true));
 		loadObjects().catch((err) => toast(err.message, true));
 	}
@@ -294,6 +325,48 @@
 			);
 		} finally {
 			structureLoading = false;
+		}
+	}
+
+	async function loadDiagram() {
+		if (!selectedDb) return;
+		diagramLoading = true;
+		diagramError = '';
+		const myToken = ++diagramRenderToken;
+		try {
+			const data = await mapi<ManagedSchemaDiagram>(`/schema?database=${encodeURIComponent(selectedDb)}`);
+			if (myToken !== diagramRenderToken) return;
+			diagram = data;
+		} catch (err) {
+			if (myToken !== diagramRenderToken) return;
+			diagram = null;
+			diagramError = err instanceof Error ? err.message : String(err);
+		} finally {
+			if (myToken === diagramRenderToken) diagramLoading = false;
+		}
+	}
+
+	async function renderDiagram() {
+		if (!diagram || !diagramContainer) return;
+		const mermaid = (await import('mermaid')).default;
+		mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+		const { svg } = await mermaid.render('dbm-er-' + Date.now(), buildErDiagram(diagram));
+		if (diagramContainer) diagramContainer.innerHTML = svg;
+	}
+
+	// Renders whenever the diagram view mounts (or new data arrives).
+	$effect(() => {
+		if (viewMode === 'uml' && diagram && !diagramError && !diagramLoading) {
+			renderDiagram().catch((err) => {
+				diagramError = err instanceof Error ? err.message : String(err);
+			});
+		}
+	});
+
+	function openDiagram() {
+		viewMode = 'uml';
+		if (!diagram && !diagramLoading) {
+			loadDiagram().catch((err) => toast(err.message, true));
 		}
 	}
 
@@ -842,6 +915,17 @@
 					</svg>
 					{translate($language, 'dbm.sql_console')}
 				</button>
+				<button
+					type="button"
+					onclick={openDiagram}
+					class="mt-2 flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/20
+					{viewMode === 'uml' ? 'ring-2 ring-blue-500/40' : ''}"
+				>
+					<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
+					</svg>
+					{translate($language, 'dbm.diagram')}
+				</button>
 
 				<div class="mt-2.5 border-t border-white/5 pt-2.5">
 					<span class="mb-1 block text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">{translate($language, 'dbm.restore')}</span>
@@ -1019,7 +1103,37 @@
 				</div>
 			{/if}
 
-			{#if viewMode === 'sql'}
+			{#if viewMode === 'uml'}
+				<!-- Schema diagram (ER/UML) -->
+				<div class="flex items-center justify-between border-b border-white/5 px-5 py-3">
+					<h3 class="text-sm font-semibold text-white">
+						{translate($language, 'dbm.diagram')} — <span class="font-mono text-blue-300">{selectedDb || translate($language, 'dbm.no_database')}</span>
+					</h3>
+					<button
+						type="button"
+						onclick={() => loadDiagram().catch((err) => toast(err.message, true))}
+						disabled={diagramLoading || !selectedDb}
+						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
+					>
+						{translate($language, 'dbm.diagram_reload')}
+					</button>
+				</div>
+				<div class="min-h-0 flex-1 overflow-auto p-4">
+					{#if diagramLoading}
+						<div class="flex h-full items-center justify-center gap-3 text-sm text-gray-400">
+							<div class="h-6 w-6 rounded-full border-2 border-gray-700 border-t-blue-400 motion-safe:animate-spin"></div>
+							{translate($language, 'dbm.diagram_loading')}
+						</div>
+					{:else if diagramError}
+						<div class="rounded-xl border border-red-700 bg-red-900/30 p-3.5 font-mono text-xs text-red-300">{diagramError}</div>
+					{:else if diagram && diagram.tables.length === 0}
+						<p class="py-10 text-center text-sm text-gray-400">{translate($language, 'dbm.diagram_no_tables')}</p>
+					{:else if diagram}
+						<p class="mb-2 text-[11px] text-gray-500">{translate($language, 'dbm.diagram_hint')}</p>
+						<div bind:this={diagramContainer} class="er-diagram w-full [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"></div>
+					{/if}
+				</div>
+			{:else if viewMode === 'sql'}
 				<!-- SQL console -->
 				<div class="flex items-center justify-between border-b border-white/5 px-5 py-3">
 					<h3 class="text-sm font-semibold text-white">
@@ -1269,6 +1383,9 @@
 											<td class="px-3 py-2">
 												{#if col.key}
 													<span class="rounded bg-yellow-900/50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-yellow-300">{col.key}</span>
+												{/if}
+												{#if col.fk_table}
+													<span class="ml-1 rounded bg-blue-900/50 px-1.5 py-0.5 font-mono text-[10px] font-bold text-blue-300">FK → {col.fk_table}.{col.fk_column}</span>
 												{/if}
 											</td>
 											<td class="px-3 py-2 font-mono text-gray-400">{col.default || '—'}</td>

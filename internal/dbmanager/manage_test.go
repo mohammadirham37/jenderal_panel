@@ -300,12 +300,12 @@ func TestManageTablesPostgresCoversSchemasAndPartitionedTables(t *testing.T) {
 }
 
 func TestManageStructurePostgresResolvesQualifiedSchema(t *testing.T) {
-	var captured string
+	var commands []string
 	mock := &executor.MockExecutor{
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			for i, arg := range args {
 				if arg == "--command" && i+1 < len(args) {
-					captured = args[i+1]
+					commands = append(commands, args[i+1])
 				}
 			}
 			return okResult("column_name,data_type,is_nullable,column_default,\n" +
@@ -319,8 +319,15 @@ func TestManageStructurePostgresResolvesQualifiedSchema(t *testing.T) {
 	if _, err := svc.ManageStructure(context.Background(), token, "app_db", "analytics.events"); err != nil {
 		t.Fatalf("ManageStructure: %v", err)
 	}
-	if !strings.Contains(captured, "table_schema = 'analytics'") || !strings.Contains(captured, "table_name = 'events'") {
-		t.Errorf("structure query must resolve the qualified schema, got:\n%s", captured)
+	if len(commands) != 2 {
+		t.Fatalf("expected structure + foreign-key queries, got %d:\n%s", len(commands), strings.Join(commands, "\n---\n"))
+	}
+	structureSQL, fkSQL := commands[0], commands[1]
+	if !strings.Contains(structureSQL, "table_schema = 'analytics'") || !strings.Contains(structureSQL, "table_name = 'events'") {
+		t.Errorf("structure query must resolve the qualified schema, got:\n%s", structureSQL)
+	}
+	if !strings.Contains(fkSQL, "sn.nspname = 'analytics'") || !strings.Contains(fkSQL, "rn.relname = 'events'") {
+		t.Errorf("foreign-key query must resolve the qualified schema, got:\n%s", fkSQL)
 	}
 }
 
@@ -431,4 +438,72 @@ func TestManageDatabasesFiltersToGrantedOnly(t *testing.T) {
 	if len(got) != 1 || got[0] != "app_db" {
 		t.Fatalf("databases = %v, want only the granted [app_db]", got)
 	}
+}
+
+func TestSchemaDiagramMySQLGroupsColumnsAndFKs(t *testing.T) {
+	mock := stubManageExec(map[string]string{
+		"KEY_COLUMN_USAGE": "TABLE_NAME\tCOLUMN_NAME\tREFERENCED_TABLE_NAME\tREFERENCED_COLUMN_NAME\n" +
+			"posts\tuser_id\tusers\tid\n",
+		"FROM information_schema.COLUMNS": "TABLE_NAME\tCOLUMN_NAME\tCOLUMN_TYPE\tIS_NULLABLE\tIF(COLUMN_KEY='PRI','PRI','')\n" +
+			"users\tid\tbigint unsigned\tNO\tPRI\n" +
+			"users\tname\tvarchar(190)\tYES\t\n" +
+			"posts\tid\tbigint unsigned\tNO\tPRI\n" +
+			"posts\tuser_id\tbigint unsigned\tYES\tMUL\n",
+	})
+	svc := &Service{exec: mock}
+	token := newManageSession("mysql")
+	defer manageSessions.drop(token)
+
+	diagram, err := svc.SchemaDiagram(context.Background(), token, "app_db")
+	if err != nil {
+		t.Fatalf("SchemaDiagram: %v", err)
+	}
+	if diagram.Engine != "mysql" || len(diagram.Tables) != 2 {
+		t.Fatalf("tables = %d, want 2 (%+v)", len(diagram.Tables), diagram.Tables)
+	}
+	users, posts := diagram.Tables[0], diagram.Tables[1]
+	if users.Name != "users" || len(users.Columns) != 2 || users.Columns[0].Key != "PRI" {
+		t.Errorf("users entity wrong: %+v", users)
+	}
+	if posts.Name != "posts" || len(posts.Columns) != 2 {
+		t.Fatalf("posts entity wrong: %+v", posts)
+	}
+	if posts.Columns[1].Name != "user_id" || posts.Columns[1].FkTable != "users" || posts.Columns[1].FkColumn != "id" {
+		t.Errorf("posts.user_id must reference users.id, got %+v", posts.Columns[1])
+	}
+	if len(diagram.Relations) != 1 || diagram.Relations[0].FromTable != "posts" ||
+		diagram.Relations[0].ToTable != "users" || diagram.Relations[0].ToColumn != "id" {
+		t.Errorf("relations wrong: %+v", diagram.Relations)
+	}
+}
+
+func TestForeignKeysPostgresQualifiesSchemas(t *testing.T) {
+	mock := stubManageExec(map[string]string{
+		"pg_constraint": "sn.nspname,rn.relname,attname,fn.nspname,fr.relname,af.attname\n" +
+			"public,orders,user_id,public,users,id\n" +
+			"analytics,events,tenant_id,public,tenants,id\n",
+	})
+	svc := &Service{exec: mock}
+	token := newManageSession("postgresql")
+	defer manageSessions.drop(token)
+
+	rels, err := svc.foreignKeys(context.Background(), mustSession(token), "app_db", "", "")
+	if err != nil {
+		t.Fatalf("foreignKeys: %v", err)
+	}
+	if len(rels) != 2 {
+		t.Fatalf("relations = %d, want 2", len(rels))
+	}
+	if rels[0].FromTable != "orders" || rels[0].ToTable != "users" {
+		t.Errorf("public relation = %+v, want orders->users", rels[0])
+	}
+	if rels[1].FromTable != "analytics.events" || rels[1].ToTable != "tenants" {
+		t.Errorf("foreign-schema relation = %+v, want analytics.events->tenants", rels[1])
+	}
+}
+
+// mustSession returns the live session for a test token.
+func mustSession(token string) *manageSession {
+	session, _ := manageSessions.get(token)
+	return session
 }

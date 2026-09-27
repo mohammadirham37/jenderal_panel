@@ -730,6 +730,8 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/manage/{token}/structure", dbHandler.ManageStructure)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/manage/{token}/schema", dbHandler.ManageSchemaDiagram)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/manage/{token}/rows", dbHandler.ManageRows)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
 				Post("/databases/manage/{token}/query", dbHandler.ManageQuery)

@@ -598,6 +598,16 @@ func (h *Handler) ManageStructure(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, columns)
 }
 
+// ManageSchemaDiagram handles GET /databases/manage/{token}/schema?database=.
+func (h *Handler) ManageSchemaDiagram(w http.ResponseWriter, r *http.Request) {
+	diagram, err := h.svc.SchemaDiagram(r.Context(), manageTokenFromRequest(r), r.URL.Query().Get("database"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, diagram)
+}
+
 // ManageRows handles GET /databases/manage/{token}/rows.
 func (h *Handler) ManageRows(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()

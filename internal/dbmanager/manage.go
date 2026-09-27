@@ -97,13 +97,37 @@ type ManagedTable struct {
 	Comment string `json:"comment"`
 }
 
-// ManagedColumn describes one column of a table.
+// ManagedColumn describes one column of a table. FkTable/FkColumn hold the
+// referenced table/column when the column participates in a foreign key.
 type ManagedColumn struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	Nullable bool   `json:"nullable"`
 	Key      string `json:"key"`
 	Default  string `json:"default"`
+	FkTable  string `json:"fk_table,omitempty"`
+	FkColumn string `json:"fk_column,omitempty"`
+}
+
+// DiagramTable is one entity of the schema diagram: a table with its columns.
+type DiagramTable struct {
+	Name    string          `json:"name"`
+	Columns []ManagedColumn `json:"columns"`
+}
+
+// DiagramRelation is one foreign-key edge in the schema diagram.
+type DiagramRelation struct {
+	FromTable  string `json:"from_table"`
+	FromColumn string `json:"from_column"`
+	ToTable    string `json:"to_table"`
+	ToColumn   string `json:"to_column"`
+}
+
+// ManagedSchemaDiagram is the full ER/UML data for one database.
+type ManagedSchemaDiagram struct {
+	Engine    string            `json:"engine"`
+	Tables    []DiagramTable    `json:"tables"`
+	Relations []DiagramRelation `json:"relations"`
 }
 
 // ManagedRows is one page of table data. Cells are nil for SQL NULL.
@@ -278,11 +302,18 @@ func (s *Service) ManageTables(ctx context.Context, token, database string) ([]M
 	if err != nil {
 		return nil, err
 	}
+	return s.listTables(ctx, session, database)
+}
+
+func (s *Service) listTables(ctx context.Context, session *manageSession, database string) ([]ManagedTable, error) {
 	if err := validateIdentifier(database); err != nil {
 		return nil, err
 	}
 
-	var result *executor.Result
+	var (
+		result *executor.Result
+		err    error
+	)
 	switch session.Engine {
 	case "mysql":
 		result, err = s.runMySQL(ctx, session, database,
@@ -416,7 +447,211 @@ func (s *Service) ManageStructure(ctx context.Context, token, database, table st
 		}
 		columns = append(columns, col)
 	}
+
+	// Annotate foreign keys so the UI can flag FK columns (PRI already
+	// travels in Key).
+	fks, err := s.foreignKeys(ctx, session, database, pgSchema, pgTable)
+	if err != nil {
+		return nil, err
+	}
+	byColumn := map[string]DiagramRelation{}
+	for _, rel := range fks {
+		byColumn[rel.FromColumn] = rel
+	}
+	for i := range columns {
+		if rel, ok := byColumn[columns[i].Name]; ok {
+			columns[i].FkTable = rel.ToTable
+			columns[i].FkColumn = rel.ToColumn
+		}
+	}
 	return columns, nil
+}
+
+// ─── Foreign keys ─────────────────────────────────────────────────
+
+// foreignKeys returns the foreign-key edges of a database (or of a single
+// table when schema/table are non-empty). FromTable uses the same listing
+// convention as tables: plain names for MySQL and public PostgreSQL tables,
+// "schema.table" for other PostgreSQL schemas.
+func (s *Service) foreignKeys(ctx context.Context, session *manageSession, database, schema, table string) ([]DiagramRelation, error) {
+	var (
+		result *executor.Result
+		err    error
+	)
+	switch session.Engine {
+	case "mysql":
+		query := "SELECT TABLE_NAME, COLUMN_NAME, REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME " +
+			"FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = " + sqlString(database) +
+			" AND REFERENCED_TABLE_NAME IS NOT NULL"
+		if table != "" {
+			query += " AND TABLE_NAME = " + sqlString(table)
+		}
+		query += " ORDER BY TABLE_NAME, ORDINAL_POSITION"
+		result, err = s.runMySQL(ctx, session, database, query)
+	case "postgresql":
+		query := `
+			SELECT sn.nspname, rn.relname, a.attname, fn.nspname, fr.relname, af.attname
+			FROM pg_constraint c
+			JOIN pg_class rn ON rn.oid = c.conrelid
+			JOIN pg_namespace sn ON sn.oid = rn.relnamespace
+			JOIN pg_class fr ON fr.oid = c.confrelid
+			JOIN pg_namespace fn ON fn.oid = fr.relnamespace
+			JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+			JOIN unnest(c.confkey) WITH ORDINALITY AS f(attnum, ord) ON f.ord = k.ord
+			JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+			JOIN pg_attribute af ON af.attrelid = c.confrelid AND af.attnum = f.attnum
+			WHERE c.contype = 'f'
+			AND sn.nspname <> 'information_schema' AND sn.nspname NOT LIKE 'pg\_%'`
+		if schema != "" {
+			query += " AND sn.nspname = " + sqlString(schema)
+		}
+		if table != "" {
+			query += " AND rn.relname = " + sqlString(table)
+		}
+		query += " ORDER BY sn.nspname, rn.relname, k.ord"
+		result, err = s.runPostgres(ctx, session, database, query)
+	default:
+		return nil, model.NewValidationError("unsupported engine")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	relations := []DiagramRelation{}
+	for i, line := range splitLines(result.Stdout) {
+		if i == 0 {
+			continue // column header
+		}
+		fields := splitFields(session.Engine, line)
+		// MySQL returns 4 fields (table, column, ref table, ref column);
+		// the PostgreSQL query returns 6 (from schema.table + to schema.table).
+		if session.Engine == "mysql" && len(fields) < 4 {
+			continue
+		}
+		if session.Engine != "mysql" && len(fields) < 6 {
+			continue
+		}
+		var rel DiagramRelation
+		if session.Engine == "postgresql" {
+			rel = DiagramRelation{
+				FromTable:  fields[1],
+				FromColumn: fields[2],
+				ToTable:    fields[4],
+				ToColumn:   fields[5],
+			}
+			if fields[0] != "public" {
+				rel.FromTable = fields[0] + "." + fields[1]
+			}
+			if fields[3] != "public" {
+				rel.ToTable = fields[3] + "." + fields[4]
+			}
+		} else {
+			rel = DiagramRelation{
+				FromTable:  fields[0],
+				FromColumn: fields[1],
+				ToTable:    fields[2],
+				ToColumn:   fields[3],
+			}
+		}
+		relations = append(relations, rel)
+	}
+	return relations, nil
+}
+
+// ─── Schema diagram ───────────────────────────────────────────────
+
+// SchemaDiagram returns every table with its columns plus the foreign-key
+// edges of a database, the data needed to draw an ER/UML diagram.
+func (s *Service) SchemaDiagram(ctx context.Context, token, database string) (*ManagedSchemaDiagram, error) {
+	session, err := s.manageSessionFor(token)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateIdentifier(database); err != nil {
+		return nil, err
+	}
+
+	relations, err := s.foreignKeys(ctx, session, database, "", "")
+	if err != nil {
+		return nil, err
+	}
+
+	// One query per engine for all columns of all tables: table, name, type,
+	// nullable (YES/NO), key (PRI or '').
+	var result *executor.Result
+	switch session.Engine {
+	case "mysql":
+		result, err = s.runMySQL(ctx, session, database,
+			"SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, IF(COLUMN_KEY='PRI','PRI','') "+
+				"FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = "+sqlString(database)+
+				" ORDER BY TABLE_NAME, ORDINAL_POSITION")
+	case "postgresql":
+		result, err = s.runPostgres(ctx, session, database, `
+			SELECT CASE WHEN n.nspname = 'public' THEN c.relname ELSE n.nspname || '.' || c.relname END,
+			       a.attname,
+			       pg_catalog.format_type(a.atttypid, a.atttypmod),
+			       CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END,
+			       CASE WHEN EXISTS (
+			           SELECT 1 FROM pg_constraint pc
+			            WHERE pc.contype = 'p' AND pc.conrelid = c.oid AND a.attnum = ANY (pc.conkey))
+			           THEN 'PRI' ELSE '' END
+			FROM pg_class c
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+			WHERE c.relkind IN ('r','p')
+			AND n.nspname NOT LIKE 'pg\_%' AND n.nspname <> 'information_schema'
+			ORDER BY n.nspname, c.relname, a.attnum`)
+	default:
+		return nil, model.NewValidationError("unsupported engine")
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	byTable := map[string]*DiagramTable{}
+	diagramTables := []DiagramTable{}
+	for i, line := range splitLines(result.Stdout) {
+		if i == 0 {
+			continue // column header
+		}
+		fields := splitFields(session.Engine, line)
+		if len(fields) < 5 || fields[0] == "" {
+			continue
+		}
+		table, ok := byTable[fields[0]]
+		if !ok {
+			diagramTables = append(diagramTables, DiagramTable{Name: fields[0], Columns: []ManagedColumn{}})
+			table = &diagramTables[len(diagramTables)-1]
+			byTable[fields[0]] = table
+		}
+		table.Columns = append(table.Columns, ManagedColumn{
+			Name:     fields[1],
+			Type:     fields[2],
+			Nullable: strings.EqualFold(fields[3], "YES"),
+			Key:      fields[4],
+		})
+	}
+
+	// Copy FK references onto the matching columns.
+	byColumn := map[string]DiagramRelation{}
+	for _, rel := range relations {
+		byColumn[rel.FromTable+"."+rel.FromColumn] = rel
+	}
+	for ti := range diagramTables {
+		t := &diagramTables[ti]
+		for ci := range t.Columns {
+			if rel, ok := byColumn[t.Name+"."+t.Columns[ci].Name]; ok {
+				t.Columns[ci].FkTable = rel.ToTable
+				t.Columns[ci].FkColumn = rel.ToColumn
+			}
+		}
+	}
+
+	return &ManagedSchemaDiagram{
+		Engine:    session.Engine,
+		Tables:    diagramTables,
+		Relations: relations,
+	}, nil
 }
 
 // ─── Rows ─────────────────────────────────────────────────────────
