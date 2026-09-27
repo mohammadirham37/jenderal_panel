@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +52,24 @@ func mockExecutor() *executor.MockExecutor {
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			return 0, nil
+		},
+	}
+}
+
+func insertCronJob(t *testing.T, db *sql.DB, id, websiteID, command, schedule string) {
+	t.Helper()
+	_, err := db.Exec(
+		`INSERT INTO cron_jobs (id, website_id, command, schedule, enabled, last_run, last_status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, 1, '', '', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+		id, websiteID, command, schedule,
+	)
+	if err != nil {
+		t.Fatalf("insert cron job: %v", err)
 	}
 }
 
@@ -233,6 +252,165 @@ func waitForTask(t *testing.T, tr *taskrunner.Runner, taskID string) *taskrunner
 	return nil
 }
 
+// TestRebuildCrontabWritesWrappersAndStreamsCrontab pins the wrapper-based
+// crontab: every enabled job gets a wrapper script recording its runs, and
+// the crontab itself is streamed through stdin — the old echo %q approach
+// merged multi-job crontabs into one line so later jobs never ran.
+func TestRebuildCrontabWritesWrappersAndStreamsCrontab(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "web-001", "testuser")
+
+	var wrappers []string
+	var crontabInput string
+	var crontabArgs []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			wrappers = append(wrappers, name+" "+strings.Join(args, " ")+"\n"+input)
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			crontabArgs = append([]string{name}, args...)
+			raw, readErr := io.ReadAll(stdin)
+			if readErr != nil {
+				return 1, readErr
+			}
+			crontabInput = string(raw)
+			return 0, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	if _, err := svc.Create(context.Background(), CronJobRequest{
+		WebsiteID: "web-001", Command: "php artisan schedule:run", Schedule: "* * * * *",
+	}); err != nil {
+		t.Fatalf("Create job1: %v", err)
+	}
+	if _, err := svc.Create(context.Background(), CronJobRequest{
+		WebsiteID: "web-001", Command: "/usr/bin/backup.sh", Schedule: "0 2 * * *",
+	}); err != nil {
+		t.Fatalf("Create job2: %v", err)
+	}
+
+	// A wrapper per job, carrying the command and the run bookkeeping.
+	if len(wrappers) < 2 {
+		t.Fatalf("wrapper scripts written = %d, want at least one per job", len(wrappers))
+	}
+	joinedWrappers := strings.Join(wrappers, "\n---\n")
+	for _, want := range []string{"#!/bin/sh", "php artisan schedule:run", "/usr/bin/backup.sh", `.last"`, `.exit"`} {
+		if !strings.Contains(joinedWrappers, want) {
+			t.Errorf("wrappers missing %q:\n%s", want, joinedWrappers)
+		}
+	}
+
+	// The crontab streams through crontab(1) with one wrapper invocation per
+	// job — no echo, no escaped newlines.
+	joinedArgs := strings.Join(crontabArgs, " ")
+	if !strings.Contains(joinedArgs, "crontab -u testuser -") {
+		t.Errorf("crontab args = %q", joinedArgs)
+	}
+	if strings.Count(crontabInput, "\n") != 2 || strings.Contains(crontabInput, "\\n") {
+		t.Fatalf("crontab must be one line per job, got %q", crontabInput)
+	}
+	if !strings.Contains(crontabInput, "* * * * * /home/testuser/.jenderal-cron/") ||
+		!strings.Contains(crontabInput, "0 2 * * * /home/testuser/.jenderal-cron/") ||
+		!strings.Contains(crontabInput, "> /dev/null 2>&1") {
+		t.Errorf("crontab lines = %q", crontabInput)
+	}
+}
+
+// TestListByWebsiteOverlaysRecordedRuns makes the Last Run column reflect
+// what the cron daemon actually executed.
+func TestListByWebsiteOverlaysRecordedRuns(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "web-001", "testuser")
+	insertCronJob(t, db, "job-ok", "web-001", "ok command", "* * * * *")
+	insertCronJob(t, db, "job-fail", "web-001", "failing command", "0 2 * * *")
+
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := name + " " + strings.Join(args, " ")
+			switch {
+			case strings.HasPrefix(joined, "test -f "):
+				return &executor.Result{ExitCode: 0}, nil // wrapper exists
+			case strings.Contains(joined, "job-ok.last"):
+				return &executor.Result{ExitCode: 0, Stdout: "2026-09-27T10:00:00Z\n"}, nil
+			case strings.Contains(joined, "job-ok.exit"):
+				return &executor.Result{ExitCode: 0, Stdout: "0\n"}, nil
+			case strings.Contains(joined, "job-fail.last"):
+				return &executor.Result{ExitCode: 0, Stdout: "2026-09-27T10:05:00Z\n"}, nil
+			case strings.Contains(joined, "job-fail.exit"):
+				return &executor.Result{ExitCode: 0, Stdout: "1\n"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	jobs, err := svc.ListByWebsite(context.Background(), "web-001")
+	if err != nil {
+		t.Fatalf("ListByWebsite: %v", err)
+	}
+
+	byID := map[string]model.CronJob{}
+	for _, job := range jobs {
+		byID[job.ID] = job
+	}
+	okJob, ok := byID["job-ok"]
+	if !ok || okJob.LastRun.IsZero() || okJob.LastStatus != "success" {
+		t.Errorf("job-ok = %#v, want last run stamped with success", okJob)
+	}
+	failJob, ok := byID["job-fail"]
+	if !ok || failJob.LastStatus != "failed" {
+		t.Errorf("job-fail = %#v, want failed status", failJob)
+	}
+}
+
+// TestListByWebsiteMigratesJobsWithoutWrappers upgrades pre-wrapper crontabs
+// the first time the page is opened, so real runs start being tracked.
+func TestListByWebsiteMigratesJobsWithoutWrappers(t *testing.T) {
+	db := setupTestDB(t)
+	insertTestWebsite(t, db, "web-001", "testuser")
+	insertCronJob(t, db, "job-old", "web-001", "old command", "* * * * *")
+
+	streamCalled := false
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// test -f wrapper: missing; every other call succeeds.
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			streamCalled = true
+			return 0, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	if _, err := svc.ListByWebsite(context.Background(), "web-001"); err != nil {
+		t.Fatalf("ListByWebsite: %v", err)
+	}
+	if !streamCalled {
+		t.Error("missing wrappers must trigger a crontab rebuild")
+	}
+}
+
 func TestTestJobWithoutRunner(t *testing.T) {
 	db := setupTestDB(t)
 	insertTestWebsite(t, db, "web-001", "testuser")
@@ -262,8 +440,14 @@ func TestTestJobRunsCommandAndRecordsSuccess(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			gotCmd = append([]string{name}, args...)
+			gotCmd = append(gotCmd, append([]string{name}, args...)...)
 			return &executor.Result{ExitCode: 0, Stdout: "hello\n"}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			return 0, nil
 		},
 	}
 	svc := NewService(db, exec, nil)
@@ -319,7 +503,18 @@ func TestTestJobRecordsFailure(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			return &executor.Result{ExitCode: 1, Stderr: "command not found"}, nil
+			// Only the actual job command fails; the wrapper/crontab
+			// bookkeeping around it must succeed.
+			if name == "sudo" {
+				return &executor.Result{ExitCode: 1, Stderr: "command not found"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+			return 0, nil
 		},
 	}
 	svc := NewService(db, exec, nil)

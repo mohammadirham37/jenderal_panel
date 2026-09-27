@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"fmt"
@@ -117,7 +118,8 @@ func (s *Service) List(ctx context.Context) ([]model.CronJob, error) {
 	return jobs, rows.Err()
 }
 
-// ListByWebsite returns all cron jobs for a specific website.
+// ListByWebsite returns all cron jobs for a specific website, with the last
+// real cron run recorded by the per-job wrappers overlaid onto the list.
 func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.CronJob, error) {
 	if err := s.requireWebsite(ctx, websiteID); err != nil {
 		return nil, err
@@ -139,7 +141,30 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 		}
 		jobs = append(jobs, job)
 	}
-	return jobs, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	var webUser string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT web_user FROM websites WHERE id = ?`, websiteID,
+	).Scan(&webUser); err == nil && webUser != "" {
+		// Jobs created before wrapper-based crontabs get migrated to one the
+		// first time the page is opened, so real runs start being tracked.
+		missing := false
+		for _, job := range jobs {
+			if job.Enabled && s.cronWrapperMissing(ctx, webUser, job.ID) {
+				missing = true
+				break
+			}
+		}
+		if missing {
+			_ = s.rebuildCrontab(ctx, websiteID)
+		}
+		s.applyRecordedRuns(ctx, webUser, jobs)
+	}
+
+	return jobs, nil
 }
 
 func (s *Service) requireWebsite(ctx context.Context, websiteID string) error {
@@ -307,8 +332,9 @@ func (s *Service) recordTestResult(ctx context.Context, id, status string) {
 		now, status, now, id)
 }
 
-// rebuildCrontab collects all enabled cron jobs for a website, resolves the
-// web_user, and writes the full crontab via sudo.
+// rebuildCrontab collects all enabled cron jobs for a website, writes a
+// wrapper script per job (so real cron runs record their outcome for the
+// panel), and installs the website's crontab via crontab(1).
 func (s *Service) rebuildCrontab(ctx context.Context, websiteID string) error {
 	// Resolve web_user for this website.
 	var webUser string
@@ -324,7 +350,7 @@ func (s *Service) rebuildCrontab(ctx context.Context, websiteID string) error {
 
 	// Gather all enabled cron jobs for this website.
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT schedule, command FROM cron_jobs
+		`SELECT id, schedule, command FROM cron_jobs
 		 WHERE website_id = ? AND enabled = 1
 		 ORDER BY created_at ASC`, websiteID)
 	if err != nil {
@@ -332,16 +358,33 @@ func (s *Service) rebuildCrontab(ctx context.Context, websiteID string) error {
 	}
 	defer rows.Close()
 
-	var lines []string
+	type enabledJob struct {
+		id       string
+		schedule string
+		command  string
+	}
+	var jobs []enabledJob
 	for rows.Next() {
-		var schedule, command string
-		if err := rows.Scan(&schedule, &command); err != nil {
+		var job enabledJob
+		if err := rows.Scan(&job.id, &job.schedule, &job.command); err != nil {
 			return fmt.Errorf("scan cron line: %w", err)
 		}
-		lines = append(lines, schedule+" "+command)
+		jobs = append(jobs, job)
 	}
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterate cron rows: %w", err)
+	}
+
+	if err := s.ensureCronStatusDir(ctx, webUser); err != nil {
+		return fmt.Errorf("prepare cron status directory: %w", err)
+	}
+
+	var lines []string
+	for _, job := range jobs {
+		if err := s.writeCronWrapper(ctx, webUser, job.id, job.command); err != nil {
+			return fmt.Errorf("write cron wrapper: %w", err)
+		}
+		lines = append(lines, fmt.Sprintf("%s %s > /dev/null 2>&1", job.schedule, s.cronWrapperPath(webUser, job.id)))
 	}
 
 	content := strings.Join(lines, "\n")
@@ -349,13 +392,112 @@ func (s *Service) rebuildCrontab(ctx context.Context, websiteID string) error {
 		content += "\n"
 	}
 
-	// Write via: echo "{content}" | sudo crontab -u {web_user} -
-	_, err = s.exec.RunSudo(ctx, "bash", "-c",
-		fmt.Sprintf("echo %q | crontab -u %s -", content, webUser))
+	// Stream the crontab through stdin: piping it through echo with a quoted
+	// string merges multi-job crontabs into a single line (bash echo does not
+	// interpret \n), which makes every job but the first never run.
+	var stderrBuf bytes.Buffer
+	exit, err := s.exec.RunSudoWithInputStream(ctx, strings.NewReader(content), &stderrBuf, "crontab", "-u", webUser, "-")
 	if err != nil {
 		return fmt.Errorf("write crontab for %s: %w", webUser, err)
 	}
+	if exit != 0 {
+		return fmt.Errorf("write crontab for %s: %s", webUser, strings.TrimSpace(stderrBuf.String()))
+	}
 
+	return nil
+}
+
+const cronStatusDirName = ".jenderal-cron"
+
+func (s *Service) cronStatusDir(webUser string) string {
+	return "/home/" + webUser + "/" + cronStatusDirName
+}
+
+func (s *Service) cronWrapperPath(webUser, jobID string) string {
+	return s.cronStatusDir(webUser) + "/" + jobID + ".sh"
+}
+
+// ensureCronStatusDir creates the per-user directory the wrappers and status
+// files live in. Cron runs as the web user, so it must own it.
+func (s *Service) ensureCronStatusDir(ctx context.Context, webUser string) error {
+	dir := s.cronStatusDir(webUser)
+	if err := s.runOK(ctx, "mkdir", "-p", dir); err != nil {
+		return err
+	}
+	if err := s.runOK(ctx, "chown", webUser+":"+webUser, dir); err != nil {
+		return err
+	}
+	return s.runOK(ctx, "chmod", "700", dir)
+}
+
+// writeCronWrapper installs the wrapper script for one job. It runs the
+// command from the user's home like cron would, then records the start time
+// and the exit code into files the panel reads back on the cron jobs page.
+func (s *Service) writeCronWrapper(ctx context.Context, webUser, jobID, command string) error {
+	dir := s.cronStatusDir(webUser)
+	script := strings.Join([]string{
+		"#!/bin/sh",
+		"# Managed by Jenderal Panel - cron job " + jobID,
+		`cd "$HOME" || exit 1`,
+		`date -u +%Y-%m-%dT%H:%M:%SZ > "` + dir + `/` + jobID + `.last"`,
+		command,
+		`echo $? > "` + dir + `/` + jobID + `.exit"`,
+		"",
+	}, "\n")
+
+	wrapper := s.cronWrapperPath(webUser, jobID)
+	if _, err := s.exec.RunSudoWithInput(ctx, script, "tee", wrapper); err != nil {
+		return err
+	}
+	if err := s.runOK(ctx, "chown", webUser+":"+webUser, wrapper); err != nil {
+		return err
+	}
+	return s.runOK(ctx, "chmod", "700", wrapper)
+}
+
+// cronWrapperMissing reports whether a job's wrapper script is absent — true
+// for jobs created before wrapper-based crontabs existed. An unreadable
+// filesystem reports false so nothing is acted on blindly.
+func (s *Service) cronWrapperMissing(ctx context.Context, webUser, jobID string) bool {
+	result, err := s.exec.RunSudo(ctx, "test", "-f", s.cronWrapperPath(webUser, jobID))
+	if err != nil {
+		return false
+	}
+	return result.ExitCode != 0
+}
+
+// applyRecordedRuns overlays the runs recorded by the cron daemon onto the
+// job list: the .last file carries the last start time, .exit the command's
+// exit code. Jobs that never ran stay untouched.
+func (s *Service) applyRecordedRuns(ctx context.Context, webUser string, jobs []model.CronJob) {
+	dir := s.cronStatusDir(webUser)
+	for i := range jobs {
+		last, err := s.exec.RunSudo(ctx, "cat", dir+"/"+jobs[i].ID+".last")
+		if err != nil || last.ExitCode != 0 {
+			continue
+		}
+		runAt, err := time.Parse(time.RFC3339, strings.TrimSpace(last.Stdout))
+		if err != nil {
+			continue
+		}
+		jobs[i].LastRun = runAt
+		jobs[i].LastStatus = "failed"
+		if exit, err := s.exec.RunSudo(ctx, "cat", dir+"/"+jobs[i].ID+".exit"); err == nil && exit.ExitCode == 0 {
+			if strings.TrimSpace(exit.Stdout) == "0" {
+				jobs[i].LastStatus = "success"
+			}
+		}
+	}
+}
+
+func (s *Service) runOK(ctx context.Context, name string, args ...string) error {
+	result, err := s.exec.RunSudo(ctx, name, args...)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("%s: %s", name, strings.TrimSpace(result.Stderr))
+	}
 	return nil
 }
 
