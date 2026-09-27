@@ -1,8 +1,9 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
 	import { api } from '$lib/api';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
+	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
 
 	interface CronJob {
 		id: string;
@@ -36,6 +37,10 @@ import { language, translate } from '$lib/stores/language';
 	let editSchedule = $state('');
 	let saving = $state(false);
 	let deleteConfirmId = $state<string | null>(null);
+
+	// Run now: one job at a time, output streamed via TaskProgress.
+	let testJobId = $state<string | null>(null);
+	let testTaskId = $state('');
 
 	const schedulePresets = [
 		{ labelKey: 'wscron.preset.everyMinute', value: '* * * * *' },
@@ -161,6 +166,26 @@ import { language, translate } from '$lib/stores/language';
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'wscron.error.delete'));
 		}
+	}
+
+	async function testCronJob(job: CronJob) {
+		if (testJobId) return;
+		try {
+			const res = await api.post<{ task_id: string }>(`${jobsBase()}/${job.id}/test`);
+			testJobId = job.id;
+			testTaskId = res.task_id;
+			toast.success(translate($language, 'wscron.toast.test_started'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wscron.error.test'));
+		}
+	}
+
+	function onTestComplete(task: { status?: string; error?: string }) {
+		if (task?.status === 'completed') toast.success(translate($language, 'wscron.toast.test_success'));
+		else toast.error(task?.error || translate($language, 'wscron.toast.test_failed'));
+		testJobId = null;
+		testTaskId = '';
+		loadCronJobs();
 	}
 
 	$effect(() => {
@@ -305,6 +330,10 @@ import { language, translate } from '$lib/stores/language';
 									<span class="rounded-full px-2.5 py-0.5 text-[11px] font-medium {statusBadgeClass(job.last_status)}">{job.last_status}</span>
 								{/if}
 								<div class="flex shrink-0 items-center gap-1">
+									<button type="button" onclick={() => testCronJob(job)} disabled={!!testJobId}
+										class="cursor-pointer rounded-lg bg-purple-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-purple-700 disabled:opacity-50">
+										{translate($language, 'wscron.test')}
+									</button>
 									<button type="button" onclick={() => startEdit(job)}
 										class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-gray-300 transition hover:bg-gray-700">{translate($language, 'wscron.edit')}</button>
 									{#if deleteConfirmId === job.id}
@@ -321,6 +350,11 @@ import { language, translate } from '$lib/stores/language';
 									{/if}
 								</div>
 							</div>
+							{#if testJobId === job.id}
+								<div class="mt-3">
+									<TaskProgress bind:taskId={testTaskId} onComplete={onTestComplete} />
+								</div>
+							{/if}
 						{/if}
 					</div>
 				{/each}
