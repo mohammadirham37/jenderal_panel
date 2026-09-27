@@ -351,7 +351,10 @@
 	async function renderDiagram() {
 		if (!diagram || !diagramContainer) return;
 		const mermaid = (await import('mermaid')).default;
-		mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+		// htmlLabels: false keeps every label as plain <text>. Mermaid's default
+		// foreignObject labels cannot be rasterized when the SVG is loaded into
+		// an <img> for the PNG export, which produced empty downloads.
+		mermaid.initialize({ startOnLoad: false, theme: 'dark', htmlLabels: false });
 		const { svg } = await mermaid.render('dbm-er-' + Date.now(), buildErDiagram(diagram));
 		if (diagramContainer) diagramContainer.innerHTML = svg;
 	}
@@ -370,11 +373,11 @@
 	async function downloadDiagramPng() {
 		if (!diagramContainer) return;
 		const svgEl = diagramContainer.querySelector('svg');
-		if (!svgEl) return;
+		if (!svgEl) throw new Error(translate($language, 'dbm.diagram_png_error'));
 		const viewbox = (svgEl.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
 		const width = viewbox.length === 4 && viewbox[2] > 0 ? viewbox[2] : svgEl.clientWidth;
 		const height = viewbox.length === 4 && viewbox[3] > 0 ? viewbox[3] : svgEl.clientHeight;
-		if (!width || !height) return;
+		if (!width || !height) throw new Error(translate($language, 'dbm.diagram_png_error'));
 
 		// Give the SVG explicit pixel dimensions so the rasterizer knows its
 		// natural size; the inline style carries a max-width that would clip it.
@@ -383,13 +386,27 @@
 		clone.setAttribute('height', String(height));
 		clone.removeAttribute('style');
 
+		// Safety net: rasterizing foreignObject content inside an <img> yields
+		// a blank image, so flatten any leftover HTML labels into plain text.
+		for (const fo of Array.from(clone.querySelectorAll('foreignObject'))) {
+			const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+			const x = fo.getAttribute('x') ?? (fo as SVGForeignObjectElement).x.baseVal.value;
+			const y = fo.getAttribute('y') ?? (fo as SVGForeignObjectElement).y.baseVal.value;
+			text.setAttribute('x', String(Number(x) + 4));
+			text.setAttribute('y', String(Number(y) + 14));
+			text.setAttribute('fill', '#e5e7eb');
+			text.setAttribute('font-size', '12');
+			text.textContent = fo.textContent?.replace(/\s+/g, ' ').trim() || '';
+			fo.replaceWith(text);
+		}
+
 		const svgText = new XMLSerializer().serializeToString(clone);
 		const url = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }));
 		try {
 			const img = new Image();
 			await new Promise<void>((resolve, reject) => {
 				img.onload = () => resolve();
-				img.onerror = () => reject(new Error(translate($language, 'dbm.diagram_error')));
+				img.onerror = () => reject(new Error(translate($language, 'dbm.diagram_png_error')));
 				img.src = url;
 			});
 			const scale = 2;
@@ -397,18 +414,17 @@
 			canvas.width = Math.round(width * scale);
 			canvas.height = Math.round(height * scale);
 			const ctx = canvas.getContext('2d');
-			if (!ctx) return;
+			if (!ctx) throw new Error(translate($language, 'dbm.diagram_png_error'));
 			ctx.fillStyle = '#111827';
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
 			ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-			canvas.toBlob((blob) => {
-				if (!blob) return;
-				const a = document.createElement('a');
-				a.href = URL.createObjectURL(blob);
-				a.download = `${selectedDb}-diagram.png`;
-				a.click();
-				URL.revokeObjectURL(a.href);
-			}, 'image/png');
+			const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+			if (!blob) throw new Error(translate($language, 'dbm.diagram_png_error'));
+			const a = document.createElement('a');
+			a.href = URL.createObjectURL(blob);
+			a.download = `${selectedDb}-diagram.png`;
+			a.click();
+			URL.revokeObjectURL(a.href);
 		} finally {
 			URL.revokeObjectURL(url);
 		}
