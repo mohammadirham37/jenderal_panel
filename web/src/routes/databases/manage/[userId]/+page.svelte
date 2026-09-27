@@ -127,6 +127,8 @@
 	let diagramLoading = $state(false);
 	let diagramError = $state('');
 	let diagramContainer: HTMLDivElement | undefined = $state();
+	let diagramStage: HTMLDivElement | undefined = $state();
+	let diagramFullscreen = $state(false);
 	let diagramRenderToken = 0;
 
 	// SQL console
@@ -352,6 +354,64 @@
 		mermaid.initialize({ startOnLoad: false, theme: 'dark' });
 		const { svg } = await mermaid.render('dbm-er-' + Date.now(), buildErDiagram(diagram));
 		if (diagramContainer) diagramContainer.innerHTML = svg;
+	}
+
+	function toggleDiagramFullscreen() {
+		if (!diagramStage) return;
+		if (document.fullscreenElement) {
+			void document.exitFullscreen();
+		} else {
+			diagramStage.requestFullscreen?.().catch((err) =>
+				toast(err instanceof Error ? err.message : String(err), true)
+			);
+		}
+	}
+
+	async function downloadDiagramPng() {
+		if (!diagramContainer) return;
+		const svgEl = diagramContainer.querySelector('svg');
+		if (!svgEl) return;
+		const viewbox = (svgEl.getAttribute('viewBox') || '').split(/[\s,]+/).map(Number);
+		const width = viewbox.length === 4 && viewbox[2] > 0 ? viewbox[2] : svgEl.clientWidth;
+		const height = viewbox.length === 4 && viewbox[3] > 0 ? viewbox[3] : svgEl.clientHeight;
+		if (!width || !height) return;
+
+		// Give the SVG explicit pixel dimensions so the rasterizer knows its
+		// natural size; the inline style carries a max-width that would clip it.
+		const clone = svgEl.cloneNode(true) as SVGSVGElement;
+		clone.setAttribute('width', String(width));
+		clone.setAttribute('height', String(height));
+		clone.removeAttribute('style');
+
+		const svgText = new XMLSerializer().serializeToString(clone);
+		const url = URL.createObjectURL(new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' }));
+		try {
+			const img = new Image();
+			await new Promise<void>((resolve, reject) => {
+				img.onload = () => resolve();
+				img.onerror = () => reject(new Error(translate($language, 'dbm.diagram_error')));
+				img.src = url;
+			});
+			const scale = 2;
+			const canvas = document.createElement('canvas');
+			canvas.width = Math.round(width * scale);
+			canvas.height = Math.round(height * scale);
+			const ctx = canvas.getContext('2d');
+			if (!ctx) return;
+			ctx.fillStyle = '#111827';
+			ctx.fillRect(0, 0, canvas.width, canvas.height);
+			ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+			canvas.toBlob((blob) => {
+				if (!blob) return;
+				const a = document.createElement('a');
+				a.href = URL.createObjectURL(blob);
+				a.download = `${selectedDb}-diagram.png`;
+				a.click();
+				URL.revokeObjectURL(a.href);
+			}, 'image/png');
+		} finally {
+			URL.revokeObjectURL(url);
+		}
 	}
 
 	// Renders whenever the diagram view mounts (or new data arrives).
@@ -808,6 +868,7 @@
 	onkeydown={(e) => {
 		if (e.key === 'Escape') { if (confirmAction) confirmAction = null; if (bulkConfirm) bulkConfirm = null; if (editingRow) editingRow = null; if (columnForm) columnForm = null; if (objectDefinition) objectDefinition = null; if (pendingDeleteRow) pendingDeleteRow = null; }
 	}}
+	onfullscreenchange={() => (diagramFullscreen = !!document.fullscreenElement)}
 />
 
 {#if !token}
@@ -1105,18 +1166,36 @@
 
 			{#if viewMode === 'uml'}
 				<!-- Schema diagram (ER/UML) -->
-				<div class="flex items-center justify-between border-b border-white/5 px-5 py-3">
+				<div class="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 px-5 py-3">
 					<h3 class="text-sm font-semibold text-white">
 						{translate($language, 'dbm.diagram')} — <span class="font-mono text-blue-300">{selectedDb || translate($language, 'dbm.no_database')}</span>
 					</h3>
-					<button
-						type="button"
-						onclick={() => loadDiagram().catch((err) => toast(err.message, true))}
-						disabled={diagramLoading || !selectedDb}
-						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
-					>
-						{translate($language, 'dbm.diagram_reload')}
-					</button>
+					<div class="flex flex-wrap items-center gap-2">
+						<button
+							type="button"
+							onclick={() => loadDiagram().catch((err) => toast(err.message, true))}
+							disabled={diagramLoading || !selectedDb}
+							class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
+						>
+							{translate($language, 'dbm.diagram_reload')}
+						</button>
+						<button
+							type="button"
+							onclick={toggleDiagramFullscreen}
+							disabled={!diagram || !!diagramError || diagramLoading}
+							class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
+						>
+							{diagramFullscreen ? translate($language, 'dbm.diagram_exit_fullscreen') : translate($language, 'dbm.diagram_fullscreen')}
+						</button>
+						<button
+							type="button"
+							onclick={() => downloadDiagramPng().catch((err) => toast(err instanceof Error ? err.message : String(err), true))}
+							disabled={!diagram || !!diagramError || diagramLoading}
+							class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40"
+						>
+							{translate($language, 'dbm.diagram_download_png')}
+						</button>
+					</div>
 				</div>
 				<div class="min-h-0 flex-1 overflow-auto p-4">
 					{#if diagramLoading}
@@ -1129,8 +1208,13 @@
 					{:else if diagram && diagram.tables.length === 0}
 						<p class="py-10 text-center text-sm text-gray-400">{translate($language, 'dbm.diagram_no_tables')}</p>
 					{:else if diagram}
-						<p class="mb-2 text-[11px] text-gray-500">{translate($language, 'dbm.diagram_hint')}</p>
-						<div bind:this={diagramContainer} class="er-diagram w-full [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"></div>
+						<div
+							bind:this={diagramStage}
+							class="relative rounded-xl border border-gray-700 bg-gray-900/40 p-3
+							[&:fullscreen]:overflow-auto [&:fullscreen]:rounded-none [&:fullscreen]:border-0 [&:fullscreen]:bg-gray-900 [&:fullscreen]:p-6"
+						>
+							<div bind:this={diagramContainer} class="er-diagram w-full [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-none"></div>
+						</div>
 					{/if}
 				</div>
 			{:else if viewMode === 'sql'}
