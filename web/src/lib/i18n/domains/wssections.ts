@@ -1,16 +1,7 @@
 // Domain dictionary: see ../index.ts for how these merge into the global lookup.
-// Owns the key prefixes: wscron., wsqueue., wsapp., wsphp., wswp., wsnav.
+// Owns the key prefixes: wscron., wsqueue., wsapp., wsphp., wswp.
 
 const en = {
-	// WebsiteSectionNav
-	'wsnav.aria': 'Website sections',
-	'wsnav.overview': 'Overview',
-	'wsnav.deployments': 'Deployments',
-	'wsnav.ssl': 'SSL',
-	'wsnav.bandwidth': 'Bandwidth',
-	'wsnav.cron': 'Cron Jobs',
-	'wsnav.queue': 'Queue Workers',
-
 	// WebsiteCronSection
 	'wscron.jobsFor': 'Scheduled jobs for {domain}',
 	'wscron.jobs': 'Scheduled jobs',
@@ -189,15 +180,6 @@ const en = {
 } as const;
 
 const id: Record<keyof typeof en, string> = {
-	// WebsiteSectionNav
-	'wsnav.aria': 'Bagian situs',
-	'wsnav.overview': 'Ringkasan',
-	'wsnav.deployments': 'Deployment',
-	'wsnav.ssl': 'SSL',
-	'wsnav.bandwidth': 'Bandwidth',
-	'wsnav.cron': 'Tugas Cron',
-	'wsnav.queue': 'Antrean Worker',
-
 	// WebsiteCronSection
 	'wscron.jobsFor': 'Tugas terjadwal untuk {domain}',
 	'wscron.jobs': 'Tugas terjadwal',

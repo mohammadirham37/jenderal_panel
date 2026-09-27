@@ -33,16 +33,18 @@ export async function login(username: string, password: string, totpCode = ''): 
 }
 
 export async function logout(): Promise<void> {
-	try {
-		await api.post('/api/v1/auth/logout', undefined, authRequestOptions);
-	} catch (error) {
-		setTimeoutError(error);
-	}
+	// Best effort: local session state must clear immediately so the UI can
+	// redirect to the login page, and the server-side logout proceeds in the
+	// background. A stalled or failed call (busy server, network hiccup) only
+	// leaves the session to expire — it must never block the redirect or
+	// surface an error banner.
+	const serverLogout = api.post('/api/v1/auth/logout', undefined, authRequestOptions).catch(() => {});
 	user.set(null);
 	roles.set([]);
 	permissions.set([]);
 	isAuthenticated.set(false);
 	setCSRFToken('');
+	await serverLogout;
 }
 
 export async function checkAuth(): Promise<boolean> {
