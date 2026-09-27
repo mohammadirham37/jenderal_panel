@@ -19,10 +19,17 @@ func Run(cfg config.ServerConfig, handler http.Handler, logger *slog.Logger) err
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 
 	srv := &http.Server{
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Handler: handler,
+		// Large database uploads (up to 512 MB) and long restores or exports
+		// legitimately run for many minutes: ReadTimeout covers the whole
+		// request body and WriteTimeout the whole handler, so both need
+		// generous bounds — a 60s write deadline aborts the connection
+		// mid-import and surfaces as 502 behind the panel domain proxy.
+		// ReadHeaderTimeout stays tight to keep slow-header clients out.
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       15 * time.Minute,
+		WriteTimeout:      60 * time.Minute,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	if cfg.TLS.Enabled && cfg.TLS.Cert != "" && cfg.TLS.Key != "" {
