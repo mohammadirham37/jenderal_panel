@@ -371,7 +371,9 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 }
 
 // RevokePrivileges removes the grant of a database user on a managed
-// database.
+// database. Like granting, this is gated on owning the database: the engine
+// REVOKE is scoped to that database, so the db user's own creator does not
+// matter (a user may revoke an admin-created db user's access to their db).
 func (h *Handler) RevokePrivileges(w http.ResponseWriter, r *http.Request) {
 	var req grantPrivilegesRequest
 	if err := httputil.DecodeJSON(r, &req); err != nil {
@@ -379,7 +381,7 @@ func (h *Handler) RevokePrivileges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.canManageDatabase(r, req.DatabaseID) || !h.canManageDBUser(r, req.UserID) {
+	if !h.canManageDatabase(r, req.DatabaseID) {
 		httputil.HandleError(w, model.ErrForbidden)
 		return
 	}
