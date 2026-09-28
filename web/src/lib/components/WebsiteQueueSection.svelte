@@ -287,10 +287,8 @@ import { language, translate } from '$lib/stores/language';
 									<button type="button" onclick={() => (deleteConfirmId = null)}
 										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsqueue.no')}</button>
 								{:else}
-									<button type="button" onclick={() => (deleteConfirmId = w.id)} title={translate($language, 'wsqueue.tooltip.delete')}
-										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white">
-										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-									</button>
+									<button type="button" onclick={() => (deleteConfirmId = w.id)}
+										class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-red-300 transition hover:bg-red-600 hover:text-white disabled:opacity-50">{translate($language, 'wsqueue.delete')}</button>
 								{/if}
 							</div>
 						</div>
