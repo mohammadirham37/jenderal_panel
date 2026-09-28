@@ -31,7 +31,9 @@ import { language, translate } from '$lib/stores/language';
 	let createNumWorkers = $state(1);
 	let creating = $state(false);
 
-	let deleteConfirmId = $state<string | null>(null);
+	// Pending stop/delete confirmed through the modal.
+	let confirmModal = $state<{ worker: QueueWorker; action: 'stop' | 'delete' } | null>(null);
+	let confirmBusy = $state(false);
 	let busyWorkerId = $state<string | null>(null);
 
 	// Monitoring panels: one worker at a time shows status or logs.
@@ -107,20 +109,38 @@ import { language, translate } from '$lib/stores/language';
 		}
 	}
 
-	async function deleteWorker(worker: QueueWorker) {
-		if (busyWorkerId) return;
-		busyWorkerId = worker.id;
-		deleteConfirmId = null;
+	async function runConfirmed() {
+		if (!confirmModal || confirmBusy) return;
+		const { worker, action } = confirmModal;
+		confirmBusy = true;
 		try {
-			await api.del(workerAPI(worker.id));
-			toast.success(translate($language, 'wsqueue.toast.deleted'));
-			if (panelWorkerId === worker.id) closePanel();
+			if (action === 'stop') {
+				await api.post(`${workerAPI(worker.id)}/stop`, {});
+				toast.success(translate($language, 'wsqueue.toast.stopped'));
+			} else {
+				await api.del(workerAPI(worker.id));
+				toast.success(translate($language, 'wsqueue.toast.deleted'));
+				if (panelWorkerId === worker.id) closePanel();
+			}
 			await loadWorkers();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'wsqueue.error.delete'));
+			toast.error(
+				err instanceof Error
+					? err.message
+					: action === 'stop'
+						? translate($language, 'wsqueue.error.action').replace('{action}', 'stop')
+						: translate($language, 'wsqueue.error.delete')
+			);
 		} finally {
-			busyWorkerId = null;
+			// Close on failure too so the toast is not hidden behind the backdrop.
+			confirmBusy = false;
+			confirmModal = null;
 		}
+	}
+
+	function closeConfirm() {
+		if (confirmBusy) return;
+		confirmModal = null;
 	}
 
 	async function openPanel(worker: QueueWorker, mode: 'status' | 'logs') {
@@ -172,6 +192,8 @@ import { language, translate } from '$lib/stores/language';
 		if (refreshTimer) clearInterval(refreshTimer);
 	});
 </script>
+
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') closeConfirm(); }} />
 
 <div class="space-y-4">
 	<div class="flex flex-wrap items-center justify-between gap-2">
@@ -270,7 +292,7 @@ import { language, translate } from '$lib/stores/language';
 								{#if w.status === 'running'}
 									<button type="button" onclick={() => runWorkerAction(w, 'restart', translate($language, 'wsqueue.toast.restarted'))} disabled={busyWorkerId === w.id}
 										class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-gray-300 transition hover:bg-gray-700 disabled:opacity-50">{translate($language, 'wsqueue.restart')}</button>
-									<button type="button" onclick={() => runWorkerAction(w, 'stop', translate($language, 'wsqueue.toast.stopped'))} disabled={busyWorkerId === w.id}
+									<button type="button" onclick={() => (confirmModal = { worker: w, action: 'stop' })} disabled={busyWorkerId === w.id}
 										class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-red-300 transition hover:bg-red-600 hover:text-white disabled:opacity-50">{translate($language, 'wsqueue.stop')}</button>
 								{:else}
 									<button type="button" onclick={() => runWorkerAction(w, 'start', translate($language, 'wsqueue.toast.started'))} disabled={busyWorkerId === w.id}
@@ -280,16 +302,8 @@ import { language, translate } from '$lib/stores/language';
 									class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-gray-300 transition hover:bg-gray-700">{translate($language, 'wsqueue.status')}</button>
 								<button type="button" onclick={() => openPanel(w, 'logs')}
 									class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-gray-300 transition hover:bg-gray-700">{translate($language, 'wsqueue.logs')}</button>
-								{#if deleteConfirmId === w.id}
-									<span class="text-[11px] text-red-400">{translate($language, 'wsqueue.deleteConfirm')}</span>
-									<button type="button" onclick={() => deleteWorker(w)} disabled={busyWorkerId === w.id}
-										class="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'wsqueue.yes')}</button>
-									<button type="button" onclick={() => (deleteConfirmId = null)}
-										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsqueue.no')}</button>
-								{:else}
-									<button type="button" onclick={() => (deleteConfirmId = w.id)}
+									<button type="button" onclick={() => (confirmModal = { worker: w, action: 'delete' })} disabled={busyWorkerId === w.id}
 										class="cursor-pointer rounded-lg px-2.5 py-1 text-[11px] text-red-300 transition hover:bg-red-600 hover:text-white disabled:opacity-50">{translate($language, 'wsqueue.delete')}</button>
-								{/if}
 							</div>
 						</div>
 						{#if panelWorkerId === w.id}
@@ -317,6 +331,66 @@ import { language, translate } from '$lib/stores/language';
 					</div>
 				{/each}
 			</div>
-		{/if}
-	</div>
+			{/if}
+		</div>
+
+	{#if confirmModal}
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div
+			class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+			role="dialog"
+			aria-modal="true"
+			tabindex="-1"
+			aria-label={translate($language, confirmModal.action === 'stop' ? 'wsqueue.stopTitle' : 'wsqueue.deleteTitle')}
+			onclick={(e) => {
+				if (e.target === e.currentTarget) closeConfirm();
+			}}
+		>
+			<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<div class="mb-3 flex items-start justify-between gap-3">
+					<h3 class="text-base font-semibold text-white">
+						{translate($language, confirmModal.action === 'stop' ? 'wsqueue.stopTitle' : 'wsqueue.deleteTitle')}
+					</h3>
+					<button
+						type="button"
+						onclick={closeConfirm}
+						class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+						aria-label={translate($language, 'wsqueue.cancel')}
+					>
+						<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
+				</div>
+				<p class="text-sm text-gray-300">
+					{translate($language, confirmModal.action === 'stop' ? 'wsqueue.stopBody' : 'wsqueue.deleteBody')}
+				</p>
+				<pre class="mt-3 overflow-x-auto rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap text-gray-200">{confirmModal.worker.command}</pre>
+				<div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
+					<button
+						type="button"
+						onclick={closeConfirm}
+						disabled={confirmBusy}
+						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
+					>
+						{translate($language, 'wsqueue.cancel')}
+					</button>
+					<button
+						type="button"
+						onclick={runConfirmed}
+						disabled={confirmBusy}
+						class="flex cursor-pointer items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-40"
+					>
+						{#if confirmBusy}
+							<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+								<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+								<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+							</svg>
+						{/if}
+						{translate($language, confirmModal.action === 'stop' ? 'wsqueue.confirmStop' : 'wsqueue.confirmDelete')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>
