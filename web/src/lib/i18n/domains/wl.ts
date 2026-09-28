@@ -89,6 +89,7 @@ const en = {
 	'wl.enable': 'Enable',
 	'wl.delete': 'Delete',
 	'wl.titleDelete': 'Delete website',
+	'wl.titleSuspend': 'Suspend website',
 
 	// Toasts and errors
 	'wl.toastCreateStarted': 'Website "{domain}" creation started.',
@@ -198,6 +199,7 @@ const id: Record<keyof typeof en, string> = {
 	'wl.enable': 'Aktifkan',
 	'wl.delete': 'Hapus',
 	'wl.titleDelete': 'Hapus situs web',
+	'wl.titleSuspend': 'Suspend situs web',
 
 	'wl.toastCreateStarted': 'Pembuatan situs web "{domain}" dimulai.',
 	'wl.toastSuspended': 'Situs web diskors.',

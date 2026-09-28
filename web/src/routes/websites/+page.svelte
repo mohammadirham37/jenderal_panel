@@ -105,9 +105,9 @@ import { language, translate } from '$lib/stores/language';
 	let laravelVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel').map((item) => item.framework_version))] : []);
 	let laravelOctaneVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel-octane').map((item) => item.framework_version))] : []);
 
-	// Delete confirm
-	let deleteConfirmId = $state<string | null>(null);
-	let suspendConfirmId = $state<string | null>(null);
+	// Pending suspend/delete confirmed through the modal.
+	let confirmModal = $state<{ website: Website; action: 'suspend' | 'delete' } | null>(null);
+	let confirmBusy = $state(false);
 	let enableConfirmId = $state<string | null>(null);
 
 	// Polling
@@ -244,14 +244,35 @@ import { language, translate } from '$lib/stores/language';
 		}
 	}
 
-	async function suspendWebsite(id: string) {
+	async function runConfirmed() {
+		if (!confirmModal || confirmBusy) return;
+		const { website, action } = confirmModal;
+		confirmBusy = true;
 		try {
-			await api.post(`/api/v1/websites/${id}/suspend`);
-			toast.success(translate($language, 'wl.toastSuspended'));
+			if (action === 'suspend') {
+				await api.post(`/api/v1/websites/${website.id}/suspend`);
+				toast.success(translate($language, 'wl.toastSuspended'));
+			} else {
+				await api.del(`/api/v1/websites/${website.id}`);
+				toast.success(translate($language, 'wl.toastDeleted'));
+			}
 			await loadWebsites();
 		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorSuspend'));
+			toast.error(
+				err instanceof Error
+					? err.message
+					: translate($language, action === 'suspend' ? 'wl.errorSuspend' : 'wl.errorDelete')
+			);
+		} finally {
+			// Close on failure too so the toast is not hidden behind the backdrop.
+			confirmBusy = false;
+			confirmModal = null;
 		}
+	}
+
+	function closeConfirm() {
+		if (confirmBusy) return;
+		confirmModal = null;
 	}
 
 	async function enableWebsite(id: string) {
@@ -261,17 +282,6 @@ import { language, translate } from '$lib/stores/language';
 			await loadWebsites();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorEnable'));
-		}
-	}
-
-	async function deleteWebsite(id: string) {
-		deleteConfirmId = null;
-		try {
-			await api.del(`/api/v1/websites/${id}`);
-			toast.success(translate($language, 'wl.toastDeleted'));
-			await loadWebsites();
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorDelete'));
 		}
 	}
 
@@ -291,6 +301,8 @@ import { language, translate } from '$lib/stores/language';
 		stopPolling();
 	});
 </script>
+
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') closeConfirm(); }} />
 
 <div class="space-y-5">
 	<div class="flex flex-wrap items-start justify-between gap-3">
@@ -666,28 +678,12 @@ import { language, translate } from '$lib/stores/language';
 									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => repairConfirmId = null}>{translate($language, 'wl.cancel')}</button>
 								</div>
 							</div>
-						{:else if suspendConfirmId === website.id}
-							<div class="rounded-lg border border-yellow-600/50 bg-yellow-900/20 p-2.5">
-								<p class="text-xs text-yellow-300">{translate($language, 'wl.suspendConfirm').replace('{domain}', website.domain)}</p>
-								<div class="mt-2 flex gap-2">
-									<button class="cursor-pointer rounded-md bg-yellow-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-yellow-700" onclick={() => { suspendConfirmId = ''; suspendWebsite(website.id); }}>{translate($language, 'wl.yesSuspend')}</button>
-									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (suspendConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
-								</div>
-							</div>
 						{:else if enableConfirmId === website.id}
 							<div class="rounded-lg border border-green-600/50 bg-green-900/20 p-2.5">
 								<p class="text-xs text-green-300">{translate($language, 'wl.enableConfirm').replace('{domain}', website.domain)}</p>
 								<div class="mt-2 flex gap-2">
 									<button class="cursor-pointer rounded-md bg-green-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-green-700" onclick={() => { enableConfirmId = ''; enableWebsite(website.id); }}>{translate($language, 'wl.yesEnable')}</button>
 									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (enableConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
-								</div>
-							</div>
-						{:else if deleteConfirmId === website.id}
-							<div class="rounded-lg border border-red-600/50 bg-red-900/20 p-2.5">
-								<p class="text-xs text-red-300">{translate($language, 'wl.deleteConfirm')}</p>
-								<div class="mt-2 flex gap-2">
-									<button class="cursor-pointer rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-red-700" onclick={() => deleteWebsite(website.id)}>{translate($language, 'wl.yesDelete')}</button>
-									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (deleteConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
 								</div>
 							</div>
 						{:else}
@@ -707,7 +703,7 @@ import { language, translate } from '$lib/stores/language';
 									</button>
 								{/if}
 								{#if website.status === 'active'}
-									<button onclick={() => (suspendConfirmId = website.id)} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+									<button onclick={() => (confirmModal = { website, action: 'suspend' })} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
 										{translate($language, 'wl.suspend')}
 									</button>
 								{/if}
@@ -716,7 +712,7 @@ import { language, translate } from '$lib/stores/language';
 										{translate($language, 'wl.enable')}
 									</button>
 								{/if}
-								<button onclick={() => (deleteConfirmId = website.id)} class="ml-auto cursor-pointer rounded-md px-3 py-2 text-sm text-red-400 transition hover:bg-red-500/10" title={translate($language, 'wl.titleDelete')}>
+								<button onclick={() => (confirmModal = { website, action: 'delete' })} class="ml-auto cursor-pointer rounded-md px-3 py-2 text-sm text-red-400 transition hover:bg-red-500/10" title={translate($language, 'wl.titleDelete')}>
 									{translate($language, 'wl.delete')}
 								</button>
 							</div>
@@ -727,3 +723,70 @@ import { language, translate } from '$lib/stores/language';
 		</div>
 	{/if}
 </div>
+
+{#if confirmModal}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		tabindex="-1"
+		aria-label={translate($language, confirmModal.action === 'suspend' ? 'wl.titleSuspend' : 'wl.titleDelete')}
+		onclick={(e) => {
+			if (e.target === e.currentTarget) closeConfirm();
+		}}
+	>
+		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-3 flex items-start justify-between gap-3">
+				<h3 class="text-base font-semibold text-white">
+					{translate($language, confirmModal.action === 'suspend' ? 'wl.titleSuspend' : 'wl.titleDelete')}
+				</h3>
+				<button
+					type="button"
+					onclick={closeConfirm}
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+					aria-label={translate($language, 'wl.cancel')}
+				>
+					<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<p class="text-sm text-gray-300">
+				{#if confirmModal.action === 'suspend'}
+					{translate($language, 'wl.suspendConfirm').replace('{domain}', confirmModal.website.domain)}
+				{:else}
+					{translate($language, 'wl.deleteConfirm')}
+				{/if}
+			</p>
+			{#if confirmModal.action === 'delete'}
+				<pre class="mt-3 overflow-x-auto rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap text-gray-200">{confirmModal.website.domain}</pre>
+			{/if}
+			<div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
+				<button
+					type="button"
+					onclick={closeConfirm}
+					disabled={confirmBusy}
+					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
+				>
+					{translate($language, 'wl.cancel')}
+				</button>
+				<button
+					type="button"
+					onclick={runConfirmed}
+					disabled={confirmBusy}
+					class="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-40
+					{confirmModal.action === 'suspend' ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-red-600 hover:bg-red-700'}"
+				>
+					{#if confirmBusy}
+						<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+						</svg>
+					{/if}
+					{translate($language, confirmModal.action === 'suspend' ? 'wl.yesSuspend' : 'wl.yesDelete')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
