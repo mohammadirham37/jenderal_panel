@@ -62,11 +62,11 @@ func (s *Service) Create(ctx context.Context, req QueueWorkerRequest) (model.Que
 		req.NumWorkers = 1
 	}
 
-	// Resolve web_user and document_root for this website.
-	var webUser, documentRoot string
+	// Make sure the website exists (the unit writer resolves its paths).
+	var exists int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT web_user, document_root FROM websites WHERE id = ?`, req.WebsiteID,
-	).Scan(&webUser, &documentRoot)
+		`SELECT 1 FROM websites WHERE id = ?`, req.WebsiteID,
+	).Scan(&exists)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return model.QueueWorker{}, model.NewDomainError("NOT_FOUND", "website not found", nil)
@@ -100,14 +100,8 @@ func (s *Service) Create(ctx context.Context, req QueueWorkerRequest) (model.Que
 	}
 
 	// Write systemd unit file, daemon-reload, enable, and start.
-	unitContent := fmt.Sprintf(systemdUnitTemplate, id, webUser, documentRoot, req.Command)
-	unitPath := unitFilePath(id)
-
-	// Write the unit file via sudo.
-	_, err = s.exec.RunSudo(ctx, "bash", "-c",
-		fmt.Sprintf("cat > %s << 'UNITEOF'\n%sUNITEOF", unitPath, unitContent))
-	if err != nil {
-		return worker, fmt.Errorf("write unit file: %w", err)
+	if err := s.writeUnitFile(ctx, worker); err != nil {
+		return worker, err
 	}
 
 	unitName := unitFileName(id)
@@ -196,10 +190,49 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 	return workers, rows.Err()
 }
 
+// writeUnitFile renders and writes the worker's systemd unit from its current
+// DB row and the website's current document_root. Start and Restart call it
+// again so units written before a fix (or before a document_root change) are
+// rewritten to the correct working directory.
+func (s *Service) writeUnitFile(ctx context.Context, w model.QueueWorker) error {
+	var appType, webUser, documentRoot string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT app_type, web_user, document_root FROM websites WHERE id = ?`, w.WebsiteID,
+	).Scan(&appType, &webUser, &documentRoot)
+	if err != nil {
+		return fmt.Errorf("query website: %w", err)
+	}
+
+	unitContent := fmt.Sprintf(systemdUnitTemplate, w.ID, webUser, workerWorkingDir(appType, documentRoot), w.Command)
+	if _, err := s.exec.RunSudo(ctx, "bash", "-c",
+		fmt.Sprintf("cat > %s << 'UNITEOF'\n%sUNITEOF", unitFilePath(w.ID), unitContent)); err != nil {
+		return fmt.Errorf("write unit file: %w", err)
+	}
+	return nil
+}
+
+// workerWorkingDir returns the directory the worker command runs in. Laravel
+// and CodeIgniter 4 sites keep document_root at <project>/public while
+// artisan/spark live in the project root one level up, so the working
+// directory is lifted there for those app types.
+func workerWorkingDir(appType, documentRoot string) string {
+	if (appType == "laravel" || appType == "codeigniter4") && strings.HasSuffix(documentRoot, "/public") {
+		return strings.TrimSuffix(documentRoot, "/public")
+	}
+	return documentRoot
+}
+
 // Start starts a queue worker's systemd service.
 func (s *Service) Start(ctx context.Context, id string) error {
-	if _, err := s.Get(ctx, id); err != nil {
+	worker, err := s.Get(ctx, id)
+	if err != nil {
 		return err
+	}
+
+	// Best-effort repair of the unit before starting.
+	_ = s.writeUnitFile(ctx, worker)
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
 	}
 
 	unitName := unitFileName(id)
@@ -226,8 +259,15 @@ func (s *Service) Stop(ctx context.Context, id string) error {
 
 // Restart restarts a queue worker's systemd service.
 func (s *Service) Restart(ctx context.Context, id string) error {
-	if _, err := s.Get(ctx, id); err != nil {
+	worker, err := s.Get(ctx, id)
+	if err != nil {
 		return err
+	}
+
+	// Best-effort repair of the unit before restarting.
+	_ = s.writeUnitFile(ctx, worker)
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
 	}
 
 	unitName := unitFileName(id)

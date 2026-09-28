@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -89,6 +90,47 @@ func TestCreate(t *testing.T) {
 	}
 	if got.Status != "running" {
 		t.Errorf("expected status=running after create with mock, got %s", got.Status)
+	}
+}
+
+// TestCreateLaravelWorkerRunsInProjectRoot verifies the systemd unit's
+// WorkingDirectory is lifted from <project>/public to the project root for
+// Laravel sites, where artisan lives.
+func TestCreateLaravelWorkerRunsInProjectRoot(t *testing.T) {
+	db := setupTestDB(t)
+	_, err := db.Exec(
+		`INSERT INTO websites (id, domain, app_type, document_root, web_user, status, ssl_enabled, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"web-lv", "lv.example.com", "laravel", "/home/lvuser/app/public", "lvuser", "active", 0,
+		"2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z",
+	)
+	if err != nil {
+		t.Fatalf("insert test website: %v", err)
+	}
+
+	var unitCmd string
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "bash" && len(args) == 2 && args[0] == "-c" {
+				unitCmd = args[1]
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, exec, nil)
+
+	if _, err := svc.Create(context.Background(), QueueWorkerRequest{
+		WebsiteID: "web-lv",
+		Command:   "php artisan queue:work --sleep=3 --tries=3",
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if !strings.Contains(unitCmd, "WorkingDirectory=/home/lvuser/app\n") {
+		t.Errorf("unit WorkingDirectory = %q, want /home/lvuser/app", unitCmd)
 	}
 }
 
