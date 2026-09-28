@@ -372,6 +372,84 @@ func (s *Service) Rename(ctx context.Context, basePath, oldPath, newPath string)
 	return nil
 }
 
+// validateTransfer resolves the source and destination of a copy/move and
+// enforces the shared guards: both paths stay inside the website home, the
+// target differs from the source, is not inside the source, and does not
+// exist yet so a transfer never overwrites silently.
+func (s *Service) validateTransfer(ctx context.Context, basePath, sourcePath, destPath string) (string, string, error) {
+	if err := rejectWebsiteRoot(basePath, sourcePath); err != nil {
+		return "", "", err
+	}
+	if err := rejectWebsiteRoot(basePath, destPath); err != nil {
+		return "", "", err
+	}
+	source, err := s.resolveWebsitePath(ctx, basePath, sourcePath, false)
+	if err != nil {
+		return "", "", err
+	}
+	dest, err := s.resolveWebsitePath(ctx, basePath, destPath, true)
+	if err != nil {
+		return "", "", err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, source); err != nil {
+		return "", "", err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, dest); err != nil {
+		return "", "", err
+	}
+	if filepath.Clean(source) == filepath.Clean(dest) {
+		return "", "", model.NewValidationError("the target must differ from the source")
+	}
+	if rel, relErr := filepath.Rel(source, dest); relErr == nil && !strings.HasPrefix(rel, "..") {
+		return "", "", model.NewValidationError("the target cannot be inside the source")
+	}
+	existsResult, err := s.runAsWebsiteUser(ctx, basePath, "test", "-e", dest)
+	if err != nil {
+		return "", "", err
+	}
+	if existsResult.ExitCode == 0 {
+		return "", "", model.NewValidationError("the target already exists")
+	}
+	return source, dest, nil
+}
+
+// Copy copies a file or directory within the website home to destPath (the
+// full target path). Modes and timestamps survive the copy (cp -a); an
+// existing target is rejected instead of overwritten. Runs as the website
+// user.
+func (s *Service) Copy(ctx context.Context, basePath, sourcePath, destPath string) error {
+	source, dest, err := s.validateTransfer(ctx, basePath, sourcePath, destPath)
+	if err != nil {
+		return err
+	}
+	result, err := s.runAsWebsiteUser(ctx, basePath, "cp", "-a", "--", source, dest)
+	if err != nil {
+		return fmt.Errorf("copy: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("FILE_ERROR", "failed to copy: "+result.Stderr, nil)
+	}
+	return nil
+}
+
+// Move moves a file or directory within the website home to destPath (the
+// full target path). An existing target is rejected instead of overwritten.
+// Runs as the website user.
+func (s *Service) Move(ctx context.Context, basePath, sourcePath, destPath string) error {
+	source, dest, err := s.validateTransfer(ctx, basePath, sourcePath, destPath)
+	if err != nil {
+		return err
+	}
+	result, err := s.runAsWebsiteUser(ctx, basePath, "mv", "--", source, dest)
+	if err != nil {
+		return fmt.Errorf("move: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("FILE_ERROR", "failed to move: "+result.Stderr, nil)
+	}
+	return nil
+}
+
 // CreateDir creates a directory (including parents) within the website's base path.
 func (s *Service) CreateDir(ctx context.Context, basePath, dirPath string) error {
 	if err := rejectWebsiteRoot(basePath, dirPath); err != nil {

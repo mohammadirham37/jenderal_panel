@@ -80,6 +80,12 @@ import { language, translate } from '$lib/stores/language';
 	let unzipDest = $state('');
 	let unzipBusy = $state(false);
 
+	// Copy / move
+	let transferMode = $state<'copy' | 'move' | null>(null);
+	let transferNames = $state<string[]>([]);
+	let transferDest = $state('/');
+	let transferBusy = $state(false);
+
 	// Bulk selection
 	let selectedNames = $state<string[]>([]);
 	let pendingBulkDelete = $state(false);
@@ -446,6 +452,66 @@ import { language, translate } from '$lib/stores/language';
 		}
 	}
 
+	// ─── Copy / move ──────────────────────────────────────────────────
+
+	// Absolute destination folders are kept; anything else is joined under
+	// the current folder. Trailing slashes are normalized away.
+	function normalizedDestDir(): string {
+		let dir = transferDest.trim();
+		if (!dir) return '/';
+		if (!dir.startsWith('/')) dir = joinPath(dir);
+		while (dir.length > 1 && dir.endsWith('/')) dir = dir.slice(0, -1);
+		return dir;
+	}
+
+	// Items keep their names inside the destination folder.
+	function transferTarget(name: string): string {
+		const dir = normalizedDestDir();
+		return dir === '/' ? `/${name}` : `${dir}/${name}`;
+	}
+
+	function openTransfer(mode: 'copy' | 'move', names: string[]) {
+		transferMode = mode;
+		transferNames = [...names];
+		transferDest = currentPath;
+	}
+
+	async function applyTransfer() {
+		if (!transferMode || transferBusy || transferNames.length === 0) return;
+		const mode = transferMode;
+		if (normalizedDestDir() === currentPath) {
+			toast.error(translate($language, 'wsf.destSameFolder'));
+			return;
+		}
+		transferBusy = true;
+		const targets = [...transferNames];
+		let done = 0;
+		let failures = 0;
+		for (const name of targets) {
+			try {
+				if (mode === 'copy') await fm.copy(joinPath(name), transferTarget(name));
+				else await fm.move(joinPath(name), transferTarget(name));
+				done++;
+			} catch {
+				failures++;
+			}
+		}
+		transferBusy = false;
+		transferMode = null;
+		if (failures === 0) {
+			flash(targets.length === 1
+				? (mode === 'copy'
+					? translate($language, 'wsf.copiedOne').replace('{name}', targets[0])
+					: translate($language, 'wsf.movedOne').replace('{name}', targets[0]))
+				: (mode === 'copy'
+					? translate($language, 'wsf.copiedMany').replace('{count}', String(targets.length))
+					: translate($language, 'wsf.movedMany').replace('{count}', String(targets.length))));
+		} else {
+			toast.error(translate($language, 'wsf.transferPartial').replace('{done}', String(done)).replace('{failed}', String(failures)));
+		}
+		await loadFiles(currentPath);
+	}
+
 	function handleEditorKeydown(e: KeyboardEvent) {
 		if ((e.metaKey || e.ctrlKey) && e.key === 's') {
 			e.preventDefault();
@@ -623,6 +689,14 @@ import { language, translate } from '$lib/stores/language';
 				<div class="flex flex-wrap items-center gap-2 border-b border-gray-700 bg-red-950/30 px-4 py-2.5">
 					<span class="text-xs font-semibold text-red-300">{translate($language, 'wsf.selectedCount').replace('{count}', String(selectedNames.length))}</span>
 					<button
+						onclick={() => openTransfer('copy', selectedNames)}
+						class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-gray-600"
+					>{translate($language, 'wsf.copy')}</button>
+					<button
+						onclick={() => openTransfer('move', selectedNames)}
+						class="cursor-pointer rounded-lg bg-gray-700 px-3 py-1.5 text-xs font-semibold text-gray-200 transition hover:bg-gray-600"
+					>{translate($language, 'wsf.move')}</button>
+					<button
 						onclick={() => (pendingBulkDelete = true)}
 						class="cursor-pointer rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-red-700"
 					>{translate($language, 'wsf.deleteSelected')}</button>
@@ -666,7 +740,7 @@ import { language, translate } from '$lib/stores/language';
 					<button onclick={() => toggleSort('time')} class="hidden w-32 cursor-pointer items-center gap-1 text-right hover:text-gray-300 md:flex">
 						{translate($language, 'wsf.modified')} {#if sortKey === 'time'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
 					</button>
-					<span class="w-32 text-right">{translate($language, 'wsf.actions')}</span>
+					<span class="w-64 text-right">{translate($language, 'wsf.actions')}</span>
 				</div>
 
 				<div
@@ -724,7 +798,7 @@ import { language, translate } from '$lib/stores/language';
 							<span class="hidden w-20 shrink-0 text-right text-xs tabular-nums text-gray-400 sm:block">{entry.is_dir ? '—' : formatSize(entry.size)}</span>
 							<span class="hidden w-32 shrink-0 text-right text-xs text-gray-500 md:block">{formatTime(entry.mod_time)}</span>
 
-							<div class="flex w-32 shrink-0 items-center justify-end gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+							<div class="flex w-64 shrink-0 items-center justify-end gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
 								{#if !entry.is_dir && isTextFile(entry.name)}
 									<button onclick={() => openFileEdit(entry)} title={translate($language, 'wsf.edit')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" /></svg>
@@ -735,6 +809,12 @@ import { language, translate } from '$lib/stores/language';
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
 									</button>
 								{/if}
+								<button onclick={() => openTransfer('copy', [entry.name])} title={translate($language, 'wsf.copy')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 8.25V6a2.25 2.25 0 00-2.25-2.25H6A2.25 2.25 0 003.75 6v8.25A2.25 2.25 0 006 16.5h2.25m8.25-8.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-8.25A2.25 2.25 0 017.5 18v-7.5a2.25 2.25 0 012.25-2.25h6.75z" /></svg>
+								</button>
+								<button onclick={() => openTransfer('move', [entry.name])} title={translate($language, 'wsf.move')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" /></svg>
+								</button>
 								<button onclick={() => { renamingFile = entry.name; renameValue = entry.name; }} title={translate($language, 'wsf.rename')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" /></svg>
 								</button>
@@ -900,6 +980,33 @@ import { language, translate } from '$lib/stores/language';
 					<button onclick={() => (unzipEntry = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
 					<button onclick={applyUnzip} disabled={unzipBusy} class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
 						{unzipBusy ? translate($language, 'wsf.working') : translate($language, 'wsf.unzip')}
+					</button>
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	<!-- Copy / move dialog -->
+	{#if transferMode}
+		<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" tabindex="-1" aria-label={transferMode === 'copy' ? translate($language, 'wsf.copyTitle') : translate($language, 'wsf.moveTitle')}>
+			<div class="w-full max-w-sm rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+				<h4 class="text-base font-semibold text-white">{transferMode === 'copy' ? translate($language, 'wsf.copyTitle') : translate($language, 'wsf.moveTitle')}</h4>
+				<p class="mt-1 truncate font-mono text-xs text-gray-500" title={transferNames.join(', ')}>{transferNames.join(', ')}</p>
+				<div class="mt-4">
+					<label for="transfer-dest" class="mb-1 block text-xs uppercase tracking-wider text-gray-400">{translate($language, 'wsf.transferDestLabel')}</label>
+					<input
+						id="transfer-dest"
+						bind:value={transferDest}
+						type="text"
+						spellcheck="false"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+					/>
+					<p class="mt-1.5 text-[11px] text-gray-500">{translate($language, 'wsf.transferHint')}</p>
+				</div>
+				<div class="mt-4 flex justify-end gap-2">
+					<button onclick={() => (transferMode = null)} class="cursor-pointer rounded-lg bg-gray-700 px-3.5 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">{translate($language, 'wsf.cancel')}</button>
+					<button onclick={applyTransfer} disabled={transferBusy || !transferDest.trim()} class="cursor-pointer rounded-lg bg-blue-600 px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+						{transferBusy ? translate($language, 'wsf.working') : transferMode === 'copy' ? translate($language, 'wsf.copy') : translate($language, 'wsf.move')}
 					</button>
 				</div>
 			</div>

@@ -191,6 +191,68 @@ func (h *Handler) Rename(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// Copy handles POST /api/websites/{websiteID}/files/copy. The target is the
+// full destination path; an existing target is rejected.
+func (h *Handler) Copy(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	var req struct {
+		Path   string `json:"path"`
+		Target string `json:"target"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.Path == "" || req.Target == "" {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "path and target are required")
+		return
+	}
+
+	if err := h.svc.Copy(r.Context(), basePath, req.Path, req.Target); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "copy_file", req.Path, fmt.Sprintf("copied %s to %s", req.Path, req.Target))
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// Move handles POST /api/websites/{websiteID}/files/move. The target is the
+// full destination path; an existing target is rejected.
+func (h *Handler) Move(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	var req struct {
+		Path   string `json:"path"`
+		Target string `json:"target"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.Path == "" || req.Target == "" {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "path and target are required")
+		return
+	}
+
+	if err := h.svc.Move(r.Context(), basePath, req.Path, req.Target); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	h.logAction(r, "move_file", req.Path, fmt.Sprintf("moved %s to %s", req.Path, req.Target))
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // CreateDir handles POST /api/websites/{websiteID}/files/mkdir
 func (h *Handler) CreateDir(w http.ResponseWriter, r *http.Request) {
 	basePath, err := h.getWebsite(r)

@@ -924,6 +924,10 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
 				Post("/websites/{id}/files/rename", fileHandler.Rename)
 			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/copy", fileHandler.Copy)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
+				Post("/websites/{id}/files/move", fileHandler.Move)
+			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
 				Post("/websites/{id}/files/mkdir", fileHandler.CreateDir)
 			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
 				Post("/websites/{id}/files/chmod", fileHandler.Chmod)

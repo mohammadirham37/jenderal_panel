@@ -30,6 +30,8 @@ test('file manager client matches the backend route contract', async () => {
 	await files.remove('/public/old.php');
 	await files.mkdir('/public/cache');
 	await files.rename('/public/a.txt', '/public/b.txt');
+	await files.copy('/public/a.txt', '/backup/a.txt');
+	await files.move('/public/b.txt', '/backup/b.txt');
 
 	assert.deepEqual(calls, [
 		['GET', '/api/v1/websites/site-1/files?path=%2Fpublic%20assets'],
@@ -37,7 +39,9 @@ test('file manager client matches the backend route contract', async () => {
 		['POST', '/api/v1/websites/site-1/files/write', { path: '/public/index.php', content: '<?php' }],
 		['DELETE', '/api/v1/websites/site-1/files?path=%2Fpublic%2Fold.php'],
 		['POST', '/api/v1/websites/site-1/files/mkdir', { path: '/public/cache' }],
-		['POST', '/api/v1/websites/site-1/files/rename', { old_path: '/public/a.txt', new_path: '/public/b.txt' }]
+		['POST', '/api/v1/websites/site-1/files/rename', { old_path: '/public/a.txt', new_path: '/public/b.txt' }],
+		['POST', '/api/v1/websites/site-1/files/copy', { path: '/public/a.txt', target: '/backup/a.txt' }],
+		['POST', '/api/v1/websites/site-1/files/move', { path: '/public/b.txt', target: '/backup/b.txt' }]
 	]);
 });
 

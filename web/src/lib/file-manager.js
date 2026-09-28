@@ -26,6 +26,12 @@ export function createFileManagerAPI(api, websiteID) {
 		rename(/** @type {string} */ oldPath, /** @type {string} */ newPath) {
 			return api.post(`${base}/rename`, { old_path: oldPath, new_path: newPath });
 		},
+		copy(/** @type {string} */ path, /** @type {string} */ target) {
+			return api.post(`${base}/copy`, { path, target });
+		},
+		move(/** @type {string} */ path, /** @type {string} */ target) {
+			return api.post(`${base}/move`, { path, target });
+		},
 		chmod(/** @type {string} */ path, /** @type {string} */ mode, /** @type {boolean} */ recursive) {
 			return api.post(`${base}/chmod`, { path, mode, recursive });
 		},

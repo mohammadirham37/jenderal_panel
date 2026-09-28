@@ -573,3 +573,81 @@ func TestUnzipRejectsNonZipArchives(t *testing.T) {
 		t.Fatal("a non-.zip archive must be rejected")
 	}
 }
+
+// ---------- copy / move ----------
+
+func TestCopyAndMoveBuildInvocations(t *testing.T) {
+	// The destination leaf must be reported as missing, or the
+	// already-exists guard rejects the transfer.
+	exec := &recordingExec{missing: map[string]bool{"/home/web_site/public/app.php": true}}
+	svc := &Service{exec: exec}
+
+	if err := svc.Copy(context.Background(), "/home/web_site", "app.php", "public/app.php"); err != nil {
+		t.Fatalf("Copy: %v", err)
+	}
+	var cpArgs []string
+	for _, cmd := range exec.commands {
+		// Recorded as ["-u", user, "--", "cp", ...].
+		if len(cmd) > 3 && cmd[3] == "cp" {
+			cpArgs = cmd[4:]
+		}
+	}
+	if cpArgs == nil {
+		t.Fatalf("copy never invoked cp: %v", exec.commands)
+	}
+	if cpArgs[0] != "-a" || cpArgs[2] != "/home/web_site/app.php" || cpArgs[3] != "/home/web_site/public/app.php" {
+		t.Fatalf("unexpected cp invocation: %v", cpArgs)
+	}
+
+	if err := svc.Move(context.Background(), "/home/web_site", "app.php", "public/app.php"); err != nil {
+		t.Fatalf("Move: %v", err)
+	}
+	var mvArgs []string
+	for _, cmd := range exec.commands {
+		if len(cmd) > 3 && cmd[3] == "mv" {
+			mvArgs = cmd[4:]
+		}
+	}
+	if mvArgs == nil {
+		t.Fatalf("move never invoked mv: %v", exec.commands)
+	}
+	if mvArgs[0] != "--" || mvArgs[1] != "/home/web_site/app.php" || mvArgs[2] != "/home/web_site/public/app.php" {
+		t.Fatalf("unexpected mv invocation: %v", mvArgs)
+	}
+}
+
+func TestTransferRejectsUnsafeTargets(t *testing.T) {
+	// An existing recordingExec answers test -e with success for every
+	// path, so any transfer must be rejected as an existing target.
+	svc := &Service{exec: &recordingExec{}}
+
+	if err := svc.Copy(context.Background(), "/home/web_site", "app.php", "public/app.php"); err == nil {
+		t.Fatal("copy onto an existing target must be rejected")
+	}
+	if err := svc.Move(context.Background(), "/home/web_site", "app.php", "public/app.php"); err == nil {
+		t.Fatal("move onto an existing target must be rejected")
+	}
+	// Same source and target.
+	missing := &recordingExec{missing: map[string]bool{"/home/web_site/app.php": true}}
+	if err := (&Service{exec: missing}).Copy(context.Background(), "/home/web_site", "app.php", "app.php"); err == nil {
+		t.Fatal("copy onto the source itself must be rejected")
+	}
+	// The website root can never be a source or a target.
+	if err := (&Service{exec: missing}).Copy(context.Background(), "/home/web_site", "", "app.php"); err == nil {
+		t.Fatal("copying the website root must be rejected")
+	}
+}
+
+func TestTransferRejectsTargetInsideSource(t *testing.T) {
+	exec := &recordingExec{missing: map[string]bool{"/home/web_site/app/inner/x.php": true}}
+	svc := &Service{exec: exec}
+
+	if err := svc.Copy(context.Background(), "/home/web_site", "app", "app/inner/x.php"); err == nil {
+		t.Fatal("a target inside the source must be rejected")
+	}
+	for _, cmd := range exec.commands {
+		if len(cmd) > 3 && (cmd[3] == "cp" || cmd[3] == "mv") {
+			t.Fatalf("no copy command may run for an invalid target: %v", exec.commands)
+		}
+	}
+}
