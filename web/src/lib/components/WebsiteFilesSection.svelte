@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, getCSRFToken } from '$lib/api';
+	import { api, apiUpload } from '$lib/api';
 	import { createFileManagerAPI } from '$lib/file-manager.js';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
@@ -53,6 +53,15 @@ import { language, translate } from '$lib/stores/language';
 	let dragging = $state(false);
 	let uploadQueue = $state<string[]>([]);
 	let uploadTotal = $state(0);
+	let uploadPercent = $state(0);
+
+	// Overall batch progress: finished files count fully, the in-flight file
+	// (uploadQueue[0]) contributes its own percentage.
+	let uploadOverall = $derived(
+		uploadTotal === 0
+			? 0
+			: Math.min(100, Math.round(((uploadTotal - uploadQueue.length + uploadPercent / 100) / uploadTotal) * 100))
+	);
 
 	// Delete confirmation
 	let pendingDelete = $state<FileEntry | null>(null);
@@ -319,22 +328,23 @@ import { language, translate } from '$lib/stores/language';
 		if (arr.length === 0) return;
 		uploadTotal = arr.length;
 		uploadQueue = arr.map((f) => f.name);
+		uploadPercent = 0;
 		for (const file of arr) {
 			try {
 				const formData = new FormData();
 				formData.append('file', file);
 				formData.append('path', currentPath);
-				const res = await fetch(`/api/v1/websites/${website.id}/files/upload`, {
-					method: 'POST',
-					headers: { 'X-CSRF-Token': getCSRFToken() },
-					credentials: 'include',
-					body: formData
-				});
-				if (!res.ok) throw new Error(`${file.name}: HTTP ${res.status}`);
+				await apiUpload(
+					`/api/v1/websites/${website.id}/files/upload`,
+					formData,
+					(percent) => { uploadPercent = percent; }
+				);
+				uploadPercent = 0;
 				uploadQueue = uploadQueue.slice(1);
 			} catch (err) {
 				uploadQueue = [];
 				uploadTotal = 0;
+				uploadPercent = 0;
 				fail(err, translate($language, 'wsf.errUploadFile').replace('{name}', file.name));
 				await loadFiles(currentPath);
 				return;
@@ -578,8 +588,16 @@ import { language, translate } from '$lib/stores/language';
 
 			{#if uploadTotal > 0}
 				<div class="border-b border-gray-700 bg-blue-900/20 px-4 py-2 text-xs text-blue-300">
-					{translate($language, 'wsf.uploadingProgress').replace('{done}', String(uploadTotal - uploadQueue.length + (uploadQueue.length ? 1 : 0))).replace('{total}', String(uploadTotal))}
-					{#if uploadQueue.length > 0}— {uploadQueue[0]}{/if}
+					<div class="flex items-center justify-between gap-3">
+						<span class="truncate">
+							{translate($language, 'wsf.uploadingProgress').replace('{done}', String(uploadTotal - uploadQueue.length + (uploadQueue.length ? 1 : 0))).replace('{total}', String(uploadTotal))}
+							{#if uploadQueue.length > 0}— {uploadQueue[0]}{/if}
+						</span>
+						<span class="shrink-0 font-semibold tabular-nums">{uploadOverall}%</span>
+					</div>
+					<div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-gray-700">
+						<div class="h-full rounded-full bg-blue-500 transition-[width] duration-150" style={`width: ${uploadOverall}%`}></div>
+					</div>
 				</div>
 			{/if}
 

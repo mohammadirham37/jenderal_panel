@@ -113,6 +113,49 @@ export const api = {
 	}
 };
 
+// Multipart upload via XHR: fetch cannot report upload progress, XHR can
+// through xhr.upload.onprogress.
+export function apiUpload(
+	path: string,
+	form: FormData,
+	onProgress?: (percent: number) => void
+): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open('POST', path);
+		xhr.withCredentials = true;
+		const token = getCSRFToken();
+		if (token) {
+			xhr.setRequestHeader('X-CSRF-Token', token);
+		}
+		if (onProgress) {
+			xhr.upload.onprogress = (e) => {
+				if (e.lengthComputable) {
+					onProgress(Math.round((e.loaded / e.total) * 100));
+				}
+			};
+		}
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve();
+				return;
+			}
+			let message = `HTTP ${xhr.status}`;
+			try {
+				const errorData: ApiError = JSON.parse(xhr.responseText);
+				if (errorData.error?.message) {
+					message = errorData.error.message;
+				}
+			} catch {
+				// Non-JSON body; keep the HTTP status message.
+			}
+			reject(new APIRequestError(message, xhr.status));
+		};
+		xhr.onerror = () => reject(new APIRequestError(`HTTP ${xhr.status}`, xhr.status));
+		xhr.send(form);
+	});
+}
+
 // Raw request that returns the full response including meta
 export async function apiRaw<T>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
 	const headers: Record<string, string> = {

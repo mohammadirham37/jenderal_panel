@@ -44,8 +44,10 @@ test('file manager client matches the backend route contract', async () => {
 test('file uploads send the CSRF token required by the API middleware', async () => {
 	const page = await readFile(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
 	const section = await readFile(new URL('../../src/lib/components/WebsiteFilesSection.svelte', import.meta.url), 'utf8');
-	assert.match(section, /import \{ api, getCSRFToken \} from '\$lib\/api'/);
-	assert.match(section, /'X-CSRF-Token': getCSRFToken\(\)/);
+	const apiClient = await readFile(new URL('../../src/lib/api.ts', import.meta.url), 'utf8');
+	// File-tab uploads go through apiUpload, which sets the header itself.
+	assert.match(section, /import \{ api, apiUpload \} from '\$lib\/api'/);
+	assert.match(apiClient, /xhr\.setRequestHeader\('X-CSRF-Token', token\)/);
 	// The deployment upload card on the page still posts multipart forms too.
 	assert.match(page, /'X-CSRF-Token': getCSRFToken\(\)/);
 });
