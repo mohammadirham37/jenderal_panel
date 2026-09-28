@@ -498,7 +498,9 @@ func (s *Service) Zip(ctx context.Context, basePath, sourcePath, targetPath stri
 		return "", model.NewValidationError("the archive target must differ from the source")
 	}
 
-	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", zipScript, "--", target, source)
+	// python3 passes everything after "-c <script>" verbatim to sys.argv
+	// (no "--" end-of-options separator like coreutils).
+	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", zipScript, target, source)
 	if err != nil {
 		return "", fmt.Errorf("zip: %w", err)
 	}
@@ -537,7 +539,7 @@ func (s *Service) Unzip(ctx context.Context, basePath, archivePath, destPath str
 		return "", err
 	}
 
-	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", unzipScript, "--", archive, dest)
+	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", unzipScript, archive, dest)
 	if err != nil {
 		return "", fmt.Errorf("unzip: %w", err)
 	}

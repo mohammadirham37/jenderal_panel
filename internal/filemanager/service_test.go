@@ -516,9 +516,15 @@ func TestZipBuildsPythonInvocation(t *testing.T) {
 	if pyArgs == nil {
 		t.Fatalf("zip never invoked python3: %v", exec.commands)
 	}
-	// python3 -c <script> -- <dest> <source>
-	if pyArgs[0] != "-c" || pyArgs[2] != "--" || pyArgs[3] != "/home/web_site/app.zip" || pyArgs[4] != "/home/web_site/app" {
+	// python3 -c <script> <dest> <source> — no "--" separator because python
+	// passes everything after -c verbatim to sys.argv.
+	if pyArgs[0] != "-c" || pyArgs[2] != "/home/web_site/app.zip" || pyArgs[3] != "/home/web_site/app" {
 		t.Fatalf("unexpected python3 invocation: %v", pyArgs)
+	}
+	for _, arg := range pyArgs {
+		if arg == "--" {
+			t.Fatalf("-- must not be passed to python3: %v", pyArgs)
+		}
 	}
 }
 
@@ -555,7 +561,7 @@ func TestUnzipBuildsPythonInvocation(t *testing.T) {
 	if pyArgs == nil {
 		t.Fatalf("unzip never invoked python3: %v", exec.commands)
 	}
-	if pyArgs[3] != "/home/web_site/uploads/release.zip" || pyArgs[4] != "/home/web_site/public" {
+	if pyArgs[2] != "/home/web_site/uploads/release.zip" || pyArgs[3] != "/home/web_site/public" {
 		t.Fatalf("unexpected python3 invocation: %v", pyArgs)
 	}
 }
