@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
-	import { goto, replaceState } from '$app/navigation';
+	import { replaceState } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
@@ -149,7 +149,6 @@ import { toast } from '$lib/stores/toast';
 
 	// ─── Overview ─────────────────────────────────────────────────────
 
-	let deleteConfirm = $state(false);
 	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
 
 	// Node.js runtime (moved from the Node.js page)
@@ -810,16 +809,6 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	// Overview actions
-	async function suspendWebsite() {
-		if (!website) return;
-		
-		try {
-			await api.post(`/api/v1/websites/${website.id}/suspend`);
-			toast.success(translate($language, 'wd.suspend_success'));
-			await loadWebsite();
-		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'wd.suspend_failed')); }
-	}
-
 	async function enableWebsite() {
 		if (!website) return;
 		
@@ -838,18 +827,6 @@ import { toast } from '$lib/stores/toast';
 			toast.success(translate($language, 'wd.retry_success'));
 			await loadWebsite();
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'wd.retry_failed')); }
-	}
-
-	async function deleteWebsite() {
-		if (!website) return;
-		
-		try {
-			await api.del(`/api/v1/websites/${website.id}`);
-			goto('/websites');
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'wd.delete_failed'));
-			deleteConfirm = false;
-		}
 	}
 
 	// Deployment
@@ -1851,14 +1828,6 @@ import { toast } from '$lib/stores/toast';
 
 <h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.actions')}</h3>
 						<div class="flex flex-wrap gap-2">
-							{#if website.status === 'active'}
-								<button
-									onclick={suspendWebsite}
-									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
-								>
-									{translate($language, 'wd.suspend')}
-								</button>
-							{/if}
 							{#if website.status === 'suspended' || website.status === 'disabled'}
 								<button
 									onclick={enableWebsite}
@@ -1873,31 +1842,6 @@ import { toast } from '$lib/stores/toast';
 									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 text-white text-sm rounded transition-colors cursor-pointer"
 								>
 									{translate($language, 'wd.retry')}
-								</button>
-							{/if}
-
-							{#if deleteConfirm}
-								<div class="flex items-center gap-2 p-2 bg-red-900/30 border border-red-700 rounded-lg">
-									<span class="text-sm text-red-300">{translate($language, 'wd.delete_confirm')}</span>
-									<button
-										onclick={deleteWebsite}
-										class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
-									>
-										{translate($language, 'wd.delete_yes')}
-									</button>
-									<button
-										onclick={() => (deleteConfirm = false)}
-										class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer"
-									>
-										{translate($language, 'wd.cancel')}
-									</button>
-								</div>
-							{:else}
-								<button
-									onclick={() => (deleteConfirm = true)}
-									class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer"
-								>
-									{translate($language, 'wd.delete')}
 								</button>
 							{/if}
 						</div>
