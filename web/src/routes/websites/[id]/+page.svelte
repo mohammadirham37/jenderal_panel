@@ -1826,7 +1826,6 @@ import { toast } from '$lib/stores/toast';
 						<p class="mt-3 text-xs text-gray-500">{translate($language, 'wd.prot.desc')}</p>
 					</div>
 
-<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.actions')}</h3>
 						<div class="flex flex-wrap gap-2">
 							{#if website.status === 'suspended' || website.status === 'disabled'}
 								<button
