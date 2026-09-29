@@ -652,7 +652,7 @@
 					</div>
 					<div class="flex items-center gap-4 text-[11px] text-gray-400">
 						<span class="flex items-center gap-1.5">
-							<span class="h-1.5 w-4 rounded-full bg-blue-400"></span>
+							<span class="h-1.5 w-4 rounded-full bg-sky-400"></span>
 							{translate($language, 'dash.cpu')}
 						</span>
 						<span class="flex items-center gap-1.5">
@@ -693,7 +693,7 @@
 								{/each}
 								<path d={chartArea(ramSeries, 600, 176, 100)} class="fill-purple-400/10"></path>
 								<path d={chartArea(diskSeries, 600, 176, 100)} class="fill-green-400/10"></path>
-								<path d={chartArea(cpuSeries, 600, 176, 100)} class="fill-blue-400/10"></path>
+								<path d={chartArea(cpuSeries, 600, 176, 100)} class="fill-sky-400/10"></path>
 								<path
 									d={chartLine(ramSeries, 600, 176, 100)}
 									class="fill-none stroke-purple-400"
@@ -710,7 +710,7 @@
 								></path>
 								<path
 									d={chartLine(cpuSeries, 600, 176, 100)}
-									class="fill-none stroke-blue-400"
+									class="fill-none stroke-sky-400"
 									stroke-width="1.5"
 									vector-effect="non-scaling-stroke"
 									stroke-linejoin="round"
