@@ -3,6 +3,7 @@ package scripts_test
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -140,5 +141,125 @@ ADMIN_HOSTNAME=::1
 
 	if !strings.Contains(output, "URL:       https://localhost:8443") {
 		t.Fatalf("summary output did not reject IPv6 literal fallbacks:\n%s", output)
+	}
+}
+
+func runSwapGuard(t *testing.T, commandMocks string) (string, string) {
+	t.Helper()
+	source, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions := strings.TrimSuffix(strings.TrimSpace(string(source)), `main "$@"`)
+	script := definitions + `
+SWAP_CALLS="$(pwd)/swap-calls"
+BUILD_SWAPFILE="$(pwd)/build-swap"
+` + commandMocks + `
+ensure_build_swap
+cleanup_build_swap
+`
+	dir := t.TempDir()
+	cmd := exec.Command("bash")
+	cmd.Dir = dir
+	cmd.Stdin = strings.NewReader(script)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("swap guard script failed: %v\n%s", err, output)
+	}
+	ansiEscape := regexp.MustCompile(`\x1b\[[0-9;]*m`)
+	return ansiEscape.ReplaceAllString(string(output), ""), dir
+}
+
+func TestInstallerAddsTemporarySwapOnLowMemory(t *testing.T) {
+	output, dir := runSwapGuard(t, `
+awk() {
+  case "$*" in
+    *MemTotal*) printf '1024\n' ;;
+    *SwapTotal*) printf '0\n' ;;
+    *NR==2*) printf '14336\n' ;;
+    *) return 0 ;;
+  esac
+}
+df() { printf 'Filesystem 1M-blocks Used Available Use%% Mounted on\n/dev/vda1 20480 4096 14336 23%% /\n'; }
+fallocate() { echo fallocate >> "$SWAP_CALLS"; }
+mkswap() { echo mkswap >> "$SWAP_CALLS"; }
+swapon() { echo swapon >> "$SWAP_CALLS"; }
+swapoff() { echo swapoff >> "$SWAP_CALLS"; }
+`)
+
+	if !strings.Contains(output, "adding 2048MB temporary swap") || !strings.Contains(output, "Swap: 2048MB active") {
+		t.Fatalf("installer did not add 2GB swap for a 1GB VPS:\n%s", output)
+	}
+	if !strings.Contains(output, "Build swap: removed") {
+		t.Fatalf("installer did not remove the build swap afterwards:\n%s", output)
+	}
+	calls, err := os.ReadFile(filepath.Join(dir, "swap-calls"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{"fallocate", "mkswap", "swapon", "swapoff"} {
+		if !strings.Contains(string(calls), expected) {
+			t.Fatalf("swap setup did not run %s:\n%s", expected, string(calls))
+		}
+	}
+}
+
+func TestInstallerSkipsSwapWhenMemoryIsPlentiful(t *testing.T) {
+	output, _ := runSwapGuard(t, `
+awk() {
+  case "$*" in
+    *MemTotal*) printf '4096\n' ;;
+    *SwapTotal*) printf '0\n' ;;
+    *) return 0 ;;
+  esac
+}
+swapon() { echo swapon >> "$SWAP_CALLS"; }
+`)
+
+	if strings.TrimSpace(output) != "" {
+		t.Fatalf("installer added a swap despite ample memory:\n%s", output)
+	}
+}
+
+func TestInstallerWarnsWhenSwapCannotBeEnabled(t *testing.T) {
+	output, _ := runSwapGuard(t, `
+awk() {
+  case "$*" in
+    *MemTotal*) printf '1024\n' ;;
+    *SwapTotal*) printf '0\n' ;;
+    *NR==2*) printf '14336\n' ;;
+    *) return 0 ;;
+  esac
+}
+df() { printf 'Filesystem 1M-blocks Used Available Use%% Mounted on\n/dev/vda1 20480 4096 14336 23%% /\n'; }
+fallocate() { :; }
+mkswap() { :; }
+swapon() { return 1; }
+swapoff() { echo swapoff >> "$SWAP_CALLS"; }
+`)
+
+	if !strings.Contains(output, "Could not enable swap") {
+		t.Fatalf("installer did not warn about failed swapon:\n%s", output)
+	}
+	if strings.Contains(output, "Build swap: removed") || strings.Contains(output, "swapoff") {
+		t.Fatalf("swapoff ran although swap was never enabled:\n%s", output)
+	}
+}
+
+func TestInstallerWiresSwapGuardIntoBuildStep(t *testing.T) {
+	source, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(source)
+	ensureIndex := strings.Index(script, "    ensure_build_swap\n")
+	cleanupIndex := strings.Index(script, "    cleanup_build_swap\n")
+	cloneIndex := strings.Index(script, "git clone")
+	verifyIndex := strings.Index(script, "Binary verification failed")
+	if ensureIndex < 0 || ensureIndex > cloneIndex {
+		t.Fatalf("installer does not enable the build swap before cloning the source:\n%s", script)
+	}
+	if cleanupIndex < verifyIndex {
+		t.Fatalf("installer removes the build swap before the binary is verified:\n%s", script)
 	}
 }

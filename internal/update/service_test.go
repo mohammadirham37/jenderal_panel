@@ -121,6 +121,18 @@ func TestUpdateAtomicallyReplacesRunningBinary(t *testing.T) {
 	if strings.Contains(script, "%!") {
 		t.Fatalf("update script contains fmt formatting errors:\n%s", script)
 	}
+	if !strings.Contains(script, "ensure_build_swap") || !strings.Contains(script, "cleanup_build_swap; rm -f") {
+		t.Fatalf("update script does not guard low-memory builds with a temporary swap:\n%s", script)
+	}
+	if swapIndex := strings.Index(script, "ensure_build_swap"); swapIndex < 0 || swapIndex > strings.Index(script, "'npm' 'install'") {
+		t.Fatalf("update script enables the build swap too late:\n%s", script)
+	}
+	if buildIdx := strings.Index(script, "CGO_ENABLED=1 go build"); buildIdx >= 0 {
+		cleanupIdx := strings.Index(script[buildIdx:], "\ncleanup_build_swap\n")
+		if cleanupIdx < 0 {
+			t.Fatalf("update script does not remove the build swap after compiling:\n%s", script)
+		}
+	}
 	execPath, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable() error = %v", err)

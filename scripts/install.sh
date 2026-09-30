@@ -33,6 +33,8 @@ ADMIN_PASSWORD=""
 ADMIN_HOSTNAME=""
 FORCE=false
 ARCH=""
+BUILD_SWAPFILE="/jenderal-build-swap"
+SWAP_ENABLED=false
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -138,6 +140,54 @@ setup_interactive() {
     read -rp "  Install? [Y/n]: " c
     [[ "$c" == "n" || "$c" == "N" ]] && { echo "  Aborted."; exit 0; }
     echo ""
+}
+
+#----------------------------------------------------------#
+#                    Build Memory Guard                      #
+#----------------------------------------------------------#
+# Compiling the frontend and the Go binary needs more memory
+# than a small VPS (1GB RAM / 1 vCPU) has physically, so a
+# temporary swapfile is created for the duration of the build
+# whenever RAM+swap is below ~2.5GB. It is removed again as
+# soon as the build finishes (or fails).
+ensure_build_swap() {
+    local ram_mb swap_mb total_mb needed_mb free_mb
+    ram_mb=$(awk '/^MemTotal/ {print int($2/1024)}' /proc/meminfo)
+    swap_mb=$(awk '/^SwapTotal/ {print int($2/1024)}' /proc/meminfo)
+    total_mb=$(( ram_mb + swap_mb ))
+    [[ $total_mb -ge 2600 ]] && return 0
+
+    needed_mb=$(( 3072 - total_mb ))
+    (( needed_mb > 2048 )) && needed_mb=2048
+    (( needed_mb < 512 )) && needed_mb=512
+    free_mb=$(df -BM / | awk 'NR==2 {print int($4)}')
+    if (( free_mb < needed_mb + 2048 )); then
+        warn "Only ${total_mb}MB total memory and not enough disk for a build swap; the build may run out of memory"
+        return 0
+    fi
+
+    log "Low memory (${total_mb}MB total): adding ${needed_mb}MB temporary swap for the build..."
+    fallocate -l ${needed_mb}M "$BUILD_SWAPFILE" 2>/dev/null \
+        || dd if=/dev/zero of="$BUILD_SWAPFILE" bs=1M count=$needed_mb status=none
+    chmod 600 "$BUILD_SWAPFILE"
+    mkswap "$BUILD_SWAPFILE" > /dev/null 2>&1 || true
+    if ! swapon "$BUILD_SWAPFILE" 2>/dev/null; then
+        warn "Could not enable swap (the virtualization may forbid it); the build may run out of memory"
+        rm -f "$BUILD_SWAPFILE"
+        return 0
+    fi
+    SWAP_ENABLED=true
+    trap cleanup_build_swap EXIT
+    log "Swap: ${needed_mb}MB active"
+}
+
+cleanup_build_swap() {
+    if [[ "${SWAP_ENABLED:-}" == true ]]; then
+        swapoff "$BUILD_SWAPFILE" 2>/dev/null || true
+        rm -f "$BUILD_SWAPFILE"
+        SWAP_ENABLED=false
+        log "Build swap: removed"
+    fi
 }
 
 #----------------------------------------------------------#
@@ -247,6 +297,7 @@ step_create_dirs() {
 }
 
 step_build() {
+    ensure_build_swap
     log "Building Jenderal Panel from source..."
     local bd="/tmp/jenderal-build-$$"
 
@@ -290,6 +341,7 @@ step_build() {
     # Verify
     "$JENDERAL_BIN" version 2>/dev/null || fail "Binary verification failed"
     log "Binary: $($JENDERAL_BIN version)"
+    cleanup_build_swap
 }
 
 step_tls() {
