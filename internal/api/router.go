@@ -174,6 +174,7 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.Use(deps.ScopeMiddleware)
 
 			r.Post("/auth/logout", authHandler.Logout)
+			r.Post("/auth/impersonate/stop", authHandler.StopImpersonation)
 			r.Get("/auth/me", authHandler.Me)
 			r.Get("/auth/sessions", authHandler.ListSessions)
 			r.Delete("/auth/sessions/{sessionID}", authHandler.RevokeSession)
@@ -234,6 +235,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Put("/users/{id}/password", userHandler.UpdatePassword)
 			r.With(auth.RequirePermission(deps.RBAC, "users.delete")).
 				Delete("/users/{id}", userHandler.Delete)
+			r.With(auth.RequirePermission(deps.RBAC, "users.impersonate")).
+				Post("/users/{id}/login-as", userHandler.LoginAs)
 
 			// SSH keys (admin manages any user's keys)
 			r.With(auth.RequirePermission(deps.RBAC, "users.view")).

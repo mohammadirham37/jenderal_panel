@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import type { User, SSHKey } from '$lib/types';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
+	import { toast } from '$lib/stores/toast';
+	import { language, translate } from '$lib/stores/language';
+	import { user, permissions, loginAs, hasPermission } from '$lib/stores/auth';
 
 	let users = $state<User[]>([]);
 	let loading = $state(true);
 	let error = $state('');
+
+	let impersonating = $state(false);
+	const canImpersonate = $derived(hasPermission($permissions, 'users.impersonate'));
 
 	// Toolbar search
 	let search = $state('');
@@ -140,6 +145,28 @@ import { language, translate } from '$lib/stores/language';
 			await loadUsers();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'usr.failed_delete'));
+		}
+	}
+
+	// ─── Login as (impersonation) ───────────────────────────────────
+
+	function canLoginAs(u: User): boolean {
+		return canImpersonate && u.is_active && u.id !== $user?.id;
+	}
+
+	async function impersonate(u: User) {
+		if (impersonating) return;
+		if (!confirm(translate($language, 'usr.login_as_confirm').replace('{name}', u.username))) return;
+
+		impersonating = true;
+		try {
+			await loginAs(u.id);
+			toast.success(translate($language, 'usr.toast_login_as').replace('{name}', u.username));
+			await goto('/');
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'usr.failed_login_as'));
+		} finally {
+			impersonating = false;
 		}
 	}
 
@@ -515,6 +542,14 @@ import { language, translate } from '$lib/stores/language';
 						<span class="ml-auto text-xs text-gray-500">{new Date(u.created_at).toLocaleDateString()}</span>
 					</div>
 					<div class="mt-3 flex flex-wrap gap-2 border-t border-gray-700 pt-3">
+						{#if canLoginAs(u)}
+							<button
+								onclick={() => impersonate(u)}
+								class="cursor-pointer rounded-md bg-sky-700/80 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-sky-700"
+							>
+								{translate($language, 'usr.login_as')}
+							</button>
+						{/if}
 						<button
 							onclick={() => openKeys(u)}
 							class="cursor-pointer rounded-md bg-purple-700/80 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-purple-700"
@@ -585,14 +620,23 @@ import { language, translate } from '$lib/stores/language';
 								<td class="px-4 py-3 text-sm text-gray-400">
 									{new Date(u.created_at).toLocaleDateString()}
 								</td>
-								<td class="px-4 py-3">
-									<div class="flex items-center justify-end gap-2">
-										<button
-											onclick={() => openKeys(u)}
-											class="cursor-pointer rounded-md bg-purple-700/80 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-purple-700"
-										>
-											{translate($language, 'usr.ssh_keys')}
-										</button>
+									<td class="px-4 py-3">
+										<div class="flex items-center justify-end gap-2">
+											{#if canLoginAs(u)}
+												<button
+													onclick={() => impersonate(u)}
+													aria-label={translate($language, 'usr.login_as_aria')}
+													class="cursor-pointer rounded-md bg-sky-700/80 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-sky-700"
+												>
+													{translate($language, 'usr.login_as')}
+												</button>
+											{/if}
+											<button
+												onclick={() => openKeys(u)}
+												class="cursor-pointer rounded-md bg-purple-700/80 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-purple-700"
+											>
+												{translate($language, 'usr.ssh_keys')}
+											</button>
 										<button
 											onclick={() => startEdit(u)}
 											class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"

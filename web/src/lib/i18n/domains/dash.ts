@@ -18,6 +18,12 @@ const en = {
 	'nav.collapse_sidebar': 'Collapse sidebar',
 	'nav.expand_sidebar': 'Expand sidebar',
 	'nav.primary_nav': 'Primary navigation',
+	'nav.impersonating_as': 'Viewing the panel as {user}',
+	'nav.impersonation_by': '· admin session by {admin}',
+	'nav.switch_back': 'Switch back',
+	'nav.switching_back': 'Switching back…',
+	'nav.switch_back_ok': 'Welcome back, {admin}.',
+	'nav.switch_back_failed': 'Could not switch back — the admin session may have ended. Log in again.',
 	'dash.timezone': 'Timezone',
 	'dash.chart.now': 'now'
 } as const;
@@ -37,6 +43,12 @@ const id: Record<keyof typeof en, string> = {
 	'nav.collapse_sidebar': 'Ciutkan bilah sisi',
 	'nav.expand_sidebar': 'Luaskan bilah sisi',
 	'nav.primary_nav': 'Navigasi utama',
+	'nav.impersonating_as': 'Melihat panel sebagai {user}',
+	'nav.impersonation_by': '· sesi admin oleh {admin}',
+	'nav.switch_back': 'Kembali ke admin',
+	'nav.switching_back': 'Kembali ke admin…',
+	'nav.switch_back_ok': 'Selamat datang kembali, {admin}.',
+	'nav.switch_back_failed': 'Tidak bisa kembali — sesi admin mungkin sudah berakhir. Silakan login lagi.',
 	'dash.timezone': 'Zona waktu',
 	'dash.chart.now': 'sekarang'
 };

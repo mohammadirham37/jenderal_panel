@@ -44,6 +44,37 @@ func (h *Handler) SetNotifier(n Notifier) {
 	h.notifier = n
 }
 
+// setSessionCookies issues the session and CSRF cookies used by login and
+// login-as flows: HttpOnly session cookie plus a JS-readable CSRF token,
+// both bound to the session's expiry.
+func setSessionCookies(w http.ResponseWriter, sessionID string, expiresAt time.Time, csrfToken string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_id",
+		Value:    sessionID,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  expiresAt,
+	})
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "csrf_token",
+		Value:    csrfToken,
+		Path:     "/",
+		HttpOnly: false,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  expiresAt,
+	})
+}
+
+// SetSessionCookies is the exported form used by other modules that start or
+// restore sessions (e.g. the users module's login-as handler).
+func SetSessionCookies(w http.ResponseWriter, sessionID string, expiresAt time.Time, csrfToken string) {
+	setSessionCookies(w, sessionID, expiresAt, csrfToken)
+}
+
 // Login authenticates a user and creates a session.
 // If TOTP is enabled and no totp_code is provided, returns {requires_totp: true}.
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
@@ -120,28 +151,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Set session cookie (HttpOnly, Secure, SameSite Strict).
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    session.ID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		Expires:  session.ExpiresAt,
-	})
-
-	// Generate and set CSRF token cookie (NOT HttpOnly so JS can read it).
+	// Session + CSRF cookies (HttpOnly session, readable CSRF).
 	csrfToken := GenerateCSRFToken()
-	http.SetCookie(w, &http.Cookie{
-		Name:     "csrf_token",
-		Value:    csrfToken,
-		Path:     "/",
-		HttpOnly: false,
-		Secure:   true,
-		SameSite: http.SameSiteStrictMode,
-		Expires:  session.ExpiresAt,
-	})
+	setSessionCookies(w, session.ID, session.ExpiresAt, csrfToken)
 
 	permissions, _ := h.rbac.GetUserPermissions(r.Context(), user.ID)
 	roles, _ := h.rbac.GetUserRoles(r.Context(), user.ID)
@@ -304,6 +316,8 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // Me returns the currently authenticated user with their roles and permissions.
+// When the session was started by an admin through login-as, the response also
+// carries the impersonation info so the UI can offer a switch back.
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	user, ok := UserFromContext(r.Context())
 	if !ok {
@@ -314,10 +328,84 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	roles, _ := h.rbac.GetUserRoles(r.Context(), user.ID)
 	permissions, _ := h.rbac.GetUserPermissions(r.Context(), user.ID)
 
-	httputil.JSON(w, http.StatusOK, model.UserWithRoles{
+	resp := model.UserWithRoles{
 		User:        user,
 		Roles:       roles,
 		Permissions: permissions,
+	}
+	if session, ok := SessionFromContext(r.Context()); ok && session.ImpersonatorSessionID != "" {
+		if info, err := h.auth.ImpersonatedBy(r.Context(), session.ImpersonatorSessionID); err == nil {
+			resp.Impersonation = info
+		}
+	}
+
+	httputil.JSON(w, http.StatusOK, resp)
+}
+
+// StopImpersonation ends a login-as session and restores the admin session it
+// was started from. The response mirrors the login shape so the frontend can
+// swap its auth state in place.
+func (h *Handler) StopImpersonation(w http.ResponseWriter, r *http.Request) {
+	session, ok := SessionFromContext(r.Context())
+	if !ok {
+		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+
+	if session.ImpersonatorSessionID == "" {
+		httputil.HandleError(w, model.NewValidationError("this session is not impersonating anyone"))
+		return
+	}
+
+	impersonated, err := h.auth.GetUserByID(r.Context(), session.UserID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	// The admin session may have been revoked or expired while impersonating;
+	// in that case the only way back is a fresh login.
+	adminSession, err := h.auth.GetSession(r.Context(), session.ImpersonatorSessionID)
+	if err != nil {
+		_ = h.auth.DeleteSession(r.Context(), session.ID)
+		httputil.HandleError(w, model.NewDomainError("IMPERSONATION_UNAVAILABLE",
+			"the original admin session is no longer active; please log in again", err))
+		return
+	}
+
+	adminUser, err := h.auth.GetUserByID(r.Context(), adminSession.UserID)
+	if err != nil || !adminUser.IsActive {
+		_ = h.auth.DeleteSession(r.Context(), session.ID)
+		httputil.HandleError(w, model.NewDomainError("IMPERSONATION_UNAVAILABLE",
+			"the original admin account is no longer active; please log in again", err))
+		return
+	}
+
+	if err := h.auth.DeleteSession(r.Context(), session.ID); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	csrfToken := GenerateCSRFToken()
+	setSessionCookies(w, adminSession.ID, adminSession.ExpiresAt, csrfToken)
+
+	roles, _ := h.rbac.GetUserRoles(r.Context(), adminUser.ID)
+	permissions, _ := h.rbac.GetUserPermissions(r.Context(), adminUser.ID)
+
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: adminUser.ID,
+		Action: "impersonate_end",
+		Module: "users",
+		Target: impersonated.ID,
+		Detail: "stopped impersonating " + impersonated.Username,
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusOK, map[string]any{
+		"user":        adminUser,
+		"roles":       roles,
+		"permissions": permissions,
+		"csrf_token":  csrfToken,
 	})
 }
 

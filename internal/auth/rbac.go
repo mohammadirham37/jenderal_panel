@@ -74,6 +74,7 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"users.create", "users"},
 		{"users.update", "users"},
 		{"users.delete", "users"},
+		{"users.impersonate", "users"},
 		{"audit.view", "audit"},
 		{"settings.view", "settings"},
 		{"settings.update", "settings"},

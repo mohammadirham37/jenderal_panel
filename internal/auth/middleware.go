@@ -32,6 +32,17 @@ func SessionFromContext(ctx context.Context) (model.Session, bool) {
 	return s, ok
 }
 
+// WithUserContext attaches an authenticated user to the context. Used by
+// handlers/tests that need to simulate the session middleware.
+func WithUserContext(ctx context.Context, user model.User) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
+}
+
+// WithSessionContext attaches a session to the context.
+func WithSessionContext(ctx context.Context, session model.Session) context.Context {
+	return context.WithValue(ctx, sessionContextKey, session)
+}
+
 // SessionMiddleware validates the session cookie, loads the user, and injects
 // both into the request context. If a Bearer token is present in the
 // Authorization header, API-token authentication is attempted first. Requests

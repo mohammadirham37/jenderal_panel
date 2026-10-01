@@ -33,10 +33,17 @@ export interface Permission {
 	module: string;
 }
 
+export interface ImpersonationInfo {
+	admin_user_id: string;
+	admin_username: string;
+}
+
 export interface UserWithRoles {
 	user: User;
 	roles: Role[];
 	permissions: Permission[];
+	/** Present when the current session was started by an admin through login-as. */
+	impersonation?: ImpersonationInfo | null;
 }
 
 export interface LoginResponse {
@@ -46,6 +53,8 @@ export interface LoginResponse {
 	csrf_token: string;
 	/** Present instead of user/session when the account has 2FA enabled and no code was supplied. */
 	requires_totp?: boolean;
+	/** Present when the session was started through login-as. */
+	impersonation?: ImpersonationInfo | null;
 }
 
 export interface ServerInfo {

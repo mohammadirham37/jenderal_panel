@@ -5,7 +5,8 @@
 	import LogoMark from '$lib/components/LogoMark.svelte';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import Toaster from '$lib/components/Toaster.svelte';
-	import { isAuthenticated, user, roles, permissions, logout, checkAuth } from '$lib/stores/auth';
+	import { isAuthenticated, user, roles, permissions, impersonation, logout, checkAuth, stopImpersonation } from '$lib/stores/auth';
+	import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 	import { serverHostname } from '$lib/stores/server';
 	import { api } from '$lib/api';
@@ -112,6 +113,25 @@
 		showLogoutConfirm = false;
 		await logout();
 		goto('/login');
+	}
+
+	let switchingBack = $state(false);
+
+	async function handleSwitchBack() {
+		if (switchingBack) return;
+		switchingBack = true;
+		const adminName = $impersonation?.admin_username ?? '';
+		try {
+			await stopImpersonation();
+			toast.success(translate($language, 'nav.switch_back_ok').replace('{admin}', adminName));
+			await goto('/');
+		} catch (err) {
+			toast.error(
+				err instanceof Error ? err.message : translate($language, 'nav.switch_back_failed')
+			);
+		} finally {
+			switchingBack = false;
+		}
 	}
 
 	async function openMobileSidebar() {
@@ -361,6 +381,25 @@
 
 		<!-- Main Content -->
 		<div class="flex min-w-0 flex-1 flex-col overflow-hidden" inert={isMobile && mobileSidebarOpen ? true : undefined}>
+			<!-- Impersonation banner: the current session was started via login-as -->
+			{#if $impersonation}
+				<div class="flex flex-wrap items-center justify-between gap-2 border-b border-yellow-500/25 bg-yellow-500/10 px-4 py-2 text-sm sm:px-6">
+					<p class="text-yellow-300">
+						{translate($language, 'nav.impersonating_as').replace('{user}', $user?.username ?? '')}
+						<span class="text-yellow-400/80">
+							{translate($language, 'nav.impersonation_by').replace('{admin}', $impersonation.admin_username)}
+						</span>
+					</p>
+					<button
+						type="button"
+						onclick={handleSwitchBack}
+						disabled={switchingBack}
+						class="cursor-pointer rounded-lg border border-yellow-400/30 bg-yellow-500/10 px-3 py-1.5 text-xs font-semibold text-yellow-200 transition hover:bg-yellow-500/20 disabled:opacity-50"
+					>
+						{switchingBack ? translate($language, 'nav.switching_back') : translate($language, 'nav.switch_back')}
+					</button>
+				</div>
+			{/if}
 			<!-- Top Bar -->
 			<header
 				class="topbar-surface flex items-center justify-between border-b border-white/5 px-4 py-3 sm:px-6"

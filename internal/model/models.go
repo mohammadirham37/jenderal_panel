@@ -47,6 +47,16 @@ type Session struct {
 	UserAgent string    `json:"user_agent"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedAt time.Time `json:"created_at"`
+	// ImpersonatorSessionID links a login-as session back to the admin
+	// session that created it; empty for ordinary logins.
+	ImpersonatorSessionID string `json:"-"`
+}
+
+// ImpersonationInfo describes an active login-as session: the admin user the
+// session can be restored to.
+type ImpersonationInfo struct {
+	AdminUserID   string `json:"admin_user_id"`
+	AdminUsername string `json:"admin_username"`
 }
 
 type AuditEntry struct {
@@ -98,6 +108,9 @@ type UserWithRoles struct {
 	User        User         `json:"user"`
 	Roles       []Role       `json:"roles"`
 	Permissions []Permission `json:"permissions"`
+	// Impersonation is set when the current session was started by an admin
+	// through login-as.
+	Impersonation *ImpersonationInfo `json:"impersonation,omitempty"`
 }
 
 type NginxStatus struct {

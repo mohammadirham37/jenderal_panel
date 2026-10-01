@@ -123,6 +123,75 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusCreated, user)
 }
 
+// LoginAs starts a session for the target user and swaps the caller's cookies
+// onto it — impersonation. The admin's own session is kept alive and recorded
+// on the new session so the panel can switch back without re-login.
+func (h *Handler) LoginAs(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	caller, ok := auth.UserFromContext(r.Context())
+	if !ok {
+		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+	currentSession, ok := auth.SessionFromContext(r.Context())
+	if !ok {
+		httputil.HandleError(w, model.NewValidationError("login-as requires a browser session"))
+		return
+	}
+
+	if caller.ID == id {
+		httputil.HandleError(w, model.NewValidationError("cannot log in as yourself"))
+		return
+	}
+	if currentSession.ImpersonatorSessionID != "" {
+		httputil.HandleError(w, model.NewValidationError("already impersonating a user; switch back first"))
+		return
+	}
+
+	target, err := h.auth.GetUserByID(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if !target.IsActive {
+		httputil.HandleError(w, model.NewValidationError("cannot log in as an inactive user"))
+		return
+	}
+
+	session, err := h.auth.CreateImpersonationSession(r.Context(), target.ID, currentSession.ID, r.RemoteAddr, r.UserAgent())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	csrfToken := auth.GenerateCSRFToken()
+	auth.SetSessionCookies(w, session.ID, session.ExpiresAt, csrfToken)
+
+	roles, _ := h.rbac.GetUserRoles(r.Context(), target.ID)
+	permissions, _ := h.rbac.GetUserPermissions(r.Context(), target.ID)
+
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: caller.ID,
+		Action: "impersonate",
+		Module: "users",
+		Target: target.ID,
+		Detail: "logged in as " + target.Username,
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusOK, map[string]any{
+		"user":        target,
+		"roles":       roles,
+		"permissions": permissions,
+		"csrf_token":  csrfToken,
+		"impersonation": model.ImpersonationInfo{
+			AdminUserID:   caller.ID,
+			AdminUsername: caller.Username,
+		},
+	})
+}
+
 // provisionSSH flips the panel flag first — the site ACL sync reads it —
 // then creates the Linux account with access to the user's websites. A
 // non-empty password is mirrored onto the account so SSH password

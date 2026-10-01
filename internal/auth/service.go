@@ -268,24 +268,40 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 
 // CreateSession creates a new session for a user.
 func (s *Service) CreateSession(ctx context.Context, userID, ip, userAgent string) (model.Session, error) {
-	now := time.Now().UTC()
-	id := ulid.Make().String()
-
-	session := model.Session{
-		ID:        id,
+	return s.insertSession(ctx, model.Session{
+		ID:        ulid.Make().String(),
 		UserID:    userID,
 		IPAddress: ip,
 		UserAgent: userAgent,
-		ExpiresAt: now.Add(s.cfg.SessionTTL),
-		CreatedAt: now,
-	}
+		ExpiresAt: time.Now().UTC().Add(s.cfg.SessionTTL),
+		CreatedAt: time.Now().UTC(),
+	}, "")
+}
 
+// CreateImpersonationSession creates a login-as session for userID that
+// remembers adminSessionID so the panel can restore it later.
+func (s *Service) CreateImpersonationSession(ctx context.Context, userID, adminSessionID, ip, userAgent string) (model.Session, error) {
+	now := time.Now().UTC()
+	session := model.Session{
+		ID:                    ulid.Make().String(),
+		UserID:                userID,
+		IPAddress:             ip,
+		UserAgent:             userAgent,
+		ExpiresAt:             now.Add(s.cfg.SessionTTL),
+		CreatedAt:             now,
+		ImpersonatorSessionID: adminSessionID,
+	}
+	return s.insertSession(ctx, session, adminSessionID)
+}
+
+func (s *Service) insertSession(ctx context.Context, session model.Session, impersonatorSessionID string) (model.Session, error) {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, user_id, ip_address, user_agent, expires_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO sessions (id, user_id, ip_address, user_agent, expires_at, created_at, impersonator_session_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		session.ID, session.UserID, session.IPAddress, session.UserAgent,
 		session.ExpiresAt.Format(time.RFC3339),
 		session.CreatedAt.Format(time.RFC3339),
+		impersonatorSessionID,
 	)
 	if err != nil {
 		return model.Session{}, fmt.Errorf("insert session: %w", err)
@@ -300,9 +316,9 @@ func (s *Service) GetSession(ctx context.Context, id string) (model.Session, err
 	var expiresStr, createdStr string
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, ip_address, user_agent, expires_at, created_at
+		`SELECT id, user_id, ip_address, user_agent, expires_at, created_at, impersonator_session_id
 		 FROM sessions WHERE id = ?`, id,
-	).Scan(&session.ID, &session.UserID, &session.IPAddress, &session.UserAgent, &expiresStr, &createdStr)
+	).Scan(&session.ID, &session.UserID, &session.IPAddress, &session.UserAgent, &expiresStr, &createdStr, &session.ImpersonatorSessionID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return model.Session{}, model.ErrNotFound
@@ -357,6 +373,20 @@ func (s *Service) ListSessions(ctx context.Context, userID string) ([]model.Sess
 	}
 
 	return sessions, rows.Err()
+}
+
+// ImpersonatedBy resolves the admin user behind a login-as session, for the
+// /auth/me response and the switch-back banner.
+func (s *Service) ImpersonatedBy(ctx context.Context, adminSessionID string) (*model.ImpersonationInfo, error) {
+	adminSession, err := s.GetSession(ctx, adminSessionID)
+	if err != nil {
+		return nil, err
+	}
+	adminUser, err := s.GetUserByID(ctx, adminSession.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return &model.ImpersonationInfo{AdminUserID: adminUser.ID, AdminUsername: adminUser.Username}, nil
 }
 
 // GetSessionForUser returns a session only if it belongs to userID, so
