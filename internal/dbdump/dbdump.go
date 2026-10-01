@@ -74,10 +74,35 @@ func DumpToFileCommand(engine, database, path string) (string, []string, error) 
 	return "sh", []string{"-c", script, "dbdump", database, path}, nil
 }
 
+// DumpToGzipFileCommand returns a command that writes a gzip-compressed dump
+// of database to path (a .sql.gz artifact). The dump streams through gzip, so
+// no uncompressed copy ever touches the disk; both user values travel as
+// positional parameters, never inside the command string.
+func DumpToGzipFileCommand(engine, database, path string) (string, []string, error) {
+	bin, args, err := DumpCommand(engine, database)
+	if err != nil {
+		return "", nil, err
+	}
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		if arg == database {
+			// The user-controlled database travels as positional parameter $1,
+			// never embedded in the script body.
+			quoted[i] = `"$1"`
+		} else {
+			quoted[i] = quoteShellArg(arg)
+		}
+	}
+	script := fmt.Sprintf("exec %s %s | gzip > \"$2\"", bin, strings.Join(quoted, " "))
+	return "sh", []string{"-c", script, "dbdump", database, path}, nil
+}
+
 // RestorePipelineCommand returns a command that streams the dump file at
 // dumpPath into the database through an OS pipe — no buffering of the whole
 // dump in memory. The database and path travel as positional parameters $1
 // and $2; psql stops at the first error so failed restores surface.
+// Gzip-compressed dumps (.sql.gz) are sniffed by magic bytes and decompressed
+// on the fly, so compressed and plain-SQL dumps restore identically.
 func RestorePipelineCommand(engine, database, dumpPath string) (string, []string, error) {
 	engine, err := normalizeEngine(engine)
 	if err != nil {
@@ -90,7 +115,11 @@ func RestorePipelineCommand(engine, database, dumpPath string) (string, []string
 	default:
 		restore = `exec sudo -u postgres psql --set ON_ERROR_STOP=on --dbname="$1"`
 	}
-	script := `exec cat "$2" | ` + restore
+	script := `if [ "$(head -c 2 "$2" | od -An -tx1 | tr -d ' \n')" = "1f8b" ]; then
+	exec gzip -dc "$2" | ` + restore + `
+else
+	exec cat "$2" | ` + restore + `
+fi`
 	return "sh", []string{"-c", script, "dbrestore", database, dumpPath}, nil
 }
 

@@ -410,6 +410,13 @@ func TestGeneratePath(t *testing.T) {
 	if len(path) < 10 {
 		t.Error("path seems too short")
 	}
+
+	// Database backups are gzip-compressed dumps; the download filename and
+	// the restore-time gzip sniffing both depend on the extension.
+	dbPath := generatePath("/var/lib/jenderal/backups", "database", "app_db")
+	if !strings.HasSuffix(dbPath, ".sql.gz") {
+		t.Errorf("expected database backup path to end in .sql.gz, got %s", dbPath)
+	}
 }
 
 // A "full" backup with no target must include EVERY managed website — not

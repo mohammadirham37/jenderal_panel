@@ -56,6 +56,32 @@ func TestDumpToFileCommandUsesPositionalParams(t *testing.T) {
 	}
 }
 
+func TestDumpToGzipFileCommand(t *testing.T) {
+	bin, args, err := DumpToGzipFileCommand("mysql", "ap; rm -rf /", "/var/backups/x.sql.gz")
+	if err != nil || bin != "sh" {
+		t.Fatalf("DumpToGzipFileCommand = %s, %v", bin, err)
+	}
+	// sh -c <script> <$0=dbdump> <$1=database> <$2=path>
+	if len(args) != 5 || args[0] != "-c" || args[2] != "dbdump" {
+		t.Fatalf("expected sh -c <script> dbdump <db> <path>, got %v", args)
+	}
+	script := args[1]
+	if !strings.Contains(script, "| gzip >") {
+		t.Errorf("script must compress the dump through gzip: %q", script)
+	}
+	if !strings.Contains(script, `"$1"`) || !strings.Contains(script, `"$2"`) {
+		t.Fatalf("script must reference $1/$2, got %q", script)
+	}
+	// The hostile value travels only as positional parameters; it must never
+	// appear in the script body.
+	if strings.Contains(script, "ap; rm -rf /") {
+		t.Errorf("user value leaked into the script body: %q", script)
+	}
+	if args[3] != "ap; rm -rf /" || args[4] != "/var/backups/x.sql.gz" {
+		t.Errorf("positional params wrong: %v", args)
+	}
+}
+
 func TestRestoreCommand(t *testing.T) {
 	bin, args, err := RestoreCommand("mysql", "app_db")
 	if err != nil || bin != "mysql" || strings.Join(args, " ") != "--database app_db" {
@@ -97,6 +123,15 @@ func TestRestorePipelineCommand(t *testing.T) {
 	}
 	if !strings.Contains(script, `exec mysql --database="$1"`) {
 		t.Errorf("script must pass the database via $1: %q", script)
+	}
+	// Gzip-compressed backups (.sql.gz) and plain SQL dumps (older backups,
+	// staging-clone dumps) must both restore: the pipeline sniffs the gzip
+	// magic (1f 8b) on the file and decompresses on the fly.
+	if !strings.Contains(script, "od -An -tx1") || !strings.Contains(script, `"1f8b"`) {
+		t.Errorf("script must sniff the gzip magic bytes: %q", script)
+	}
+	if !strings.Contains(script, `exec gzip -dc "$2"`) {
+		t.Errorf("script must decompress gzipped dumps: %q", script)
 	}
 	if strings.Contains(script, "app_db") || strings.Contains(script, "/var/backups/app.sql") {
 		t.Errorf("user values leaked into the script body: %q", script)

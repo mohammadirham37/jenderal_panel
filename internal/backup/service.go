@@ -312,8 +312,9 @@ func (s *Service) backupDatabase(ctx context.Context, b model.Backup, write func
 	}
 
 	// Direct argv with a parameterised redirect: the target and path travel
-	// as positional shell parameters and are never interpolated.
-	bin, args, err := dbdump.DumpToFileCommand(engine, b.Target, b.Path)
+	// as positional shell parameters and are never interpolated. The dump
+	// streams through gzip so no uncompressed copy ever touches the disk.
+	bin, args, err := dbdump.DumpToGzipFileCommand(engine, b.Target, b.Path)
 	if err != nil {
 		return err
 	}
@@ -686,28 +687,35 @@ func (s *Service) restoreFull(ctx context.Context, b model.Backup, component str
 	return nil
 }
 
-// DownloadBackupStream streams the backup archive to w without buffering it
-// whole in memory. Returns the download filename.
-func (s *Service) DownloadBackupStream(ctx context.Context, caller Caller, id string, w io.Writer) (string, error) {
+// ResolveBackupDownload validates that the caller may download the backup
+// and returns it together with the on-disk file name, so the HTTP headers
+// can carry the real name before the body starts streaming.
+func (s *Service) ResolveBackupDownload(ctx context.Context, caller Caller, id string) (model.Backup, string, error) {
 	b, err := s.Get(ctx, id)
 	if err != nil {
-		return "", err
+		return model.Backup{}, "", err
 	}
 	if !auth.CanManageResource(caller.Admin, caller.UserID, b.CreatedBy) {
-		return "", model.ErrForbidden
+		return model.Backup{}, "", model.ErrForbidden
 	}
 	if b.Status != "completed" {
-		return "", model.NewValidationError("only completed backups can be downloaded")
+		return model.Backup{}, "", model.NewValidationError("only completed backups can be downloaded")
 	}
 
 	filename := filepath.Base(b.Path)
 	if filename == "" || filename == "." {
 		filename = "backup-" + b.ID
 	}
+	return b, filename, nil
+}
+
+// StreamBackupFile streams the backup archive to w without buffering it
+// whole in memory.
+func (s *Service) StreamBackupFile(ctx context.Context, b model.Backup, w io.Writer) error {
 	if _, err := s.exec.RunSudoStream(ctx, w, "cat", b.Path); err != nil {
-		return "", fmt.Errorf("stream backup: %w", err)
+		return fmt.Errorf("stream backup: %w", err)
 	}
-	return filename, nil
+	return nil
 }
 
 // --- Pruning ---
@@ -1150,7 +1158,7 @@ func generatePath(localDir, backupType, target string) string {
 	case "website":
 		return filepath.Join(localDir, "website", fmt.Sprintf("%s_%s.tar.gz", timestamp, safeName))
 	case "database":
-		return filepath.Join(localDir, "database", fmt.Sprintf("%s_%s.sql", timestamp, safeName))
+		return filepath.Join(localDir, "database", fmt.Sprintf("%s_%s.sql.gz", timestamp, safeName))
 	case "config":
 		return filepath.Join(localDir, "config", fmt.Sprintf("%s_config.tar.gz", timestamp))
 	case "full":

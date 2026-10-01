@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -131,19 +132,44 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // Download handles GET /api/backups/{id}/download and streams the archive
-// as an attachment.
+// as an attachment under its real file name (e.g. 20260102_150405_db.sql.gz).
 func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", `attachment; filename="backup-`+id+`"`)
-
-	filename, err := h.svc.DownloadBackupStream(r.Context(), callerFromContext(r), id, w)
+	b, filename, err := h.svc.ResolveBackupDownload(r.Context(), callerFromContext(r), id)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
+	w.Header().Set("Content-Type", downloadContentType(filename))
+	w.Header().Set("Content-Disposition", `attachment; filename="`+headerSafeFilename(filename)+`"`)
+
+	if err := h.svc.StreamBackupFile(r.Context(), b, w); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
 	h.logAction(r, "download_backup", id, "downloaded "+filename)
+}
+
+// downloadContentType maps a backup file name to a MIME type.
+func downloadContentType(filename string) string {
+	if strings.HasSuffix(filename, ".gz") {
+		return "application/gzip"
+	}
+	return "application/octet-stream"
+}
+
+// headerSafeFilename strips characters that could break the quoted
+// Content-Disposition value — imported backups keep their uploaded name.
+func headerSafeFilename(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '"', '\\', '\r', '\n':
+			return '-'
+		}
+		return r
+	}, name)
 }
 
 // Restore handles POST /api/backups/{id}/restore and runs the restore as a
