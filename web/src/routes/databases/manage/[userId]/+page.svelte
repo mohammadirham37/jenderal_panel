@@ -88,6 +88,7 @@
 			loadDatabases().catch((err) => toast(err.message, true));
 			loadObjects().catch(() => undefined);
 		}
+		loadRestoreLimit().catch(() => undefined);
 	});
 	let sessionError = $state('');
 
@@ -178,6 +179,16 @@
 	let restoreFile = $state<File | null>(null);
 	let restoreBusy = $state(false);
 	let restoreConfirmOpen = $state(false);
+	// Client-side mirror of the panel's restore upload cap; null until loaded.
+	let restoreLimit = $state<{ max_mb: number; label: string } | null>(null);
+
+	async function loadRestoreLimit() {
+		try {
+			restoreLimit = await api.get<{ max_mb: number; label: string }>('/api/v1/databases/restore-limit');
+		} catch {
+			// The server still enforces the cap; the pre-check is a convenience.
+		}
+	}
 
 	let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -653,8 +664,13 @@
 
 	function pickRestoreFile(e: Event) {
 		const el = e.currentTarget as HTMLInputElement;
-		restoreFile = el.files?.[0] ?? null;
+		const file = el.files?.[0] ?? null;
 		el.value = '';
+		if (file && restoreLimit && file.size > restoreLimit.max_mb * 1024 * 1024) {
+			toast(translate($language, 'db.restore_too_large').replace('{limit}', restoreLimit.label || restoreLimit.max_mb + ' MB'), true);
+			return;
+		}
+		restoreFile = file;
 	}
 
 	async function doRestore() {

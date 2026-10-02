@@ -1,6 +1,7 @@
 package dbmanager
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,19 +13,31 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Handler handles database management HTTP requests.
 type Handler struct {
-	svc   *Service
-	audit *audit.Service
-	tasks *taskrunner.Runner
+	svc      *Service
+	audit    *audit.Service
+	tasks    *taskrunner.Runner
+	settings *settings.Service
+	// onRestoreLimitChange, when set, runs after the restore upload limit
+	// changes so dependent configuration (the panel domain's nginx
+	// client_max_body_size) follows without waiting for a restart.
+	onRestoreLimitChange func(context.Context)
 }
 
 // NewHandler creates a new database management Handler.
-func NewHandler(svc *Service, auditSvc *audit.Service, tasks *taskrunner.Runner) *Handler {
-	return &Handler{svc: svc, audit: auditSvc, tasks: tasks}
+func NewHandler(svc *Service, auditSvc *audit.Service, tasks *taskrunner.Runner, settingsSvc *settings.Service) *Handler {
+	return &Handler{svc: svc, audit: auditSvc, tasks: tasks, settings: settingsSvc}
+}
+
+// SetRestoreLimitNotifier wires the callback invoked after the restore upload
+// limit is saved.
+func (h *Handler) SetRestoreLimitNotifier(fn func(context.Context)) {
+	h.onRestoreLimitChange = fn
 }
 
 // ListEngines returns the status of all database engines.
@@ -480,8 +493,96 @@ func (h *Handler) ExportDatabase(w http.ResponseWriter, r *http.Request) {
 	_ = exp.Write(w)
 }
 
-// maxRestoreBytes caps the uploaded dump size for restores.
-const maxRestoreBytes = 2 << 30
+// Restore upload limit: stored in the settings table as megabytes, applied
+// per request so a change takes effect without a restart. When the setting
+// is unset or unreadable the historical 2 GB default applies.
+const (
+	restoreMaxMBSetting = "databases.restore_max_mb"
+	defaultRestoreMaxMB = 2048
+	minRestoreMaxMB     = 1
+	maxRestoreMaxMB     = 102400
+)
+
+// restoreMaxMB resolves the configured limit in megabytes, falling back to
+// the default when the setting is unset, unreadable, or out of range.
+func (h *Handler) restoreMaxMB(ctx context.Context) int64 {
+	if h.settings != nil {
+		if raw, ok, err := h.settings.Get(ctx, restoreMaxMBSetting); err == nil && ok {
+			if parsed, err := strconv.ParseInt(raw, 10, 64); err == nil &&
+				parsed >= minRestoreMaxMB && parsed <= maxRestoreMaxMB {
+				return parsed
+			}
+		}
+	}
+	return defaultRestoreMaxMB
+}
+
+// restoreLimit resolves the effective upload cap: its byte value plus a
+// human-readable label for error messages.
+func (h *Handler) restoreLimit(ctx context.Context) (int64, string) {
+	mb := h.restoreMaxMB(ctx)
+	return mb << 20, formatLimitMB(mb)
+}
+
+// formatLimitMB renders a megabyte count for user-facing messages:
+// below 1 GB as MB, otherwise as GB (with a decimal when not whole).
+func formatLimitMB(mb int64) string {
+	if mb < 1024 {
+		return fmt.Sprintf("%d MB", mb)
+	}
+	whole, frac := mb/1024, mb%1024
+	if frac == 0 {
+		return fmt.Sprintf("%d GB", whole)
+	}
+	return fmt.Sprintf("%.1f GB", float64(mb)/1024)
+}
+
+// GetRestoreLimit handles GET /databases/restore-limit.
+func (h *Handler) GetRestoreLimit(w http.ResponseWriter, r *http.Request) {
+	mb := h.restoreMaxMB(r.Context())
+	httputil.JSON(w, http.StatusOK, map[string]any{"max_mb": mb, "label": formatLimitMB(mb)})
+}
+
+// setRestoreLimitRequest is the JSON body for updating the restore limit.
+type setRestoreLimitRequest struct {
+	MaxMB int64 `json:"max_mb"`
+}
+
+// SetRestoreLimit handles PUT /databases/restore-limit. Saving also refreshes
+// the panel domain vhost (best-effort) so its nginx body-size cap follows.
+func (h *Handler) SetRestoreLimit(w http.ResponseWriter, r *http.Request) {
+	var req setRestoreLimitRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.MaxMB < minRestoreMaxMB || req.MaxMB > maxRestoreMaxMB {
+		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			fmt.Sprintf("max_mb must be between %d and %d", minRestoreMaxMB, maxRestoreMaxMB))
+		return
+	}
+
+	if err := h.settings.Set(r.Context(), restoreMaxMBSetting, strconv.FormatInt(req.MaxMB, 10)); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "set_restore_limit",
+		Module: "dbmanager",
+		Target: restoreMaxMBSetting,
+		Detail: fmt.Sprintf("restore upload limit set to %s", formatLimitMB(req.MaxMB)),
+		IP:     r.RemoteAddr,
+	})
+
+	if h.onRestoreLimitChange != nil {
+		h.onRestoreLimitChange(r.Context())
+	}
+
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
 
 // restoreMultipartMemory bounds how much of the uploaded dump ParseMultipart
 // keeps in RAM; larger file parts spill to temp files and are streamed into
@@ -494,12 +595,13 @@ const restoreMultipartMemory = 32 << 20
 func (h *Handler) RestoreDatabase(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreBytes)
+	limitBytes, limitLabel := h.restoreLimit(r.Context())
+	r.Body = http.MaxBytesReader(w, r.Body, limitBytes)
 	if err := r.ParseMultipartForm(restoreMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
-				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 2 GB limit")
+				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the "+limitLabel+" limit")
 			return
 		}
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")
@@ -719,12 +821,13 @@ func (h *Handler) ManageEmptyTable(w http.ResponseWriter, r *http.Request) {
 // or gzipped SQL dump; the dump replaces the current contents of the
 // selected database using the management session's credentials.
 func (h *Handler) ManageRestore(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRestoreBytes)
+	limitBytes, limitLabel := h.restoreLimit(r.Context())
+	r.Body = http.MaxBytesReader(w, r.Body, limitBytes)
 	if err := r.ParseMultipartForm(restoreMultipartMemory); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			httputil.JSONError(w, http.StatusRequestEntityTooLarge,
-				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the 2 GB limit")
+				"RESTORE_FILE_TOO_LARGE", "restore file exceeds the "+limitLabel+" limit")
 			return
 		}
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")

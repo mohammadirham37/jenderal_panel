@@ -44,6 +44,12 @@ const (
 	settingEmail   = "panel_domain_email"
 	settingEnabled = "panel_domain_enabled"
 
+	// restoreMaxMBSetting is owned by the dbmanager module (restore upload
+	// cap); the vhost's client_max_body_size must mirror it or nginx would
+	// reject uploads the panel itself would accept.
+	restoreMaxMBSetting = "databases.restore_max_mb"
+	defaultBodySize     = "2g"
+
 	renewBefore = 30 * 24 * time.Hour
 	vhostSuffix = ".conf"
 )
@@ -200,7 +206,7 @@ func proxyTLSVerifyOff(upstream string) string {
 
 // renderHTTPVhost renders the port-80 vhost: ACME challenges plus a plain
 // proxy so the domain works even before the certificate exists.
-func renderHTTPVhost(domain, webroot, upstream string) string {
+func renderHTTPVhost(domain, webroot, upstream, bodySize string) string {
 	mapVar := "$jenderal_ws_" + wsVarSanitizer.ReplaceAllString(domain, "_")
 	return `# Managed by Jenderal Panel (panel domain)
 map $http_upgrade ` + mapVar + ` {
@@ -223,7 +229,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
         # must match the panel's own restore upload cap
-        client_max_body_size 2g;
+        client_max_body_size ` + bodySize + `;
         proxy_read_timeout 7200s;
     }
 }
@@ -234,7 +240,7 @@ server {
 // plain proxy so renewals keep working) plus the HTTPS server. One file
 // must carry both — a TLS-only vhost would strand HTTP-01 renewals on the
 // default port-80 server of whichever site claims it.
-func renderTLSVhost(domain, upstream, certPath, keyPath, webroot string) string {
+func renderTLSVhost(domain, upstream, certPath, keyPath, webroot, bodySize string) string {
 	mapVar := "$jenderal_ws_" + wsVarSanitizer.ReplaceAllString(domain, "_") + "_wss"
 	return `# Managed by Jenderal Panel (panel domain)
 map $http_upgrade ` + mapVar + ` {
@@ -257,7 +263,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
         # must match the panel's own restore upload cap
-        client_max_body_size 2g;
+        client_max_body_size ` + bodySize + `;
         proxy_read_timeout 7200s;
     }
 }
@@ -282,7 +288,7 @@ server {
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection ` + mapVar + `;
         # must match the panel's own restore upload cap
-        client_max_body_size 2g;
+        client_max_body_size ` + bodySize + `;
         proxy_read_timeout 7200s;
         proxy_send_timeout 300s;
     }
@@ -419,7 +425,7 @@ func (s *Service) setup(ctx context.Context, domain, email string, write func(st
 
 	// 1. HTTP vhost (ACME + proxy), tested and reloaded.
 	write("Writing HTTP vhost…")
-	if err := s.writeVhostTested(ctx, vhostPath, renderHTTPVhost(domain, webroot, upstream)); err != nil {
+	if err := s.writeVhostTested(ctx, vhostPath, renderHTTPVhost(domain, webroot, upstream, s.bodySize(ctx))); err != nil {
 		return err
 	}
 	if err := s.enableVhost(ctx, domain); err != nil {
@@ -460,7 +466,7 @@ func (s *Service) setup(ctx context.Context, domain, email string, write func(st
 
 	// 3. HTTPS vhost.
 	write("Writing HTTPS vhost…")
-	if err := s.writeVhostTested(ctx, vhostPath, renderTLSVhost(domain, upstream, certFile, keyFile, webroot)); err != nil {
+	if err := s.writeVhostTested(ctx, vhostPath, renderTLSVhost(domain, upstream, certFile, keyFile, webroot, s.bodySize(ctx))); err != nil {
 		return err
 	}
 	if err := s.reloadNginx(ctx); err != nil {
@@ -573,6 +579,38 @@ func (s *Service) Start(ctx context.Context) {
 	}()
 }
 
+// bodySize renders the nginx value matching the panel's restore upload cap:
+// "<MB>m" when the setting holds a usable megabyte count, the historical 2g
+// otherwise — the default must render exactly like the pre-setting vhosts so
+// existing installs are not rewritten on upgrade.
+func (s *Service) bodySize(ctx context.Context) string {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT value FROM settings WHERE key = ?`, restoreMaxMBSetting)
+	if err != nil {
+		return defaultBodySize
+	}
+	defer rows.Close()
+	var raw string
+	if !rows.Next() {
+		return defaultBodySize
+	}
+	if err := rows.Scan(&raw); err != nil {
+		return defaultBodySize
+	}
+	var mb int
+	if _, err := fmt.Sscanf(raw, "%d", &mb); err != nil || mb < 1 || mb > 102400 {
+		return defaultBodySize
+	}
+	return fmt.Sprintf("%dm", mb)
+}
+
+// RefreshVhost rewrites the panel domain vhost when the rendered template no
+// longer matches the one on disk (e.g. after the restore upload limit
+// changed). Best-effort: a missing or disabled vhost is a no-op.
+func (s *Service) RefreshVhost(ctx context.Context) {
+	s.refreshVhost(ctx)
+}
+
 // refreshVhost rewrites the panel domain vhost when it differs from the
 // currently rendered template (HTTP-only while no certificate exists, TLS
 // otherwise). A vhost that was never written by Setup is left alone.
@@ -587,9 +625,10 @@ func (s *Service) refreshVhost(ctx context.Context) {
 		return
 	}
 	upstream := s.upstreamURL()
-	desired := renderHTTPVhost(domain, acmeWebroot, upstream)
+	bodySize := s.bodySize(ctx)
+	desired := renderHTTPVhost(domain, acmeWebroot, upstream, bodySize)
 	if _, err := os.Stat(certFile); err == nil {
-		desired = renderTLSVhost(domain, upstream, certFile, keyFile, acmeWebroot)
+		desired = renderTLSVhost(domain, upstream, certFile, keyFile, acmeWebroot, bodySize)
 	}
 	if strings.TrimSpace(result.Stdout) == strings.TrimSpace(desired) {
 		return

@@ -6,7 +6,7 @@ import (
 )
 
 func TestRenderHTTPVhost(t *testing.T) {
-	out := renderHTTPVhost("panel.example.com", "/var/lib/jenderal/acme-challenges", "http://127.0.0.1:8443")
+	out := renderHTTPVhost("panel.example.com", "/var/lib/jenderal/acme-challenges", "http://127.0.0.1:8443", "2g")
 	for _, want := range []string{
 		"server_name panel.example.com",
 		"proxy_pass http://127.0.0.1:8443",
@@ -23,7 +23,7 @@ func TestRenderHTTPVhost(t *testing.T) {
 }
 
 func TestRenderTLSVhost(t *testing.T) {
-	out := renderTLSVhost("panel.example.com", "http://127.0.0.1:8443", "/certs/panel.crt", "/certs/panel.key", "/webroot")
+	out := renderTLSVhost("panel.example.com", "http://127.0.0.1:8443", "/certs/panel.crt", "/certs/panel.key", "/webroot", "2g")
 	for _, want := range []string{
 		"listen 443 ssl",
 		"listen 80",
@@ -50,11 +50,11 @@ func TestRenderTLSVhost(t *testing.T) {
 
 func TestRenderVhostsHTTPSUpstream(t *testing.T) {
 	const upstream = "https://127.0.0.1:8443"
-	httpOut := renderHTTPVhost("panel.example.com", "/webroot", upstream)
+	httpOut := renderHTTPVhost("panel.example.com", "/webroot", upstream, "2g")
 	if !strings.Contains(httpOut, "proxy_pass "+upstream) {
 		t.Errorf("http vhost missing https upstream: %q", httpOut)
 	}
-	tlsOut := renderTLSVhost("panel.example.com", upstream, "/c.pem", "/k.pem", "/webroot")
+	tlsOut := renderTLSVhost("panel.example.com", upstream, "/c.pem", "/k.pem", "/webroot", "2g")
 	if !strings.Contains(tlsOut, "proxy_pass "+upstream) {
 		t.Errorf("tls vhost missing https upstream: %q", tlsOut)
 	}
@@ -65,7 +65,7 @@ func TestRenderVhostsHTTPSUpstream(t *testing.T) {
 		}
 	}
 	// Plain-HTTP upstreams must not carry the verification bypass.
-	if strings.Contains(renderHTTPVhost("panel.example.com", "/w", "http://127.0.0.1:8443"), "proxy_ssl_verify") {
+	if strings.Contains(renderHTTPVhost("panel.example.com", "/w", "http://127.0.0.1:8443", "2g"), "proxy_ssl_verify") {
 		t.Error("http upstream must not set proxy_ssl_verify")
 	}
 }
@@ -88,5 +88,18 @@ func TestPanelDomainRegex(t *testing.T) {
 		if panelDomainRegex.MatchString(d) {
 			t.Errorf("domain %q should be invalid", d)
 		}
+	}
+}
+
+// The vhost body size must follow the configured restore upload cap so nginx
+// never rejects uploads the panel itself would accept.
+func TestRenderVhostCarriesConfiguredBodySize(t *testing.T) {
+	httpOut := renderHTTPVhost("panel.example.com", "/w", "http://127.0.0.1:8443", "4096m")
+	if !strings.Contains(httpOut, "client_max_body_size 4096m;") {
+		t.Errorf("http vhost missing configured body size: %s", httpOut)
+	}
+	tlsOut := renderTLSVhost("panel.example.com", "http://127.0.0.1:8443", "/c.pem", "/k.pem", "/w", "4096m")
+	if n := strings.Count(tlsOut, "client_max_body_size 4096m;"); n != 2 {
+		t.Errorf("tls vhost should carry the configured body size twice, got %d", n)
 	}
 }

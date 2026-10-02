@@ -37,6 +37,19 @@ func (s *Service) GetAll(ctx context.Context) ([]model.Setting, error) {
 	return settings, rows.Err()
 }
 
+// Get returns one setting's value; found is false when the key is unset.
+func (s *Service) Get(ctx context.Context, key string) (string, bool, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read setting %s: %w", key, err)
+	}
+	return value, true, nil
+}
+
 func (s *Service) Set(ctx context.Context, key, value string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := s.db.ExecContext(ctx,

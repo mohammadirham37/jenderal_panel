@@ -132,6 +132,34 @@ import { toast } from '$lib/stores/toast';
 	let restorePending = $state<{ id: string; name: string; fileName: string; file: File } | null>(null);
 	let restoreBusy = $state(false);
 	let restoreStatus = $state<{ id: string; message: string; error: boolean } | null>(null);
+	// Client-side mirror of the panel's restore upload cap; null until loaded.
+	let restoreLimit = $state<{ max_mb: number; label: string } | null>(null);
+
+	function restoreLimitBytes(): number | null {
+		return restoreLimit ? restoreLimit.max_mb * 1024 * 1024 : null;
+	}
+
+	function rejectIfTooLarge(id: string, file: File): boolean {
+		const limitBytes = restoreLimitBytes();
+		if (limitBytes !== null && file.size > limitBytes) {
+			restoreStatus = {
+				id,
+				message: translate($language, 'db.restore_too_large').replace('{limit}', restoreLimit?.label || String(restoreLimit?.max_mb) + ' MB'),
+				error: true
+			};
+			setTimeout(() => { if (restoreStatus?.id === id) restoreStatus = null; }, 6000);
+			return true;
+		}
+		return false;
+	}
+
+	async function loadRestoreLimit() {
+		try {
+			restoreLimit = await api.get<{ max_mb: number; label: string }>('/api/v1/databases/restore-limit');
+		} catch {
+			// The server still enforces the cap; the pre-check is a convenience.
+		}
+	}
 
 	function pickRestoreFile(id: string, name: string) {
 		restoreTargetDb = { id, name };
@@ -143,6 +171,7 @@ import { toast } from '$lib/stores/toast';
 		const file = input.files?.[0];
 		input.value = '';
 		if (!file || !restoreTargetDb) return;
+		if (rejectIfTooLarge(restoreTargetDb.id, file)) return;
 		restorePending = {
 			id: restoreTargetDb.id,
 			name: restoreTargetDb.name,
@@ -516,6 +545,7 @@ import { toast } from '$lib/stores/toast';
 		loadDatabases();
 		loadUsers();
 		loadGrants();
+		loadRestoreLimit();
 	});
 </script>
 

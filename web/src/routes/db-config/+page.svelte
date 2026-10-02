@@ -89,8 +89,50 @@
 		}
 	}
 
+	// Restore upload limit — a panel-wide setting, not tied to either engine.
+	interface RestoreLimit {
+		max_mb: number;
+		label: string;
+	}
+
+	let restoreLimit = $state<RestoreLimit | null>(null);
+	let restoreLimitDraft = $state('');
+	let restoreLimitSaving = $state(false);
+	let restoreLimitError = $state('');
+
+	async function loadRestoreLimit() {
+		try {
+			restoreLimit = await api.get<RestoreLimit>('/api/v1/databases/restore-limit');
+			restoreLimitDraft = String(restoreLimit.max_mb);
+			restoreLimitError = '';
+		} catch {
+			restoreLimitError = translate($language, 'dbc.restore_limit.error.load');
+		}
+	}
+
+	async function saveRestoreLimit() {
+		if (restoreLimitSaving) return;
+		const mb = Number(restoreLimitDraft);
+		if (!Number.isInteger(mb) || mb < 1 || mb > 102400) {
+			toast.error(translate($language, 'dbc.restore_limit.error.invalid'));
+			return;
+		}
+		restoreLimitSaving = true;
+		try {
+			await api.put('/api/v1/databases/restore-limit', { max_mb: mb });
+			restoreLimit = { max_mb: mb, label: '' };
+			toast.success(translate($language, 'dbc.restore_limit.toast.saved'));
+			await loadRestoreLimit();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'dbc.restore_limit.error.save'));
+		} finally {
+			restoreLimitSaving = false;
+		}
+	}
+
 	$effect(() => {
 		void loadEngine(engine);
+		void loadRestoreLimit();
 	});
 </script>
 
@@ -212,4 +254,41 @@
 			</div>
 		</div>
 	{/if}
+
+	<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+		<h3 class="text-sm font-semibold text-white">{translate($language, 'dbc.restore_limit.title')}</h3>
+		<p class="mt-1 text-xs text-gray-400">{translate($language, 'dbc.restore_limit.desc')}</p>
+		{#if restoreLimitError}
+			<div class="mt-3 rounded-lg border border-red-700 bg-red-900/30 p-3 text-xs text-red-300">
+				{restoreLimitError}
+			</div>
+		{:else if restoreLimit}
+			<div class="mt-3 flex flex-wrap items-center gap-3">
+				<div class="flex items-center gap-2">
+					<input
+						type="number"
+						min="1"
+						max="102400"
+						step="1"
+						bind:value={restoreLimitDraft}
+						class="w-32 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+					/>
+					<span class="text-sm text-gray-400">MB</span>
+				</div>
+				<button
+					type="button"
+					onclick={saveRestoreLimit}
+					disabled={restoreLimitSaving || Number(restoreLimitDraft) === restoreLimit.max_mb}
+					class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+				>
+					{restoreLimitSaving
+						? translate($language, 'dbc.restore_limit.saving')
+						: translate($language, 'dbc.restore_limit.save')}
+				</button>
+				<span class="text-[11px] text-gray-500">
+					{translate($language, 'dbc.restore_limit.current').replace('{limit}', restoreLimit.label || restoreLimit.max_mb + ' MB')}
+				</span>
+			</div>
+		{/if}
+	</div>
 </div>

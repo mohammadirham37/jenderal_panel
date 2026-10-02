@@ -99,6 +99,7 @@ const en = {
 	'db.restore_failed_http': 'Restore failed (HTTP {code})',
 	'db.restored_from': 'Restored from {name}',
 	'db.restore_failed': 'Restore failed',
+	'db.restore_too_large': 'File exceeds the restore upload limit ({limit}).',
 	'db.load_engines_failed': 'Failed to load database engines',
 	'db.load_databases_failed': 'Failed to load databases',
 	'db.load_users_failed': 'Failed to load database users',
@@ -251,7 +252,16 @@ const en = {
 	'dbc.restart_note': 'Applying restarts the database service and takes a moment.',
 	'dbc.toast.applied': 'Database configuration applied.',
 	'dbc.error.load': 'Failed to load database configuration',
-	'dbc.error.apply': 'Failed to apply database configuration'
+	'dbc.error.apply': 'Failed to apply database configuration',
+	'dbc.restore_limit.title': 'Restore upload limit',
+	'dbc.restore_limit.desc': 'Maximum dump file size accepted when restoring a database from an upload. Applies panel-wide; when a panel domain is configured, its nginx upload limit is updated as well.',
+	'dbc.restore_limit.current': 'Current limit: {limit}',
+	'dbc.restore_limit.save': 'Save',
+	'dbc.restore_limit.saving': 'Saving…',
+	'dbc.restore_limit.toast.saved': 'Restore upload limit updated.',
+	'dbc.restore_limit.error.invalid': 'Enter a whole number of MB between 1 and 102400.',
+	'dbc.restore_limit.error.load': 'Failed to load the restore upload limit.',
+	'dbc.restore_limit.error.save': 'Failed to save the restore upload limit.'
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -351,6 +361,7 @@ const id: Record<keyof typeof en, string> = {
 	'db.restore_failed_http': 'Pemulihan gagal (HTTP {code})',
 	'db.restored_from': 'Dipulihkan dari {name}',
 	'db.restore_failed': 'Pemulihan gagal',
+	'db.restore_too_large': 'Ukuran file melebihi batas upload restore ({limit}).',
 	'db.load_engines_failed': 'Gagal memuat engine database',
 	'db.load_databases_failed': 'Gagal memuat database',
 	'db.load_users_failed': 'Gagal memuat pengguna database',
@@ -503,7 +514,16 @@ const id: Record<keyof typeof en, string> = {
 	'dbc.restart_note': 'Menerapkan konfigurasi akan me-restart layanan database dan butuh beberapa saat.',
 	'dbc.toast.applied': 'Konfigurasi database diterapkan.',
 	'dbc.error.load': 'Gagal memuat konfigurasi database',
-	'dbc.error.apply': 'Gagal menerapkan konfigurasi database'
+	'dbc.error.apply': 'Gagal menerapkan konfigurasi database',
+	'dbc.restore_limit.title': 'Batas upload restore',
+	'dbc.restore_limit.desc': 'Ukuran maksimum file dump yang diterima saat memulihkan database dari unggahan. Berlaku untuk seluruh panel; jika panel domain dikonfigurasi, batas upload nginx-nya juga diperbarui.',
+	'dbc.restore_limit.current': 'Batas saat ini: {limit}',
+	'dbc.restore_limit.save': 'Simpan',
+	'dbc.restore_limit.saving': 'Menyimpan…',
+	'dbc.restore_limit.toast.saved': 'Batas upload restore diperbarui.',
+	'dbc.restore_limit.error.invalid': 'Masukkan angka MB bulat antara 1 dan 102400.',
+	'dbc.restore_limit.error.load': 'Gagal memuat batas upload restore.',
+	'dbc.restore_limit.error.save': 'Gagal menyimpan batas upload restore.'
 };
 
 export const dict = { en, id };

@@ -145,7 +145,8 @@ func NewRouter(deps Dependencies) http.Handler {
 	queueHandler := queue.NewHandler(deps.QueueSvc, deps.AuditSvc)
 	nodeHandler := nodejs.NewHandler(deps.NodeSvc, deps.AuditSvc, deps.Tasks)
 	taskHandler := taskrunner.NewHandler(deps.Tasks)
-	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc, deps.Tasks)
+	dbHandler := dbmanager.NewHandler(deps.DBManagerSvc, deps.AuditSvc, deps.Tasks, deps.SettingsSvc)
+	dbHandler.SetRestoreLimitNotifier(deps.PanelDomainSvc.RefreshVhost)
 	dockerHandler := docker.NewHandler(deps.DockerSvc, deps.AuditSvc, deps.Tasks)
 	backupHandler := backup.NewHandler(deps.BackupSvc, deps.AuditSvc)
 	alertHandler := alert.NewHandler(deps.AlertSvc, deps.AuditSvc)
@@ -734,6 +735,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/db-config/{engine}", dbConfigHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
 				Put("/db-config/{engine}", dbConfigHandler.SaveConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/restore-limit", dbHandler.GetRestoreLimit)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+				Put("/databases/restore-limit", dbHandler.SetRestoreLimit)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/grants", dbHandler.ListGrants)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.users")).
