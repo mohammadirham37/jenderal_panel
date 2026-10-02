@@ -1,8 +1,10 @@
 package dbmanager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -136,9 +138,24 @@ func TestRestoreRejectsUploadOverConfiguredLimit(t *testing.T) {
 		t.Fatalf("set limit: %v", err)
 	}
 
-	req := httptest.NewRequest("POST", "/api/v1/databases/db-1/restore",
-		strings.NewReader(strings.Repeat("x", 2<<20)))
-	req.Header.Set("Content-Type", "multipart/form-data; boundary=boundary")
+	// The body must be a well-formed multipart form whose file part exceeds
+	// the limit: a malformed body fails ParseMultipartForm before
+	// MaxBytesReader can surface its error, yielding 400 instead of 413.
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	part, err := mw.CreateFormFile("file", "dump.sql")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("x"), 2<<20)); err != nil {
+		t.Fatalf("write part: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/api/v1/databases/db-1/restore", &body)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", "db-1")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

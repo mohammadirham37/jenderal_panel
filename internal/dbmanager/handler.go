@@ -955,8 +955,8 @@ func (h *Handler) ManageDeleteRow(w http.ResponseWriter, r *http.Request) {
 // ManageAddColumn handles POST /databases/manage/{token}/add-column.
 func (h *Handler) ManageAddColumn(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Database string                      `json:"database"`
-		Table    string                      `json:"table"`
+		Database string            `json:"database"`
+		Table    string            `json:"table"`
 		Spec     ManagedColumnSpec `json:"spec"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {
@@ -993,9 +993,9 @@ func (h *Handler) ManageDropColumn(w http.ResponseWriter, r *http.Request) {
 // ManageModifyColumn handles POST /databases/manage/{token}/modify-column.
 func (h *Handler) ManageModifyColumn(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Database string                      `json:"database"`
-		Table    string                      `json:"table"`
-		Original string                      `json:"original"`
+		Database string            `json:"database"`
+		Table    string            `json:"table"`
+		Original string            `json:"original"`
 		Spec     ManagedColumnSpec `json:"spec"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {

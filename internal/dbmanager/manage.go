@@ -1373,7 +1373,6 @@ type ManagedRowValues struct {
 	Values  []*string
 }
 
-
 // quoteTableFor/quoteIdentFor are the plain-function forms used by the
 // row/column SQL builders, mirroring Service.quoteTable/quoteIdent.
 func quoteTableFor(engine, database, table string) string {
