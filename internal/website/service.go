@@ -868,6 +868,19 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		return fmt.Errorf("check website user: %s", strings.TrimSpace(userResult.Stderr))
 	}
 
+	// userdel normally removes the matching group too, but a survivor (user
+	// already gone, group left behind) blocks re-creating the same domain
+	// later: useradd then exits 9 while the user is missing. Clear it.
+	groupResult, err := s.exec.RunSudo(ctx, "getent", "group", w.WebUser)
+	if err != nil {
+		return fmt.Errorf("check website group: %w", err)
+	}
+	if groupResult.ExitCode == 0 {
+		if err := s.runSudoOK(ctx, "groupdel", w.WebUser); err != nil {
+			return fmt.Errorf("delete website group: %w", err)
+		}
+	}
+
 	// Reload nginx.
 	if err := s.reloadNginx(ctx); err != nil {
 		return fmt.Errorf("delete website: %w", err)

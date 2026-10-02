@@ -668,3 +668,82 @@ func TestGrantOwnerSSHAccessOnlyForOwnedSites(t *testing.T) {
 		t.Errorf("nil SSH wiring must not sync, calls = %v", fake.calls)
 	}
 }
+
+func TestEnsureWebUserHealsStaleGroup(t *testing.T) {
+	// A partial delete can leave the group behind while the user is gone.
+	// useradd then exits 9 ("group exists") and the account is never
+	// created; the recreate must drop the stale group and retry.
+	var calls []string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			calls = append(calls, name)
+			switch {
+			case name == "useradd" && len(calls) == 1:
+				return &executor.Result{ExitCode: 9, Stderr: "useradd: group web_stale_example_com exists"}, nil
+			case name == "id":
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	p := &Provisioner{exec: mock}
+
+	if err := p.ensureWebUser(context.Background(), "ws-heal", "web_stale_example_com", "/home/web_stale_example_com"); err != nil {
+		t.Fatalf("ensureWebUser() error = %v", err)
+	}
+
+	sawGroupdel := false
+	for _, c := range calls {
+		if c == "groupdel" {
+			sawGroupdel = true
+		}
+	}
+	if !sawGroupdel {
+		t.Errorf("stale group was not removed, calls = %v", calls)
+	}
+	if calls[len(calls)-1] != "useradd" {
+		t.Errorf("useradd was not retried after clearing the group, calls = %v", calls)
+	}
+}
+
+func TestEnsureWebUserAcceptsExistingUser(t *testing.T) {
+	// Exit 9 with the user present is the recreate-reuse path: the account
+	// must be kept and no group cleanup may run.
+	var calls []string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			calls = append(calls, name)
+			switch {
+			case name == "useradd":
+				return &executor.Result{ExitCode: 9, Stderr: "useradd: user 'web_reuse_example_com' already exists"}, nil
+			case name == "id":
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	p := &Provisioner{exec: mock}
+
+	if err := p.ensureWebUser(context.Background(), "ws-reuse", "web_reuse_example_com", "/home/web_reuse_example_com"); err != nil {
+		t.Fatalf("ensureWebUser() error = %v", err)
+	}
+	for _, c := range calls {
+		if c == "groupdel" {
+			t.Error("groupdel must not run when the user still exists")
+		}
+	}
+}
+
+func TestEnsureWebUserFailsOnUseraddError(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 3, Stderr: "useradd: invalid argument to option"}, nil
+		},
+	}
+	p := &Provisioner{exec: mock}
+
+	err := p.ensureWebUser(context.Background(), "ws-fail", "web_fail_example_com", "/home/web_fail_example_com")
+	if err == nil || !strings.Contains(err.Error(), "create user failed") {
+		t.Fatalf("expected a create user failure, got %v", err)
+	}
+}

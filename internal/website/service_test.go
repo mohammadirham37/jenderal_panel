@@ -922,3 +922,43 @@ func TestCreateRequestAcceptsStringProxyPort(t *testing.T) {
 		})
 	}
 }
+
+// A partial delete can leave the group behind while the user is already
+// gone; the survivor blocks re-creating the same domain later (useradd exits
+// 9 while the user is missing), so Delete must clear it too.
+func TestDeleteRemovesLeftoverGroup(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-delete-group", "group-delete.example.com", "static", "", "active")
+
+	var groupDeleted bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch {
+			case name == "getent":
+				// The group still exists even though the user is gone.
+				return &executor.Result{ExitCode: 0}, nil
+			case name == "groupdel" && args[len(args)-1] == "web_group_delete_example_com":
+				groupDeleted = true
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewService(db, mock, nil).Delete(context.Background(), "ws-delete-group"); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	if !groupDeleted {
+		t.Error("leftover website group was not removed")
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM websites WHERE id = 'ws-delete-group'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Error("website row survived Delete")
+	}
+}

@@ -129,6 +129,61 @@ func (p *Provisioner) Recover(ctx context.Context) error {
 	return nil
 }
 
+// ensureWebUser creates the website's system user, healing the state a
+// failed or partial delete can leave behind: when only the group survives,
+// useradd exits 9 ("group exists") without the user existing, and every
+// later install -d -o fails with "invalid user". Detect that case, drop the
+// stale group, and retry.
+func (p *Provisioner) ensureWebUser(ctx context.Context, websiteID, webUser, homeDir string) error {
+	addArgs := func() []string {
+		return []string{
+			"--system",
+			"--home-dir", homeDir,
+			"--create-home",
+			"--shell", "/usr/sbin/nologin",
+			webUser,
+		}
+	}
+
+	result, err := p.exec.RunSudo(ctx, "useradd", addArgs()...)
+	if err != nil {
+		return fmt.Errorf("create user failed: %w", err)
+	}
+	if result.ExitCode == 0 {
+		return nil
+	}
+	// Exit code 9 means the name is already taken: either the user exists
+	// (a recreate reuses the account, which is fine) or only the group does.
+	if result.ExitCode != 9 {
+		return fmt.Errorf("create user failed: %s", strings.TrimSpace(result.Stderr))
+	}
+
+	check, err := p.exec.RunSudo(ctx, "id", "-u", webUser)
+	if err != nil {
+		return fmt.Errorf("check website user: %w", err)
+	}
+	if check.ExitCode == 0 {
+		return nil
+	}
+	if check.ExitCode != 1 {
+		return fmt.Errorf("check website user: %s", strings.TrimSpace(check.Stderr))
+	}
+
+	// The user is gone but the name was still taken: a stale group blocks
+	// useradd. Remove it and retry — without this the website could never be
+	// recreated on the same domain.
+	_, _ = p.exec.RunSudo(ctx, "groupdel", webUser)
+
+	retry, err := p.exec.RunSudo(ctx, "useradd", addArgs()...)
+	if err != nil {
+		return fmt.Errorf("create user failed: %w", err)
+	}
+	if retry.ExitCode != 0 {
+		return fmt.Errorf("create user failed: %s", strings.TrimSpace(retry.Stderr))
+	}
+	return nil
+}
+
 // provision executes the full provisioning pipeline for a website.
 func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	unlock := p.mutations.Lock(websiteID)
@@ -154,20 +209,8 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	}
 
 	// Create system user.
-	result, err := p.exec.RunSudo(ctx, "useradd",
-		"--system",
-		"--home-dir", homeDir,
-		"--create-home",
-		"--shell", "/usr/sbin/nologin",
-		w.WebUser,
-	)
-	if err != nil {
-		p.fail(ctx, websiteID, "create user failed: "+err.Error())
-		return
-	}
-	// Exit code 9 means user already exists, which is acceptable.
-	if result.ExitCode != 0 && result.ExitCode != 9 {
-		p.fail(ctx, websiteID, "create user failed: "+strings.TrimSpace(result.Stderr))
+	if err := p.ensureWebUser(ctx, websiteID, w.WebUser, homeDir); err != nil {
+		p.fail(ctx, websiteID, err.Error())
 		return
 	}
 
@@ -194,7 +237,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		dirs = append(dirs, w.DocumentRoot)
 	}
 	for _, dir := range dirs {
-		result, err = p.exec.RunSudo(ctx, "install", "-d", "-o", w.WebUser, "-g", w.WebUser, "-m", "0750", dir)
+		result, err := p.exec.RunSudo(ctx, "install", "-d", "-o", w.WebUser, "-g", w.WebUser, "-m", "0750", dir)
 		if err != nil {
 			p.fail(ctx, websiteID, "create directory failed: "+err.Error())
 			return
@@ -317,7 +360,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	}
 
 	// Create symlink in sites-enabled.
-	result, err = p.exec.RunSudo(ctx, "ln", "-sf", confPath, enabledPath)
+	result, err := p.exec.RunSudo(ctx, "ln", "-sf", confPath, enabledPath)
 	if err != nil {
 		p.fail(ctx, websiteID, "enable site failed: "+err.Error())
 		return
