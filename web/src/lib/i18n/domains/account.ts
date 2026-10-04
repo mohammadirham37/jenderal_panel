@@ -93,22 +93,6 @@ const en = {
 	'set.actions': 'Actions',
 	'set.delete': 'Delete',
 
-	// ─── Settings page: remote backup storage (S3) ────────────────
-	'set.remote.title': 'Remote backup storage',
-	'set.remote.desc': 'Off-site copy for backups. Any S3-compatible provider works (AWS S3, Wasabi, Cloudflare R2, MinIO), or an rclone remote configured on this server. Set type to “s3” and fill in the fields; leave type empty to keep backups local only. Backups are uploaded automatically after each completed run.',
-	'set.remote.off': 'Off (local only)',
-	'set.remote.rcloneRemote': 'Rclone remote',
-	'set.remote.rclonePath': 'Rclone path (optional)',
-	'set.remote.endpoint': 'Endpoint',
-	'set.remote.bucket': 'Bucket',
-	'set.remote.region': 'Region',
-	'set.remote.accessKey': 'Access key',
-	'set.remote.secretKey': 'Secret key',
-	'set.remote.prefix': 'Prefix (optional)',
-	'set.remote.save': 'Save remote storage',
-	'set.remote.saved': 'Remote storage configuration saved.',
-	'set.remote.saveFailed': 'Failed to save remote storage',
-
 	// ─── Settings page: panel domain ──────────────────────────────
 	'set.domain.title': 'Panel domain',
 	'set.domain.enabled': 'enabled',
@@ -295,22 +279,6 @@ const id: Record<keyof typeof en, string> = {
 	'set.type': 'Tipe',
 	'set.actions': 'Aksi',
 	'set.delete': 'Hapus',
-
-	// ─── Settings page: remote backup storage (S3) ────────────────
-	'set.remote.title': 'Penyimpanan backup remote',
-	'set.remote.desc': 'Salinan off-site untuk backup. Penyedia apa pun yang kompatibel dengan S3 bisa digunakan (AWS S3, Wasabi, Cloudflare R2, MinIO), atau remote rclone yang dikonfigurasi di server ini. Setel type ke “s3” dan isi kolomnya; biarkan type kosong agar backup tetap hanya lokal. Backup diunggah otomatis setelah setiap eksekusi yang selesai.',
-	'set.remote.off': 'Mati (hanya lokal)',
-	'set.remote.rcloneRemote': 'Remote rclone',
-	'set.remote.rclonePath': 'Path rclone (opsional)',
-	'set.remote.endpoint': 'Endpoint',
-	'set.remote.bucket': 'Bucket',
-	'set.remote.region': 'Region',
-	'set.remote.accessKey': 'Kunci akses',
-	'set.remote.secretKey': 'Kunci rahasia',
-	'set.remote.prefix': 'Prefix (opsional)',
-	'set.remote.save': 'Simpan penyimpanan remote',
-	'set.remote.saved': 'Konfigurasi penyimpanan remote berhasil disimpan.',
-	'set.remote.saveFailed': 'Gagal menyimpan penyimpanan remote',
 
 	// ─── Settings page: panel domain ──────────────────────────────
 	'set.domain.title': 'Domain panel',
