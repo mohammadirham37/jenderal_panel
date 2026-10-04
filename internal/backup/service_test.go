@@ -528,3 +528,34 @@ func TestImportBackup(t *testing.T) {
 		t.Fatal("non-gzip config import should fail")
 	}
 }
+
+func TestRemoteOnlyRoundTrip(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := db.Exec(`INSERT INTO backups (id, type, path, status, kind, created_by, created_at, remote_path, remote_only)
+		VALUES ('b-1', 'website', '/tmp/x.tar.gz', 'completed', 'manual', '', ?, 'gdrive://abc123', 1)`, now)
+	if err != nil {
+		t.Fatalf("insert backup: %v", err)
+	}
+
+	b, err := svc.Get(context.Background(), "b-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !b.RemoteOnly {
+		t.Error("expected RemoteOnly true")
+	}
+	if b.RemotePath != "gdrive://abc123" {
+		t.Errorf("RemotePath = %q", b.RemotePath)
+	}
+
+	list, err := svc.List(context.Background())
+	if err != nil || len(list) != 1 {
+		t.Fatalf("List: %v (%d rows)", err, len(list))
+	}
+	if !list[0].RemoteOnly {
+		t.Error("list row lost remote_only")
+	}
+}

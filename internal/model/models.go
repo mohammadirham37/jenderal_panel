@@ -383,6 +383,7 @@ type Backup struct {
 	Kind       string    `json:"kind"` // manual | scheduled | safety
 	CreatedBy  string    `json:"created_by"`
 	RemotePath string    `json:"remote_path"`
+	RemoteOnly bool      `json:"remote_only"`
 	TaskID     string    `json:"task_id,omitempty"`
 	StartedAt  time.Time `json:"started_at,omitempty"`
 	FinishedAt time.Time `json:"finished_at,omitempty"`

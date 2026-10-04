@@ -761,7 +761,7 @@ func (s *Service) ListByOwner(ctx context.Context, userID string) ([]model.Backu
 func (s *Service) listWhere(ctx context.Context, where string, args ...any) ([]model.Backup, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, type, target, storage, path, size_bytes, status, error_msg,
-		        kind, created_by, task_id, started_at, finished_at, remote_path, created_at
+		        kind, created_by, task_id, started_at, finished_at, remote_path, remote_only, created_at
 		 FROM backups`+where+` ORDER BY created_at DESC`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list backups: %w", err)
@@ -783,7 +783,7 @@ func (s *Service) listWhere(ctx context.Context, where string, args ...any) ([]m
 func (s *Service) Get(ctx context.Context, id string) (model.Backup, error) {
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, type, target, storage, path, size_bytes, status, error_msg,
-		        kind, created_by, task_id, started_at, finished_at, remote_path, created_at
+		        kind, created_by, task_id, started_at, finished_at, remote_path, remote_only, created_at
 		 FROM backups WHERE id = ?`, id)
 
 	b, err := scanBackupRow(row)
@@ -1024,17 +1024,18 @@ func scanBackup(rows *sql.Rows) (model.Backup, error) {
 	var b model.Backup
 	var target, errorMsg, kind, createdBy, taskID, startedStr, finishedStr, remotePath sql.NullString
 	var sizeBytes sql.NullInt64
+	var remoteOnly int
 	var createdStr string
 
 	err := rows.Scan(
 		&b.ID, &b.Type, &target, &b.Storage, &b.Path,
 		&sizeBytes, &b.Status, &errorMsg,
-		&kind, &createdBy, &taskID, &startedStr, &finishedStr, &remotePath, &createdStr,
+		&kind, &createdBy, &taskID, &startedStr, &finishedStr, &remotePath, &remoteOnly, &createdStr,
 	)
 	if err != nil {
 		return model.Backup{}, err
 	}
-	return finishBackupScan(b, target, errorMsg, sizeBytes, kind, createdBy, taskID, startedStr, finishedStr, remotePath, sql.NullString{String: createdStr, Valid: true}), nil
+	return finishBackupScan(b, target, errorMsg, sizeBytes, kind, createdBy, taskID, startedStr, finishedStr, remotePath, remoteOnly, sql.NullString{String: createdStr, Valid: true}), nil
 }
 
 // scanBackupRow scans a backup from sql.Row.
@@ -1042,23 +1043,25 @@ func scanBackupRow(row *sql.Row) (model.Backup, error) {
 	var b model.Backup
 	var target, errorMsg, kind, createdBy, taskID, startedStr, finishedStr, remotePath sql.NullString
 	var sizeBytes sql.NullInt64
+	var remoteOnly int
 	var createdStr string
 
 	err := row.Scan(
 		&b.ID, &b.Type, &target, &b.Storage, &b.Path,
 		&sizeBytes, &b.Status, &errorMsg,
-		&kind, &createdBy, &taskID, &startedStr, &finishedStr, &remotePath, &createdStr,
+		&kind, &createdBy, &taskID, &startedStr, &finishedStr, &remotePath, &remoteOnly, &createdStr,
 	)
 	if err != nil {
 		return model.Backup{}, err
 	}
-	return finishBackupScan(b, target, errorMsg, sizeBytes, kind, createdBy, taskID, startedStr, finishedStr, remotePath, sql.NullString{String: createdStr, Valid: true}), nil
+	return finishBackupScan(b, target, errorMsg, sizeBytes, kind, createdBy, taskID, startedStr, finishedStr, remotePath, remoteOnly, sql.NullString{String: createdStr, Valid: true}), nil
 }
 
 func finishBackupScan(
 	b model.Backup,
 	target, errorMsg sql.NullString, sizeBytes sql.NullInt64,
-	kind, createdBy, taskID, startedStr, finishedStr, remotePath, createdStr sql.NullString,
+	kind, createdBy, taskID, startedStr, finishedStr, remotePath sql.NullString,
+	remoteOnly int, createdStr sql.NullString,
 ) model.Backup {
 	b.Target = target.String
 	b.ErrorMsg = errorMsg.String
@@ -1067,6 +1070,7 @@ func finishBackupScan(
 	b.CreatedBy = createdBy.String
 	b.TaskID = taskID.String
 	b.RemotePath = remotePath.String
+	b.RemoteOnly = remoteOnly == 1
 	if startedStr.Valid && startedStr.String != "" {
 		b.StartedAt, _ = time.Parse(time.RFC3339, startedStr.String)
 	}
