@@ -103,8 +103,10 @@ func (f *fakeGDriveExchange) Test(ctx context.Context) (string, error) { return 
 func (f *fakeGDriveExchange) ExchangeCode(ctx context.Context, code string) (string, error) {
 	return f.refreshToken, nil
 }
-func (f *fakeGDriveExchange) EnsureFolder(ctx context.Context) (string, error) { return f.folderID, nil }
-func (f *fakeGDriveExchange) AuthorizeURL() string                              { return "https://accounts.google.com/fake" }
+func (f *fakeGDriveExchange) EnsureFolder(ctx context.Context) (string, error) {
+	return f.folderID, nil
+}
+func (f *fakeGDriveExchange) AuthorizeURL() string { return "https://accounts.google.com/fake" }
 
 func TestGDriveExchangeStoresTokenAndFolder(t *testing.T) {
 	db := setupTestDB(t)

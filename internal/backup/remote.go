@@ -142,42 +142,41 @@ func (s *Service) RetryUpload(ctx context.Context, caller Caller, id string) (st
 	return taskID, nil
 }
 
-
 // RemoteConfigRequest is the write-only config payload from the UI. Secret
 // fields left empty preserve the stored values; they are never returned.
 type RemoteConfigRequest struct {
-	Type        string `json:"type"`
-	Endpoint    string `json:"endpoint"`
-	Bucket      string `json:"bucket"`
-	Region      string `json:"region"`
-	AccessKey   string `json:"access_key"`
-	SecretKey   string `json:"s3_secret_key"`
-	Prefix      string `json:"prefix"`
-	UseTLS      bool   `json:"use_tls"`
-	GDClientID  string `json:"gdrive_client_id"`
-	GDClientSecret string `json:"gdrive_client_secret"`
-	RcloneRemote string `json:"rclone_remote"`
-	RclonePath  string `json:"rclone_path"`
-	DeleteLocalAfterUpload bool `json:"delete_local_after_upload"`
+	Type                   string `json:"type"`
+	Endpoint               string `json:"endpoint"`
+	Bucket                 string `json:"bucket"`
+	Region                 string `json:"region"`
+	AccessKey              string `json:"access_key"`
+	SecretKey              string `json:"s3_secret_key"`
+	Prefix                 string `json:"prefix"`
+	UseTLS                 bool   `json:"use_tls"`
+	GDClientID             string `json:"gdrive_client_id"`
+	GDClientSecret         string `json:"gdrive_client_secret"`
+	RcloneRemote           string `json:"rclone_remote"`
+	RclonePath             string `json:"rclone_path"`
+	DeleteLocalAfterUpload bool   `json:"delete_local_after_upload"`
 }
 
 // RemoteConfigView is the read model: no secrets, only *_set booleans.
 type RemoteConfigView struct {
-	Type        string `json:"type"`
-	Endpoint    string `json:"endpoint"`
-	Bucket      string `json:"bucket"`
-	Region      string `json:"region"`
-	AccessKey   string `json:"access_key"`
-	Prefix      string `json:"prefix"`
-	UseTLS      bool   `json:"use_tls"`
-	SecretSet   bool   `json:"s3_secret_set"`
-	GDClientID  string `json:"gdrive_client_id"`
-	GDClientSecretSet bool `json:"gdrive_client_secret_set"`
-	GDConnected bool   `json:"gdrive_connected"`
-	GDFolderID  string `json:"gdrive_folder_id"`
-	RcloneRemote string `json:"rclone_remote"`
-	RclonePath  string `json:"rclone_path"`
-	DeleteLocalAfterUpload bool `json:"delete_local_after_upload"`
+	Type                   string `json:"type"`
+	Endpoint               string `json:"endpoint"`
+	Bucket                 string `json:"bucket"`
+	Region                 string `json:"region"`
+	AccessKey              string `json:"access_key"`
+	Prefix                 string `json:"prefix"`
+	UseTLS                 bool   `json:"use_tls"`
+	SecretSet              bool   `json:"s3_secret_set"`
+	GDClientID             string `json:"gdrive_client_id"`
+	GDClientSecretSet      bool   `json:"gdrive_client_secret_set"`
+	GDConnected            bool   `json:"gdrive_connected"`
+	GDFolderID             string `json:"gdrive_folder_id"`
+	RcloneRemote           string `json:"rclone_remote"`
+	RclonePath             string `json:"rclone_path"`
+	DeleteLocalAfterUpload bool   `json:"delete_local_after_upload"`
 }
 
 // RemoteConfigView returns the masked configuration for the UI.
@@ -189,7 +188,7 @@ func (s *Service) RemoteConfigView(ctx context.Context) (RemoteConfigView, error
 	return RemoteConfigView{
 		Type: cfg.Type, Endpoint: cfg.Endpoint, Bucket: cfg.Bucket, Region: cfg.Region,
 		AccessKey: cfg.AccessKey, Prefix: cfg.Prefix, UseTLS: cfg.UseTLS,
-		SecretSet: cfg.SecretKey != "",
+		SecretSet:  cfg.SecretKey != "",
 		GDClientID: cfg.GDriveClientID, GDClientSecretSet: cfg.GDriveClientSecret != "",
 		GDConnected: cfg.GDriveRefreshToken != "", GDFolderID: cfg.GDriveFolderID,
 		RcloneRemote: cfg.RcloneRemote, RclonePath: cfg.RclonePath,
