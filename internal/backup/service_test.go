@@ -796,3 +796,71 @@ func TestDeleteBackupWarnsWhenBackendMismatch(t *testing.T) {
 		t.Error("row must still be deleted on mismatch")
 	}
 }
+
+func TestStreamBackupFileFromRemote(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", false)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+
+	fake := &fakeStorage{}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedRemoteBackup(t, db, "b-ro", "https://s3.test/bkt/website/f.tar.gz", true)
+
+	b, _ := svc.Get(context.Background(), "b-ro")
+	var buf strings.Builder
+	if err := svc.StreamBackupFile(context.Background(), b, &buf); err != nil {
+		t.Fatalf("StreamBackupFile: %v", err)
+	}
+	if buf.String() != "backup-bytes" {
+		t.Errorf("streamed = %q", buf.String())
+	}
+	if len(fake.downloaded) != 1 || fake.downloaded[0] != "website/f.tar.gz" {
+		t.Errorf("downloads = %v", fake.downloaded)
+	}
+}
+
+func TestRestoreFromRemoteStagesTempFile(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", false)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+	seedBackupTargets(t, db)
+
+	fake := &fakeStorage{}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedRemoteBackup(t, db, "b-restore", "https://s3.test/bkt/website/f.tar.gz", true)
+	if _, err := db.Exec(`UPDATE backups SET type = 'config' WHERE id = 'b-restore'`); err != nil {
+		t.Fatalf("set type: %v", err)
+	}
+	b, _ := svc.Get(context.Background(), "b-restore")
+
+	var staged string
+	mock := mockExecutor()
+	mock.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "df" {
+			// free-space check in stageRemoteBackup; report plenty.
+			return &executor.Result{ExitCode: 0, Stdout: "AVAIL\n999999999999\n"}, nil
+		}
+		if name == "tar" {
+			staged = args[2] // tar -xzf <path> -C /
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	}
+	svc.exec = mock
+
+	err := svc.restoreBackup(context.Background(), SystemCaller, b, "", func(string) {})
+	if err != nil {
+		t.Fatalf("restoreBackup: %v", err)
+	}
+	if staged == "" || staged == b.Path {
+		t.Errorf("restore must run against a staged temp file, got %q", staged)
+	}
+	if len(fake.downloaded) != 1 {
+		t.Errorf("downloads = %v", fake.downloaded)
+	}
+}

@@ -519,6 +519,17 @@ func (s *Service) RequestRestore(ctx context.Context, caller Caller, id, compone
 }
 
 func (s *Service) restoreBackup(ctx context.Context, caller Caller, b model.Backup, component string, write func(string)) error {
+	// Remote-only backups are downloaded into a temp file first so the
+	// existing path-based restore logic can run.
+	if b.RemoteOnly && b.RemotePath != "" {
+		tmpPath, err := s.stageRemoteBackup(ctx, b, write)
+		if err != nil {
+			return err
+		}
+		defer os.Remove(tmpPath)
+		b.Path = tmpPath
+	}
+
 	// Safety first: snapshot the current state so a bad restore can be
 	// rolled back. Safety backups use a short 3-day retention.
 	if b.Type == "website" || b.Type == "database" || b.Type == "full" {
@@ -542,6 +553,64 @@ func (s *Service) restoreBackup(ctx context.Context, caller Caller, b model.Back
 	default:
 		return model.NewValidationError("unknown backup type: " + b.Type)
 	}
+}
+
+// stageRemoteBackup downloads a remote-only backup into a temp file so the
+// existing path-based restore logic can run; the caller removes the temp
+// file when the restore finishes.
+func (s *Service) stageRemoteBackup(ctx context.Context, b model.Backup, write func(string)) (string, error) {
+	backend, name, ok := remotestorage.ParseRemoteRef(b.RemotePath)
+	if !ok {
+		return "", fmt.Errorf("unrecognized remote path: %s", b.RemotePath)
+	}
+	cfg, err := s.remoteConfig(ctx)
+	if err != nil {
+		return "", fmt.Errorf("remote storage unavailable: %w", err)
+	}
+	if cfg.Type != backend || !cfg.Enabled() {
+		return "", model.NewValidationError("backup lives on " + backend + " storage, which is not currently configured")
+	}
+	st, _, err := s.remoteStorage(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	if free := s.freeSpace(ctx, os.TempDir()); free > 0 && free < b.SizeBytes {
+		return "", fmt.Errorf("not enough disk space to download the backup: %d bytes free, %d needed", free, b.SizeBytes)
+	}
+
+	tmp, err := os.CreateTemp("", "jenderal-remote-restore-")
+	if err != nil {
+		return "", fmt.Errorf("create temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	write("Downloading backup from remote storage…")
+	if err := st.Download(ctx, name, tmp); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return "", fmt.Errorf("download backup: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return "", fmt.Errorf("save temp file: %w", err)
+	}
+	write("Backup downloaded; starting restore…")
+	return tmpName, nil
+}
+
+// freeSpace returns available bytes on dir's filesystem (0 when unknown).
+func (s *Service) freeSpace(ctx context.Context, dir string) int64 {
+	result, err := s.exec.RunSudo(ctx, "df", "-B1", "--output=avail", dir)
+	if err != nil || result.ExitCode != 0 {
+		return 0
+	}
+	lines := strings.Fields(strings.TrimSpace(result.Stdout))
+	if len(lines) >= 2 {
+		v, _ := strconv.ParseInt(lines[len(lines)-1], 10, 64)
+		return v
+	}
+	return 0
 }
 
 // runSafetyBackup synchronously backs up the same target, tagged kind=safety.
@@ -704,8 +773,26 @@ func (s *Service) ResolveBackupDownload(ctx context.Context, caller Caller, id s
 }
 
 // StreamBackupFile streams the backup archive to w without buffering it
-// whole in memory.
+// whole in memory. Remote-only backups stream straight from the remote
+// backend; local files are read as root via sudo cat.
 func (s *Service) StreamBackupFile(ctx context.Context, b model.Backup, w io.Writer) error {
+	if b.RemoteOnly && b.RemotePath != "" {
+		backend, name, ok := remotestorage.ParseRemoteRef(b.RemotePath)
+		if !ok {
+			return fmt.Errorf("unrecognized remote path: %s", b.RemotePath)
+		}
+		st, cfg, err := s.remoteStorage(ctx)
+		if err != nil {
+			return fmt.Errorf("remote storage unavailable: %w", err)
+		}
+		if cfg.Type != backend {
+			return fmt.Errorf("backup lives on %s storage but %s is configured", backend, cfg.Type)
+		}
+		if err := st.Download(ctx, name, w); err != nil {
+			return fmt.Errorf("stream remote backup: %w", err)
+		}
+		return nil
+	}
 	if _, err := s.exec.RunSudoStream(ctx, w, "cat", b.Path); err != nil {
 		return fmt.Errorf("stream backup: %w", err)
 	}
@@ -834,13 +921,7 @@ func (s *Service) Stats(ctx context.Context) (BackupStats, error) {
 		return stats, fmt.Errorf("backup stats: %w", err)
 	}
 
-	result, err := s.exec.RunSudo(ctx, "df", "-B1", "--output=avail", s.localDir)
-	if err == nil && result.ExitCode == 0 {
-		lines := strings.Fields(strings.TrimSpace(result.Stdout))
-		if len(lines) >= 2 {
-			stats.DiskFree, _ = strconv.ParseInt(lines[len(lines)-1], 10, 64)
-		}
-	}
+	stats.DiskFree = s.freeSpace(ctx, s.localDir)
 	return stats, nil
 }
 
