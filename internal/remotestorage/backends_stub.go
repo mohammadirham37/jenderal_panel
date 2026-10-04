@@ -1,7 +1,7 @@
 package remotestorage
 
-// Temporary stubs for the three backends so the package compiles before
-// Tasks 3-5 land. Each block is deleted when the real implementation arrives.
+// Temporary stubs for the remaining backends so the package compiles before
+// Tasks 4-5 land. Each block is deleted when the real implementation arrives.
 
 import (
 	"context"
@@ -10,21 +10,6 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
-
-type s3Storage struct {
-	cfg  Config
-	http *http.Client
-	exec executor.CommandExecutor
-}
-
-func (s *s3Storage) Upload(ctx context.Context, localPath string, size int64, name string) (string, error) {
-	return "", ErrNotConfigured
-}
-func (s *s3Storage) Download(ctx context.Context, name string, w io.Writer) error {
-	return ErrNotConfigured
-}
-func (s *s3Storage) Delete(ctx context.Context, name string) error { return ErrNotConfigured }
-func (s *s3Storage) Test(ctx context.Context) (string, error)      { return "", ErrNotConfigured }
 
 type GDriveStorage struct {
 	cfg  Config
