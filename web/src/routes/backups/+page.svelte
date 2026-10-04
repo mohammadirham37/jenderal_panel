@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+import BackupStoragePanel from '$lib/components/BackupStoragePanel.svelte';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
 import { roles } from '$lib/stores/auth';
@@ -18,6 +19,7 @@ import { roles } from '$lib/stores/auth';
 		kind: string;
 		created_by: string;
 		remote_path?: string;
+		remote_only?: boolean;
 		task_id?: string;
 		started_at?: string;
 		finished_at?: string;
@@ -53,7 +55,7 @@ import { roles } from '$lib/stores/auth';
 	}
 
 	// ── State ──────────────────────────────────────────────────────
-	let activeTab = $state<'backups' | 'schedules'>('backups');
+	let activeTab = $state<'backups' | 'schedules' | 'storage'>('backups');
 
 	// Backups
 	let backups = $state<Backup[]>([]);
@@ -106,6 +108,7 @@ import { roles } from '$lib/stores/auth';
 	let editScheduleKeep = $state(0);
 	let savingSchedule = $state(false);
 
+	let uploadTaskId = $state('');
 	let deleteScheduleConfirmId = $state<string | null>(null);
 	let pruneBusy = $state(false);
 
@@ -183,6 +186,10 @@ import { roles } from '$lib/stores/auth';
 			return ' ' + translate($language, 'bk.safetyNote');
 		}
 		return '';
+	}
+
+	function remoteRestoreNote(b: Backup): string {
+		return b.remote_only ? ' ' + translate($language, 'bk.remoteRestoreNote') : '';
 	}
 
 	function duration(b: Backup): string {
@@ -336,6 +343,17 @@ import { roles } from '$lib/stores/auth';
 			await Promise.all([loadBackups(), loadStats()]);
 		} catch (err) {
 			flash(err instanceof Error ? err.message : translate($language, 'bk.errorDelete'), true);
+		}
+	}
+
+	async function retryUpload(id: string) {
+		try {
+			const res = await api.post<{ task_id?: string }>(`/api/v1/backups/${id}/upload`, {});
+			flash(translate($language, 'bk.toastUploadStarted'));
+			if (res?.task_id) uploadTaskId = res.task_id;
+			await loadBackups();
+		} catch (err) {
+			flash(err instanceof Error ? err.message : translate($language, 'bk.errorUpload'), true);
 		}
 	}
 
@@ -552,6 +570,13 @@ import { roles } from '$lib/stores/auth';
 		</div>
 	{/if}
 
+	{#if uploadTaskId}
+		<div class="rounded-xl border border-gray-700 bg-gray-800 p-4">
+			<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'bk.progressUpload')}</p>
+			<TaskProgress bind:taskId={uploadTaskId} storageKey="backup-upload-task" onComplete={loadBackups} />
+		</div>
+	{/if}
+
 	{#if showScheduleForm}
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 			<h3 class="mb-4 text-lg font-semibold text-white">{translate($language, 'bk.newScheduleTitle')}</h3>
@@ -615,6 +640,11 @@ import { roles } from '$lib/stores/auth';
 			onclick={() => { activeTab = 'schedules'; loadSchedules(); }}
 			class="cursor-pointer rounded-lg px-4 py-1.5 text-xs font-semibold transition {activeTab === 'schedules' ? 'bg-blue-500/20 text-blue-200' : 'text-gray-400 hover:text-gray-200'}"
 		>{translate($language, 'bk.tabSchedules')}</button>
+		<button
+			type="button"
+			onclick={() => (activeTab = 'storage')}
+			class="cursor-pointer rounded-lg px-4 py-1.5 text-xs font-semibold transition {activeTab === 'storage' ? 'bg-blue-500/20 text-blue-200' : 'text-gray-400 hover:text-gray-200'}"
+		>{translate($language, 'bk.tabStorage')}</button>
 	</div>
 
 	{#if activeTab === 'backups'}
@@ -766,7 +796,9 @@ import { roles } from '$lib/stores/auth';
 							{#if b.kind && b.kind !== 'manual'}
 								<span class="rounded-md px-1.5 py-0.5 text-[10px] font-semibold {kindBadge(b.kind)}">{b.kind}</span>
 							{/if}
-							{#if b.remote_path}
+							{#if b.remote_only}
+								<span class="rounded-md bg-indigo-900/50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300" title={b.remote_path}>{translate($language, 'bk.remoteOnly')}</span>
+							{:else if b.remote_path}
 								<span class="rounded-md bg-teal-900/50 px-1.5 py-0.5 text-[10px] font-semibold text-teal-300" title={b.remote_path}>{translate($language, 'bk.offSite')}</span>
 							{/if}
 							<div class="min-w-0 flex-1">
@@ -784,7 +816,7 @@ import { roles } from '$lib/stores/auth';
 							<div class="flex shrink-0 items-center gap-1">
 								{#if restoreConfirmId === b.id}
 									<span class="mr-1 text-[11px] text-yellow-400">
-										{translate($language, 'bk.restoreConfirm')}{safetyNote(b)}?
+										{translate($language, 'bk.restoreConfirm')}{safetyNote(b)}{remoteRestoreNote(b)}?
 									</span>
 									<button
 										type="button"
@@ -802,7 +834,17 @@ import { roles } from '$lib/stores/auth';
 										{translate($language, 'bk.no')}
 									</button>
 								{:else}
-									{#if b.type === 'full'}
+								{#if b.status === 'completed' && !b.remote_path && b.kind !== 'safety'}
+									<button
+										type="button"
+										onclick={() => retryUpload(b.id)}
+										title={translate($language, 'bk.titleUpload')}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-blue-600 hover:text-white"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V6a2 2 0 012-2h12a2 2 0 012 2v2M12 20V8m0 0l-4 4m4-4l4 4" /></svg>
+									</button>
+								{/if}
+								{#if b.type === 'full'}
 										<select
 											bind:value={restoreComponent}
 											class="rounded-lg border border-gray-600 bg-gray-900 px-1.5 py-1 text-[10px] text-gray-300"
@@ -864,7 +906,7 @@ import { roles } from '$lib/stores/auth';
 				</div>
 			{/if}
 		</div>
-	{:else}
+	{:else if activeTab === 'schedules'}
 		<div class="rounded-xl border border-gray-700 bg-gray-800">
 			{#if loadingSchedules}
 				<div class="space-y-2 p-5">
@@ -999,5 +1041,7 @@ import { roles } from '$lib/stores/auth';
 				</div>
 			{/if}
 		</div>
+	{:else if activeTab === 'storage'}
+		<BackupStoragePanel />
 	{/if}
 </div>
