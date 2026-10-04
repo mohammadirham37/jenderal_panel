@@ -5,6 +5,8 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
+	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -557,5 +560,158 @@ func TestRemoteOnlyRoundTrip(t *testing.T) {
 	}
 	if !list[0].RemoteOnly {
 		t.Error("list row lost remote_only")
+	}
+}
+
+func seedRemoteConfig(t *testing.T, db *sql.DB, typ string, deleteLocal bool) {
+	t.Helper()
+	dl := "0"
+	if deleteLocal {
+		dl = "1"
+	}
+	pairs := map[string]string{
+		"backup_remote_type": typ, "backup_remote_s3_endpoint": "https://s3.test",
+		"backup_remote_s3_bucket": "bkt", "backup_remote_s3_access_key": "ak",
+		"backup_remote_s3_secret_key": "sk", "backup_remote_delete_local": dl,
+	}
+	for k, v := range pairs {
+		if _, err := db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, 'now')`, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+}
+
+// fakeStorage records calls; injected through the storageOverride test seam.
+type fakeStorage struct {
+	uploadRef  string
+	uploadErr  error
+	deleteErr  error
+	uploaded   []string
+	deleted    []string
+	downloaded []string
+}
+
+func (f *fakeStorage) Upload(ctx context.Context, localPath string, size int64, name string) (string, error) {
+	f.uploaded = append(f.uploaded, name)
+	if f.uploadErr != nil {
+		return "", f.uploadErr
+	}
+	return f.uploadRef, nil
+}
+func (f *fakeStorage) Download(ctx context.Context, name string, w io.Writer) error {
+	f.downloaded = append(f.downloaded, name)
+	_, _ = w.Write([]byte("backup-bytes"))
+	return nil
+}
+func (f *fakeStorage) Delete(ctx context.Context, name string) error {
+	f.deleted = append(f.deleted, name)
+	return f.deleteErr
+}
+func (f *fakeStorage) Test(ctx context.Context) (string, error) { return "fake ok", nil }
+
+func seedBackupRow(t *testing.T, db *sql.DB, id, backupType, target, path, kind string) {
+	t.Helper()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO backups (id, type, target, path, status, kind, created_by, created_at)
+		VALUES (?, ?, ?, ?, 'running', ?, '', ?)`, id, backupType, target, path, kind, now); err != nil {
+		t.Fatalf("seed backup row: %v", err)
+	}
+}
+
+func TestExecuteBackupUploadsAndKeepsLocalByDefault(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", false)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+	seedBackupTargets(t, db)
+
+	fake := &fakeStorage{uploadRef: "https://s3.test/bkt/website/f.tar.gz"}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedBackupRow(t, db, "b-up", "website", "example.com", "/tmp/test-backups/website/f.tar.gz", KindManual)
+	b, _ := svc.Get(context.Background(), "b-up")
+
+	if err := svc.executeBackup(context.Background(), b, func(string) {}); err != nil {
+		t.Fatalf("executeBackup: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), b.ID)
+	if got.RemotePath != "https://s3.test/bkt/website/f.tar.gz" {
+		t.Errorf("remote_path = %q", got.RemotePath)
+	}
+	if got.RemoteOnly {
+		t.Error("disk-saving off: local file must be kept")
+	}
+	if len(fake.uploaded) != 1 || fake.uploaded[0] != "website/f.tar.gz" {
+		t.Errorf("uploads = %v", fake.uploaded)
+	}
+}
+
+func TestExecuteBackupDiskSavingRemovesLocal(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", true)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+	seedBackupTargets(t, db)
+
+	fake := &fakeStorage{uploadRef: "https://s3.test/bkt/config/c.tar.gz"}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedBackupRow(t, db, "b-ds", "config", "", "/tmp/test-backups/config/c.tar.gz", KindManual)
+	b, _ := svc.Get(context.Background(), "b-ds")
+
+	if err := svc.executeBackup(context.Background(), b, func(string) {}); err != nil {
+		t.Fatalf("executeBackup: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), b.ID)
+	if !got.RemoteOnly || got.RemotePath == "" {
+		t.Errorf("expected remote-only, got remote_only=%v remote_path=%q", got.RemoteOnly, got.RemotePath)
+	}
+}
+
+func TestExecuteBackupUploadFailureKeepsLocal(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", true)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+	seedBackupTargets(t, db)
+
+	fake := &fakeStorage{uploadErr: fmt.Errorf("503 slow down")}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedBackupRow(t, db, "b-fail", "config", "", "/tmp/test-backups/config/c.tar.gz", KindManual)
+	b, _ := svc.Get(context.Background(), "b-fail")
+
+	if err := svc.executeBackup(context.Background(), b, func(string) {}); err != nil {
+		t.Fatalf("upload failure must not fail the backup: %v", err)
+	}
+
+	got, _ := svc.Get(context.Background(), b.ID)
+	if got.Status != "completed" || got.RemoteOnly || got.RemotePath != "" {
+		t.Errorf("expected completed local-only, got %+v", got)
+	}
+}
+
+func TestSafetyBackupsAreNeverUploaded(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", true)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+	seedBackupTargets(t, db)
+
+	fake := &fakeStorage{uploadRef: "https://s3.test/bkt/x"}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedBackupRow(t, db, "b-safety", "config", "", "/tmp/test-backups/config/s.tar.gz", KindSafety)
+	b, _ := svc.Get(context.Background(), "b-safety")
+
+	_ = svc.executeBackup(context.Background(), b, func(string) {})
+	if len(fake.uploaded) != 0 {
+		t.Errorf("safety backup uploaded: %v", fake.uploaded)
 	}
 }

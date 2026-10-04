@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/dbdump"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -44,11 +46,13 @@ var SystemCaller = Caller{Admin: true}
 
 // Service manages backup CRUD operations and execution.
 type Service struct {
-	db       *sql.DB
-	exec     executor.CommandExecutor
-	audit    *audit.Service
-	localDir string
-	tasks    *taskrunner.Runner
+	db          *sql.DB
+	exec        executor.CommandExecutor
+	audit       *audit.Service
+	localDir    string
+	tasks       *taskrunner.Runner
+	remoteStore *remotestorage.ConfigStore
+	httpClient  *http.Client
 }
 
 // NewService creates a new backup Service.
@@ -234,19 +238,9 @@ func (s *Service) executeBackup(ctx context.Context, b model.Backup, write func(
 	write(fmt.Sprintf("Backup completed (%d bytes).", sizeBytes))
 
 	// Off-site copy: best effort — a failed upload never fails the backup,
-	// the local file is the primary copy.
+	// the local file is the primary copy until disk-saving removes it.
 	if b.Kind != KindSafety {
-		if cfg, cfgErr := s.GetRemoteConfig(ctx); cfgErr == nil && cfg.enabled() {
-			write("Uploading off-site copy…")
-			remotePath, upErr := s.UploadToRemote(ctx, b, cfg)
-			if upErr != nil {
-				write("Off-site upload failed: " + upErr.Error())
-			} else {
-				_, _ = s.db.ExecContext(ctx,
-					`UPDATE backups SET remote_path = ? WHERE id = ?`, remotePath, b.ID)
-				write("Off-site copy uploaded: " + remotePath)
-			}
-		}
+		_ = s.uploadAfterBackup(ctx, b, write)
 	}
 
 	if b.Kind == KindScheduled {

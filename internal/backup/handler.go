@@ -192,6 +192,19 @@ func (h *Handler) Restore(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// RetryUpload handles POST /api/backups/{id}/upload — uploads an existing
+// completed local backup to the configured remote storage (202 + task id).
+func (h *Handler) RetryUpload(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	taskID, err := h.svc.RetryUpload(r.Context(), callerFromContext(r), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "upload_backup", id, "remote upload started (task "+taskID+")")
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // Prune handles POST /api/backups/prune and runs the retention pass now.
 func (h *Handler) Prune(w http.ResponseWriter, r *http.Request) {
 	pruned, err := h.svc.PruneNow(r.Context())
