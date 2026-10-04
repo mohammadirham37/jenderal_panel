@@ -17,6 +17,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
+	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 	"github.com/mohammadirham37/jenderal_panel/internal/cloudflared"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
@@ -260,6 +261,7 @@ func cmdServe() {
 	dbManagerSvc := dbmanager.NewService(db, exec, auditSvc)
 	dockerSvc := docker.NewService(exec, auditSvc)
 	backupSvc := backup.NewService(db, exec, auditSvc, "/var/lib/jenderal/backups")
+	backupSvc.SetRemoteStore(remotestorage.NewConfigStore(db))
 	backupScheduler := backup.NewScheduler(backupSvc)
 	alertSvc := alert.NewService(db, auditSvc)
 	alertSvc.SetTargetProviders(serviceMgr, sslSvc)

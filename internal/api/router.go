@@ -862,6 +862,20 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
 				Post("/backup-schedules/{id}/disable", backupHandler.DisableSchedule)
 
+			// Remote backup storage (config is admin-only)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.remote")).
+				Get("/backup-remote/config", backupHandler.GetRemoteConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.remote")).
+				Put("/backup-remote/config", backupHandler.SaveRemoteConfig)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.remote")).
+				Post("/backup-remote/test", backupHandler.TestRemote)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.remote")).
+				Get("/backup-remote/gdrive/authorize", backupHandler.GDriveAuthorize)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.remote")).
+				Post("/backup-remote/gdrive/exchange", backupHandler.GDriveExchange)
+			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
+				Post("/backups/{id}/upload", backupHandler.RetryUpload)
+
 			// Tasks (background operations)
 			r.Get("/tasks", taskHandler.List)
 			r.Get("/tasks/{id}", taskHandler.Get)

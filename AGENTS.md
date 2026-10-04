@@ -37,7 +37,7 @@ After work is pushed to `main`, deploy by clicking **Update** on the panel's Upd
 - systemd services via `internal/service` `ServiceManager` allow-list (globs like `php*-fpm` supported).
 - API responses via `internal/httputil`: `JSON` → `{"data":...}`, `JSONList` adds `meta`, errors via `HandleError` + `model.NewDomainError/NewValidationError`.
 - New module checklist (service → handler → router Dependencies → routes+RBAC → main.go wiring → rbac.go Seed → migration → frontend page) is in `CLAUDE.md`.
-- Auth: SQLite sessions, Argon2id, 63 RBAC permissions seeded in `internal/auth/rbac.go`, CSRF double-submit on mutating requests.
+- Auth: SQLite sessions, Argon2id, 74 RBAC permissions seeded in `internal/auth/rbac.go`, CSRF double-submit on mutating requests.
 
 ## Frontend rules
 

@@ -3,10 +3,12 @@ package backup
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
@@ -138,4 +140,151 @@ func (s *Service) RetryUpload(ctx context.Context, caller Caller, id string) (st
 		return nil
 	})
 	return taskID, nil
+}
+
+
+// RemoteConfigRequest is the write-only config payload from the UI. Secret
+// fields left empty preserve the stored values; they are never returned.
+type RemoteConfigRequest struct {
+	Type        string `json:"type"`
+	Endpoint    string `json:"endpoint"`
+	Bucket      string `json:"bucket"`
+	Region      string `json:"region"`
+	AccessKey   string `json:"access_key"`
+	SecretKey   string `json:"s3_secret_key"`
+	Prefix      string `json:"prefix"`
+	UseTLS      bool   `json:"use_tls"`
+	GDClientID  string `json:"gdrive_client_id"`
+	GDClientSecret string `json:"gdrive_client_secret"`
+	RcloneRemote string `json:"rclone_remote"`
+	RclonePath  string `json:"rclone_path"`
+	DeleteLocalAfterUpload bool `json:"delete_local_after_upload"`
+}
+
+// RemoteConfigView is the read model: no secrets, only *_set booleans.
+type RemoteConfigView struct {
+	Type        string `json:"type"`
+	Endpoint    string `json:"endpoint"`
+	Bucket      string `json:"bucket"`
+	Region      string `json:"region"`
+	AccessKey   string `json:"access_key"`
+	Prefix      string `json:"prefix"`
+	UseTLS      bool   `json:"use_tls"`
+	SecretSet   bool   `json:"s3_secret_set"`
+	GDClientID  string `json:"gdrive_client_id"`
+	GDClientSecretSet bool `json:"gdrive_client_secret_set"`
+	GDConnected bool   `json:"gdrive_connected"`
+	GDFolderID  string `json:"gdrive_folder_id"`
+	RcloneRemote string `json:"rclone_remote"`
+	RclonePath  string `json:"rclone_path"`
+	DeleteLocalAfterUpload bool `json:"delete_local_after_upload"`
+}
+
+// RemoteConfigView returns the masked configuration for the UI.
+func (s *Service) RemoteConfigView(ctx context.Context) (RemoteConfigView, error) {
+	cfg, err := s.remoteConfig(ctx)
+	if err != nil {
+		return RemoteConfigView{}, err
+	}
+	return RemoteConfigView{
+		Type: cfg.Type, Endpoint: cfg.Endpoint, Bucket: cfg.Bucket, Region: cfg.Region,
+		AccessKey: cfg.AccessKey, Prefix: cfg.Prefix, UseTLS: cfg.UseTLS,
+		SecretSet: cfg.SecretKey != "",
+		GDClientID: cfg.GDriveClientID, GDClientSecretSet: cfg.GDriveClientSecret != "",
+		GDConnected: cfg.GDriveRefreshToken != "", GDFolderID: cfg.GDriveFolderID,
+		RcloneRemote: cfg.RcloneRemote, RclonePath: cfg.RclonePath,
+		DeleteLocalAfterUpload: cfg.DeleteLocalAfterUpload,
+	}, nil
+}
+
+// SaveRemoteConfig validates and stores the UI payload.
+func (s *Service) SaveRemoteConfig(ctx context.Context, req RemoteConfigRequest) error {
+	if req.Type != "" && req.Type != "s3" && req.Type != "gdrive" && req.Type != "rclone" {
+		return model.NewValidationError("type must be empty, s3, gdrive, or rclone")
+	}
+	cfg := remotestorage.Config{
+		Type: req.Type, Endpoint: req.Endpoint, Bucket: req.Bucket, Region: req.Region,
+		AccessKey: req.AccessKey, SecretKey: req.SecretKey, Prefix: req.Prefix, UseTLS: req.UseTLS,
+		GDriveClientID: req.GDClientID, GDriveClientSecret: req.GDClientSecret,
+		RcloneRemote: req.RcloneRemote, RclonePath: req.RclonePath,
+		DeleteLocalAfterUpload: req.DeleteLocalAfterUpload,
+	}
+	if err := s.remoteStore.Save(ctx, cfg); err != nil {
+		return fmt.Errorf("save remote config: %w", err)
+	}
+	return nil
+}
+
+// TestRemoteConnection verifies the currently configured backend.
+func (s *Service) TestRemoteConnection(ctx context.Context) (string, error) {
+	st, _, err := s.remoteStorage(ctx)
+	if err != nil {
+		return "", err
+	}
+	return st.Test(ctx)
+}
+
+// gdriveClient is the slice of the Drive backend the OAuth flow needs;
+// *remotestorage.GDriveStorage satisfies it. A seam so tests can fake it.
+type gdriveClient interface {
+	AuthorizeURL() string
+	ExchangeCode(ctx context.Context, code string) (string, error)
+	EnsureFolder(ctx context.Context) (string, error)
+	Test(ctx context.Context) (string, error)
+}
+
+var defaultNewGDrive = func(cfg remotestorage.Config, exec executor.CommandExecutor, hc *http.Client) gdriveClient {
+	return remotestorage.NewGDrive(cfg, exec, hc)
+}
+
+var newGDriveForConfig = defaultNewGDrive
+
+// GDriveAuthorizeURL returns the Google consent URL for the stored client id.
+func (s *Service) GDriveAuthorizeURL(ctx context.Context) (string, error) {
+	cfg, err := s.remoteConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	if cfg.GDriveClientID == "" {
+		return "", model.NewValidationError("save the Google Drive client ID first")
+	}
+	return newGDriveForConfig(cfg, s.exec, s.httpClient).AuthorizeURL(), nil
+}
+
+// GDriveExchange completes the copy-paste OAuth flow: swaps the code for a
+// refresh token, ensures the target folder exists, stores both, and returns
+// the connected account email.
+func (s *Service) GDriveExchange(ctx context.Context, code string) (string, error) {
+	cfg, err := s.remoteConfig(ctx)
+	if err != nil {
+		return "", err
+	}
+	if cfg.GDriveClientID == "" || cfg.GDriveClientSecret == "" {
+		return "", model.NewValidationError("save the Google Drive client ID and secret first")
+	}
+	gd := newGDriveForConfig(cfg, s.exec, s.httpClient)
+	refreshToken, err := gd.ExchangeCode(ctx, code)
+	if err != nil {
+		return "", err
+	}
+	cfg.GDriveRefreshToken = refreshToken
+	cfg.Type = "gdrive"
+	gd = newGDriveForConfig(cfg, s.exec, s.httpClient)
+	folderID, err := gd.EnsureFolder(ctx)
+	if err != nil {
+		return "", fmt.Errorf("prepare drive folder: %w", err)
+	}
+	cfg.GDriveFolderID = folderID
+	if err := s.remoteStore.Save(ctx, cfg); err != nil {
+		return "", fmt.Errorf("store tokens: %w", err)
+	}
+	// Save() never writes the refresh token by design; persist it explicitly.
+	if err := s.remoteStore.SaveRefreshToken(ctx, refreshToken); err != nil {
+		return "", fmt.Errorf("store refresh token: %w", err)
+	}
+	info, err := gd.Test(ctx)
+	if err != nil {
+		return "", fmt.Errorf("connection test after connect: %w", err)
+	}
+	return info, nil
 }

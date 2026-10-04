@@ -115,6 +115,7 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"backups.create", "backups"},
 		{"backups.restore", "backups"},
 		{"backups.delete", "backups"},
+		{"backups.remote", "backups"},
 		{"alerts.view", "alerts"},
 		{"alerts.manage", "alerts"},
 		{"notifications.view", "notifications"},
