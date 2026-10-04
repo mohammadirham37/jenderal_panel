@@ -122,12 +122,18 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.DeleteBackup(r.Context(), id); err != nil {
+	warning, err := h.svc.DeleteBackup(r.Context(), id)
+	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
 	h.logAction(r, "delete_backup", id, "deleted backup")
+	if warning != "" {
+		h.logAction(r, "delete_backup_warning", id, warning)
+		httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok", "warning": warning})
+		return
+	}
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 )
 
@@ -275,7 +276,7 @@ func TestDeleteBackup(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 
-	if err := svc.DeleteBackup(context.Background(), "b-del"); err != nil {
+	if _, err := svc.DeleteBackup(context.Background(), "b-del"); err != nil {
 		t.Fatalf("DeleteBackup: %v", err)
 	}
 
@@ -713,5 +714,85 @@ func TestSafetyBackupsAreNeverUploaded(t *testing.T) {
 	_ = svc.executeBackup(context.Background(), b, func(string) {})
 	if len(fake.uploaded) != 0 {
 		t.Errorf("safety backup uploaded: %v", fake.uploaded)
+	}
+}
+
+func seedRemoteBackup(t *testing.T, db *sql.DB, id, remotePath string, remoteOnly bool) {
+	t.Helper()
+	ro := 0
+	if remoteOnly {
+		ro = 1
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO backups (id, type, path, status, kind, created_by, created_at, remote_path, remote_only)
+		VALUES (?, 'website', '/tmp/x.tar.gz', 'completed', 'manual', '', ?, ?, ?)`, id, now, remotePath, ro); err != nil {
+		t.Fatalf("seed remote backup: %v", err)
+	}
+}
+
+func TestDeleteBackupRemovesRemoteCopy(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", false)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+
+	fake := &fakeStorage{}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedRemoteBackup(t, db, "b-del", "https://s3.test/bkt/website/f.tar.gz", false)
+
+	warning, err := svc.DeleteBackup(context.Background(), "b-del")
+	if err != nil {
+		t.Fatalf("DeleteBackup: %v", err)
+	}
+	if warning != "" {
+		t.Errorf("unexpected warning %q", warning)
+	}
+	if len(fake.deleted) != 1 {
+		t.Errorf("remote deletes = %v", fake.deleted)
+	}
+	if _, err := svc.Get(context.Background(), "b-del"); err != model.ErrNotFound {
+		t.Errorf("row must be gone, got %v", err)
+	}
+}
+
+func TestDeleteBackupAbortsWhenRemoteDeleteFails(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", false)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+
+	fake := &fakeStorage{deleteErr: fmt.Errorf("403 keystore unavailable")}
+	storageOverride = func(remotestorage.Config) (remotestorage.Storage, error) { return fake, nil }
+	defer func() { storageOverride = nil }()
+
+	seedRemoteBackup(t, db, "b-del2", "https://s3.test/bkt/website/f.tar.gz", false)
+
+	if _, err := svc.DeleteBackup(context.Background(), "b-del2"); err == nil {
+		t.Fatal("remote delete failure must abort the deletion")
+	}
+	if _, err := svc.Get(context.Background(), "b-del2"); err != nil {
+		t.Error("row must survive a failed deletion")
+	}
+}
+
+func TestDeleteBackupWarnsWhenBackendMismatch(t *testing.T) {
+	db := setupTestDB(t)
+	seedRemoteConfig(t, db, "s3", false)
+	svc := NewService(db, mockExecutor(), nil, "/tmp/test-backups")
+	svc.SetRemoteStore(remotestorage.NewConfigStore(db))
+
+	seedRemoteBackup(t, db, "b-del3", "gdrive://orphan-1", false)
+
+	warning, err := svc.DeleteBackup(context.Background(), "b-del3")
+	if err != nil {
+		t.Fatalf("DeleteBackup: %v", err)
+	}
+	if warning == "" {
+		t.Error("expected a warning that the remote copy was left in place")
+	}
+	if _, err := svc.Get(context.Background(), "b-del3"); err != model.ErrNotFound {
+		t.Error("row must still be deleted on mismatch")
 	}
 }

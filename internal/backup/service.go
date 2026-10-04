@@ -724,11 +724,38 @@ func (s *Service) PruneNow(ctx context.Context) (int, error) {
 	return pruneExpired(ctx, s, schedules, time.Now().UTC()), nil
 }
 
-// DeleteBackup removes a backup file and its database record.
-func (s *Service) DeleteBackup(ctx context.Context, id string) error {
+// DeleteBackup removes a backup everywhere: the remote object (when the
+// stored remote reference matches the configured backend), the local file,
+// and the database row. A failed remote deletion aborts the whole operation
+// so no row is lost while its remote copy survives. When the remote reference
+// cannot be handled (no backend configured, or a different backend type), the
+// local deletion proceeds and a warning is returned.
+func (s *Service) DeleteBackup(ctx context.Context, id string) (string, error) {
 	b, err := s.Get(ctx, id)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	warning := ""
+	if b.RemotePath != "" {
+		backend, name, ok := remotestorage.ParseRemoteRef(b.RemotePath)
+		switch {
+		case !ok:
+			warning = "remote copy left in place (unrecognized reference): " + b.RemotePath
+		default:
+			cfg, cfgErr := s.remoteConfig(ctx)
+			if cfgErr != nil || cfg.Type != backend || !cfg.Enabled() {
+				warning = "remote copy left in place (backend not configured): " + b.RemotePath
+			} else {
+				st, _, err := s.remoteStorage(ctx)
+				if err != nil {
+					return "", fmt.Errorf("delete remote copy: %w", err)
+				}
+				if delErr := st.Delete(ctx, name); delErr != nil {
+					return "", fmt.Errorf("delete remote copy: %w", delErr)
+				}
+			}
+		}
 	}
 
 	if b.Path != "" {
@@ -737,9 +764,9 @@ func (s *Service) DeleteBackup(ctx context.Context, id string) error {
 
 	_, err = s.db.ExecContext(ctx, `DELETE FROM backups WHERE id = ?`, id)
 	if err != nil {
-		return fmt.Errorf("delete backup: %w", err)
+		return warning, fmt.Errorf("delete backup: %w", err)
 	}
-	return nil
+	return warning, nil
 }
 
 // List returns all backups ordered by created_at DESC.

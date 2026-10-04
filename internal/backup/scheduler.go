@@ -120,9 +120,15 @@ func pruneExpired(ctx context.Context, svc *Service, schedules []model.BackupSch
 
 		seen[k]++
 		if retentionExpired(lim.days, lim.keep, seen[k], b.CreatedAt, now) {
-			if err := svc.DeleteBackup(ctx, b.ID); err != nil {
+			warning, err := svc.DeleteBackup(ctx, b.ID)
+			if err != nil {
+				// Kept for the next hourly tick to retry (remote deletion
+				// failures abort the deletion so nothing is orphaned).
 				log.Printf("backup scheduler: delete expired backup %s: %v", b.ID, err)
 				continue
+			}
+			if warning != "" {
+				log.Printf("backup scheduler: pruned backup %s with warning: %s", b.ID, warning)
 			}
 			pruned++
 		}
