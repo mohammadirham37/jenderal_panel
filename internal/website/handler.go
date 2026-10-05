@@ -570,12 +570,13 @@ func (h *Handler) Retry(w http.ResponseWriter, r *http.Request) {
 // GetConfig handles GET /api/websites/{id}/config.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	content, err := h.svc.GetConfig(r.Context(), id)
+	variant := r.URL.Query().Get("variant")
+	content, exists, err := h.svc.GetConfig(r.Context(), id, variant)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
-	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
+	httputil.JSON(w, http.StatusOK, map[string]any{"content": content, "exists": exists})
 }
 
 // SaveConfig handles PUT /api/websites/{id}/config.
@@ -583,18 +584,19 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {
 		Content string `json:"content"`
+		Variant string `json:"variant"`
 	}
 	if err := httputil.DecodeJSON(r, &body); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	if err := h.svc.SaveConfig(r.Context(), id, body.Content); err != nil {
+	if err := h.svc.SaveConfig(r.Context(), id, body.Content, body.Variant); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 
-	h.logAction(r, "save_website_config", id, "saved website nginx config")
+	h.logAction(r, "save_website_config", id, "saved website "+body.Variant+" nginx config")
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

@@ -679,6 +679,8 @@ import { toast } from '$lib/stores/toast';
 	let configError = $state('');
 	let configSaveMsg = $state('');
 	let configInitialized = $state(false);
+	let configVariant = $state<'http' | 'ssl'>('http');
+	let configExists = $state(true);
 	let proxyScheme = $state('http');
 	let proxyHost = $state('');
 	let proxyPort = $state('');
@@ -1252,8 +1254,10 @@ import { toast } from '$lib/stores/toast';
 		configLoading = true;
 		configError = '';
 		try {
-			const data = await api.get<{ content: string }>(`/api/v1/websites/${website.id}/config`);
-			configContent = data.content || '';
+			const query = configVariant === 'ssl' ? '?variant=ssl' : '';
+			const data = await api.get<{ content: string; exists: boolean }>(`/api/v1/websites/${website.id}/config${query}`);
+			configExists = data.exists !== false;
+			configContent = configExists ? (data.content || '') : '';
 		} catch (err) {
 			configError = err instanceof Error ? err.message : translate($language, 'wd.config.load_failed');
 		} finally {
@@ -1265,11 +1269,18 @@ import { toast } from '$lib/stores/toast';
 		if (!website) return;
 		configSaveMsg = ''; configError = '';
 		try {
-			await api.put(`/api/v1/websites/${website.id}/config`, { content: configContent });
+			await api.put(`/api/v1/websites/${website.id}/config`, { content: configContent, variant: configVariant });
 			configSaveMsg = translate($language, 'wd.config.saved');
 		} catch (err) {
 			configError = err instanceof Error ? err.message : translate($language, 'wd.config.save_failed');
 		}
+	}
+
+	async function switchConfigVariant(variant: 'http' | 'ssl') {
+		if (configVariant === variant) return;
+		configVariant = variant;
+		configSaveMsg = '';
+		await loadConfig();
 	}
 
 	// Domains
@@ -2695,7 +2706,25 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 
 					<!-- Manual editor -->
 					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
-						<h3 class="text-lg font-semibold text-white mb-3">{translate($language, 'wd.config.nginx_title')}</h3>
+						<div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.config.nginx_title')}</h3>
+							<div class="flex rounded-lg border border-gray-700 p-0.5">
+								<button
+									type="button"
+									onclick={() => switchConfigVariant('http')}
+									class="cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition {configVariant === 'http' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}"
+								>
+									HTTP
+								</button>
+								<button
+									type="button"
+									onclick={() => switchConfigVariant('ssl')}
+									class="cursor-pointer rounded-md px-3 py-1 text-xs font-medium transition {configVariant === 'ssl' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'}"
+								>
+									HTTPS
+								</button>
+							</div>
+						</div>
 
 						{#if configError}
 							<div class="mb-2 text-red-400 text-sm">{configError}</div>
@@ -2709,6 +2738,8 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 
 						{#if configLoading}
 							<div class="text-gray-400 text-sm">{translate($language, 'wd.config.loading')}</div>
+						{:else if configVariant === 'ssl' && !configExists}
+							<div class="rounded-lg border border-yellow-700 bg-yellow-900/30 p-3 text-sm text-yellow-300">{translate($language, 'wd.config.ssl_missing')}</div>
 						{:else}
 							<textarea
 								bind:value={configContent}

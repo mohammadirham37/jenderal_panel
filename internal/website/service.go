@@ -1155,26 +1155,65 @@ func (s *Service) markProvisioningQueueFailed(websiteID string, queueErr error) 
 		limitProvisionError("queue provisioning failed: "+queueErr.Error()), time.Now().UTC().Format(time.RFC3339), websiteID)
 }
 
-// GetConfig returns the Nginx vhost configuration for a website.
-func (s *Service) GetConfig(ctx context.Context, id string) (string, error) {
+// Config variants for GetConfig/SaveConfig: the plain HTTP vhost, or the
+// TLS (HTTPS) vhost the ssl module writes next to it.
+const (
+	ConfigVariantHTTP = "http"
+	ConfigVariantSSL  = "ssl"
+)
+
+// vhostConfigPath returns the nginx vhost file for the variant.
+func vhostConfigPath(domain, variant string) string {
+	if variant == ConfigVariantSSL {
+		return "/etc/nginx/sites-available/" + domain + ".ssl"
+	}
+	return "/etc/nginx/sites-available/" + domain
+}
+
+// validConfigVariant accepts the two variants plus "" for backward
+// compatibility with callers that predate the split.
+func validConfigVariant(variant string) bool {
+	return variant == "" || variant == ConfigVariantHTTP || variant == ConfigVariantSSL
+}
+
+// GetConfig returns the Nginx vhost configuration for a website. The ssl
+// variant returns the HTTPS vhost; exists is false when the site has no TLS
+// vhost yet because no certificate was issued.
+func (s *Service) GetConfig(ctx context.Context, id, variant string) (string, bool, error) {
+	if !validConfigVariant(variant) {
+		return "", false, model.NewValidationError("unsupported config variant: " + variant)
+	}
 	w, err := s.Get(ctx, id)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	confPath := "/etc/nginx/sites-available/" + w.Domain
+	confPath := vhostConfigPath(w.Domain, variant)
+	probe, err := s.exec.RunSudo(ctx, "test", "-f", confPath)
+	if err != nil {
+		return "", false, fmt.Errorf("read vhost config: %w", err)
+	}
+	if probe == nil || probe.ExitCode != 0 {
+		return "", false, nil
+	}
 	result, err := s.exec.RunSudo(ctx, "cat", confPath)
 	if err != nil {
-		return "", fmt.Errorf("read vhost config: %w", err)
+		return "", false, fmt.Errorf("read vhost config: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return "", fmt.Errorf("read vhost config: %s", strings.TrimSpace(result.Stderr))
+		return "", false, fmt.Errorf("read vhost config: %s", strings.TrimSpace(result.Stderr))
 	}
-	return result.Stdout, nil
+	return result.Stdout, true, nil
 }
 
 // SaveConfig saves an Nginx vhost configuration with validation and rollback.
-func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
+// The ssl variant only accepts edits to an existing TLS vhost: that file is
+// created together with the certificate, and saving one without it would
+// break nginx on the missing key paths.
+func (s *Service) SaveConfig(ctx context.Context, id, content, variant string) error {
+	if !validConfigVariant(variant) {
+		return model.NewValidationError("unsupported config variant: " + variant)
+	}
 	unlock := s.mutations.Lock(id)
 	defer unlock()
 	w, err := s.Get(ctx, id)
@@ -1182,7 +1221,16 @@ func (s *Service) SaveConfig(ctx context.Context, id, content string) error {
 		return err
 	}
 
-	confPath := "/etc/nginx/sites-available/" + w.Domain
+	confPath := vhostConfigPath(w.Domain, variant)
+	if variant == ConfigVariantSSL {
+		probe, err := s.exec.RunSudo(ctx, "test", "-f", confPath)
+		if err != nil {
+			return fmt.Errorf("read vhost config: %w", err)
+		}
+		if probe == nil || probe.ExitCode != 0 {
+			return model.NewValidationError("HTTPS is not configured for this website yet — issue a certificate first")
+		}
+	}
 	bakPath := confPath + ".bak"
 	tmpFile, err := os.CreateTemp("", "jenderal_website_vhost_*.tmp")
 	if err != nil {

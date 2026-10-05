@@ -303,6 +303,7 @@ const en = {
 	'wd.config.saved': 'Configuration saved successfully.',
 	'wd.config.save_failed': 'Failed to save config',
 	'wd.config.load_failed': 'Failed to load config',
+	'wd.config.ssl_missing': 'HTTPS is not configured for this website yet — issue a certificate from the SSL tab first.',
 
 	// Nginx profile options
 	'wd.profile.auto.label': 'Auto (from app type)',
@@ -733,6 +734,7 @@ const id: Record<keyof typeof en, string> = {
 	'wd.config.saved': 'Konfigurasi berhasil disimpan.',
 	'wd.config.save_failed': 'Gagal menyimpan konfigurasi',
 	'wd.config.load_failed': 'Gagal memuat konfigurasi',
+	'wd.config.ssl_missing': 'HTTPS belum dikonfigurasi untuk situs ini — terbitkan sertifikat dari tab SSL terlebih dahulu.',
 
 	// Nginx profile options
 	'wd.profile.auto.label': 'Otomatis (dari jenis aplikasi)',

@@ -1016,6 +1016,121 @@ func TestUpdatePHPVersion(t *testing.T) {
 	}
 }
 
+// The config editor serves two vhost files: the plain HTTP vhost and the
+// TLS (HTTPS) vhost next to it. The ssl variant only exists once a
+// certificate was issued, and only then may it be edited.
+func TestConfigVariants(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	httpPath := "/etc/nginx/sites-available/phpcfg.example.com"
+	sslPath := httpPath + ".ssl"
+	files := map[string]string{httpPath: "# original http vhost\n"}
+	savedMarker := "# saved via config editor\n"
+	var nginxTestFails bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch name {
+			case "test":
+				if args[0] == "-f" {
+					if _, ok := files[args[1]]; ok {
+						return &executor.Result{ExitCode: 0}, nil
+					}
+					return &executor.Result{ExitCode: 1}, nil
+				}
+			case "cat":
+				if content, ok := files[args[0]]; ok {
+					return &executor.Result{ExitCode: 0, Stdout: content}, nil
+				}
+				return &executor.Result{ExitCode: 1, Stderr: "No such file or directory"}, nil
+			case "cp":
+				if len(args) == 2 {
+					if strings.Contains(args[0], "jenderal_website_vhost_") {
+						files[args[1]] = savedMarker
+					} else if content, ok := files[args[0]]; ok {
+						files[args[1]] = content
+					}
+				}
+			case "nginx":
+				if nginxTestFails {
+					return &executor.Result{ExitCode: 1, Stderr: "nginx: configuration file test failed"}, nil
+				}
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "phpcfg.example.com", Template: "php", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// Without a certificate there is no TLS vhost: reading reports
+	// exists=false and saving is refused before anything is touched.
+	content, exists, err := svc.GetConfig(context.Background(), created.ID, ConfigVariantSSL)
+	if err != nil || exists || content != "" {
+		t.Fatalf("missing ssl GetConfig = (%q, %v, %v), want empty and not exists", content, exists, err)
+	}
+	if err := svc.SaveConfig(context.Background(), created.ID, "# new\n", ConfigVariantSSL); err == nil || !strings.Contains(err.Error(), "HTTPS is not configured") {
+		t.Fatalf("missing ssl SaveConfig error = %v, want 'HTTPS is not configured'", err)
+	}
+	if _, ok := files[sslPath]; ok {
+		t.Fatal("ssl vhost was created by a rejected save")
+	}
+
+	// Once the ssl module wrote the vhost, both variants read and save
+	// independently.
+	files[sslPath] = "# original tls vhost\n"
+	content, exists, err = svc.GetConfig(context.Background(), created.ID, ConfigVariantSSL)
+	if err != nil || !exists || content != "# original tls vhost\n" {
+		t.Fatalf("ssl GetConfig = (%q, %v, %v)", content, exists, err)
+	}
+	if err := svc.SaveConfig(context.Background(), created.ID, "# edited tls\n", ConfigVariantSSL); err != nil {
+		t.Fatalf("ssl SaveConfig error = %v", err)
+	}
+	if files[sslPath] != savedMarker {
+		t.Fatalf("ssl vhost on disk = %q, want the saved content", files[sslPath])
+	}
+	if files[sslPath+".bak"] != "# original tls vhost\n" {
+		t.Fatalf("ssl backup = %q, want the pre-save content", files[sslPath+".bak"])
+	}
+	content, _, err = svc.GetConfig(context.Background(), created.ID, ConfigVariantHTTP)
+	if err != nil || content != "# original http vhost\n" {
+		t.Fatalf("http vhost changed by an ssl save: (%q, %v)", content, err)
+	}
+
+	// An invalid nginx config is rolled back from the backup.
+	nginxTestFails = true
+	err = svc.SaveConfig(context.Background(), created.ID, "# broken\n", ConfigVariantSSL)
+	if err == nil || !strings.Contains(err.Error(), "nginx configuration is invalid") {
+		t.Fatalf("invalid config error = %v, want invalid-config rejection", err)
+	}
+	if files[sslPath] != savedMarker {
+		t.Fatalf("ssl vhost not rolled back, on disk = %q", files[sslPath])
+	}
+	nginxTestFails = false
+
+	// Unknown variants are rejected; the empty variant stays an alias for
+	// the HTTP vhost.
+	if _, _, err := svc.GetConfig(context.Background(), created.ID, "ftp"); err == nil || !strings.Contains(err.Error(), "unsupported config variant") {
+		t.Fatalf("variant GetConfig error = %v, want unsupported", err)
+	}
+	if err := svc.SaveConfig(context.Background(), created.ID, "# x\n", "ftp"); err == nil || !strings.Contains(err.Error(), "unsupported config variant") {
+		t.Fatalf("variant SaveConfig error = %v, want unsupported", err)
+	}
+	if err := svc.SaveConfig(context.Background(), created.ID, "# plain\n", ""); err != nil {
+		t.Fatalf("empty-variant SaveConfig error = %v", err)
+	}
+	if files[httpPath] != savedMarker {
+		t.Fatalf("http vhost on disk = %q, want the saved content", files[httpPath])
+	}
+}
+
 // The create form sends proxy fields as strings (and leaves proxy_port
 // empty for non-reverse-proxy templates); decoding must not fail on them.
 func TestCreateRequestAcceptsStringProxyPort(t *testing.T) {
