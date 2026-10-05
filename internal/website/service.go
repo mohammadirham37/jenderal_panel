@@ -712,8 +712,35 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 		return err
 	}
 
+	// A PHP version change re-provisions the site runtime: the new version's
+	// FPM pool must exist before the vhost points at its socket, and the old
+	// pool is only removed afterwards. The site must not be mid-provisioning
+	// or suspended — the pool/vhost surgery would fight those flows.
+	oldPHPVersion := w.PHPVersion
+	phpChanged := false
 	if req.PHPVersion != nil {
-		w.PHPVersion = *req.PHPVersion
+		newVersion := strings.TrimSpace(*req.PHPVersion)
+		if w.AppType == "static" {
+			if newVersion != "" {
+				return model.NewValidationError("static websites cannot set a PHP version")
+			}
+		} else if !phpVersionRegex.MatchString(newVersion) || !supportedPHP(newVersion) {
+			return model.NewValidationError("unsupported PHP version: " + newVersion)
+		}
+		if newVersion != w.PHPVersion {
+			if w.Status != "active" && w.Status != "failed" {
+				return model.NewValidationError("cannot change the PHP version while the website is " + w.Status)
+			}
+			installed, err := s.phpRuntimeInstalled(ctx, newVersion)
+			if err != nil {
+				return fmt.Errorf("check PHP %s: %w", newVersion, err)
+			}
+			if !installed {
+				return model.NewValidationError("PHP " + newVersion + " is not installed on this server")
+			}
+			w.PHPVersion = newVersion
+			phpChanged = true
+		}
 	}
 
 	// Document root changes are validated against the site's own home
@@ -747,9 +774,30 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 
 	// Regenerate the vhost from the updated state before committing, so a
 	// failed regeneration leaves the stored values untouched.
-	if rootChanged {
+	if phpChanged && w.AppType != "static" && w.PHPVersion != "" {
+		if err := s.writeFPMPool(ctx, w); err != nil {
+			return fmt.Errorf("write PHP-FPM pool: %w", err)
+		}
+		if err := s.runSudoOK(ctx, "systemctl", "restart", "php"+w.PHPVersion+"-fpm"); err != nil {
+			return fmt.Errorf("restart PHP %s-FPM: %w", w.PHPVersion, err)
+		}
+	}
+
+	if phpChanged || rootChanged {
 		if err := s.regenerateConfig(ctx, w, ""); err != nil {
 			return fmt.Errorf("regenerate vhost: %w", err)
+		}
+	}
+
+	// Retire the previous version's pool only after the vhost stopped
+	// referencing its socket.
+	if phpChanged && oldPHPVersion != "" && oldPHPVersion != w.PHPVersion {
+		oldPool := filepath.Join("/etc/php", oldPHPVersion, "fpm/pool.d", w.Domain+".conf")
+		if err := s.runSudoOK(ctx, "rm", "-f", oldPool); err != nil {
+			return fmt.Errorf("remove old PHP-FPM pool: %w", err)
+		}
+		if err := s.runSudoOK(ctx, "systemctl", "restart", "php"+oldPHPVersion+"-fpm"); err != nil {
+			return fmt.Errorf("restart PHP %s-FPM: %w", oldPHPVersion, err)
 		}
 	}
 
@@ -1509,6 +1557,47 @@ func (s *Service) regenerateConfig(ctx context.Context, w model.Website, _ strin
 
 	_, _ = s.exec.RunSudo(ctx, "systemctl", "reload", "nginx")
 
+	return nil
+}
+
+// writeFPMPool renders and installs the site's PHP-FPM pool for its current
+// PHP version, mirroring what provisioning writes. Callers restart the
+// matching php-fpm service afterwards so the pool's socket appears.
+func (s *Service) writeFPMPool(ctx context.Context, w model.Website) error {
+	homeDir := "/home/" + w.WebUser
+	poolContent, err := RenderPool(PoolData{
+		Domain:     w.Domain,
+		WebUser:    w.WebUser,
+		PHPVersion: w.PHPVersion,
+		HomeDir:    homeDir,
+		LogDir:     homeDir + "/logs",
+	})
+	if err != nil {
+		return fmt.Errorf("render pool: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "jenderal_pool_*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp pool config: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmpFile.WriteString(poolContent); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp pool config: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("close temp pool config: %w", err)
+	}
+
+	poolPath := filepath.Join("/etc/php", w.PHPVersion, "fpm/pool.d", w.Domain+".conf")
+	result, err := s.exec.RunSudo(ctx, "cp", tmpPath, poolPath)
+	if err != nil {
+		return fmt.Errorf("write pool config: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("write pool config: %s", strings.TrimSpace(result.Stderr))
+	}
 	return nil
 }
 

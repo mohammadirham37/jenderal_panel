@@ -234,6 +234,41 @@ import { toast } from '$lib/stores/toast';
 			docRootBusy = false;
 		}
 	}
+
+	let phpEditing = $state(false);
+	let phpValue = $state('');
+	let phpOptions = $state<string[]>([]);
+	let phpBusy = $state(false);
+
+	async function openPhpEdit() {
+		if (!website) return;
+		phpValue = website.php_version ?? '';
+		phpOptions = phpValue ? [phpValue] : [];
+		phpEditing = true;
+		try {
+			const opts = await api.get<{ php_versions: { version: string; installed: boolean }[] }>('/api/v1/websites/options');
+			const installed = (opts.php_versions ?? []).filter((runtime) => runtime.installed).map((runtime) => runtime.version);
+			phpOptions = phpValue && !installed.includes(phpValue) ? [phpValue, ...installed] : installed;
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.phpver_failed'));
+			phpEditing = false;
+		}
+	}
+
+	async function savePhpVersion() {
+		if (!website || phpBusy) return;
+		phpBusy = true;
+		try {
+			await api.put(`/api/v1/websites/${website.id}`, { php_version: phpValue });
+			toast.success(translate($language, 'wd.phpver_saved'));
+			phpEditing = false;
+			await loadWebsite();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.phpver_failed'));
+		} finally {
+			phpBusy = false;
+		}
+	}
 	let canManageServices = $derived(hasPermission($permissions, 'services.manage'));
 	let canUpdateWebsite = $derived(hasPermission($permissions, 'websites.update'));
 
@@ -1600,6 +1635,30 @@ import { toast } from '$lib/stores/toast';
 								<div class="text-sm text-gray-200 font-mono break-all">{website.document_root}</div>
 							{/if}
 						</div>
+						{#if website.app_type !== 'static'}
+							<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
+								<div class="text-xs text-gray-400 uppercase tracking-wider mb-1 flex items-center justify-between gap-2">
+									{translate($language, 'wd.phpver_label')}
+									{#if !phpEditing && canUpdateWebsite}
+										<button type="button" onclick={openPhpEdit} class="cursor-pointer text-[10px] normal-case tracking-normal text-blue-400 hover:text-blue-300">{translate($language, 'wd.docroot_edit')}</button>
+									{/if}
+								</div>
+								{#if phpEditing}
+									<select bind:value={phpValue} class="w-full cursor-pointer rounded border border-gray-600 bg-gray-900 px-2 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none">
+										{#each phpOptions as version (version)}
+											<option value={version}>{version}</option>
+										{/each}
+									</select>
+									<p class="mt-1 text-[10px] text-gray-500">{translate($language, 'wd.phpver_hint')}</p>
+									<div class="mt-2 flex gap-2">
+										<button type="button" onclick={savePhpVersion} disabled={phpBusy} class="cursor-pointer rounded bg-blue-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50">{phpBusy ? translate($language, 'dbm.saving') : translate($language, 'wd.phpver_save')}</button>
+										<button type="button" onclick={() => (phpEditing = false)} class="cursor-pointer rounded border border-gray-600 px-2.5 py-1 text-xs text-gray-300 transition hover:bg-gray-700">{translate($language, 'wd.cancel')}</button>
+									</div>
+								{:else}
+									<div class="text-sm text-gray-200 font-mono">{website.php_version}</div>
+								{/if}
+							</div>
+						{/if}
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
 							<div class="text-xs text-gray-400 uppercase tracking-wider mb-1">{translate($language, 'wd.web_user')}</div>
 							<div class="text-sm text-gray-200 font-mono">{website.web_user}</div>

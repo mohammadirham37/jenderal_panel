@@ -383,6 +383,11 @@ const en = {
 	'wd.docroot_saved': 'Document root updated. The change is live immediately.',
 	'wd.docroot_failed': 'Failed to update document root',
 	'wd.docroot_hint': 'The directory must already exist inside the site home (/home/<user>/…). Octane sites keep app/public.',
+	'wd.phpver_label': 'PHP Version',
+	'wd.phpver_save': 'Save',
+	'wd.phpver_saved': 'PHP version updated. The site now runs on the new version.',
+	'wd.phpver_failed': 'Failed to update PHP version',
+	'wd.phpver_hint': 'Lists installed versions. Switching rebuilds the site FPM pool and nginx vhost.',
 	// Per-site protection card
 	'wd.prot.title': 'Protection',
 	'wd.prot.waf': 'WAF (ModSecurity)',
@@ -806,6 +811,11 @@ const id: Record<keyof typeof en, string> = {
 	'wd.docroot_saved': 'Document root diperbarui. Perubahan langsung aktif.',
 	'wd.docroot_failed': 'Gagal memperbarui document root',
 	'wd.docroot_hint': 'Direktorinya harus sudah ada di dalam home situs (/home/<user>/…). Situs Octane tetap memakai app/public.',
+	'wd.phpver_label': 'Versi PHP',
+	'wd.phpver_save': 'Simpan',
+	'wd.phpver_saved': 'Versi PHP diperbarui. Situs sekarang berjalan di versi baru.',
+	'wd.phpver_failed': 'Gagal memperbarui versi PHP',
+	'wd.phpver_hint': 'Hanya versi terpasang yang tersedia. Mengganti versi membangun ulang pool FPM dan vhost nginx situs.',
 	// Per-site protection card
 	'wd.prot.title': 'Proteksi',
 	'wd.prot.waf': 'WAF (ModSecurity)',

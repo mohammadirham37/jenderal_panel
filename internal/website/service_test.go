@@ -896,6 +896,126 @@ func TestUpdateDocumentRootRegeneratesTLSVhost(t *testing.T) {
 	}
 }
 
+// Changing a site's PHP version must re-provision the runtime: write the new
+// version's FPM pool, restart its FPM, regenerate the vhost to point at the
+// new socket, then retire the old pool — in that order.
+func TestUpdatePHPVersion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var ops []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// phpRuntimeInstalled probes; PHP 8.1 is not on this host.
+			if name == "test" && len(args) == 2 && args[1] == "/etc/php/8.1" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch {
+			case name == "cp" && len(args) == 2 && strings.Contains(args[0], "jenderal_pool_"):
+				ops = append(ops, "pool:"+args[1])
+			case name == "cp" && len(args) == 2 && strings.Contains(args[0], "jenderal_website_regen_"):
+				ops = append(ops, "vhost:"+args[1])
+			case name == "rm":
+				ops = append(ops, "rm:"+args[1])
+			case name == "systemctl" && args[0] == "restart":
+				ops = append(ops, "restart:"+args[1])
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "phpver.example.com", Template: "php", PHPVersion: "8.3", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET status = 'active' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{PHPVersion: strPtr("8.2")}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	loaded, err := svc.Get(context.Background(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.PHPVersion != "8.2" {
+		t.Fatalf("php version = %q, want 8.2", loaded.PHPVersion)
+	}
+
+	newPool := "pool:/etc/php/8.2/fpm/pool.d/phpver.example.com.conf"
+	oldPool := "rm:/etc/php/8.3/fpm/pool.d/phpver.example.com.conf"
+	indexOf := func(op string) int {
+		for i, o := range ops {
+			if o == op {
+				return i
+			}
+		}
+		return -1
+	}
+	if indexOf(newPool) == -1 {
+		t.Fatalf("new pool was not written, ops = %v", ops)
+	}
+	if indexOf("restart:php8.2-fpm") == -1 {
+		t.Errorf("new FPM was not restarted, ops = %v", ops)
+	}
+	if indexOf(oldPool) == -1 {
+		t.Errorf("old pool was not removed, ops = %v", ops)
+	}
+	if indexOf("restart:php8.3-fpm") == -1 {
+		t.Errorf("old FPM was not restarted, ops = %v", ops)
+	}
+	// The new socket must exist before the vhost references it, and the old
+	// pool must outlive the vhost that still points at it.
+	vhostIdx := -1
+	for i, o := range ops {
+		if strings.HasPrefix(o, "vhost:") {
+			vhostIdx = i
+			break
+		}
+	}
+	if vhostIdx == -1 {
+		t.Fatal("vhost was not regenerated")
+	}
+	if indexOf(newPool) > vhostIdx {
+		t.Errorf("vhost regenerated before the new pool existed, ops = %v", ops)
+	}
+	if indexOf(oldPool) < vhostIdx {
+		t.Errorf("old pool removed before the vhost stopped referencing it, ops = %v", ops)
+	}
+
+	// An uninstalled version is rejected before anything is touched.
+	before := len(ops)
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{PHPVersion: strPtr("8.1")}); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("uninstalled version error = %v, want 'not installed'", err)
+	}
+	if len(ops) != before {
+		t.Errorf("system was touched for a rejected update, ops = %v", ops)
+	}
+
+	// Same-version updates are a no-op: no pool surgery, no restarts.
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{PHPVersion: strPtr("8.2")}); err != nil {
+		t.Fatalf("same-version Update() error = %v", err)
+	}
+	if len(ops) != before {
+		t.Errorf("same-version update touched the system, ops = %v", ops[before:])
+	}
+
+	// Mid-provisioning or suspended sites are refused.
+	if _, err := db.Exec(`UPDATE websites SET status = 'suspended' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Update(context.Background(), created.ID, UpdateRequest{PHPVersion: strPtr("8.4")}); err == nil || !strings.Contains(err.Error(), "while the website is suspended") {
+		t.Fatalf("suspended site error = %v, want status gate rejection", err)
+	}
+}
+
 // The create form sends proxy fields as strings (and leaves proxy_port
 // empty for non-reverse-proxy templates); decoding must not fail on them.
 func TestCreateRequestAcceptsStringProxyPort(t *testing.T) {
