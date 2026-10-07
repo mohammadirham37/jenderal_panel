@@ -197,7 +197,10 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <svelte:head>
-	<title>{$serverHostname || 'Jenderal Panel'}</title>
+	<!-- Unauthenticated (login) pages have no server hostname yet; fall back
+		to the host the panel is reached at so the brand never shows up in
+		indexed page titles. -->
+	<title>{$serverHostname || page.url.hostname || 'Panel'}</title>
 </svelte:head>
 
 {#if loading}

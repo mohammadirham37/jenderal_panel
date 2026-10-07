@@ -6,7 +6,15 @@
 		<meta name="theme-color" content="#07111e" />
 		<link rel="icon" type="image/png" href="/favicon.png" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-		<title>Jenderal Panel</title>
+		<title></title>
+		<script>
+			(function () {
+				// Show the host this panel is reached at instead of the product
+				// name, so search engines indexing the public login page do not
+				// pick up the branding.
+				document.title = document.location.hostname;
+			})();
+		</script>
 		<script>
 			(function () {
 				let savedTheme = null;
