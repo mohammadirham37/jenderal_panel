@@ -19,6 +19,10 @@
 	let cwd = $state('');
 	let connected = $state(false);
 	let connecting = $state(false);
+	// True while a command is executing: the input box then feeds the
+	// command's prompts (confirmations, passwords) instead of starting a
+	// new command, and Ctrl+C interrupts it.
+	let running = $state(false);
 	let ws: WebSocket | null = null;
 	let outputEl: HTMLTextAreaElement;
 
@@ -62,6 +66,7 @@
 				return;
 			}
 			if (ev.type === 'error') {
+				running = false;
 				if (ev.output) output += ev.output;
 				if (!output.endsWith('\n')) output += '\n';
 				scrollToBottom();
@@ -71,6 +76,7 @@
 			// reports its exit code and the shell's working directory.
 			if (ev.output) output += ev.output;
 			if (!ev.partial) {
+				running = false;
 				if (ev.output && !ev.output.endsWith('\n')) output += '\n';
 				if (ev.exitCode !== null && ev.exitCode !== 0) output += translate($language, 'common.terminal.exitCode').replace('{code}', String(ev.exitCode)) + '\n';
 				if (ev.cwd) cwd = ev.cwd;
@@ -82,6 +88,7 @@
 		ws.onclose = () => {
 			connected = false;
 			connecting = false;
+			running = false;
 			output += translate($language, 'common.terminal.disconnectedBanner') + '\n';
 			scrollToBottom();
 		};
@@ -89,6 +96,7 @@
 		ws.onerror = () => {
 			connected = false;
 			connecting = false;
+			running = false;
 			output += translate($language, 'common.terminal.errorBanner') + '\n';
 			scrollToBottom();
 		};
@@ -127,17 +135,45 @@
 		}
 		historyIndex = -1;
 		draft = '';
-		ws.send(cmd);
+		ws.send(JSON.stringify({ command: cmd }));
 		command = '';
+		running = true;
+		scrollToBottom();
+	}
+
+	// Feeds the running command's prompt (e.g. answering a production
+	// migrate confirmation with "yes").
+	function sendInput() {
+		const text = command;
+		if (!ws || !connected || !running || !text.trim()) return;
+		output += `${text}\n`;
+		ws.send(JSON.stringify({ input: text }));
+		command = '';
+		scrollToBottom();
+	}
+
+	// Interrupts the running command the way Ctrl+C would; the shell itself
+	// survives and reports the command's exit code.
+	function sendInterrupt() {
+		if (!ws || !connected || !running) return;
+		output += '^C\n';
+		ws.send(JSON.stringify({ signal: 'SIGINT' }));
 		scrollToBottom();
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Enter') {
 			e.preventDefault();
-			sendCommand();
+			if (running) sendInput();
+			else sendCommand();
 			return;
 		}
+		if (e.ctrlKey && (e.key === 'c' || e.key === 'C') && running) {
+			e.preventDefault();
+			sendInterrupt();
+			return;
+		}
+		if (running) return;
 		if (e.key === 'ArrowUp') {
 			e.preventDefault();
 			if (history.length === 0) return;
@@ -228,10 +264,10 @@
 	<!-- Input -->
 	<div class="flex border-t border-gray-700">
 		<span
-			class="flex max-w-56 items-center whitespace-nowrap bg-gray-900 px-3 font-mono text-sm text-green-400"
+			class="flex max-w-56 items-center whitespace-nowrap bg-gray-900 px-3 font-mono text-sm {running ? 'text-yellow-400' : 'text-green-400'}"
 			title={cwd || '~'}
 		>
-			{shortenPath(cwd || '~')} $
+			{running ? '…' : `${shortenPath(cwd || '~')} $`}
 		</span>
 		<input
 			type="text"
@@ -239,14 +275,27 @@
 			onkeydown={handleKeydown}
 			onpaste={handlePaste}
 			disabled={!connected}
-			placeholder={connected ? translate($language, 'common.typeCommand') : translate($language, 'common.notConnected')}
+			placeholder={running
+				? translate($language, 'common.terminal.awaitingInput')
+				: connected
+					? translate($language, 'common.typeCommand')
+					: translate($language, 'common.notConnected')}
 			autocomplete="off"
 			spellcheck="false"
 			class="flex-1 bg-gray-900 px-3 py-3 font-mono text-sm text-white focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
 		/>
 		<button
 			type="button"
-			onclick={sendCommand}
+			onclick={sendInterrupt}
+			disabled={!running}
+			title="Ctrl+C"
+			class="cursor-pointer bg-red-600/80 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+		>
+			Ctrl+C
+		</button>
+		<button
+			type="button"
+			onclick={() => (running ? sendInput() : sendCommand())}
 			disabled={!connected || !command.trim()}
 			class="cursor-pointer bg-blue-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
 		>
@@ -256,6 +305,8 @@
 
 	<!-- Hints -->
 	<div class="border-t border-gray-700/50 bg-gray-900 px-3 py-1.5 text-[10px] text-gray-500">
-		{translate($language, 'common.terminal.hints')}
+		{running
+			? translate($language, 'common.terminal.runningHints')
+			: translate($language, 'common.terminal.hints')}
 	</div>
 </div>

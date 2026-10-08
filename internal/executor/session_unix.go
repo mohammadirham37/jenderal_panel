@@ -24,3 +24,11 @@ func killProcessGroup(cmd *exec.Cmd) error {
 	}
 	return nil
 }
+
+// signalProcessGroup delivers the signal to the session's process group.
+func signalProcessGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	return syscall.Kill(-cmd.Process.Pid, sig)
+}

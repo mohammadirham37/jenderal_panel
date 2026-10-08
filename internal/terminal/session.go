@@ -20,12 +20,22 @@ const markerHoldback = 64
 
 // commandLine renders one shell stdin line that executes command via eval
 // and emits the completion marker. The command travels base64-encoded so
-// quotes, dollar signs, and newlines survive the round trip; </dev/null
-// keeps commands from consuming the shell's stdin.
+// quotes, dollar signs, and newlines survive the round trip. The command
+// keeps the shell's stdin, so prompts (Laravel's production confirm, mysql
+// passwords, …) can read responses the client sends as input lines while
+// the command runs.
 func commandLine(command string) string {
 	encoded := base64.StdEncoding.EncodeToString([]byte(command))
-	return "eval \"$(printf %s '" + encoded + "' | base64 -d)\" </dev/null; " +
+	return "eval \"$(printf %s '" + encoded + "' | base64 -d)\"; " +
 		"__panel_ec=$?; printf '\\001%s:%s\\001' \"$__panel_ec\" \"$PWD\"\n"
+}
+
+// trapLine makes the shell survive a process-group SIGINT: the running
+// foreground command takes the interrupt (its exit code flows through the
+// completion marker) while bash defers the no-op trap and stays alive for
+// the next command.
+func trapLine() string {
+	return "trap 'true' INT\n"
 }
 
 // cdLine renders a raw stdin line changing into dir, falling back to the

@@ -38,6 +38,10 @@ const en = {
 	'common.terminal.exitCode': '[exit {code}]',
 	'common.terminal.hints':
 		'Shell state (cd, export) persists while connected · ↑/↓ history · Ctrl+L clear · paste multi-line to run it as one command',
+	'common.terminal.awaitingInput':
+		'Command is waiting for a response — type it (e.g. yes) and press Enter',
+	'common.terminal.runningHints':
+		'A command is running — answer its questions in the input box (e.g. yes) · Ctrl+C or the red button interrupts it',
 	// Theme toggle (ThemeToggle.svelte)
 	'common.switchToLight': 'Switch to light mode',
 	'common.switchToDark': 'Switch to dark mode',
@@ -84,6 +88,10 @@ const id: Record<keyof typeof en, string> = {
 	'common.terminal.exitCode': '[keluar {code}]',
 	'common.terminal.hints':
 		'Status shell (cd, export) tetap tersimpan selama terhubung · riwayat ↑/↓ · Ctrl+L bersihkan · tempel multi-baris untuk dijalankan sebagai satu perintah',
+	'common.terminal.awaitingInput':
+		'Perintah menunggu jawaban — ketik (mis. yes) lalu tekan Enter',
+	'common.terminal.runningHints':
+		'Ada perintah yang sedang berjalan — jawab pertanyaannya lewat kotak input (mis. yes) · Ctrl+C atau tombol merah untuk menghentikannya',
 	// Theme toggle (ThemeToggle.svelte)
 	'common.switchToLight': 'Ganti ke mode terang',
 	'common.switchToDark': 'Ganti ke mode gelap',

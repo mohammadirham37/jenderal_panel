@@ -45,6 +45,12 @@ func TestCommandLineWrapsCommandForEval(t *testing.T) {
 	if !strings.Contains(line, "\\001") {
 		t.Fatalf("no marker printf in line: %q", line)
 	}
+
+	// The command must keep the shell's stdin so interactive prompts can
+	// read the responses the client sends while it runs.
+	if strings.Contains(line, "</dev/null") {
+		t.Fatalf("command line redirects stdin away from prompts: %q", line)
+	}
 }
 
 func TestOutputParserSingleCommand(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os/exec"
+	"syscall"
 )
 
 // Session is a long-running process connected through pipes. The terminal
@@ -66,4 +67,11 @@ func (s *Session) Stop() error {
 	err := killProcessGroup(s.cmd)
 	<-s.done
 	return err
+}
+
+// Signal delivers sig to the session's process group, so a terminal-style
+// interrupt reaches the running foreground command without ending the shell
+// (which guards itself with a no-op trap).
+func (s *Session) Signal(sig syscall.Signal) error {
+	return signalProcessGroup(s.cmd, sig)
 }

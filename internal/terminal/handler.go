@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -30,9 +31,13 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: httputil.SameOriginCheckOrigin,
 }
 
-// wsRequest is the JSON message sent by the client.
+// wsRequest is the JSON message sent by the client. command starts a new
+// shell command; input feeds a running command's prompt (confirmation
+// questions, passwords); signal interrupts the running command.
 type wsRequest struct {
 	Command string `json:"command"`
+	Input   string `json:"input"`
+	Signal  string `json:"signal"`
 }
 
 // wsResponse is the JSON message sent back to the client. A command streams
@@ -135,6 +140,21 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return conn.WriteMessage(websocket.TextMessage, data) == nil
 	}
 
+	// Tracks whether a command is executing: only then do raw input lines
+	// reach the command's prompts instead of the shell's command reader.
+	var runMu sync.Mutex
+	running := false
+	setRunning := func(v bool) {
+		runMu.Lock()
+		running = v
+		runMu.Unlock()
+	}
+	isRunning := func() bool {
+		runMu.Lock()
+		defer runMu.Unlock()
+		return running
+	}
+
 	// Forward shell output to the client: partial chunks stream as they
 	// arrive, completion markers become the final message of a command.
 	parser := &outputParser{
@@ -142,6 +162,7 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 			_ = writeJSON(wsResponse{Type: "output", Output: chunk, Partial: true})
 		},
 		onComplete: func(exitCode int, cwd string) {
+			setRunning(false)
 			_ = writeJSON(wsResponse{Type: "output", ExitCode: exitCode, Cwd: cwd})
 		},
 	}
@@ -190,9 +211,10 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		_ = conn.Close()
 	}()
 
-	// Start in the website's working directory, then probe once so the
-	// client learns the initial working directory.
-	initScript := ""
+	// Start in the website's working directory, guard the shell against
+	// process-group interrupts, then probe once so the client learns the
+	// initial working directory.
+	initScript := trapLine()
 	if webUser != "" && workdir != "" {
 		initScript += cdLine(workdir)
 	}
@@ -215,23 +237,43 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 			req.Command = strings.TrimSpace(string(message))
 		}
 
-		if req.Command == "" {
-			continue
-		}
+		switch {
+		case req.Command != "":
+			// Audit log the command.
+			_ = h.audit.Log(ctx, audit.LogEntry{
+				UserID: user.ID,
+				Action: "terminal_command",
+				Module: "terminal",
+				Target: websiteID,
+				Detail: req.Command,
+				IP:     r.RemoteAddr,
+			})
 
-		// Audit log the command.
-		_ = h.audit.Log(ctx, audit.LogEntry{
-			UserID: user.ID,
-			Action: "terminal_command",
-			Module: "terminal",
-			Target: websiteID,
-			Detail: req.Command,
-			IP:     r.RemoteAddr,
-		})
-
-		if _, err := session.Stdin().Write([]byte(commandLine(req.Command))); err != nil {
-			h.sendError(conn, "terminal session ended")
-			return
+			setRunning(true)
+			if _, err := session.Stdin().Write([]byte(commandLine(req.Command))); err != nil {
+				h.sendError(conn, "terminal session ended")
+				return
+			}
+		case req.Input != "":
+			// Feed a running command's prompt. Input is intentionally not
+			// audited: prompts include password questions.
+			if !isRunning() {
+				continue
+			}
+			line := req.Input
+			if !strings.HasSuffix(line, "\n") {
+				line += "\n"
+			}
+			if _, err := session.Stdin().Write([]byte(line)); err != nil {
+				h.sendError(conn, "terminal session ended")
+				return
+			}
+		case req.Signal != "":
+			// Only the interrupt is supported: it stops the running command
+			// the way Ctrl+C would, leaving the shell alive.
+			if req.Signal == "SIGINT" && isRunning() {
+				_ = session.Signal(syscall.SIGINT)
+			}
 		}
 	}
 }
