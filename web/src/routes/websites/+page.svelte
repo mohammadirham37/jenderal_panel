@@ -5,6 +5,7 @@
 	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
+import type { ServerInfo } from '$lib/types';
 
 	interface Website {
 		id: string;
@@ -109,6 +110,37 @@ import { language, translate } from '$lib/stores/language';
 	let confirmModal = $state<{ website: Website; action: 'suspend' | 'delete' } | null>(null);
 	let confirmBusy = $state(false);
 	let enableConfirmId = $state<string | null>(null);
+
+	// DNS tutorial modal on the add-website form; the server's public IP is
+	// fetched once so beginners can copy it straight into their A record.
+	let dnsHelpOpen = $state(false);
+	let serverPublicIP = $state('');
+	let serverIPLoading = $state(false);
+	let serverIPLoaded = $state(false);
+
+	async function openDnsHelp() {
+		dnsHelpOpen = true;
+		if (serverIPLoaded || serverIPLoading) return;
+		serverIPLoading = true;
+		try {
+			const info = await api.get<ServerInfo>('/api/v1/server/info');
+			serverPublicIP = info.ip || '';
+		} catch {
+			// The IP is context, not a requirement — the tutorial stands alone.
+		} finally {
+			serverIPLoading = false;
+			serverIPLoaded = true;
+		}
+	}
+
+	async function copyServerIP() {
+		try {
+			await navigator.clipboard.writeText(serverPublicIP);
+			toast.success(translate($language, 'wl.dnsHelp.copied'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.dnsHelp.copyFailed'));
+		}
+	}
 
 	// Polling
 	let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -348,7 +380,16 @@ import { language, translate } from '$lib/stores/language';
 			{/if}
 			<div class="space-y-5">
 				<div>
-					<label for="create-domain" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wl.labelDomain')}</label>
+					<div class="mb-1 flex items-center justify-between gap-2">
+						<label for="create-domain" class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wl.labelDomain')}</label>
+						<button
+							type="button"
+							onclick={openDnsHelp}
+							class="cursor-pointer text-[11px] text-blue-400 transition hover:text-blue-300"
+						>
+							{translate($language, 'wl.dnsHelp.button')}
+						</button>
+					</div>
 					<input
 						id="create-domain"
 						type="text"
@@ -785,6 +826,95 @@ import { language, translate } from '$lib/stores/language';
 						</svg>
 					{/if}
 					{translate($language, confirmModal.action === 'suspend' ? 'wl.yesSuspend' : 'wl.yesDelete')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
+
+{#if dnsHelpOpen}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		tabindex="-1"
+		aria-label={translate($language, 'wl.dnsHelp.title')}
+		onclick={(e) => {
+			if (e.target === e.currentTarget) dnsHelpOpen = false;
+		}}
+	>
+		<div class="w-full max-w-2xl rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-3 flex items-start justify-between gap-3">
+				<h3 class="text-base font-semibold text-white">{translate($language, 'wl.dnsHelp.title')}</h3>
+				<button
+					type="button"
+					onclick={() => (dnsHelpOpen = false)}
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+					aria-label={translate($language, 'wl.cancel')}
+				>
+					<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+
+			<p class="text-sm leading-6 text-gray-300">{translate($language, 'wl.dnsHelp.intro')}</p>
+
+			<div class="mt-3 rounded-lg border border-gray-700 bg-gray-900 p-3">
+				<div class="flex flex-wrap items-center justify-between gap-2">
+					<p class="text-xs font-medium uppercase tracking-wider text-gray-400">{translate($language, 'wl.dnsHelp.ipTitle')}</p>
+					{#if serverPublicIP}
+						<button
+							type="button"
+							onclick={copyServerIP}
+							class="cursor-pointer rounded-md border border-gray-600 px-2 py-0.5 text-[10px] text-gray-300 transition hover:bg-gray-700"
+						>
+							{translate($language, 'wl.dnsHelp.copy')}
+						</button>
+					{/if}
+				</div>
+				{#if serverIPLoading}
+					<p class="mt-1 text-sm text-gray-500">{translate($language, 'wl.dnsHelp.ipLoading')}</p>
+				{:else if serverPublicIP}
+					<p class="mt-1 font-mono text-lg font-semibold text-green-400">{serverPublicIP}</p>
+				{:else}
+					<p class="mt-1 text-sm text-gray-500">{translate($language, 'wl.dnsHelp.ipUnavailable')}</p>
+				{/if}
+			</div>
+
+			<div class="mt-4">
+				<h4 class="text-sm font-semibold text-white">{translate($language, 'wl.dnsHelp.whatTitle')}</h4>
+				<p class="mt-1 text-sm leading-6 text-gray-300">{translate($language, 'wl.dnsHelp.whatText')}</p>
+			</div>
+
+			<div class="mt-4">
+				<h4 class="text-sm font-semibold text-white">{translate($language, 'wl.dnsHelp.stepsTitle')}</h4>
+				<ol class="mt-2 list-decimal space-y-2 pl-5 text-sm leading-6 text-gray-300">
+					<li>{translate($language, 'wl.dnsHelp.step1')}</li>
+					<li>{translate($language, 'wl.dnsHelp.step2')}</li>
+					<li>{translate($language, 'wl.dnsHelp.step3')}</li>
+					<li>{translate($language, 'wl.dnsHelp.step4')}</li>
+					<li>{translate($language, 'wl.dnsHelp.step5')}</li>
+					<li>{translate($language, 'wl.dnsHelp.step6')}</li>
+				</ol>
+			</div>
+
+			<div class="mt-4 rounded-lg border border-yellow-700/50 bg-yellow-900/20 p-3">
+				<h4 class="text-sm font-semibold text-yellow-300">{translate($language, 'wl.dnsHelp.tipsTitle')}</h4>
+				<ul class="mt-1 list-disc space-y-1 pl-5 text-sm leading-6 text-yellow-200/90">
+					<li>{translate($language, 'wl.dnsHelp.tipCloudflare')}</li>
+					<li>{translate($language, 'wl.dnsHelp.tipReplace')}</li>
+				</ul>
+			</div>
+
+			<div class="mt-4 flex items-center justify-end border-t border-gray-700 pt-4">
+				<button
+					type="button"
+					onclick={() => (dnsHelpOpen = false)}
+					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
+				>
+					{translate($language, 'wl.cancel')}
 				</button>
 			</div>
 		</div>

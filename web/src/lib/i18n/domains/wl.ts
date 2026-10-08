@@ -114,6 +114,29 @@ const en = {
 	'wl.yesSuspend': 'Yes, suspend',
 	'wl.enableConfirm': 'Re-enable {domain}?',
 	'wl.yesEnable': 'Yes, enable',
+
+	// DNS help modal on the add-website form
+	'wl.dnsHelp.button': 'DNS help',
+	'wl.dnsHelp.title': 'Point your domain to this server',
+	'wl.dnsHelp.intro': 'Before your website can be opened from the internet, your domain must point to this server. That link is made with a DNS A record: a small entry at your domain provider that says "send visitors of this domain to this IP address".',
+	'wl.dnsHelp.ipTitle': "This server's public IP",
+	'wl.dnsHelp.ipLoading': 'Fetching…',
+	'wl.dnsHelp.ipUnavailable': 'Not available — contact the server administrator.',
+	'wl.dnsHelp.copy': 'Copy',
+	'wl.dnsHelp.copied': 'IP copied to clipboard',
+	'wl.dnsHelp.copyFailed': 'Failed to copy the IP',
+	'wl.dnsHelp.whatTitle': 'What is an A record?',
+	'wl.dnsHelp.whatText': 'An A record links a domain name to an IPv4 address. When someone types your domain into a browser, DNS looks up the A record to answer "which server hosts this domain?" and the visitor is sent to that IP — in this case, this panel server.',
+	'wl.dnsHelp.stepsTitle': 'How to add the A record',
+	'wl.dnsHelp.step1': 'Log in to the website where you bought or manage your domain (for example Namecheap, GoDaddy, Hostinger, Niagahoster, or Cloudflare).',
+	'wl.dnsHelp.step2': 'Open the DNS settings of your domain — usually called Manage DNS, DNS Records, or Name Servers.',
+	'wl.dnsHelp.step3': 'Add a new record with Type "A", Name/Host "@" (that means the root domain example.com itself), and Value/IP Address filled with this server\'s public IP shown above. Leave TTL at its default.',
+	'wl.dnsHelp.step4': 'Add a second record with Type "A", Name "www", and the same IP, so www.example.com works too.',
+	'wl.dnsHelp.step5': 'Save the records, then wait for DNS propagation — usually a few minutes, occasionally up to 24 hours.',
+	'wl.dnsHelp.step6': 'Check that it works: open a terminal and run "ping example.com" — it should reply with this server\'s IP. You can also use an online "DNS propagation checker".',
+	'wl.dnsHelp.tipsTitle': 'Good to know',
+	'wl.dnsHelp.tipCloudflare': 'If your domain uses Cloudflare, start with the record set to "DNS only" (grey cloud) so the SSL certificate can be issued. You can turn on the proxy (orange cloud) afterwards.',
+	'wl.dnsHelp.tipReplace': "Replace example.com with your own domain, and the IP with this server's IP shown above.",
 } as const;
 
 const id: Record<keyof typeof en, string> = {
@@ -222,6 +245,29 @@ const id: Record<keyof typeof en, string> = {
 	'wl.yesSuspend': 'Ya, suspend',
 	'wl.enableConfirm': 'Aktifkan kembali {domain}?',
 	'wl.yesEnable': 'Ya, aktifkan',
+
+	// DNS help modal on the add-website form
+	'wl.dnsHelp.button': 'Bantuan DNS',
+	'wl.dnsHelp.title': 'Arahkan domain Anda ke server ini',
+	'wl.dnsHelp.intro': 'Sebelum website Anda bisa dibuka dari internet, domain harus diarahkan dulu ke server ini. Penghubungnya adalah DNS A record: sebuah entri kecil di pengelola domain Anda yang berarti "kirim pengunjung domain ini ke alamat IP ini".',
+	'wl.dnsHelp.ipTitle': 'IP publik server ini',
+	'wl.dnsHelp.ipLoading': 'Mengambil…',
+	'wl.dnsHelp.ipUnavailable': 'Tidak tersedia — hubungi administrator server.',
+	'wl.dnsHelp.copy': 'Salin',
+	'wl.dnsHelp.copied': 'IP tersalin ke clipboard',
+	'wl.dnsHelp.copyFailed': 'Gagal menyalin IP',
+	'wl.dnsHelp.whatTitle': 'Apa itu A record?',
+	'wl.dnsHelp.whatText': 'A record menghubungkan nama domain dengan alamat IPv4. Ketika seseorang mengetik domain Anda di browser, DNS membaca A record untuk menjawab "server mana yang meng-host domain ini?", lalu pengunjung diarahkan ke IP tersebut — yaitu server panel ini.',
+	'wl.dnsHelp.stepsTitle': 'Cara menambahkan A record',
+	'wl.dnsHelp.step1': 'Masuk ke situs tempat Anda membeli atau mengelola domain (misalnya Niagahoster, Hostinger, Namecheap, GoDaddy, atau Cloudflare).',
+	'wl.dnsHelp.step2': 'Buka pengaturan DNS domain Anda — biasanya bernama Kelola DNS, Manage DNS, DNS Records, atau Name Servers.',
+	'wl.dnsHelp.step3': 'Tambahkan record baru dengan Type "A", Name/Host "@" (artinya domain utama example.com itu sendiri), dan Value/IP Address diisi IP publik server ini seperti yang tertulis di atas. Biarkan TTL pada nilai bawaan.',
+	'wl.dnsHelp.step4': 'Tambahkan record kedua dengan Type "A", Name "www", dan IP yang sama, agar www.example.com juga bisa diakses.',
+	'wl.dnsHelp.step5': 'Simpan record-nya, lalu tunggu propagasi DNS — biasanya beberapa menit, kadang sampai 24 jam.',
+	'wl.dnsHelp.step6': 'Cek apakah sudah tersambung: buka terminal dan jalankan "ping example.com" — hasilnya harus menunjukkan IP server ini. Anda juga bisa memakai "DNS propagation checker" online.',
+	'wl.dnsHelp.tipsTitle': 'Perlu diketahui',
+	'wl.dnsHelp.tipCloudflare': 'Jika domain Anda memakai Cloudflare, mulailah dengan mode "DNS only" (awan abu-abu) agar sertifikat SSL bisa diterbitkan. Proxy (awan oranye) bisa dinyalakan setelahnya.',
+	'wl.dnsHelp.tipReplace': 'Ganti example.com dengan domain Anda sendiri, dan IP dengan IP server ini di atas.',
 };
 
 export const dict = { en, id };
