@@ -12,6 +12,8 @@
 	let error = $state('');
 
 	let impersonating = $state(false);
+	// Pending "login as" target, confirmed through the modal.
+	let impersonateModal = $state<User | null>(null);
 	const canImpersonate = $derived(hasPermission($permissions, 'users.impersonate'));
 
 	// Toolbar search
@@ -154,14 +156,21 @@
 		return canImpersonate && u.is_active && u.id !== $user?.id;
 	}
 
-	async function impersonate(u: User) {
-		if (impersonating) return;
-		if (!confirm(translate($language, 'usr.login_as_confirm').replace('{name}', u.username))) return;
+	function impersonate(u: User) {
+		impersonateModal = u;
+	}
+
+	async function runImpersonate() {
+		if (!impersonateModal || impersonating) return;
+		const target = impersonateModal;
+		// Close before running so the success/error toast is never hidden
+		// behind the backdrop.
+		impersonateModal = null;
 
 		impersonating = true;
 		try {
-			await loginAs(u.id);
-			toast.success(translate($language, 'usr.toast_login_as').replace('{name}', u.username));
+			await loginAs(target.id);
+			toast.success(translate($language, 'usr.toast_login_as').replace('{name}', target.username));
 			await goto('/');
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'usr.failed_login_as'));
@@ -974,6 +983,70 @@
 					</button>
 				</div>
 			</form>
+		</div>
+	</div>
+{/if}
+
+<!-- Login as confirmation modal -->
+{#if impersonateModal}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		aria-label={translate($language, 'usr.login_as_aria')}
+		tabindex="-1"
+	>
+		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-3 flex items-start justify-between gap-3">
+				<div class="flex items-center gap-3">
+					<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-300">
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+						</svg>
+					</span>
+					<h3 class="text-lg font-semibold text-white">
+						{translate($language, 'usr.login_as')}
+						<span class="ml-1 text-blue-400">{impersonateModal.username}</span>
+					</h3>
+				</div>
+				<button
+					type="button"
+					onclick={() => (impersonateModal = null)}
+					class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+					aria-label={translate($language, 'usr.close')}
+				>
+					<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+					</svg>
+				</button>
+			</div>
+			<p class="text-sm leading-6 text-gray-300">
+				{translate($language, 'usr.login_as_confirm').replace('{name}', impersonateModal.username)}
+			</p>
+			<div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
+				<button
+					type="button"
+					onclick={() => (impersonateModal = null)}
+					disabled={impersonating}
+					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40"
+				>
+					{translate($language, 'usr.cancel')}
+				</button>
+				<button
+					type="button"
+					onclick={runImpersonate}
+					disabled={impersonating}
+					class="flex cursor-pointer items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-40"
+				>
+					{#if impersonating}
+						<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+							<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" />
+							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
+						</svg>
+					{/if}
+					{translate($language, 'usr.login_as')}
+				</button>
+			</div>
 		</div>
 	</div>
 {/if}
