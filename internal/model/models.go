@@ -468,6 +468,9 @@ type UpdateInfo struct {
 type CommitInfo struct {
 	SHA     string `json:"sha"`
 	Message string `json:"message"`
+	// Body is the commit message after the subject line; empty for
+	// subject-only commits.
+	Body    string `json:"body,omitempty"`
 	Author  string `json:"author"`
 	Date    string `json:"date"`
 	URL     string `json:"url"`

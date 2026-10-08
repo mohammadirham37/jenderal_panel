@@ -112,7 +112,8 @@ func (s *Service) Check(ctx context.Context) (model.UpdateInfo, error) {
 }
 
 // Changelog returns the most recent commits on main from GitHub so the panel
-// can show what each update contains. Message is the commit subject line.
+// can show what each update contains. Message is the commit subject line and
+// Body carries the explanatory text after it.
 func (s *Service) Changelog(ctx context.Context, limit int) ([]model.CommitInfo, error) {
 	if limit <= 0 || limit > 50 {
 		limit = 15
@@ -155,12 +156,15 @@ func (s *Service) Changelog(ctx context.Context, limit int) ([]model.CommitInfo,
 	out := make([]model.CommitInfo, 0, len(commits))
 	for _, c := range commits {
 		subject := c.Commit.Message
+		body := ""
 		if idx := strings.IndexByte(subject, '\n'); idx >= 0 {
+			body = strings.TrimSpace(subject[idx+1:])
 			subject = subject[:idx]
 		}
 		out = append(out, model.CommitInfo{
 			SHA:     displayVersion(c.SHA),
 			Message: strings.TrimSpace(subject),
+			Body:    body,
 			Author:  c.Commit.Author.Name,
 			Date:    c.Commit.Author.Date,
 			URL:     c.HTMLURL,

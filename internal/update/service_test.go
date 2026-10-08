@@ -247,7 +247,7 @@ func TestChangelogReturnsCommitSubjects(t *testing.T) {
 			t.Errorf("per_page = %q, want 2", req.URL.Query().Get("per_page"))
 		}
 		body := `[
-			{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","html_url":"https://github.com/example/commit/a","commit":{"message":"fix(dbmanager): grant tracking\n\nLong body that must be dropped","author":{"name":"Dev","date":"2026-09-25T10:00:00Z"}}},
+			{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","html_url":"https://github.com/example/commit/a","commit":{"message":"fix(dbmanager): grant tracking\n\nLong body that must be kept","author":{"name":"Dev","date":"2026-09-25T10:00:00Z"}}},
 			{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","html_url":"https://github.com/example/commit/b","commit":{"message":"feat(ui): modal","author":{"name":"Dev","date":"2026-09-26T10:00:00Z"}}}
 		]`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
@@ -263,8 +263,11 @@ func TestChangelogReturnsCommitSubjects(t *testing.T) {
 	if commits[0].SHA != "aaaaaaaa" || commits[0].Message != "fix(dbmanager): grant tracking" || commits[0].Author != "Dev" {
 		t.Errorf("first commit = %+v, want short sha, subject line and author", commits[0])
 	}
-	if commits[1].Message != "feat(ui): modal" || commits[1].URL == "" {
-		t.Errorf("second commit = %+v, want subject and url", commits[1])
+	if commits[0].Body != "Long body that must be kept" {
+		t.Errorf("first commit body = %q, want the text after the subject line", commits[0].Body)
+	}
+	if commits[1].Message != "feat(ui): modal" || commits[1].URL == "" || commits[1].Body != "" {
+		t.Errorf("second commit = %+v, want subject, url and no body", commits[1])
 	}
 }
 

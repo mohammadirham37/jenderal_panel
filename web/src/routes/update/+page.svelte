@@ -17,6 +17,7 @@
 	interface CommitInfo {
 		sha: string;
 		message: string;
+		body?: string;
 		author: string;
 		date: string;
 		url: string;
@@ -382,18 +383,26 @@
 				{:else if changelog.length === 0}
 					<div class="px-5 py-6 text-sm text-gray-400">{translate($language, 'upd.changelog_empty')}</div>
 				{:else}
-					{#each changelog as c (c.sha)}
-						<div class="px-5 py-3.5 transition hover:bg-gray-750">
-							<p class="text-sm leading-snug text-gray-100">{c.message}</p>
-							<p class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
-								<a href={c.url} target="_blank" rel="noopener" class="font-mono text-blue-400 hover:text-blue-300">{c.sha}</a>
-								<span class="text-gray-600">·</span>
-								<span>{c.author}</span>
-								<span class="text-gray-600">·</span>
-								<span>{commitDate(c.date)}</span>
-							</p>
-						</div>
-					{/each}
+				{#each changelog as c (c.sha)}
+					<div class="px-5 py-3.5 transition hover:bg-gray-750">
+						<p class="text-sm leading-snug text-gray-100">{c.message}</p>
+						{#if c.body}
+							<details class="mt-1.5 group">
+								<summary class="cursor-pointer select-none text-[11px] font-medium text-blue-400 transition hover:text-blue-300 marker:content-none">
+									{translate($language, 'upd.commit_details')}
+								</summary>
+								<p class="mt-1.5 whitespace-pre-wrap text-xs leading-5 text-gray-400">{c.body}</p>
+							</details>
+						{/if}
+						<p class="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-gray-500">
+							<a href={c.url} target="_blank" rel="noopener" class="font-mono text-blue-400 hover:text-blue-300">{c.sha}</a>
+							<span class="text-gray-600">·</span>
+							<span>{c.author}</span>
+							<span class="text-gray-600">·</span>
+							<span>{commitDate(c.date)}</span>
+						</p>
+					</div>
+				{/each}
 				{/if}
 			</div>
 		</div>
