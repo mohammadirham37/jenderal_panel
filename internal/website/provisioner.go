@@ -293,6 +293,13 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		return
 	}
 
+	// Go sites: allocate the app port (the vhost below needs it), write and
+	// enable the app unit without starting it, and install the toolchain.
+	if err := p.setupGoApp(ctx, websiteID, &w); err != nil {
+		p.fail(ctx, websiteID, "go app setup failed: "+err.Error())
+		return
+	}
+
 	// Build aliases from domains.
 	domains, err := p.loadDomains(ctx, websiteID)
 	if err != nil {
@@ -479,6 +486,50 @@ func (p *Provisioner) grantOwnerSSHAccess(ctx context.Context, w websiteRow) {
 	if err := p.sshAccounts.SyncOwnedWebsites(ctx, w.CreatedBy); err != nil {
 		p.logAudit(ctx, "ssh_grant_error", w.ID, "sync owner SSH access: "+err.Error())
 	}
+}
+
+// setupGoApp prepares the app service for go sites during provisioning:
+// allocates the loopback port (the vhost render below needs it), heals an
+// empty app_runtime, writes and enables the systemd unit without starting
+// it (no binary exists until the first deploy), and installs the Go
+// toolchain when missing for go-build sites.
+func (p *Provisioner) setupGoApp(ctx context.Context, websiteID string, w *websiteRow) error {
+	if w.AppType != "go" {
+		return nil
+	}
+	if w.AppRuntime == "" {
+		w.AppRuntime = "go"
+	}
+	if w.AppPort <= 0 {
+		port, err := allocateAppPort(ctx, p.db, p.exec)
+		if err != nil {
+			return err
+		}
+		w.AppPort = port
+	}
+	if _, err := p.db.ExecContext(ctx,
+		`UPDATE websites SET app_port = ?, app_runtime = ? WHERE id = ?`,
+		w.AppPort, w.AppRuntime, websiteID,
+	); err != nil {
+		return fmt.Errorf("save app port: %w", err)
+	}
+	full := model.Website{
+		ID: w.ID, Domain: w.Domain, AppType: w.AppType, AppRuntime: w.AppRuntime,
+		AppPort: w.AppPort, AppStartCommand: w.AppStartCommand,
+		WebUser: w.WebUser, DocumentRoot: w.DocumentRoot,
+	}
+	if err := writeAppUnitFiles(ctx, p.exec, full); err != nil {
+		return err
+	}
+	if w.AppRuntime == "go" {
+		svc := &Service{exec: p.exec}
+		if err := svc.ensureGoToolchain(ctx, func(output string) {
+			_ = p.updateProgress(ctx, websiteID, "installing Go toolchain", output+"\n")
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // setupOctane writes the site's Caddyfile and systemd unit and enables the
@@ -817,6 +868,7 @@ type websiteRow struct {
 	ID               string
 	Domain           string
 	AppType          string
+	AppRuntime       string
 	PHPVersion       string
 	NodeVersion      string
 	DocumentRoot     string
@@ -852,11 +904,11 @@ func (p *Provisioner) loadWebsite(ctx context.Context, id string) (websiteRow, e
 	var w websiteRow
 	var phpVersion, framework, frameworkVersion, frontendStack, inertiaAdapter, projectVariant, setupMode, provisionStage, provisionLog sql.NullString
 	err := p.db.QueryRowContext(ctx,
-		`SELECT id, domain, app_type, php_version, node_version, document_root, web_user, created_by,
+		`SELECT id, domain, app_type, app_runtime, php_version, node_version, document_root, web_user, created_by,
 		        framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		        nginx_profile, app_port, app_start_command, app_build_command, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port
 		 FROM websites WHERE id = ?`, id,
-	).Scan(&w.ID, &w.Domain, &w.AppType, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.CreatedBy,
+	).Scan(&w.ID, &w.Domain, &w.AppType, &w.AppRuntime, &phpVersion, &w.NodeVersion, &w.DocumentRoot, &w.WebUser, &w.CreatedBy,
 		&framework, &frameworkVersion, &frontendStack, &inertiaAdapter, &projectVariant, &setupMode, &provisionStage, &provisionLog,
 		&w.NginxProfile, &w.AppPort, &w.AppStartCommand, &w.AppBuildCommand, &w.OctanePort, &w.OctaneWorkers, &w.ProxyScheme, &w.ProxyHost, &w.ProxyPort)
 	if err != nil {

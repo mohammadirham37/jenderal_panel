@@ -747,3 +747,158 @@ func TestEnsureWebUserFailsOnUseraddError(t *testing.T) {
 		t.Fatalf("expected a create user failure, got %v", err)
 	}
 }
+
+func insertGoTestWebsite(t *testing.T, db *sql.DB, id, domain string) {
+	t.Helper()
+	insertTestWebsite(t, db, id, domain, "go", "", "pending")
+	webUser := DomainToUser(domain)
+	if _, err := db.Exec(`UPDATE websites SET app_runtime = '', app_port = 0, app_start_command = './app',
+		app_build_command = 'go build -o app .', document_root = ?, nginx_profile = 'app-proxy', framework = 'go' WHERE id = ?`,
+		"/home/"+webUser+"/app/public", id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestProvision_GoSite_AllocatesPortWritesUnitWithoutStart(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertGoTestWebsite(t, db, "ws-go", "go.example.com")
+
+	var teeFiles []struct{ path, content string }
+	var sudoCommands [][]string
+	var vhostContent string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCommands = append(sudoCommands, append([]string{name}, args...))
+			if name == "cp" && len(args) == 2 && strings.Contains(args[1], "sites-available") {
+				if b, err := os.ReadFile(args[0]); err == nil {
+					vhostContent = string(b)
+				}
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			if len(args) >= 1 {
+				teeFiles = append(teeFiles, struct{ path, content string }{args[len(args)-1], input})
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-go")
+
+	status, errMsg := getWebsiteStatus(t, db, "ws-go")
+	if status != "active" {
+		t.Fatalf("status = %q (%s), want active", status, errMsg)
+	}
+	var port int
+	var runtime string
+	if err := db.QueryRow(`SELECT app_port, app_runtime FROM websites WHERE id = 'ws-go'`).Scan(&port, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	if port < 8200 || port > 8299 {
+		t.Fatalf("app_port = %d, want 8200-8299", port)
+	}
+	if runtime != "go" {
+		t.Fatalf("app_runtime = %q, want go", runtime)
+	}
+	var unit string
+	for _, f := range teeFiles {
+		if strings.Contains(f.path, "jenderal-app-ws-go.service") {
+			unit = f.content
+		}
+	}
+	if unit == "" {
+		t.Fatalf("app unit not written; tee files = %+v", teeFiles)
+	}
+	if !strings.Contains(unit, "Environment=PORT=") {
+		t.Errorf("unit missing PORT env:\n%s", unit)
+	}
+	if !strings.Contains(vhostContent, "proxy_pass http://127.0.0.1:") {
+		t.Errorf("vhost missing app proxy:\n%s", vhostContent)
+	}
+	for _, c := range sudoCommands {
+		if c[0] == "systemctl" && len(c) >= 2 && c[1] == "start" && strings.Contains(strings.Join(c, " "), "jenderal-app") {
+			t.Fatalf("app unit must not start during provisioning; calls = %#v", sudoCommands)
+		}
+	}
+}
+
+func TestProvision_LaravelSite_NoAppUnit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "ws-lrv", "lrv.example.com", "php", "8.3", "pending")
+	if _, err := db.Exec(`UPDATE websites SET framework = 'laravel', framework_version = '12', setup_mode = 'config-only',
+		document_root = '/home/web_lrv_example_com/app/public' WHERE id = 'ws-lrv'`); err != nil {
+		t.Fatal(err)
+	}
+	var teePaths []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			if len(args) >= 1 && strings.Contains(args[len(args)-1], "jenderal-app-") {
+				teePaths = append(teePaths, args[len(args)-1])
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-lrv")
+	for _, p := range teePaths {
+		if strings.Contains(p, "jenderal-app-") {
+			t.Errorf("app unit written for laravel site: %s", p)
+		}
+	}
+	var port int
+	if err := db.QueryRow(`SELECT app_port FROM websites WHERE id = 'ws-lrv'`).Scan(&port); err != nil {
+		t.Fatal(err)
+	}
+	if port != 0 {
+		t.Fatalf("app_port = %d, want 0 for laravel site", port)
+	}
+}
+
+func TestProvision_GoSite_InstallsToolchainWhenMissing(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	insertGoTestWebsite(t, db, "ws-go2", "go2.example.com")
+	installCalled := false
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "/usr/local/go/bin/go" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "bash" && len(args) >= 2 && args[0] == "-c" && strings.Contains(args[1], "1.27.1") {
+				installCalled = true
+				return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	NewProvisioner(db, mock, nil).provision(context.Background(), "ws-go2")
+	if !installCalled {
+		t.Fatal("toolchain install script was not executed")
+	}
+	status, errMsg := getWebsiteStatus(t, db, "ws-go2")
+	if status != "active" {
+		t.Fatalf("status = %q (%s), want active", status, errMsg)
+	}
+}

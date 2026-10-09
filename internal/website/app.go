@@ -2,6 +2,7 @@ package website
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/goruntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
@@ -43,10 +45,11 @@ func appUnitName(websiteID string) string {
 }
 
 // allocateAppPort picks the lowest free app port: not used by another site
-// and not currently listening on the server.
-func (s *Service) allocateAppPort(ctx context.Context) (int, error) {
+// and not currently listening on the server. Package-level so the
+// provisioner shares the exact same allocation logic as SaveAppService.
+func allocateAppPort(ctx context.Context, db *sql.DB, exec executor.CommandExecutor) (int, error) {
 	used := map[int]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT app_port FROM websites WHERE app_port > 0`)
+	rows, err := db.QueryContext(ctx, `SELECT app_port FROM websites WHERE app_port > 0`)
 	if err != nil {
 		return 0, fmt.Errorf("list used app ports: %w", err)
 	}
@@ -63,7 +66,7 @@ func (s *Service) allocateAppPort(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
-	result, err := s.exec.RunSudo(ctx, "ss", "-ltnH")
+	result, err := exec.RunSudo(ctx, "ss", "-ltnH")
 	if err == nil {
 		for _, line := range strings.Split(result.Stdout, "\n") {
 			// Format: ... peers — local address is field 4 ("*:8123").
@@ -84,6 +87,10 @@ func (s *Service) allocateAppPort(ctx context.Context) (int, error) {
 		}
 	}
 	return 0, fmt.Errorf("no free app ports in range %d-%d", appPortMin, appPortMax)
+}
+
+func (s *Service) allocateAppPort(ctx context.Context) (int, error) {
+	return allocateAppPort(ctx, s.db, s.exec)
 }
 
 // GetAppService returns the app service configuration and unit state.
@@ -303,19 +310,8 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	w.AppBuildCommand = buildCommand
 
 	// Go apps run from the repository root, not the document root.
-	unitContent, err := buildAppUnit(w, s.appWorkDir(ctx, w))
-	if err != nil {
+	if err := writeAppUnitFiles(ctx, s.exec, w); err != nil {
 		return AppServiceStatus{}, err
-	}
-	unitPath := "/etc/systemd/system/" + appUnitName(w.ID)
-	if _, err := s.exec.RunSudoWithInput(ctx, unitContent, "tee", unitPath); err != nil {
-		return AppServiceStatus{}, fmt.Errorf("write unit file: %w", err)
-	}
-	if _, err := s.exec.RunSudo(ctx, "systemctl", "daemon-reload"); err != nil {
-		return AppServiceStatus{}, fmt.Errorf("daemon-reload: %w", err)
-	}
-	if _, err := s.exec.RunSudo(ctx, "systemctl", "enable", appUnitName(w.ID)); err != nil {
-		return AppServiceStatus{}, fmt.Errorf("enable unit: %w", err)
 	}
 
 	// The port is part of the nginx vhost; regenerate when it is new or
@@ -411,14 +407,38 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 
 // appWorkDir returns the directory the app's unit and build run from: the
 // document root for most runtimes, the repository root for go/go-binary.
-func (s *Service) appWorkDir(ctx context.Context, w model.Website) string {
+func appWorkDirFor(ctx context.Context, exec executor.CommandExecutor, w model.Website) string {
 	if w.AppRuntime != "go" && w.AppRuntime != "go-binary" {
 		return w.DocumentRoot
 	}
-	if root, _ := siteops.AppProjectRoot(ctx, s.exec, "/home/"+w.WebUser, w.DocumentRoot); root != "" {
+	if root, _ := siteops.AppProjectRoot(ctx, exec, "/home/"+w.WebUser, w.DocumentRoot); root != "" {
 		return root
 	}
 	return w.DocumentRoot
+}
+
+func (s *Service) appWorkDir(ctx context.Context, w model.Website) string {
+	return appWorkDirFor(ctx, s.exec, w)
+}
+
+// writeAppUnitFiles renders the app unit and installs it enabled but not
+// started — starting is the deploy hook's job once a binary exists.
+func writeAppUnitFiles(ctx context.Context, exec executor.CommandExecutor, w model.Website) error {
+	unitContent, err := buildAppUnit(w, appWorkDirFor(ctx, exec, w))
+	if err != nil {
+		return err
+	}
+	unitPath := "/etc/systemd/system/" + appUnitName(w.ID)
+	if _, err := exec.RunSudoWithInput(ctx, unitContent, "tee", unitPath); err != nil {
+		return fmt.Errorf("write unit file: %w", err)
+	}
+	if _, err := exec.RunSudo(ctx, "systemctl", "daemon-reload"); err != nil {
+		return fmt.Errorf("daemon-reload: %w", err)
+	}
+	if _, err := exec.RunSudo(ctx, "systemctl", "enable", appUnitName(w.ID)); err != nil {
+		return fmt.Errorf("enable unit: %w", err)
+	}
+	return nil
 }
 
 // ensureGoToolchain probes the server-wide Go toolchain and installs the
