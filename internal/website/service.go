@@ -72,18 +72,18 @@ func (f *FlexInt) UnmarshalJSON(data []byte) error {
 
 // CreateRequest holds the data for creating a new website.
 type CreateRequest struct {
-	Domain           string `json:"domain"`
-	AppType          string `json:"app_type,omitempty"`
-	PHPVersion       string `json:"php_version"`
-	NodeVersion      string `json:"node_version"`
-	Template         string `json:"template"`
-	FrameworkVersion string `json:"framework_version"`
-	FrontendStack    string `json:"frontend_stack"`
-	InertiaAdapter   string `json:"inertia_adapter"`
-	ProjectVariant   string `json:"project_variant"`
-	SetupMode        string `json:"setup_mode"`
-	ProxyScheme      string `json:"proxy_scheme,omitempty"`
-	ProxyHost        string `json:"proxy_host,omitempty"`
+	Domain           string  `json:"domain"`
+	AppType          string  `json:"app_type,omitempty"`
+	PHPVersion       string  `json:"php_version"`
+	NodeVersion      string  `json:"node_version"`
+	Template         string  `json:"template"`
+	FrameworkVersion string  `json:"framework_version"`
+	FrontendStack    string  `json:"frontend_stack"`
+	InertiaAdapter   string  `json:"inertia_adapter"`
+	ProjectVariant   string  `json:"project_variant"`
+	SetupMode        string  `json:"setup_mode"`
+	ProxyScheme      string  `json:"proxy_scheme,omitempty"`
+	ProxyHost        string  `json:"proxy_host,omitempty"`
 	ProxyPort        FlexInt `json:"proxy_port,omitempty"`
 	// CreatedBy is stamped by the handler from the authenticated user; it is
 	// never accepted from the request body.
@@ -320,6 +320,9 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		ID:               websiteID,
 		Domain:           req.Domain,
 		AppType:          profile.AppType,
+		AppRuntime:       profile.AppRuntime,
+		AppBuildCommand:  profile.AppBuildCommand,
+		AppStartCommand:  profile.AppStartCommand,
 		PHPVersion:       req.PHPVersion,
 		NodeVersion:      profile.NodeVersion,
 		DocumentRoot:     docRoot,
@@ -349,11 +352,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 	defer tx.Rollback()
 
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO websites (id, domain, app_type, php_version, node_version, document_root, web_user, status, ssl_enabled,
+		`INSERT INTO websites (id, domain, app_type, app_runtime, app_start_command, app_build_command, php_version, node_version, document_root, web_user, status, ssl_enabled,
 		 framework, framework_version, frontend_stack, inertia_adapter, project_variant, setup_mode, provision_stage, provision_log,
 		 nginx_profile, git_repo, git_branch, deploy_webhook_secret, octane_port, octane_workers, proxy_scheme, proxy_host, proxy_port, created_by, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		w.ID, w.Domain, w.AppType, nullableString(w.PHPVersion),
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		w.ID, w.Domain, w.AppType, w.AppRuntime, w.AppStartCommand, w.AppBuildCommand, nullableString(w.PHPVersion),
 		w.NodeVersion,
 		w.DocumentRoot, w.WebUser, w.Status, boolToInt(w.SSLEnabled),
 		w.Framework, w.FrameworkVersion, w.FrontendStack, w.InertiaAdapter, w.ProjectVariant, w.SetupMode,

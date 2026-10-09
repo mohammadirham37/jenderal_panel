@@ -1197,3 +1197,30 @@ func TestDeleteRemovesLeftoverGroup(t *testing.T) {
 		t.Error("website row survived Delete")
 	}
 }
+
+func TestCreateGoSitePersistsDefaults(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		return &executor.Result{ExitCode: 0}, nil
+	}}
+	svc := NewService(db, mock, nil)
+	created, err := svc.Create(context.Background(), CreateRequest{
+		Domain: "api.example.com", Template: "go-build", SetupMode: "config-only",
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if created.DocumentRoot != "/home/web_api_example_com/app/public" {
+		t.Fatalf("document root = %q", created.DocumentRoot)
+	}
+	var runtime, start, build, docRoot string
+	err = db.QueryRow(`SELECT app_runtime, app_start_command, app_build_command, document_root FROM websites WHERE id = ?`, created.ID).
+		Scan(&runtime, &start, &build, &docRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime != "go" || start != "./app" || build != "go build -o app ." || docRoot != "/home/web_api_example_com/app/public" {
+		t.Fatalf("persisted row = runtime %q start %q build %q docroot %q", runtime, start, build, docRoot)
+	}
+}

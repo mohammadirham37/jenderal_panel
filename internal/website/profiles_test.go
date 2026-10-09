@@ -109,3 +109,30 @@ func TestResolveProfileRejectsUnknownAllowlistValues(t *testing.T) {
 		t.Fatal("ResolveProfile() accepted unknown Laravel version")
 	}
 }
+
+func TestResolveProfileGoDefaults(t *testing.T) {
+	p, err := ResolveProfile(CreateRequest{Template: "go-build", SetupMode: SetupConfigOnly})
+	if err != nil {
+		t.Fatalf("ResolveProfile(go-build) error = %v", err)
+	}
+	if p.AppType != "go" || p.AppRuntime != "go" || p.NginxProfile != "app-proxy" {
+		t.Fatalf("go-build profile = %#v", p)
+	}
+	if p.AppBuildCommand != "go build -o app ." || p.AppStartCommand != "./app" {
+		t.Fatalf("go-build commands = build %q start %q", p.AppBuildCommand, p.AppStartCommand)
+	}
+	if p.RelativeDocumentRoot != "app/public" {
+		t.Fatalf("go-build docroot = %q, want app/public", p.RelativeDocumentRoot)
+	}
+
+	pb, err := ResolveProfile(CreateRequest{Template: "go-binary", SetupMode: SetupConfigOnly})
+	if err != nil {
+		t.Fatalf("ResolveProfile(go-binary) error = %v", err)
+	}
+	if pb.AppRuntime != "go-binary" || pb.AppBuildCommand != "" || pb.AppStartCommand != "./app" {
+		t.Fatalf("go-binary profile = %#v", pb)
+	}
+	if pb.RelativeDocumentRoot != "app/public" {
+		t.Fatalf("go-binary docroot = %q, want app/public", pb.RelativeDocumentRoot)
+	}
+}

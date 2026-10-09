@@ -17,6 +17,9 @@ const (
 type Profile struct {
 	Template             string `json:"template"`
 	AppType              string `json:"app_type"`
+	AppRuntime           string `json:"app_runtime"`
+	AppBuildCommand      string `json:"app_build_command"`
+	AppStartCommand      string `json:"app_start_command"`
 	NginxProfile         string `json:"nginx_profile"`
 	Framework            string `json:"framework"`
 	FrameworkVersion     string `json:"framework_version"`
@@ -133,10 +136,18 @@ func ResolveProfile(req CreateRequest) (Profile, error) {
 		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
 			return Profile{}, model.NewValidationError("go apps do not use PHP")
 		}
+		runtime := "go"
+		buildCommand := "go build -o app ."
+		if template == "go-binary" {
+			runtime = "go-binary"
+			buildCommand = ""
+		}
 		return Profile{
-			Template: template, AppType: "go", NginxProfile: "app-proxy",
+			Template: template, AppType: "go", AppRuntime: runtime, NginxProfile: "app-proxy",
 			Framework: "go", ProjectVariant: "empty", SetupMode: SetupConfigOnly,
-			RelativeDocumentRoot: "public",
+			RelativeDocumentRoot: "app/public",
+			AppBuildCommand:      buildCommand,
+			AppStartCommand:      "./app",
 		}, nil
 	case "wordpress":
 		if req.PHPVersion != "" && !supportedPHP(req.PHPVersion) {
