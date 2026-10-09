@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -123,7 +124,11 @@ func (s *Service) Install(ctx context.Context) (string, error) {
 // InstallSync runs the same pinned install script inline instead of through
 // the task runner, so callers that own their own progress log (website
 // provisioning, the deploy hook) can wait for completion and stream output.
+// A 15-minute deadline is derived because provisioning contexts carry none —
+// without one the executor's short default would kill the ~70MB download.
 func (s *Service) InstallSync(ctx context.Context, write func(string)) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
 	if s.audit != nil {
 		_ = s.audit.Log(ctx, audit.LogEntry{Action: "go_runtime_install", Module: "services", Detail: "installing Go " + Version})
 	}

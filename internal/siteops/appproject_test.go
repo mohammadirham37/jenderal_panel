@@ -9,8 +9,13 @@ import (
 )
 
 func TestAppProjectRoot_LegacyPublicGit(t *testing.T) {
+	// Site homes are 0710 and the panel user cannot stat inside them, so
+	// the probe must run privileged (RunSudo).
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return nil, errors.New("unprivileged Run must not be used for the probe")
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			if name == "test" && len(args) == 2 && args[0] == "-d" && args[1] == "/home/u/public/.git" {
 				return &executor.Result{ExitCode: 0}, nil
 			}
@@ -29,6 +34,9 @@ func TestAppProjectRoot_LegacyPublicGit(t *testing.T) {
 func TestAppProjectRoot_NewLayout(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return nil, errors.New("unprivileged Run must not be used for the probe")
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return &executor.Result{ExitCode: 1}, nil
 		},
 	}
@@ -44,6 +52,9 @@ func TestAppProjectRoot_NewLayout(t *testing.T) {
 func TestAppProjectRoot_ExecErrorFallsBackToDocroot(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return nil, errors.New("unprivileged Run must not be used for the probe")
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return nil, errors.New("executor unavailable")
 		},
 	}

@@ -12,10 +12,12 @@ import (
 // Sites created before that layout cloned into the document root itself
 // (<home>/public); a .git directory there marks the legacy layout so every
 // consumer (deployment clone target, systemd unit working directory, build
-// command) keeps agreeing on one location. When the probe cannot run at all,
-// the document root is the conservative answer.
+// command) keeps agreeing on one location. The probe runs privileged
+// because site homes are 0710 and the panel user cannot stat inside them;
+// when the probe cannot run at all, the document root is the conservative
+// answer.
 func AppProjectRoot(ctx context.Context, exec executor.CommandExecutor, homeDir, docroot string) (string, bool) {
-	res, err := exec.Run(ctx, "test", "-d", homeDir+"/public/.git")
+	res, err := exec.RunSudo(ctx, "test", "-d", homeDir+"/public/.git")
 	if err != nil || res == nil {
 		return docroot, false
 	}

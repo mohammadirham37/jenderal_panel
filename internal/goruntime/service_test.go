@@ -78,3 +78,22 @@ func TestInstallSyncNonZeroExitFails(t *testing.T) {
 		t.Errorf("err = %v, want stderr included", err)
 	}
 }
+
+func TestInstallSyncDerivesDeadlineForSlowDownloads(t *testing.T) {
+	var gotDeadline bool
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			_, gotDeadline = ctx.Deadline()
+			return &executor.Result{ExitCode: 0, Stdout: "ok"}, nil
+		},
+	}
+	svc := NewService(mock, nil)
+	// Provisioning runs under a deadline-less context; the executor's 30s
+	// default would kill the ~70MB toolchain download.
+	if err := svc.InstallSync(context.Background(), func(string) {}); err != nil {
+		t.Fatalf("InstallSync error = %v", err)
+	}
+	if !gotDeadline {
+		t.Fatal("InstallSync did not derive a context deadline; slow downloads would hit the executor default timeout")
+	}
+}

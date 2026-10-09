@@ -646,6 +646,10 @@ func TestDeploy_GoSite_ClonesIntoAppDir(t *testing.T) {
 			return &executor.Result{ExitCode: 1}, nil
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				// Legacy-layout probe misses so the clone targets <home>/app.
+				return &executor.Result{ExitCode: 1}, nil
+			}
 			if name == "su" {
 				suCommands = append(suCommands, args...)
 			}

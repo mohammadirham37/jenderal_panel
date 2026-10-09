@@ -776,6 +776,10 @@ func TestProvision_GoSite_AllocatesPortWritesUnitWithoutStart(t *testing.T) {
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			sudoCommands = append(sudoCommands, append([]string{name}, args...))
+			if name == "test" {
+				// Legacy-layout probe misses: provisioning uses <home>/app.
+				return &executor.Result{ExitCode: 1}, nil
+			}
 			if name == "cp" && len(args) == 2 && strings.Contains(args[1], "sites-available") {
 				if b, err := os.ReadFile(args[0]); err == nil {
 					vhostContent = string(b)
@@ -883,6 +887,9 @@ func TestProvision_GoSite_InstallsToolchainWhenMissing(t *testing.T) {
 			return &executor.Result{ExitCode: 0}, nil
 		},
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
 			if name == "bash" && len(args) >= 2 && args[0] == "-c" && strings.Contains(args[1], "1.27.1") {
 				installCalled = true
 				return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil

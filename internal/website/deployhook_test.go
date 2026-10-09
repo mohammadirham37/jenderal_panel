@@ -40,6 +40,11 @@ func deployHookExecutor(t *testing.T, buildExit int, buildStderr string, isActiv
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			sudoCalls = append(sudoCalls, append([]string{name}, args...))
 			if name == "test" {
+				// The legacy-layout probe must miss so the new <home>/app
+				// layout is used; the go.mod check must hit.
+				if strings.Contains(strings.Join(args, " "), "/public/.git") {
+					return &executor.Result{ExitCode: 1}, nil
+				}
 				return &executor.Result{ExitCode: 0}, nil
 			}
 			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
@@ -167,4 +172,72 @@ func TestRunDeployHook_GoBinary_SkipsBuildRestarts(t *testing.T) {
 	if !hasSystemctlAction(sudoCalls, "start") {
 		t.Fatalf("start not called; calls = %#v", *sudoCalls)
 	}
+}
+
+func TestRunDeployHook_HealsEmptyAppRuntime(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	mock, sudoCalls := deployHookExecutor(t, 0, "", "active")
+	svc := NewService(db, mock, nil)
+	// Legacy row: app_type go but app_runtime never backfilled.
+	insertAppWebsite(t, db, "legacy.example.com", "go", "", port)
+	if _, err := db.Exec(`UPDATE websites SET app_runtime = '' WHERE id = 'w-legacy.example.com'`); err != nil {
+		t.Fatal(err)
+	}
+	var logged []string
+	if err := svc.RunDeployHook(context.Background(), "w-legacy.example.com", func(l string) { logged = append(logged, l) }); err != nil {
+		t.Fatalf("RunDeployHook error = %v (legacy go site must build via healed runtime)", err)
+	}
+	if !hasSystemctlAction(sudoCalls, "restart") {
+		t.Fatalf("restart not called; calls = %#v", *sudoCalls)
+	}
+}
+
+func TestDeployGoUpload_ExtractsToProjectRootAndRunsHook(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	mock, sudoCalls := deployHookExecutor(t, 0, "", "inactive")
+	svc := NewService(db, mock, nil)
+	insertAppWebsite(t, db, "go.example.com", "go", "go-binary", port)
+
+	var logged []string
+	if err := svc.deployGoUpload(context.Background(), mustGetWebsite(t, svc, "w-go.example.com"), "/tmp/upload.zip", "zip", func(l string) { logged = append(logged, l) }); err != nil {
+		t.Fatalf("deployGoUpload error = %v", err)
+	}
+	var callLines []string
+	for _, c := range *sudoCalls {
+		callLines = append(callLines, strings.Join(c, " "))
+	}
+	joined := strings.Join(callLines, "\n")
+	if !strings.Contains(joined, "/home/web_go_example_com/app") {
+		t.Errorf("extraction did not target the project root: %s", joined)
+	}
+	if strings.Contains(joined, "-d /home/web_go_example_com/app/public") {
+		t.Errorf("extraction targeted the document root: %s", joined)
+	}
+	if !hasSystemctlAction(sudoCalls, "start") {
+		t.Errorf("deploy hook did not run after extraction: %s", joined)
+	}
+	_ = logged
+}
+
+func mustGetWebsite(t *testing.T, svc *Service, id string) model.Website {
+	t.Helper()
+	w, err := svc.Get(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return w
 }

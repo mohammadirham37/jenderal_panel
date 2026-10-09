@@ -27,7 +27,9 @@ func (s *Service) RunDeployHook(ctx context.Context, websiteID string, write fun
 	}
 	runtime := w.AppRuntime
 	if runtime == "" {
+		// Legacy rows predate app_runtime; go-build is the safe default.
 		runtime = "go"
+		w.AppRuntime = runtime
 	}
 	root, _ := siteops.AppProjectRoot(ctx, s.exec, "/home/"+w.WebUser, w.DocumentRoot)
 	if root == "" {
