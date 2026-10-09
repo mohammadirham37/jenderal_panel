@@ -108,8 +108,9 @@ Deployment dan `internal/website` sama-sama sudah mengimpor `siteops`.
 ## 3. Post-deploy hook (inti fitur)
 
 Titik sisip: akhir `deploy()` di `internal/deployment/service.go`, setelah
-`RestoreServingAccess` + `SyncOwnedWebsites` sukses, sebelum deployment
-ditandai success. Struktur:
+`RestoreServingAccess` sukses dan **sebelum** deployment ditandai success
+(sharing `SyncOwnedWebsites` tetap berjalan setelah penandaan success,
+sesuai urutan kode hari ini — tidak diubah). Struktur:
 
 ```
 bila AppType != "go" → selesai seperti hari ini (tanpa perubahan apa pun)
@@ -122,8 +123,11 @@ bila AppType == "go":
      deployment)
   4. build sebagai web_user:
      sudo -u <u> bash -c 'cd <root> && PATH=/usr/local/go/bin:$PATH go build -o app .'
-     (prepend PATH adalah perbaikan bug laten: script build hari ini
-     tidak memasukkan /usr/local/go/bin ke PATH)
+     (dua perbaikan bug laten: script build hari ini tidak memasukkan
+     /usr/local/go/bin ke PATH, dan pemanggil `RunSudo("-u", args...)`
+     dengan `args=["/bin/bash","-c",script]` menghasilkan argv
+     `sudo -u /bin/bash -c …` — sudo menganggap "/bin/bash" sebagai nama
+     user; argv build harus penuh `-u <webuser> -- /bin/bash -c …`)
      — `go build -o` build di temp lalu rename → atomik; proses lama
        tetap memakai inode lama selama build
   5. build gagal → deployment failed dengan output compiler di log;
