@@ -29,8 +29,12 @@ const InitialSetupCommand = "initial setup"
 // allowedCommands maps human-readable command labels to the actual argument
 // slices that will be executed. Only commands present in this map may be run.
 var allowedCommands = map[string][]string{
-	"cp .env.example .env":                               {"cp", ".env.example", ".env"},
-	"git pull":                                           {"git", "pull"},
+	"cp .env.example .env": {"cp", ".env.example", ".env"},
+	// "git pull" is a hard sync to the pushed branch: npm/composer dirty
+	// tracked files like package-lock.json, which makes a plain pull abort
+	// with "local changes would be overwritten". Untracked files (.env,
+	// uploads) are never touched by reset --hard.
+	"git pull":                                           {"git", "fetch", "&&", "git", "reset", "--hard", "@{upstream}"},
 	"composer install":                                   {"composer", "install", "--no-interaction"},
 	"composer update":                                    {"composer", "update", "--no-interaction"},
 	"composer dump-autoload":                             {"composer", "dump-autoload"},

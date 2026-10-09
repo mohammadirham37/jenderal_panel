@@ -44,8 +44,8 @@ func TestGitPullIsAllowedAndTargetsGitRoot(t *testing.T) {
 	if !ok {
 		t.Fatal("git pull must be an allowed command")
 	}
-	if strings.Join(args, " ") != "git pull" {
-		t.Fatalf("git pull args = %v, want [git pull]", args)
+	if strings.Join(args, " ") != "git fetch && git reset --hard @{upstream}" {
+		t.Fatalf("git pull args = %v, want a hard sync to the upstream branch", args)
 	}
 
 	if marker := projectMarkerFor("git pull"); marker != ".git" {
