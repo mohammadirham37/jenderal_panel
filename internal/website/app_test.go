@@ -2,8 +2,11 @@ package website
 
 import (
 	"context"
+	"errors"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -354,4 +357,37 @@ func TestEnsureGoToolchain_InstallsWhenMissing(t *testing.T) {
 		t.Fatalf("second ensureGoToolchain error = %v", err)
 	}
 	_ = before
+}
+
+func TestWaitAppHealthy_ListeningPortSucceeds(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	svc := NewService(nil, &executor.MockExecutor{}, nil)
+	if err := svc.waitAppHealthy(context.Background(), port); err != nil {
+		t.Fatalf("waitAppHealthy error = %v", err)
+	}
+}
+
+func TestWaitAppHealthy_ClosedPortTimesOut(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	svc := NewService(nil, &executor.MockExecutor{}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	err = svc.waitAppHealthy(ctx, port)
+	if err == nil {
+		t.Fatal("waitAppHealthy error = nil, want failure")
+	}
+	var domainErr *model.DomainError
+	if !errors.As(err, &domainErr) || domainErr.Code != "APP_HEALTH_CHECK_FAILED" {
+		t.Fatalf("err = %v, want APP_HEALTH_CHECK_FAILED domain error", err)
+	}
 }

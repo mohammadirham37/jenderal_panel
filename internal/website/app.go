@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"fmt"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -464,6 +465,35 @@ func (s *Service) runGoBuild(ctx context.Context, w model.Website, root string, 
 		return fmt.Errorf("build failed: %s", detail)
 	}
 	return nil
+}
+
+// waitAppHealthy polls the app's loopback port until it accepts TCP
+// connections (30 × 1s), so a deployment is only marked successful when
+// the restarted binary actually came up.
+func (s *Service) waitAppHealthy(ctx context.Context, port int) error {
+	if port <= 0 {
+		return model.NewDomainError("APP_HEALTH_CHECK_FAILED", "no app port allocated", nil)
+	}
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		conn, err := net.DialTimeout("tcp", addr, time.Second)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return model.NewDomainError("APP_HEALTH_CHECK_FAILED",
+				fmt.Sprintf("the app is not listening on %s; deployment aborted while waiting", addr), nil)
+		case <-time.After(time.Second):
+		}
+	}
+	return model.NewDomainError("APP_HEALTH_CHECK_FAILED",
+		fmt.Sprintf("the app is not listening on %s after 30s; check the app unit logs", addr), nil)
 }
 
 // sortedAppPorts is a tiny helper for deterministic tests.
