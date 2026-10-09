@@ -11,6 +11,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/goruntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
+	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -100,8 +101,17 @@ func (s *Service) GetAppService(ctx context.Context, websiteID string) (AppServi
 		active = strings.TrimSpace(result.Stdout) == "active"
 	}
 
+	runtime := w.AppRuntime
+	if runtime == "" {
+		if w.AppType == "go" {
+			runtime = "go"
+		} else {
+			runtime = "node"
+		}
+	}
+
 	return AppServiceStatus{
-		Runtime:      "node",
+		Runtime:      runtime,
 		Port:         w.AppPort,
 		StartCommand: w.AppStartCommand,
 		BuildCommand: w.AppBuildCommand,
@@ -112,17 +122,18 @@ func (s *Service) GetAppService(ctx context.Context, websiteID string) (AppServi
 }
 
 // buildAppUnit renders the systemd unit for an app service, dispatching on
-// the site's runtime.
-func buildAppUnit(w model.Website, docroot string) (string, error) {
+// the site's runtime. dir is the unit's working directory: the document root
+// for node/python, the repository root for go/go-binary.
+func buildAppUnit(w model.Website, dir string) (string, error) {
 	switch w.AppRuntime {
 	case "", "node":
-		return buildNodeAppUnit(w, docroot)
+		return buildNodeAppUnit(w, dir)
 	case "go", "go-binary":
-		return buildBinaryAppUnit(w, docroot)
+		return buildBinaryAppUnit(w, dir)
 	case "python":
-		return buildPythonAppUnit(w, docroot)
+		return buildPythonAppUnit(w, dir)
 	case "deno", "bun":
-		return buildBinaryAppUnit(w, docroot)
+		return buildBinaryAppUnit(w, dir)
 	default:
 		return "", model.NewValidationError("unsupported app runtime: " + w.AppRuntime)
 	}
@@ -196,19 +207,27 @@ WantedBy=multi-user.target
 }
 
 // buildBinaryAppUnit runs a self-contained executable (Go binary, deno
-// entrypoint, etc.) from the document root. Relative paths resolve against
-// the working directory.
-func buildBinaryAppUnit(w model.Website, docroot string) (string, error) {
+// entrypoint, etc.). Relative paths resolve against the working directory:
+// for go/go-binary that is the repository root (not the document root), so
+// the built binary and .env live outside the nginx-served tree.
+func buildBinaryAppUnit(w model.Website, projectRoot string) (string, error) {
 	start := strings.TrimSpace(w.AppStartCommand)
 	if start == "" {
 		return "", model.NewValidationError("start command is required")
 	}
 	exec := start
 	if strings.HasPrefix(exec, "./") {
-		exec = docroot + "/" + strings.TrimPrefix(exec, "./")
+		exec = projectRoot + "/" + strings.TrimPrefix(exec, "./")
 	} else if !strings.ContainsAny(exec, "/") {
 		// A bare command runs from the working directory.
-		exec = docroot + "/" + exec
+		exec = projectRoot + "/" + exec
+	}
+	envLines := ""
+	if (w.AppRuntime == "go" || w.AppRuntime == "go-binary") && w.AppPort > 0 {
+		// The panel allocates the loopback port; the app must read it from
+		// the environment instead of hardcoding it.
+		envLines = "Environment=PORT=" + strconv.Itoa(w.AppPort) + "\n" +
+			"EnvironmentFile=-" + projectRoot + "/.env\n"
 	}
 
 	return `[Unit]
@@ -217,8 +236,8 @@ After=network.target
 
 [Service]
 User=` + w.WebUser + `
-WorkingDirectory=` + docroot + `
-ExecStart=` + exec + `
+WorkingDirectory=` + projectRoot + `
+` + envLines + `ExecStart=` + exec + `
 Restart=always
 RestartSec=5
 
@@ -242,7 +261,12 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	startCommand = strings.TrimSpace(startCommand)
 	buildCommand = strings.TrimSpace(buildCommand)
 	if w.AppRuntime == "" {
-		w.AppRuntime = "node"
+		// Legacy rows predate app_runtime; go sites were go-build all along.
+		if w.AppType == "go" {
+			w.AppRuntime = "go"
+		} else {
+			w.AppRuntime = "node"
+		}
 	}
 	if w.AppRuntime == "node" && w.NodeVersion != "" {
 		if err := noderuntime.ValidateVersion(w.NodeVersion); err != nil {
@@ -277,7 +301,14 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	w.AppStartCommand = startCommand
 	w.AppBuildCommand = buildCommand
 
-	unitContent, err := buildAppUnit(w, w.DocumentRoot)
+	// Go apps run from the repository root, not the document root.
+	unitDir := w.DocumentRoot
+	if w.AppRuntime == "go" || w.AppRuntime == "go-binary" {
+		if root, _ := siteops.AppProjectRoot(ctx, s.exec, "/home/"+w.WebUser, w.DocumentRoot); root != "" {
+			unitDir = root
+		}
+	}
+	unitContent, err := buildAppUnit(w, unitDir)
 	if err != nil {
 		return AppServiceStatus{}, err
 	}

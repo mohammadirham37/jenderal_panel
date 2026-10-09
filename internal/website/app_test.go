@@ -1,9 +1,11 @@
 package website
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
@@ -131,5 +133,92 @@ func TestBuildAppBuildArgvPython(t *testing.T) {
 	}
 	if !strings.Contains(args[2], "python manage.py collectstatic --noinput") {
 		t.Errorf("user build command missing: %s", args[2])
+	}
+}
+
+func TestBuildGoAppUnit_PortEnvEnvFileAndWorkingDir(t *testing.T) {
+	unit, err := buildBinaryAppUnit(model.Website{
+		AppRuntime: "go", AppPort: 8210, AppStartCommand: "./app", WebUser: "u", Domain: "go.example.com",
+	}, "/home/u/app")
+	if err != nil {
+		t.Fatalf("buildBinaryAppUnit error = %v", err)
+	}
+	for _, want := range []string{
+		"WorkingDirectory=/home/u/app\n",
+		"Environment=PORT=8210\n",
+		"EnvironmentFile=-/home/u/app/.env\n",
+		"ExecStart=/home/u/app/app\n",
+	} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit missing %q\nunit:\n%s", want, unit)
+		}
+	}
+}
+
+func TestBuildGoAppUnit_NoPortOmitsEnvironment(t *testing.T) {
+	unit, err := buildBinaryAppUnit(model.Website{
+		AppRuntime: "go", AppPort: 0, AppStartCommand: "./app", WebUser: "u", Domain: "go.example.com",
+	}, "/home/u/app")
+	if err != nil {
+		t.Fatalf("buildBinaryAppUnit error = %v", err)
+	}
+	if strings.Contains(unit, "Environment=PORT=") || strings.Contains(unit, "EnvironmentFile=") {
+		t.Errorf("unit should omit env lines without a port\nunit:\n%s", unit)
+	}
+}
+
+func TestBuildGoBinaryAppUnit_PortAndEnvFile(t *testing.T) {
+	unit, err := buildBinaryAppUnit(model.Website{
+		AppRuntime: "go-binary", AppPort: 8211, AppStartCommand: "./app", WebUser: "u", Domain: "go.example.com",
+	}, "/home/u/app")
+	if err != nil {
+		t.Fatalf("buildBinaryAppUnit error = %v", err)
+	}
+	for _, want := range []string{"Environment=PORT=8211\n", "EnvironmentFile=-/home/u/app/.env\n", "WorkingDirectory=/home/u/app\n"} {
+		if !strings.Contains(unit, want) {
+			t.Errorf("unit missing %q\nunit:\n%s", want, unit)
+		}
+	}
+}
+
+func TestBuildDenoAppUnit_Unchanged(t *testing.T) {
+	unit, err := buildBinaryAppUnit(model.Website{
+		AppRuntime: "deno", AppPort: 8212, AppStartCommand: "./server", WebUser: "u", Domain: "deno.example.com",
+	}, "/home/u/public")
+	if err != nil {
+		t.Fatalf("buildBinaryAppUnit error = %v", err)
+	}
+	if strings.Contains(unit, "Environment=PORT=") || strings.Contains(unit, "EnvironmentFile=") {
+		t.Errorf("deno unit must not gain go env lines\nunit:\n%s", unit)
+	}
+	if !strings.Contains(unit, "WorkingDirectory=/home/u/public\n") {
+		t.Errorf("deno unit working dir changed\nunit:\n%s", unit)
+	}
+}
+
+func TestGetAppService_GoSiteDefaultsRuntime(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 1}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 1, Stdout: "inactive"}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+	res, err := db.Exec(`INSERT INTO websites (id, domain, app_type, document_root, web_user, status, created_at, updated_at)
+		VALUES ('w1', 'go.example.com', 'go', '/home/web_go_example_com/app/public', 'web_go_example_com', 'active', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res
+	status, err := svc.GetAppService(context.Background(), "w1")
+	if err != nil {
+		t.Fatalf("GetAppService error = %v", err)
+	}
+	if status.Runtime != "go" {
+		t.Fatalf("runtime = %q, want go (healed from empty)", status.Runtime)
 	}
 }
