@@ -120,6 +120,30 @@ func (s *Service) Install(ctx context.Context) (string, error) {
 	return s.tasks.Run("Install Go "+Version, "bash", "-c", installScript()), nil
 }
 
+// InstallSync runs the same pinned install script inline instead of through
+// the task runner, so callers that own their own progress log (website
+// provisioning, the deploy hook) can wait for completion and stream output.
+func (s *Service) InstallSync(ctx context.Context, write func(string)) error {
+	if s.audit != nil {
+		_ = s.audit.Log(ctx, audit.LogEntry{Action: "go_runtime_install", Module: "services", Detail: "installing Go " + Version})
+	}
+	result, err := s.exec.RunSudo(ctx, "bash", "-c", installScript())
+	if err != nil {
+		return fmt.Errorf("go toolchain install: %w", err)
+	}
+	if result.Stdout != "" && write != nil {
+		write(strings.TrimSpace(result.Stdout))
+	}
+	if result.ExitCode != 0 {
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = fmt.Sprintf("exit status %d", result.ExitCode)
+		}
+		return fmt.Errorf("go toolchain install failed: %s", detail)
+	}
+	return nil
+}
+
 // EnsureInstalled reports a precise error when Go builds are requested
 // before the server-wide toolchain was installed.
 func (s *Service) EnsureInstalled(ctx context.Context) error {
