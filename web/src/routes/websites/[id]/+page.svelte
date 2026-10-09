@@ -1923,8 +1923,13 @@ import { toast } from '$lib/stores/toast';
 			{:else if activeTab === 'Deployment'}
 				<div class="space-y-6">
 					<!-- Git Repository -->
-					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<h3 class="text-lg font-semibold text-white mb-4">{translate($language, 'wd.deploy.repo_title')}</h3>
+						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+							<div class="mb-4 flex flex-wrap items-center gap-2">
+								<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.deploy.repo_title')}</h3>
+								{#if website?.app_type === 'go'}
+									<span class="rounded-full bg-green-900/50 px-2.5 py-0.5 text-[11px] font-medium text-green-400">{translate($language, 'wd.deploy.autoBuild')}</span>
+								{/if}
+							</div>
 						<div class="space-y-4">
 							<!-- Provider -->
 							<div>

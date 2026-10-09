@@ -426,6 +426,9 @@ import type { ServerInfo } from '$lib/types';
 								<option value="bun">{translate($language, 'wl.optBun')}</option>
 							</select>
 						</div>
+						{#if selection.template === 'go-build' || selection.template === 'go-binary'}
+							<p class="sm:col-span-2 lg:col-span-3 text-xs text-gray-500">{translate($language, 'wl.goTemplateHint')}</p>
+						{/if}
 						{#if selection.template !== 'static' && selection.template !== 'reverse-proxy'}
 							<div>
 								<label for="create-php-version" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelPhpVersion')}</label>

@@ -165,6 +165,7 @@ const en = {
 
 	// Deployment — Git repository
 	'wd.deploy.repo_title': 'Git Repository',
+	'wd.deploy.autoBuild': 'Auto build on deploy',
 	'wd.deploy.provider': 'Provider',
 	'wd.deploy.repo_url': 'Repository URL',
 	'wd.deploy.visibility': 'Visibility',
@@ -596,6 +597,7 @@ const id: Record<keyof typeof en, string> = {
 
 	// Deployment — Git repository
 	'wd.deploy.repo_title': 'Repositori Git',
+	'wd.deploy.autoBuild': 'Build otomatis saat deploy',
 	'wd.deploy.provider': 'Penyedia',
 	'wd.deploy.repo_url': 'URL Repositori',
 	'wd.deploy.visibility': 'Visibilitas',
