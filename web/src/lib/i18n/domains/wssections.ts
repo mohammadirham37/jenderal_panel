@@ -119,6 +119,13 @@ const en = {
 	'wsapp.hint.python':
 		'Start command runs with the site virtualenv on PATH (created on first build; deps from requirements.txt).',
 	'wsapp.hint.node': 'Runs via nvm-exec with Node {version} from the site directory.',
+	'wsapp.hint.go': 'The binary runs from the repository root; see the PORT snippet below.',
+	'wsapp.runtime.go': 'Go',
+	'wsapp.runtime.python': 'Python',
+	'wsapp.portCardTitle': 'App port & environment',
+	'wsapp.portNote': 'Your app must listen on the PORT environment variable — the panel allocates it for you.',
+	'wsapp.envFileNote':
+		'Optional .env in the repository root, one KEY=val per line (systemd format, no quotes or export).',
 	'wsapp.saving': 'Saving…',
 	'wsapp.saveConfig': 'Save configuration',
 	'wsapp.error.load': 'Failed to load app service',
@@ -301,6 +308,13 @@ const id: Record<keyof typeof en, string> = {
 	'wsapp.hint.python':
 		'Perintah start dijalankan dengan virtualenv situs di PATH (dibuat saat build pertama; dependensi dari requirements.txt).',
 	'wsapp.hint.node': 'Dijalankan via nvm-exec dengan Node {version} dari direktori situs.',
+	'wsapp.hint.go': 'Biner dijalankan dari root repositori; lihat cuplikan PORT di bawah.',
+	'wsapp.runtime.go': 'Go',
+	'wsapp.runtime.python': 'Python',
+	'wsapp.portCardTitle': 'Port & environment aplikasi',
+	'wsapp.portNote': 'Aplikasi Anda harus mendengarkan environment variable PORT — panel yang mengalokasikannya.',
+	'wsapp.envFileNote':
+		'.env opsional di root repositori, satu KEY=val per baris (format systemd, tanpa kutip atau export).',
 	'wsapp.saving': 'Menyimpan…',
 	'wsapp.saveConfig': 'Simpan konfigurasi',
 	'wsapp.error.load': 'Gagal memuat layanan aplikasi',

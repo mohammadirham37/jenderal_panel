@@ -38,6 +38,11 @@
 
 	let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
+	// The loaded status carries the precise runtime (go vs go-binary);
+	// fall back to the page-provided app type before it arrives.
+	let effRuntime = $derived(status?.runtime || runtime);
+	let isGoRuntime = $derived(effRuntime === 'go' || effRuntime === 'go-binary');
+
 	function appAPI(action = ''): string {
 		const base = `/api/v1/websites/${encodeURIComponent(websiteID)}/app`;
 		return action ? `${base}/${action}` : base;
@@ -140,7 +145,13 @@
 				? translate($language, 'wsapp.serviceFor').replace('{domain}', domain)
 				: translate($language, 'wsapp.service')}
 			{#if status?.port}· port {status.port}{/if}
-			· Node {nodeVersion || translate($language, 'wsapp.default')}{status?.unit ? ` · ${status.unit}` : ''}
+			{#if isGoRuntime}
+				· {translate($language, 'wsapp.runtime.go')}
+			{:else if effRuntime === 'python'}
+				· {translate($language, 'wsapp.runtime.python')}
+			{:else}
+				· Node {nodeVersion || translate($language, 'wsapp.default')}{status?.unit ? ` · ${status.unit}` : ''}
+			{/if}
 		</p>
 		<button
 			type="button"
@@ -195,6 +206,15 @@
 			</div>
 		</div>
 
+		{#if isGoRuntime}
+			<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<h3 class="text-sm font-semibold text-white">{translate($language, 'wsapp.portCardTitle')}</h3>
+				<p class="mt-2 text-xs text-gray-400">{translate($language, 'wsapp.portNote')}</p>
+				<pre class="mt-2 overflow-x-auto rounded-lg border border-gray-700 bg-gray-900 p-3 font-mono text-xs text-green-400">app.Listen(":" + os.Getenv("PORT"))</pre>
+				<p class="mt-2 text-[10px] text-gray-500">{translate($language, 'wsapp.envFileNote')}</p>
+			</div>
+		{/if}
+
 		<div class="rounded-xl border border-gray-700 bg-gray-800 p-5">
 			<h3 class="mb-3 text-sm font-semibold text-white">{translate($language, 'wsapp.configuration')}</h3>
 			<div class="grid gap-3">
@@ -203,11 +223,13 @@
 					<input id="app-start" type="text" bind:value={startCommand} placeholder="npm run start"
 						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-2 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
 					<p class="mt-1 text-[10px] text-gray-500">
-				{#if runtime === 'python'}
-					{translate($language, 'wsapp.hint.python')}
-				{:else}
-					{translate($language, 'wsapp.hint.node').replace('{version}', nodeVersion || translate($language, 'wsapp.default'))}
-				{/if}
+					{#if effRuntime === 'python'}
+						{translate($language, 'wsapp.hint.python')}
+					{:else if isGoRuntime}
+						{translate($language, 'wsapp.hint.go')}
+					{:else}
+						{translate($language, 'wsapp.hint.node').replace('{version}', nodeVersion || translate($language, 'wsapp.default'))}
+					{/if}
 			</p>
 				</div>
 				<div>
