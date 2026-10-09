@@ -302,13 +302,7 @@ func (s *Service) SaveAppService(ctx context.Context, websiteID string, startCom
 	w.AppBuildCommand = buildCommand
 
 	// Go apps run from the repository root, not the document root.
-	unitDir := w.DocumentRoot
-	if w.AppRuntime == "go" || w.AppRuntime == "go-binary" {
-		if root, _ := siteops.AppProjectRoot(ctx, s.exec, "/home/"+w.WebUser, w.DocumentRoot); root != "" {
-			unitDir = root
-		}
-	}
-	unitContent, err := buildAppUnit(w, unitDir)
+	unitContent, err := buildAppUnit(w, s.appWorkDir(ctx, w))
 	if err != nil {
 		return AppServiceStatus{}, err
 	}
@@ -385,25 +379,26 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 	return tr.RunFuncWithOptions(
 		taskrunner.Options{Name: "App build — " + w.Domain, Module: "website", Timeout: 30 * time.Minute},
 		func(taskCtx context.Context, write func(string)) error {
-			args, buildErr := buildAppBuildArgv(w.AppRuntime, w.WebUser, w.DocumentRoot, w.AppBuildCommand)
-			if buildErr != nil {
-				return buildErr
-			}
 			if w.AppRuntime == "go" || w.AppRuntime == "go-binary" {
-				if err := s.goEnsureInstalled(taskCtx); err != nil {
+				if err := s.runGoBuild(taskCtx, w, s.appWorkDir(taskCtx, w), write); err != nil {
 					return err
 				}
-			}
-			write("Running build: " + w.AppBuildCommand)
-			result, err := s.exec.RunSudo(taskCtx, "-u", args...)
-			if result != nil && result.Stdout != "" {
-				write(result.Stdout)
-			}
-			if err != nil {
-				return fmt.Errorf("build: %w", err)
-			}
-			if result.ExitCode != 0 {
-				return fmt.Errorf("build failed with exit status %d", result.ExitCode)
+			} else {
+				args, buildErr := buildAppBuildArgv(w.AppRuntime, w.WebUser, w.DocumentRoot, w.AppBuildCommand)
+				if buildErr != nil {
+					return buildErr
+				}
+				write("Running build: " + w.AppBuildCommand)
+				result, err := s.exec.RunSudo(taskCtx, args[0], args[1:]...)
+				if result != nil && result.Stdout != "" {
+					write(result.Stdout)
+				}
+				if err != nil {
+					return fmt.Errorf("build: %w", err)
+				}
+				if result.ExitCode != 0 {
+					return fmt.Errorf("build failed with exit status %d", result.ExitCode)
+				}
 			}
 			if err := s.AppAction(taskCtx, websiteID, "restart"); err != nil {
 				return err
@@ -413,17 +408,60 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 		}), nil
 }
 
-// goEnsureInstalled probes the server-wide Go toolchain and reports a
-// precise error when it is missing.
-func (s *Service) goEnsureInstalled(ctx context.Context) error {
-	result, err := s.exec.RunSudo(ctx, goruntime.GoBin, "version")
+// appWorkDir returns the directory the app's unit and build run from: the
+// document root for most runtimes, the repository root for go/go-binary.
+func (s *Service) appWorkDir(ctx context.Context, w model.Website) string {
+	if w.AppRuntime != "go" && w.AppRuntime != "go-binary" {
+		return w.DocumentRoot
+	}
+	if root, _ := siteops.AppProjectRoot(ctx, s.exec, "/home/"+w.WebUser, w.DocumentRoot); root != "" {
+		return root
+	}
+	return w.DocumentRoot
+}
+
+// ensureGoToolchain probes the server-wide Go toolchain and installs the
+// pinned release inline when it is missing, streaming progress into write.
+func (s *Service) ensureGoToolchain(ctx context.Context, write func(string)) error {
+	gr := goruntime.NewService(s.exec, nil)
+	if status, err := gr.Status(ctx); err == nil && status.Installed {
+		return nil
+	}
+	write("Installing Go toolchain " + goruntime.Version + " ...")
+	return gr.InstallSync(ctx, write)
+}
+
+// runGoBuild validates the project shape, ensures the toolchain, and runs
+// the site's build command as the site user from the repository root.
+func (s *Service) runGoBuild(ctx context.Context, w model.Website, root string, write func(string)) error {
+	res, err := s.exec.RunSudo(ctx, "test", "-f", root+"/go.mod")
+	if err != nil || res == nil || res.ExitCode != 0 {
+		return model.NewValidationError("no go.mod found in the repository root; is this a Go project?")
+	}
+	if err := s.ensureGoToolchain(ctx, write); err != nil {
+		return err
+	}
+	if strings.TrimSpace(w.AppBuildCommand) == "" {
+		return model.NewValidationError("no build command configured")
+	}
+	write("Running build: " + w.AppBuildCommand)
+	args, argvErr := buildAppBuildArgv(w.AppRuntime, w.WebUser, root, w.AppBuildCommand)
+	if argvErr != nil {
+		return argvErr
+	}
+	result, err := s.exec.RunSudo(ctx, args[0], args[1:]...)
+	if result != nil && result.Stdout != "" {
+		write(result.Stdout)
+	}
 	if err != nil {
-		return model.NewDomainError("GO_TOOLCHAIN_MISSING",
-			"the Go toolchain is not installed; an administrator must install it first (services page)", nil)
+		return fmt.Errorf("build: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return model.NewDomainError("GO_TOOLCHAIN_MISSING",
-			"the Go toolchain is not working: "+strings.TrimSpace(result.Stderr), nil)
+		detail := strings.TrimSpace(result.Stderr)
+		if detail == "" {
+			detail = fmt.Sprintf("exit status %d", result.ExitCode)
+		}
+		return fmt.Errorf("build failed: %s", detail)
 	}
 	return nil
 }

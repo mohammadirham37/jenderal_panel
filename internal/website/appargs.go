@@ -31,30 +31,32 @@ func buildAppStartArgv(runtime, webUser, docroot, startCommand string) ([]string
 	}
 }
 
-// buildAppBuildArgv assembles the argv that runs the build command. The go
-// toolchain is prepended to PATH via the shell; the build command is the
-// site owner's own and runs as their user.
-func buildAppBuildArgv(runtime, webUser, docroot, buildCommand string) ([]string, error) {
+// buildAppBuildArgv assembles the full RunSudo argv that runs the build
+// command: ["-u", user, "--", "/bin/bash", "-c", script]. The go toolchain
+// is prepended to PATH inside the script; the command is the site owner's
+// own and runs as their user. For go/go-binary, dir is the repository root;
+// for python it is the document root.
+func buildAppBuildArgv(runtime, webUser, dir, buildCommand string) ([]string, error) {
 	// The dependency install (venv + requirements.txt) runs even without a
 	// user build command.
 	buildCommand = strings.TrimSpace(buildCommand)
 	switch runtime {
 	case "go", "go-binary":
-		script := "cd " + docroot + " && " + buildCommand
-		return []string{"/bin/bash", "-c", script}, nil
+		script := "cd " + dir + " && PATH=/usr/local/go/bin:$PATH " + buildCommand
+		return []string{"-u", webUser, "--", "/bin/bash", "-c", script}, nil
 	case "python":
 		home := "/home/" + webUser
 		venvBin := home + "/venv/bin"
 		venvPython := venvBin + "/python"
 		venvDir := home + "/venv"
-		script := "cd " + docroot + " && " +
+		script := "cd " + dir + " && " +
 			"[ -x " + shQuote(venvPython) + " ] || " +
 			"/usr/bin/python3 -m venv " + shQuote(venvDir) + " && " +
 			"[ ! -f requirements.txt ] || " + venvBin + "/pip install --no-input -r requirements.txt"
 		if buildCommand != "" {
 			script += " && " + buildCommand
 		}
-		return []string{"/bin/bash", "-c", script}, nil
+		return []string{"-u", webUser, "--", "/bin/bash", "-c", script}, nil
 	default:
 		return nil, fmt.Errorf("unsupported app runtime: %s", runtime)
 	}

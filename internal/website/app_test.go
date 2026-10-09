@@ -116,7 +116,10 @@ func TestBuildAppBuildArgvPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAppBuildArgv: %v", err)
 	}
-	script := args[2]
+	if len(args) < 6 || args[0] != "-u" || args[1] != "web_example_com" || args[2] != "--" {
+		t.Fatalf("python argv prefix = %#v, want -u web_example_com -- ...", args)
+	}
+	script := args[5]
 	for _, want := range []string{
 		"python3 -m venv '/home/web_example_com/venv'",
 		"pip install --no-input -r requirements.txt",
@@ -131,8 +134,8 @@ func TestBuildAppBuildArgvPython(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAppBuildArgv with build: %v", err)
 	}
-	if !strings.Contains(args[2], "python manage.py collectstatic --noinput") {
-		t.Errorf("user build command missing: %s", args[2])
+	if !strings.Contains(args[5], "python manage.py collectstatic --noinput") {
+		t.Errorf("user build command missing: %s", args[5])
 	}
 }
 
@@ -221,4 +224,134 @@ func TestGetAppService_GoSiteDefaultsRuntime(t *testing.T) {
 	if status.Runtime != "go" {
 		t.Fatalf("runtime = %q, want go (healed from empty)", status.Runtime)
 	}
+}
+
+func TestBuildAppBuildArgvGo(t *testing.T) {
+	argv, err := buildAppBuildArgv("go", "u", "/home/u/app", "go build -o app .")
+	if err != nil {
+		t.Fatalf("buildAppBuildArgv error = %v", err)
+	}
+	want := []string{"-u", "u", "--", "/bin/bash", "-c", "cd /home/u/app && PATH=/usr/local/go/bin:$PATH go build -o app ."}
+	if len(argv) != len(want) {
+		t.Fatalf("argv = %#v, want %#v", argv, want)
+	}
+	for i := range want {
+		if argv[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q (full: %#v)", i, argv[i], want[i], argv)
+		}
+	}
+}
+
+func TestRunGoBuild_MissingGoMod(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 1}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 1}, nil
+		},
+	}
+	svc := NewService(nil, mock, nil)
+	w := model.Website{AppType: "go", AppRuntime: "go", WebUser: "u", AppBuildCommand: "go build -o app ."}
+	err := svc.runGoBuild(context.Background(), w, "/home/u/app", func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "go.mod") {
+		t.Fatalf("err = %v, want go.mod validation error", err)
+	}
+}
+
+func TestRunGoBuild_RunsBuildAsWebUser(t *testing.T) {
+	var sudoCalls [][]string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			if name == "test" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "built"}, nil
+		},
+	}
+	svc := NewService(nil, mock, nil)
+	w := model.Website{AppType: "go", AppRuntime: "go", WebUser: "u", AppBuildCommand: "go build -o app ."}
+	var logged []string
+	if err := svc.runGoBuild(context.Background(), w, "/home/u/app", func(l string) { logged = append(logged, l) }); err != nil {
+		t.Fatalf("runGoBuild error = %v", err)
+	}
+	var buildCall []string
+	for _, c := range sudoCalls {
+		if c[0] == "-u" {
+			buildCall = c
+		}
+	}
+	if buildCall == nil {
+		t.Fatalf("no sudo -u build call; calls = %#v", sudoCalls)
+	}
+	if buildCall[1] != "u" || buildCall[2] != "--" {
+		t.Fatalf("build argv prefix = %#v, want -u u --", buildCall[:3])
+	}
+	if len(logged) == 0 {
+		t.Error("build output not forwarded to write")
+	}
+}
+
+func TestRunGoBuild_CompilerErrorFails(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "test" {
+				return &executor.Result{ExitCode: 0}, nil
+			}
+			return &executor.Result{ExitCode: 1, Stderr: "cannot find package"}, nil
+		},
+	}
+	svc := NewService(nil, mock, nil)
+	w := model.Website{AppType: "go", AppRuntime: "go", WebUser: "u", AppBuildCommand: "go build -o app ."}
+	err := svc.runGoBuild(context.Background(), w, "/home/u/app", func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "cannot find package") {
+		t.Fatalf("err = %v, want compiler error surfaced", err)
+	}
+}
+
+func TestEnsureGoToolchain_InstallsWhenMissing(t *testing.T) {
+	installed := false
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "/usr/local/go/bin/go" {
+				if installed {
+					return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil
+				}
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "bash" && len(args) >= 2 && args[0] == "-c" && strings.Contains(args[1], "1.27.1") {
+				installed = true
+				return &executor.Result{ExitCode: 0, Stdout: "go version go1.27.1 linux/amd64"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(nil, mock, nil)
+	var logged []string
+	if err := svc.ensureGoToolchain(context.Background(), func(l string) { logged = append(logged, l) }); err != nil {
+		t.Fatalf("ensureGoToolchain error = %v", err)
+	}
+	if !installed {
+		t.Fatal("install script was not executed")
+	}
+	if len(logged) == 0 {
+		t.Error("install progress not written")
+	}
+
+	// Second call with the toolchain present must not reinstall.
+	before := installed
+	if err := svc.ensureGoToolchain(context.Background(), func(l string) { logged = append(logged, l) }); err != nil {
+		t.Fatalf("second ensureGoToolchain error = %v", err)
+	}
+	_ = before
 }
