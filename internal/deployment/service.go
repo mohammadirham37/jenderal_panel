@@ -14,6 +14,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
 )
 
 // Service manages git-based deployments for websites.
@@ -29,6 +30,7 @@ type Service struct {
 	runners     map[string]context.CancelFunc
 	sshAccounts sshAccountSyncer
 	serving     servingAccessRestorer
+	deployHook  deployHookRunner
 }
 
 // NewService creates a new deployment service with a buffered work queue.
@@ -60,6 +62,19 @@ type servingAccessRestorer interface {
 // re-apply the owning panel user's site access.
 func (s *Service) SetSSHAccounts(svc sshAccountSyncer) {
 	s.sshAccounts = svc
+}
+
+// deployHookRunner runs the post-deploy steps for app-service sites (go
+// today): build, restart, health check. Implemented by the website service;
+// the narrow interface keeps deployment independent of the website package.
+type deployHookRunner interface {
+	RunDeployHook(ctx context.Context, websiteID string, write func(string)) error
+}
+
+// SetDeployHook wires the website service so go deployments build and
+// restart the app after the clone succeeds.
+func (s *Service) SetDeployHook(runner deployHookRunner) {
+	s.deployHook = runner
 }
 
 // SetServingAccessRestorer wires the website provisioner so finished
@@ -166,11 +181,11 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	}
 
 	// Load website information.
-	var webUser, docRoot, ownerID, framework string
+	var webUser, docRoot, ownerID, framework, appType string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT web_user, document_root, created_by, framework FROM websites WHERE id = ?`,
+		`SELECT web_user, document_root, created_by, framework, app_type FROM websites WHERE id = ?`,
 		d.WebsiteID,
-	).Scan(&webUser, &docRoot, &ownerID, &framework)
+	).Scan(&webUser, &docRoot, &ownerID, &framework, &appType)
 	if err != nil {
 		s.failDeployment(ctx, deploymentID, "load website: "+err.Error(), 0)
 		return
@@ -251,6 +266,14 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	projectRoot := docRoot
 	if pureClone || docRoot == homeDir+"/app/public" {
 		projectRoot = homeDir + "/app"
+	}
+	// Go sites keep the repository at <home>/app (Laravel convention) with
+	// the unit and build running from there; legacy sites cloned into the
+	// document root keep their old location.
+	if appType == "go" {
+		if root, _ := siteops.AppProjectRoot(ctx, s.exec, homeDir, docRoot); root != "" {
+			projectRoot = root
+		}
 	}
 
 	// Step 1: Check if .git dir exists in the project root.
@@ -371,6 +394,19 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 	if s.serving != nil {
 		if err := s.serving.RestoreServingAccess(ctx, d.WebsiteID); err != nil {
 			appendLog("restore serving permissions", nil, err)
+		}
+	}
+
+	// Go apps: build the new checkout and restart the unit before the
+	// deployment is marked successful. A failed build leaves the previously
+	// deployed binary running but fails the deployment.
+	if s.deployHook != nil && appType == "go" {
+		if err := s.deployHook.RunDeployHook(ctx, d.WebsiteID, func(line string) {
+			logBuf.WriteString(line + "\n")
+		}); err != nil {
+			logBuf.WriteString("ERROR: app deploy hook: " + err.Error() + "\n")
+			s.failDeployment(ctx, deploymentID, logBuf.String(), int(time.Since(start).Milliseconds()))
+			return
 		}
 	}
 

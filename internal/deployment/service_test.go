@@ -3,6 +3,7 @@ package deployment
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -520,5 +521,152 @@ func TestLaravelDeployPureClonesIntoApp(t *testing.T) {
 	}
 	if !strings.Contains(all, "rm -rf /home/web_lara_example_com/app") {
 		t.Errorf("expected a fresh-clone wipe of the app directory:\n%s", all)
+	}
+}
+
+type recordingHook struct {
+	mu     sync.Mutex
+	calls  []string
+	err    error
+	writes []string
+}
+
+func (h *recordingHook) RunDeployHook(ctx context.Context, websiteID string, write func(string)) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls = append(h.calls, websiteID)
+	write("hook stage: build ok")
+	return h.err
+}
+
+func deployGoWebsite(t *testing.T, db *sql.DB, domain, webUser, docRoot string) string {
+	t.Helper()
+	id := insertWebsite(t, db, domain, webUser, docRoot)
+	if _, err := db.Exec(`UPDATE websites SET app_type = 'go', framework = 'go' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestDeploy_NonGoSite_DoesNotRunDeployHook(t *testing.T) {
+	for _, framework := range []string{"laravel", "codeigniter4", ""} {
+		db := setupTestDB(t)
+		auditSvc := audit.NewService(db)
+		svc := NewService(db, newMockExecutor(), auditSvc)
+		hook := &recordingHook{}
+		svc.SetDeployHook(hook)
+
+		websiteID := insertWebsite(t, db, "php.example.com", "web_php", "/home/web_php/app/public")
+		if framework != "" {
+			if _, err := db.Exec(`UPDATE websites SET framework = ? WHERE id = ?`, framework, websiteID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+		if err != nil {
+			t.Fatalf("Deploy (%s): %v", framework, err)
+		}
+		svc.deploy(context.Background(), d.ID)
+
+		if len(hook.calls) != 0 {
+			t.Errorf("framework %q: deploy hook ran for non-go site: %v", framework, hook.calls)
+		}
+		got, err := svc.GetDeployment(context.Background(), d.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status != "success" {
+			t.Errorf("framework %q: status = %s, want success (log: %s)", framework, got.Status, got.Log)
+		}
+	}
+}
+
+func TestDeploy_GoSite_RunsHookAndSucceeds(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+	svc := NewService(db, newMockExecutor(), auditSvc)
+	hook := &recordingHook{}
+	svc.SetDeployHook(hook)
+
+	websiteID := deployGoWebsite(t, db, "go.example.com", "web_go", "/home/web_go/app/public")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	if len(hook.calls) != 1 || hook.calls[0] != websiteID {
+		t.Fatalf("hook calls = %v, want one call for %s", hook.calls, websiteID)
+	}
+	got, err := svc.GetDeployment(context.Background(), d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "success" {
+		t.Fatalf("status = %s, want success (log: %s)", got.Status, got.Log)
+	}
+	if !strings.Contains(got.Log, "hook stage: build ok") {
+		t.Errorf("deployment log missing hook output: %s", got.Log)
+	}
+}
+
+func TestDeploy_HookError_MarksDeploymentFailed(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+	svc := NewService(db, newMockExecutor(), auditSvc)
+	hook := &recordingHook{err: errors.New("boom")}
+	svc.SetDeployHook(hook)
+
+	websiteID := deployGoWebsite(t, db, "go.example.com", "web_go", "/home/web_go/app/public")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	got, err := svc.GetDeployment(context.Background(), d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "failed" {
+		t.Fatalf("status = %s, want failed", got.Status)
+	}
+	if !strings.Contains(got.Log, "app deploy hook: boom") {
+		t.Errorf("deployment log missing hook error: %s", got.Log)
+	}
+}
+
+func TestDeploy_GoSite_ClonesIntoAppDir(t *testing.T) {
+	db := setupTestDB(t)
+	auditSvc := audit.NewService(db)
+	var suCommands []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// siteops legacy probe: no .git in <home>/public → new layout.
+			return &executor.Result{ExitCode: 1}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "su" {
+				suCommands = append(suCommands, args...)
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	svc := NewService(db, mock, auditSvc)
+	svc.SetDeployHook(&recordingHook{})
+
+	websiteID := deployGoWebsite(t, db, "go.example.com", "web_go", "/home/web_go/app/public")
+	d, err := svc.Deploy(context.Background(), websiteID, "https://github.com/example/repo.git", "main")
+	if err != nil {
+		t.Fatalf("Deploy: %v", err)
+	}
+	svc.deploy(context.Background(), d.ID)
+
+	joined := strings.Join(suCommands, " ")
+	if !strings.Contains(joined, "/home/web_go/app") {
+		t.Errorf("clone did not target <home>/app: %q", joined)
+	}
+	if strings.Contains(joined, "/home/web_go/public") {
+		t.Errorf("clone targeted the document root: %q", joined)
 	}
 }
