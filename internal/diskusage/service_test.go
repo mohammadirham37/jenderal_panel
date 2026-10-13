@@ -279,8 +279,10 @@ func TestOverviewCollectsReport(t *testing.T) {
 	if logs.Bytes != 104857600 || logs.Missing {
 		t.Errorf("unexpected /var/log usage: %+v", logs)
 	}
-	if !byLabel["websites"].Missing {
-		t.Errorf("expected /var/www to be reported missing when du has no line for it")
+	// The websites row is synthesized from the per-site home scan; with no
+	// database rows it is present at zero bytes, never "missing".
+	if w := byLabel["websites"]; w.Missing || w.Bytes != 0 || w.Path != "/home/web_*" {
+		t.Errorf("unexpected websites row: %+v", w)
 	}
 	if !byLabel["panel_backups"].Missing {
 		t.Errorf("expected /var/lib/jenderal/backups to be reported missing")
@@ -466,5 +468,40 @@ func TestDecodeOptionsClampsLogArchivesDays(t *testing.T) {
 	}
 	if opts.LogArchivesDays != 0 {
 		t.Fatalf("negative LogArchivesDays = %d, want 0", opts.LogArchivesDays)
+	}
+}
+
+func TestAnalyzedPathsMatchPanelLayout(t *testing.T) {
+	// This panel keeps website homes under /home/web_<domain>; /var/www is
+	// not a panel location and only produced a misleading near-zero row.
+	for _, p := range analyzedPaths {
+		if p.Path == "/var/www" {
+			t.Error("analyzedPaths must not include /var/www")
+		}
+	}
+}
+
+func TestWebsitesDirUsageSumsSiteHomes(t *testing.T) {
+	o := Overview{Websites: []SiteUsage{
+		{Domain: "a.example.com", Path: "/home/web_a_example_com", Bytes: 100},
+		{Domain: "b.example.com", Path: "/home/web_b_example_com", Bytes: 250},
+	}}
+	d := websitesDirUsage(o)
+	if d.Label != "websites" {
+		t.Errorf("label = %q, want websites", d.Label)
+	}
+	if d.Path != "/home/web_*" {
+		t.Errorf("path = %q, want /home/web_*", d.Path)
+	}
+	if d.Bytes != 350 {
+		t.Errorf("bytes = %d, want 350", d.Bytes)
+	}
+	if d.Missing {
+		t.Error("row must not be marked missing when homes were measured")
+	}
+
+	empty := websitesDirUsage(Overview{})
+	if empty.Bytes != 0 || empty.Missing {
+		t.Errorf("empty overview row = %+v, want 0 bytes, not missing", empty)
 	}
 }

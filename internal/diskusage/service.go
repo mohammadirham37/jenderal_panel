@@ -38,7 +38,6 @@ type analyzedPath struct {
 var analyzedPaths = []analyzedPath{
 	{"/var/log", "system_logs"},
 	{"/var/cache/apt", "apt_cache"},
-	{"/var/www", "websites"},
 	{"/var/lib/jenderal/backups", "panel_backups"},
 	{"/tmp", "temp_files"},
 }
@@ -128,6 +127,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	}
 	s.collectDirSizes(ctx, &overview)
 	s.collectWebsites(ctx, &overview)
+	overview.Dirs = append(overview.Dirs, websitesDirUsage(overview))
 	s.collectRootDirs(ctx, &overview)
 	s.collectJournal(ctx, &overview)
 	s.collectRotatedLogs(ctx, &overview)
@@ -182,6 +182,17 @@ func (s *Service) collectDirSizes(ctx context.Context, o *Overview) {
 
 // collectWebsites measures each website's home directory (document root plus
 // its logs) and reports them largest first.
+// websitesDirUsage summarizes the measured website homes into one "Space by
+// Location" row. Sites live at /home/web_<domain> in this panel, so the row
+// is derived from the per-site scan instead of a hardcoded directory.
+func websitesDirUsage(o Overview) DirUsage {
+	var total int64
+	for _, site := range o.Websites {
+		total += site.Bytes
+	}
+	return DirUsage{Path: "/home/web_*", Label: "websites", Bytes: total}
+}
+
 func (s *Service) collectWebsites(ctx context.Context, o *Overview) {
 	if s.db == nil {
 		return
