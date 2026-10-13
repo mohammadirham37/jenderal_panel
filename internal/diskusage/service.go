@@ -73,15 +73,16 @@ type SiteUsage struct {
 
 // Overview is the full disk usage report shown on the disk page.
 type Overview struct {
-	Filesystems  []FilesystemStat `json:"filesystems"`
-	Dirs         []DirUsage       `json:"dirs"`
-	Websites     []SiteUsage      `json:"websites"`
-	RootDirs     []DirUsage       `json:"root_dirs"`
-	JournalBytes int64            `json:"journal_bytes"`
-	Kernel       string           `json:"kernel"`
-	OldKernels   []string         `json:"old_kernels"`
-	HasDocker    bool             `json:"has_docker"`
-	Docker       []DockerUsage    `json:"docker"`
+	Filesystems     []FilesystemStat `json:"filesystems"`
+	Dirs            []DirUsage       `json:"dirs"`
+	Websites        []SiteUsage      `json:"websites"`
+	RootDirs        []DirUsage       `json:"root_dirs"`
+	JournalBytes    int64            `json:"journal_bytes"`
+	RotatedLogBytes int64            `json:"rotated_log_bytes"`
+	Kernel          string           `json:"kernel"`
+	OldKernels      []string         `json:"old_kernels"`
+	HasDocker       bool             `json:"has_docker"`
+	Docker          []DockerUsage    `json:"docker"`
 }
 
 // DockerUsage is one row of `docker system df`.
@@ -98,6 +99,7 @@ type CleanupOptions struct {
 	AptAutoremove   bool `json:"apt_autoremove"`
 	TmpCleanDays    int  `json:"tmp_clean_days"`
 	DockerPrune     bool `json:"docker_prune"`
+	LogArchives     bool `json:"log_archives"`
 }
 
 // CleanupAction describes one planned cleanup step for the dry-run preview.
@@ -125,6 +127,7 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	s.collectWebsites(ctx, &overview)
 	s.collectRootDirs(ctx, &overview)
 	s.collectJournal(ctx, &overview)
+	s.collectRotatedLogs(ctx, &overview)
 	s.collectKernels(ctx, &overview)
 	s.collectDocker(ctx, &overview)
 
@@ -321,6 +324,26 @@ func (s *Service) collectJournal(ctx context.Context, o *Overview) {
 	o.JournalBytes = parseJournalUsage(res.Stdout)
 }
 
+// collectRotatedLogs sums the size of rotated log archives in /var/log —
+// the same file set the log_archives cleanup action deletes (compressed or
+// numbered archives older than three days; active logs are never touched).
+// A failing scan degrades to zero like the other optional collectors.
+func (s *Service) collectRotatedLogs(ctx context.Context, o *Overview) {
+	res, err := s.exec.RunSudo(ctx, "find", "/var/log", "-xdev", "-type", "f",
+		"(", "-name", "*.gz", "-o", "-name", "*.old", "-o", "-name", "*.[0-9]", ")",
+		"-mtime", "+3", "-printf", "%s\n")
+	if err != nil || res.ExitCode != 0 {
+		return
+	}
+	var total int64
+	for _, line := range strings.Split(strings.TrimSpace(res.Stdout), "\n") {
+		if n, cerr := strconv.ParseInt(strings.TrimSpace(line), 10, 64); cerr == nil {
+			total += n
+		}
+	}
+	o.RotatedLogBytes = total
+}
+
 func (s *Service) collectKernels(ctx context.Context, o *Overview) {
 	res, err := s.exec.Run(ctx, "uname", "-r")
 	if err != nil {
@@ -414,6 +437,14 @@ func cleanupActions(opts CleanupOptions) []CleanupAction {
 			Commands: [][]string{{
 				"docker", "system", "prune", "-f",
 			}},
+		})
+	}
+	if opts.LogArchives {
+		actions = append(actions, CleanupAction{
+			Name: "log_archives",
+			Commands: [][]string{{"find", "/var/log", "-xdev", "-type", "f",
+				"(", "-name", "*.gz", "-o", "-name", "*.old", "-o", "-name", "*.[0-9]", ")",
+				"-mtime", "+3", "-delete"}},
 		})
 	}
 	return actions

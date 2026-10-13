@@ -73,6 +73,10 @@ const en = {
 	'dku.cleanup.aptClean.desc': 'Deletes downloaded .deb archives from /var/cache/apt.',
 	'dku.cleanup.aptAutoremove.desc': 'Removes packages that are no longer needed, including old kernels.',
 	'dku.cleanup.dockerPrune.desc': 'Removes stopped containers plus unused images, networks, and build cache.',
+	'dku.cleanup.logArchives': 'Old rotated logs (/var/log)',
+	'dku.cleanup.logArchives.desc': 'Deletes compressed or numbered /var/log archives older than 3 days; active logs are never touched.',
+	'dku.cleanup.kernels': 'old kernel packages',
+	'dku.cleanNow': 'Clean now',
 	'dku.cleanup.journalVacuum.desc': 'Caps the systemd journal at the given size.',
 	'dku.cleanup.tmpClean.desc': 'Deletes files under /tmp not modified for the given number of days.'
 } as const;
@@ -148,6 +152,10 @@ const id: Record<keyof typeof en, string> = {
 	'dku.cleanup.aptClean.desc': 'Menghapus arsip .deb yang sudah terunduh di /var/cache/apt.',
 	'dku.cleanup.aptAutoremove.desc': 'Menghapus paket yang tidak lagi dibutuhkan, termasuk kernel lama.',
 	'dku.cleanup.dockerPrune.desc': 'Menghapus kontainer yang berhenti serta image, jaringan, dan build cache yang tidak terpakai.',
+	'dku.cleanup.logArchives': 'Arsip log rotasi lama (/var/log)',
+	'dku.cleanup.logArchives.desc': 'Menghapus arsip /var/log terkompresi atau bernomor yang berumur lebih dari 3 hari; log aktif tidak disentuh.',
+	'dku.cleanup.kernels': 'paket kernel lama',
+	'dku.cleanNow': 'Bersihkan sekarang',
 	'dku.cleanup.journalVacuum.desc': 'Membatasi jurnal systemd pada ukuran yang diberikan.',
 	'dku.cleanup.tmpClean.desc': 'Menghapus file di /tmp yang tidak dimodifikasi selama jumlah hari yang diberikan.'
 };

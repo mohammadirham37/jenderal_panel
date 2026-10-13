@@ -52,6 +52,7 @@
 		websites: SiteUsage[];
 		root_dirs: DirUsage[];
 		journal_bytes: number;
+		rotated_log_bytes: number;
 		kernel: string;
 		old_kernels: string[];
 		has_docker: boolean;
@@ -69,6 +70,7 @@
 		apt_autoremove: boolean;
 		tmp_clean_days: number;
 		docker_prune: boolean;
+		log_archives: boolean;
 	}
 
 	let overview = $state<Overview | null>(null);
@@ -80,7 +82,8 @@
 		apt_clean: false,
 		apt_autoremove: false,
 		tmp_clean_days: 0,
-		docker_prune: false
+		docker_prune: false,
+		log_archives: false
 	});
 	let plan = $state<CleanupAction[]>([]);
 	let starting = $state(false);
@@ -160,6 +163,23 @@
 
 	const maxDirBytes = $derived(Math.max(1, ...dirRows.map((r) => r.bytes)));
 	const maxRootBytes = $derived(Math.max(1, ...(overview?.root_dirs.map((d) => d.bytes) ?? [1])));
+
+	function dirBytes(path: string): number {
+		return overview?.dirs.find((d) => d.path === path)?.bytes ?? 0;
+	}
+
+	// Rough ceiling of what the cleanup actions can free: journal vacuum,
+	// rotated /var/log archives, apt cache, and /tmp.
+	const reclaimableBytes = $derived(
+		(overview?.journal_bytes ?? 0) +
+			(overview?.rotated_log_bytes ?? 0) +
+			dirBytes('/var/cache/apt') +
+			dirBytes('/tmp')
+	);
+
+	function scrollToCleanup() {
+		document.getElementById('dku-cleanup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
 
 	// Per-website folder breakdown (expandable rows in "Websites by Size").
 	// One row is expanded at a time; the report is fetched on demand.
@@ -270,13 +290,23 @@
 			<h2 class="text-2xl font-bold text-white">{translate($language, 'dku.title')}</h2>
 			<p class="text-sm text-gray-500">{translate($language, 'dku.subtitle')}</p>
 		</div>
-		<button
-			onclick={load}
-			disabled={loading}
-			class="cursor-pointer rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition-colors hover:bg-gray-600 disabled:opacity-50"
-		>
-			{translate($language, 'dku.refresh')}
-		</button>
+		<div class="flex items-center gap-2">
+			{#if !loading && reclaimableBytes > 0}
+				<button
+					onclick={scrollToCleanup}
+					class="cursor-pointer rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-green-700"
+				>
+					{translate($language, 'dku.cleanNow')} · ≈{formatBytes(reclaimableBytes)}
+				</button>
+			{/if}
+			<button
+				onclick={load}
+				disabled={loading}
+				class="cursor-pointer rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition-colors hover:bg-gray-600 disabled:opacity-50"
+			>
+				{translate($language, 'dku.refresh')}
+			</button>
+		</div>
 	</div>
 
 	{#if taskId}
@@ -553,7 +583,7 @@
 		{/if}
 
 		<!-- Cleanup -->
-		<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+		<div id="dku-cleanup" class="scroll-mt-4 rounded-lg border border-gray-700 bg-gray-800 p-5">
 			<h3 class="mb-1 text-lg font-semibold text-white">{translate($language, 'dku.cleanup.title')}</h3>
 			<p class="mb-4 text-xs text-gray-500">{translate($language, 'dku.cleanup.desc')}</p>
 
@@ -567,6 +597,7 @@
 					<span>
 						<span class="block text-sm font-medium text-white">{translate($language, 'dku.cleanup.aptClean')}</span>
 						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.aptClean.desc')}</span>
+						{#if dirBytes('/var/cache/apt') > 0}<span class="mt-1 block text-xs font-medium text-green-400/90">≈ {formatBytes(dirBytes('/var/cache/apt'))}</span>{/if}
 					</span>
 				</label>
 				<label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors {options.apt_autoremove ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}">
@@ -574,6 +605,7 @@
 					<span>
 						<span class="block text-sm font-medium text-white">{translate($language, 'dku.cleanup.aptAutoremove')}</span>
 						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.aptAutoremove.desc')}</span>
+						{#if overview && overview.old_kernels.length > 0}<span class="mt-1 block text-xs font-medium text-green-400/90">{overview.old_kernels.length} {translate($language, 'dku.cleanup.kernels')}</span>{/if}
 					</span>
 				</label>
 				<label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors {options.docker_prune ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}">
@@ -583,10 +615,19 @@
 						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.dockerPrune.desc')}</span>
 					</span>
 				</label>
+				<label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors {options.log_archives ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}">
+					<input type="checkbox" bind:checked={options.log_archives} class="mt-0.5 h-4 w-4 accent-blue-500" />
+					<span>
+						<span class="block text-sm font-medium text-white">{translate($language, 'dku.cleanup.logArchives')}</span>
+						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.logArchives.desc')}</span>
+						{#if overview && overview.rotated_log_bytes > 0}<span class="mt-1 block text-xs font-medium text-green-400/90">≈ {formatBytes(overview.rotated_log_bytes)}</span>{/if}
+					</span>
+				</label>
 				<div class="flex flex-wrap items-end gap-3 rounded-xl border border-gray-700 p-3.5">
 					<div>
 						<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="dku-journal">
 							{translate($language, 'dku.cleanup.journalVacuum')}
+							{#if overview && overview.journal_bytes > 0}<span class="ml-1 text-green-400/90">({formatBytes(overview.journal_bytes)})</span>{/if}
 						</label>
 						<input
 							id="dku-journal"
@@ -601,6 +642,7 @@
 					<div>
 						<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="dku-tmp">
 							{translate($language, 'dku.cleanup.tmpClean')}
+							{#if dirBytes('/tmp') > 0}<span class="ml-1 text-green-400/90">({formatBytes(dirBytes('/tmp'))})</span>{/if}
 						</label>
 						<input
 							id="dku-tmp"

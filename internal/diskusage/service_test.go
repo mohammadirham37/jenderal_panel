@@ -276,3 +276,83 @@ func TestOverviewCollectsReport(t *testing.T) {
 		t.Errorf("expected /var/lib/jenderal/backups to be reported missing")
 	}
 }
+
+func TestCleanupCommandsLogArchives(t *testing.T) {
+	svc := NewService(nil, &executor.MockExecutor{})
+
+	// Off by default: existing callers must see no change.
+	if cmds := svc.CleanupCommands(CleanupOptions{AptClean: true}); len(cmds) != 1 {
+		t.Fatalf("log_archives must default off; got %d commands", len(cmds))
+	}
+
+	opts := CleanupOptions{JournalVacuumMB: 100, AptClean: true, AptAutoremove: true, TmpCleanDays: 7, DockerPrune: true, LogArchives: true}
+	plan := svc.CleanupPlan(opts)
+	if len(plan) != 6 {
+		t.Fatalf("expected 6 planned actions, got %d", len(plan))
+	}
+	logAction := plan[len(plan)-1]
+	if logAction.Name != "log_archives" {
+		t.Fatalf("last action = %q, want log_archives", logAction.Name)
+	}
+	cmd := logAction.Commands[0]
+	joined := strings.Join(cmd, " ")
+	for _, want := range []string{"/var/log", "-name", "*.gz", "*.old", "*.[0-9]", "-mtime", "+3", "-delete", "-xdev", "-type", "f"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("log archive command missing %q: %v", want, cmd)
+		}
+	}
+	// Only rotated archives may be deleted — never plain active logs.
+	if strings.Contains(joined, "-name *.log ") || strings.HasSuffix(joined, "-name syslog") {
+		t.Errorf("command must not target active logs: %v", cmd)
+	}
+}
+
+func TestCollectRotatedLogsSumsSizes(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "uname" {
+				return &executor.Result{ExitCode: 0, Stdout: "6.8.0-45-generic\n"}, nil
+			}
+			return &executor.Result{}, errors.New("unexpected command " + name)
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "df" {
+				return &executor.Result{ExitCode: 0, Stdout: "Filesystem Type 1-blocks Used Available Capacity Mounted on\n/dev/vda1 ext4 100 60 40 60% /\n"}, nil
+			}
+			if name == "find" {
+				return &executor.Result{ExitCode: 0, Stdout: "100\n250\n50\n"}, nil
+			}
+			return &executor.Result{}, errors.New("unexpected sudo command " + name)
+		},
+	}
+	svc := NewService(nil, exec)
+	overview, err := svc.Overview(context.Background())
+	if err != nil {
+		t.Fatalf("overview: %v", err)
+	}
+	if overview.RotatedLogBytes != 400 {
+		t.Fatalf("rotated log bytes = %d, want 400", overview.RotatedLogBytes)
+	}
+}
+
+func TestCollectRotatedLogsDegradesGracefully(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{}, errors.New("unexpected command " + name)
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "df" {
+				return &executor.Result{ExitCode: 0, Stdout: "Filesystem Type 1-blocks Used Available Capacity Mounted on\n/dev/vda1 ext4 100 60 40 60% /\n"}, nil
+			}
+			return nil, errors.New("find unavailable")
+		},
+	}
+	svc := NewService(nil, exec)
+	overview, err := svc.Overview(context.Background())
+	if err != nil {
+		t.Fatalf("overview must not fail when the rotated-log scan fails: %v", err)
+	}
+	if overview.RotatedLogBytes != 0 {
+		t.Fatalf("rotated log bytes = %d, want 0", overview.RotatedLogBytes)
+	}
+}
