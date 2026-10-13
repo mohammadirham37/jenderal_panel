@@ -100,6 +100,9 @@ type CleanupOptions struct {
 	TmpCleanDays    int  `json:"tmp_clean_days"`
 	DockerPrune     bool `json:"docker_prune"`
 	LogArchives     bool `json:"log_archives"`
+	// LogArchivesDays limits the archive deletion to files older than N
+	// days; 0 deletes every rotated archive (active logs are never touched).
+	LogArchivesDays int `json:"log_archives_days"`
 }
 
 // CleanupAction describes one planned cleanup step for the dry-run preview.
@@ -324,14 +327,14 @@ func (s *Service) collectJournal(ctx context.Context, o *Overview) {
 	o.JournalBytes = parseJournalUsage(res.Stdout)
 }
 
-// collectRotatedLogs sums the size of rotated log archives in /var/log —
-// the same file set the log_archives cleanup action deletes (compressed or
-// numbered archives older than three days; active logs are never touched).
-// A failing scan degrades to zero like the other optional collectors.
+// collectRotatedLogs sums the size of every rotated log archive in /var/log
+// — the full set the log_archives cleanup action can delete at age 0
+// (compressed or numbered archives; active logs are never touched). A
+// failing scan degrades to zero like the other optional collectors.
 func (s *Service) collectRotatedLogs(ctx context.Context, o *Overview) {
 	res, err := s.exec.RunSudo(ctx, "find", "/var/log", "-xdev", "-type", "f",
 		"(", "-name", "*.gz", "-o", "-name", "*.old", "-o", "-name", "*.[0-9]", ")",
-		"-mtime", "+3", "-printf", "%s\n")
+		"-printf", "%s\n")
 	if err != nil || res.ExitCode != 0 {
 		return
 	}
@@ -457,12 +460,13 @@ func cleanupActions(opts CleanupOptions) []CleanupAction {
 		})
 	}
 	if opts.LogArchives {
-		actions = append(actions, CleanupAction{
-			Name: "log_archives",
-			Commands: [][]string{{"find", "/var/log", "-xdev", "-type", "f",
-				"(", "-name", "*.gz", "-o", "-name", "*.old", "-o", "-name", "*.[0-9]", ")",
-				"-mtime", "+3", "-delete"}},
-		})
+		cmd := []string{"find", "/var/log", "-xdev", "-type", "f",
+			"(", "-name", "*.gz", "-o", "-name", "*.old", "-o", "-name", "*.[0-9]", ")"}
+		if opts.LogArchivesDays > 0 {
+			cmd = append(cmd, "-mtime", "+"+strconv.Itoa(opts.LogArchivesDays))
+		}
+		cmd = append(cmd, "-delete")
+		actions = append(actions, CleanupAction{Name: "log_archives", Commands: [][]string{cmd}})
 	}
 	return actions
 }

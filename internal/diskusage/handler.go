@@ -44,6 +44,12 @@ func decodeOptions(r *http.Request) (CleanupOptions, error) {
 	if opts.TmpCleanDays > 365 {
 		opts.TmpCleanDays = 365
 	}
+	if opts.LogArchivesDays < 0 {
+		opts.LogArchivesDays = 0
+	}
+	if opts.LogArchivesDays > 365 {
+		opts.LogArchivesDays = 365
+	}
 	return opts, nil
 }
 

@@ -3,6 +3,7 @@ package diskusage
 import (
 	"context"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -314,10 +315,14 @@ func TestCleanupCommandsLogArchives(t *testing.T) {
 	}
 	cmd := logAction.Commands[0]
 	joined := strings.Join(cmd, " ")
-	for _, want := range []string{"/var/log", "-name", "*.gz", "*.old", "*.[0-9]", "-mtime", "+3", "-delete", "-xdev", "-type", "f"} {
+	for _, want := range []string{"/var/log", "-name", "*.gz", "*.old", "*.[0-9]", "-delete", "-xdev", "-type", "f"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("log archive command missing %q: %v", want, cmd)
 		}
+	}
+	// Days unset (0) deletes all rotated archives: no -mtime filter.
+	if strings.Contains(joined, "-mtime") {
+		t.Errorf("days=0 must not filter by age: %v", cmd)
 	}
 	// Only rotated archives may be deleted — never plain active logs.
 	if strings.Contains(joined, "-name *.log ") || strings.HasSuffix(joined, "-name syslog") {
@@ -411,5 +416,55 @@ func TestCleanupCommandsKeepsDockerWhenCLIPresent(t *testing.T) {
 	cmds := svc.CleanupCommands(context.Background(), CleanupOptions{DockerPrune: true})
 	if len(cmds) != 1 || cmds[0][0] != "docker" {
 		t.Fatalf("docker prune must stay when the CLI works, got %v", cmds)
+	}
+}
+
+func TestCleanupLogArchivesDays(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "docker" {
+				return &executor.Result{ExitCode: 0, Stdout: "Docker version 27.0.0"}, nil
+			}
+			return &executor.Result{}, errors.New("unexpected command " + name)
+		},
+	}
+	svc := NewService(nil, exec)
+	ctx := context.Background()
+
+	// Days 0 (default): all rotated archives, no -mtime filter.
+	cmds := svc.CleanupCommands(ctx, CleanupOptions{LogArchives: true})
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+	joined := strings.Join(cmds[0], " ")
+	if strings.Contains(joined, "-mtime") {
+		t.Errorf("days=0 must delete all rotated archives (no -mtime): %v", cmds[0])
+	}
+
+	// A positive day count keeps recent archives.
+	cmds = svc.CleanupCommands(ctx, CleanupOptions{LogArchives: true, LogArchivesDays: 5})
+	joined = strings.Join(cmds[0], " ")
+	if !strings.Contains(joined, "-mtime +5") {
+		t.Errorf("days=5 must add -mtime +5: %v", cmds[0])
+	}
+}
+
+func TestDecodeOptionsClampsLogArchivesDays(t *testing.T) {
+	req := httptest.NewRequest("POST", "/api/v1/disk/plan", strings.NewReader(`{"log_archives":true,"log_archives_days":9999}`))
+	opts, err := decodeOptions(req)
+	if err != nil {
+		t.Fatalf("decodeOptions: %v", err)
+	}
+	if opts.LogArchivesDays != 365 {
+		t.Fatalf("LogArchivesDays = %d, want clamped to 365", opts.LogArchivesDays)
+	}
+
+	req = httptest.NewRequest("POST", "/api/v1/disk/plan", strings.NewReader(`{"log_archives":true,"log_archives_days":-7}`))
+	opts, err = decodeOptions(req)
+	if err != nil {
+		t.Fatalf("decodeOptions: %v", err)
+	}
+	if opts.LogArchivesDays != 0 {
+		t.Fatalf("negative LogArchivesDays = %d, want 0", opts.LogArchivesDays)
 	}
 }

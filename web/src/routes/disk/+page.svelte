@@ -71,6 +71,7 @@
 		tmp_clean_days: number;
 		docker_prune: boolean;
 		log_archives: boolean;
+		log_archives_days: number;
 	}
 
 	let overview = $state<Overview | null>(null);
@@ -83,7 +84,8 @@
 		apt_autoremove: false,
 		tmp_clean_days: 0,
 		docker_prune: false,
-		log_archives: false
+		log_archives: false,
+		log_archives_days: 0
 	});
 	let plan = $state<CleanupAction[]>([]);
 	let starting = $state(false);
@@ -659,6 +661,21 @@
 							bind:value={options.tmp_clean_days}
 							class="w-32 rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
 						/>
+					</div>
+					<div>
+						<label class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400" for="dku-log-days">
+							{translate($language, 'dku.cleanup.logArchivesDays')}
+							{#if overview && overview.rotated_log_bytes > 0}<span class="ml-1 text-green-400/90">({formatBytes(overview.rotated_log_bytes)})</span>{/if}
+						</label>
+						<input
+							id="dku-log-days"
+							type="number"
+							min="0"
+							max="365"
+							bind:value={options.log_archives_days}
+							class="w-32 rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+						/>
+						<p class="mt-1 text-[10px] text-gray-500">{translate($language, 'dku.cleanup.logArchivesDaysHint')}</p>
 					</div>
 				</div>
 			</div>
