@@ -334,3 +334,86 @@ func (p *PostgreSQLEngine) ResetPassword(ctx context.Context, username, password
 	}
 	return nil
 }
+
+// MajorVersion returns the server's major version ("16") derived from
+// psql --version, used to pick the matching pgvector apt package.
+func (p *PostgreSQLEngine) MajorVersion(ctx context.Context) (string, error) {
+	result, err := p.exec.Run(ctx, "psql", "--version")
+	if err != nil {
+		return "", fmt.Errorf("postgresql version probe: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", model.NewDomainError("POSTGRESQL_ERROR", "PostgreSQL is not installed", nil)
+	}
+	fields := strings.Fields(result.Stdout)
+	for _, f := range fields {
+		if strings.HasPrefix(f, "1") && strings.Contains(f, ".") {
+			parts := strings.SplitN(f, ".", 2)
+			return parts[0], nil
+		}
+	}
+	return "", model.NewDomainError("POSTGRESQL_ERROR", "could not parse psql version: "+strings.TrimSpace(result.Stdout), nil)
+}
+
+// VectorAvailableVersion reports the pgvector version available to the
+// server ("0.7.0") or an empty string when the package is not installed.
+func (p *PostgreSQLEngine) VectorAvailableVersion(ctx context.Context) (string, error) {
+	stmt := "SELECT default_version FROM pg_available_extensions WHERE name='vector'"
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-tAc", stmt)
+	if err != nil {
+		return "", fmt.Errorf("postgresql pgvector probe: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return "", model.NewDomainError("POSTGRESQL_ERROR", "failed to probe pgvector: "+result.Stderr, nil)
+	}
+	return strings.TrimSpace(result.Stdout), nil
+}
+
+// VectorEnabledDatabases reports which of the named databases have the
+// vector extension active.
+func (p *PostgreSQLEngine) VectorEnabledDatabases(ctx context.Context, names []string) (map[string]bool, error) {
+	enabled := map[string]bool{}
+	for _, name := range names {
+		stmt := "SELECT 1 FROM pg_extension WHERE extname='vector'"
+		result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-d", name, "-tAc", stmt)
+		if err != nil {
+			return nil, fmt.Errorf("postgresql pgvector status for %s: %w", name, err)
+		}
+		if result.ExitCode != 0 {
+			return nil, model.NewDomainError("POSTGRESQL_ERROR", "failed to read pgvector status for "+name+": "+result.Stderr, nil)
+		}
+		enabled[name] = strings.TrimSpace(result.Stdout) == "1"
+	}
+	return enabled, nil
+}
+
+// EnableVector creates the pgvector extension inside a database so RAG
+// applications can use vector columns and similarity operators.
+func (p *PostgreSQLEngine) EnableVector(ctx context.Context, database string) error {
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-d", database,
+		"-c", "CREATE EXTENSION IF NOT EXISTS vector")
+	if err != nil {
+		return fmt.Errorf("postgresql enable pgvector: %w", err)
+	}
+	if result.ExitCode != 0 {
+		return model.NewDomainError("POSTGRESQL_ERROR", "failed to enable pgvector in "+database+": "+result.Stderr, nil)
+	}
+	return nil
+}
+
+// pgvectorInstallScript renders the root script that installs the pgvector
+// apt package for a PostgreSQL major version. Ubuntu 22.04 does not ship
+// pgvector at all and 24.04/26.04 only carry it for their stock version, so
+// the PGDG apt repository (signed keyring, distro codename aware) is added
+// first — the same pattern as the PHP module's ondrej PPA. The script
+// contains no user input.
+func pgvectorInstallScript(majorVersion string) string {
+	return "set -eu\n" +
+		"codename=$(/usr/bin/lsb_release -cs)\n" +
+		"install -d -m 0755 /usr/share/postgresql-common/pgdg\n" +
+		"/usr/bin/curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.asc\n" +
+		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n" +
+		"apt-get update -qq\n" +
+		"apt-get install -y -o DPkg::Lock::Timeout=120 postgresql-" + majorVersion + "-pgvector\n" +
+		"echo 'pgvector installed'\n"
+}

@@ -3,6 +3,7 @@ package dbmanager
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -597,5 +598,87 @@ func TestPostgreSQLListUsers(t *testing.T) {
 	}
 	if users[0] != "appuser" {
 		t.Errorf("expected appuser, got %s", users[0])
+	}
+}
+
+func TestPgvectorStatusEnableAndScript(t *testing.T) {
+	var sudoCalls [][]string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "psql" {
+				return okResult("psql (PostgreSQL) 16.4 (Ubuntu 16.4-1.pgdg24.04+1)"), nil
+			}
+			return okResult(""), nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := name + " " + strings.Join(args, " ")
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			switch {
+			case strings.Contains(joined, "pg_available_extensions"):
+				return okResult("0.7.0\n"), nil
+			case strings.Contains(joined, "-d ragdb") && strings.Contains(joined, "pg_extension"):
+				return okResult("1\n"), nil
+			default:
+				return okResult(""), nil
+			}
+		},
+	}
+	svc := newTestService(t, mock)
+	ctx := context.Background()
+
+	ragdb, err := svc.CreateDatabase(ctx, "ragdb", "postgresql", "", "panel-user")
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+	if _, err := svc.CreateDatabase(ctx, "plaindb", "postgresql", "", "panel-user"); err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	status, err := svc.PgvectorStatus(ctx)
+	if err != nil {
+		t.Fatalf("PgvectorStatus: %v", err)
+	}
+	if status.Available != "0.7.0" {
+		t.Fatalf("available = %q, want 0.7.0", status.Available)
+	}
+	if !status.Databases["ragdb"] {
+		t.Errorf("ragdb should be enabled; map = %v", status.Databases)
+	}
+	if status.Databases["plaindb"] {
+		t.Errorf("plaindb should not be enabled; map = %v", status.Databases)
+	}
+
+	if err := svc.EnableDatabaseVector(ctx, ragdb.ID); err != nil {
+		t.Fatalf("EnableDatabaseVector: %v", err)
+	}
+	found := false
+	for _, c := range sudoCalls {
+		joined := strings.Join(c, " ")
+		if strings.Contains(joined, "-d ragdb") && strings.Contains(joined, "CREATE EXTENSION IF NOT EXISTS vector") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("CREATE EXTENSION not issued for ragdb; calls = %v", sudoCalls)
+	}
+
+	script, err := svc.PgvectorInstallScript(ctx)
+	if err != nil {
+		t.Fatalf("PgvectorInstallScript: %v", err)
+	}
+	if !strings.Contains(script, "postgresql-16-pgvector") {
+		t.Errorf("script missing version-matched package:\n%s", script)
+	}
+}
+
+func TestPgvectorRejectsNonPostgresDatabase(t *testing.T) {
+	svc := newTestService(t, newMockExec())
+	mdb, err := svc.CreateDatabase(context.Background(), "mysqldb", "mysql", "utf8mb4", "panel-user")
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+	err = svc.EnableDatabaseVector(context.Background(), mdb.ID)
+	if err == nil {
+		t.Fatal("EnableDatabaseVector on mysql db = nil error, want validation error")
 	}
 }

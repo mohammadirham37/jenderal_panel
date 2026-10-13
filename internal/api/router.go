@@ -707,6 +707,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
 				Post("/databases/engines/{engine}/restart", dbHandler.RestartEngine)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+				Get("/databases/engines/postgresql/pgvector", dbHandler.PgvectorStatus)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+				Post("/databases/engines/postgresql/install-pgvector", dbHandler.InstallPgvector)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+				Post("/databases/{id}/enable-pgvector", dbHandler.EnablePgvector)
+			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases", dbHandler.ListDatabases)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
 				Post("/databases", dbHandler.CreateDatabase)

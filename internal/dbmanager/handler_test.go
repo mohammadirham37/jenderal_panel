@@ -15,6 +15,7 @@ import (
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/settings"
 )
 
@@ -168,5 +169,95 @@ func TestRestoreRejectsUploadOverConfiguredLimit(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "restore file exceeds the 1 MB limit") {
 		t.Errorf("error should name the configured 1 MB limit: %s", rec.Body.String())
+	}
+}
+
+func TestPgvectorHandlers(t *testing.T) {
+	db := setupTestDB(t)
+	var sudoCalls [][]string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "psql" {
+				return &executor.Result{ExitCode: 0, Stdout: "psql (PostgreSQL) 16.4"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			joined := name + " " + strings.Join(args, " ")
+			if strings.Contains(joined, "pg_available_extensions") {
+				return &executor.Result{ExitCode: 0, Stdout: "0.7.0\n"}, nil
+			}
+			return &executor.Result{ExitCode: 0, Stdout: "\n"}, nil
+		},
+	}
+	svc := NewService(db, mock, audit.NewService(db))
+	h := NewHandler(svc, audit.NewService(db), nil, settings.NewService(db))
+
+	if _, err := db.Exec(
+		`INSERT INTO managed_databases (id, name, engine, charset, created_by, created_at, updated_at)
+		 VALUES ('db-1', 'ragdb', 'postgresql', '', 'panel-user', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed database: %v", err)
+	}
+
+	// Status endpoint reports availability and per-database state.
+	req := httptest.NewRequest("GET", "/api/v1/databases/engines/postgresql/pgvector", nil)
+	req = req.WithContext(auth.WithAdminFlag(req.Context(), true))
+	rec := httptest.NewRecorder()
+	h.PgvectorStatus(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("PgvectorStatus code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Available string          `json:"available_version"`
+			Databases map[string]bool `json:"databases"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	status := envelope.Data
+	if status.Available != "0.7.0" {
+		t.Errorf("available = %q, want 0.7.0", status.Available)
+	}
+	if len(status.Databases) != 1 {
+		t.Errorf("databases = %v, want one entry", status.Databases)
+	}
+
+	// Enable endpoint issues CREATE EXTENSION for the managed database.
+	req = httptest.NewRequest("POST", "/api/v1/databases/db-1/enable-pgvector", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "db-1")
+	req = req.WithContext(context.WithValue(auth.WithAdminFlag(context.Background(), true), chi.RouteCtxKey, rctx))
+	rec = httptest.NewRecorder()
+	h.EnablePgvector(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("EnablePgvector code = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	found := false
+	for _, c := range sudoCalls {
+		if strings.Contains(strings.Join(c, " "), "CREATE EXTENSION IF NOT EXISTS vector") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("CREATE EXTENSION not issued; calls = %v", sudoCalls)
+	}
+
+	// Enable on a mysql database is a validation error.
+	if _, err := db.Exec(
+		`INSERT INTO managed_databases (id, name, engine, charset, created_by, created_at, updated_at)
+		 VALUES ('db-2', 'mysqldb', 'mysql', 'utf8mb4', 'panel-user', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest("POST", "/api/v1/databases/db-2/enable-pgvector", nil)
+	rctx = chi.NewRouteContext()
+	rctx.URLParams.Add("id", "db-2")
+	req = req.WithContext(context.WithValue(auth.WithAdminFlag(context.Background(), true), chi.RouteCtxKey, rctx))
+	rec = httptest.NewRecorder()
+	h.EnablePgvector(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("EnablePgvector on mysql code = %d, want 400 (body: %s)", rec.Code, rec.Body.String())
 	}
 }

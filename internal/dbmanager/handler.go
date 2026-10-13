@@ -85,6 +85,62 @@ func (h *Handler) InstallEngine(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// PgvectorStatus reports pgvector availability and which managed
+// PostgreSQL databases have the vector extension active.
+func (h *Handler) PgvectorStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := h.svc.PgvectorStatus(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, status)
+}
+
+// InstallPgvector installs the pgvector apt package for the installed
+// PostgreSQL version as a background task.
+func (h *Handler) InstallPgvector(w http.ResponseWriter, r *http.Request) {
+	script, err := h.svc.PgvectorInstallScript(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	taskID := h.tasks.Run("Install pgvector", "bash", "-c", script)
+
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "install_pgvector",
+		Module: "dbmanager",
+		Target: "postgresql",
+		Detail: "task:" + taskID,
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// EnablePgvector activates the vector extension in a managed PostgreSQL
+// database.
+func (h *Handler) EnablePgvector(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := h.svc.EnableDatabaseVector(r.Context(), id); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "enable_pgvector",
+		Module: "dbmanager",
+		Target: id,
+		Detail: "enabled the pgvector extension",
+		IP:     r.RemoteAddr,
+	})
+
+	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 // StartEngine starts a database engine service.
 func (h *Handler) StartEngine(w http.ResponseWriter, r *http.Request) {
 	engine := chi.URLParam(r, "engine")

@@ -108,3 +108,104 @@ func TestPostgreSQLRevokePrivilegesSkipsOwnershipTransferForNonOwner(t *testing.
 		t.Fatalf("expected owner lookup + revoke only, got %v", calls)
 	}
 }
+
+func TestPostgreSQLMajorVersion(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0, Stdout: "psql (PostgreSQL) 16.4 (Ubuntu 16.4-1.pgdg24.04+1)"}, nil
+		},
+	}
+	major, err := NewPostgreSQLEngine(mock).MajorVersion(context.Background())
+	if err != nil {
+		t.Fatalf("MajorVersion() error = %v", err)
+	}
+	if major != "16" {
+		t.Fatalf("major = %q, want 16", major)
+	}
+}
+
+func TestPostgreSQLMajorVersionRequiresInstall(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 127}, nil
+		},
+	}
+	if _, err := NewPostgreSQLEngine(mock).MajorVersion(context.Background()); err == nil {
+		t.Fatal("MajorVersion() = nil error, want failure when psql is missing")
+	}
+}
+
+func TestPostgreSQLVectorStatus(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := strings.Join(args, " ")
+			switch {
+			case strings.Contains(joined, "pg_available_extensions"):
+				return &executor.Result{ExitCode: 0, Stdout: "0.7.0\n"}, nil
+			case strings.Contains(joined, "-d ragdb") && strings.Contains(joined, "pg_extension"):
+				return &executor.Result{ExitCode: 0, Stdout: "1\n"}, nil
+			case strings.Contains(joined, "-d plaindb") && strings.Contains(joined, "pg_extension"):
+				return &executor.Result{ExitCode: 0, Stdout: "\n"}, nil
+			}
+			return &executor.Result{ExitCode: 1, Stderr: "unexpected query: " + joined}, nil
+		},
+	}
+	engine := NewPostgreSQLEngine(mock)
+	ctx := context.Background()
+
+	version, err := engine.VectorAvailableVersion(ctx)
+	if err != nil {
+		t.Fatalf("VectorAvailableVersion() error = %v", err)
+	}
+	if version != "0.7.0" {
+		t.Fatalf("available version = %q, want 0.7.0", version)
+	}
+
+	enabled, err := engine.VectorEnabledDatabases(ctx, []string{"ragdb", "plaindb"})
+	if err != nil {
+		t.Fatalf("VectorEnabledDatabases() error = %v", err)
+	}
+	if !enabled["ragdb"] || enabled["plaindb"] {
+		t.Fatalf("enabled map = %v, want ragdb only", enabled)
+	}
+}
+
+func TestPostgreSQLEnableVector(t *testing.T) {
+	var calls [][]string
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			calls = append(calls, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+	if err := NewPostgreSQLEngine(mock).EnableVector(context.Background(), "ragdb"); err != nil {
+		t.Fatalf("EnableVector() error = %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("calls = %v", calls)
+	}
+	joined := strings.Join(calls[0], " ")
+	if !strings.Contains(joined, "-d ragdb") {
+		t.Errorf("extension must be created inside ragdb, got %q", joined)
+	}
+	if !strings.Contains(joined, "CREATE EXTENSION IF NOT EXISTS vector") {
+		t.Errorf("call must create the vector extension, got %q", joined)
+	}
+}
+
+func TestPgvectorInstallScript(t *testing.T) {
+	script := pgvectorInstallScript("16")
+	for _, want := range []string{
+		"postgresql-16-pgvector",
+		"apt.postgresql.org",
+		"apt-get install -y",
+		"/usr/bin/lsb_release -cs",
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("install script missing %q:\n%s", want, script)
+		}
+	}
+	if strings.Contains(script, "eval") {
+		t.Error("install script must not use eval")
+	}
+}

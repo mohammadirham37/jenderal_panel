@@ -96,6 +96,89 @@ func (s *Service) RestartEngine(ctx context.Context, engineName string) error {
 	return eng.Restart(ctx)
 }
 
+// PgvectorStatus is the pgvector view of the PostgreSQL engine: the
+// extension version available server-wide and which managed databases have
+// it active.
+type PgvectorStatus struct {
+	Available string          `json:"available_version"`
+	Databases map[string]bool `json:"databases"`
+}
+
+// postgresEngine returns the concrete PostgreSQL engine.
+func (s *Service) postgresEngine() (*PostgreSQLEngine, error) {
+	eng, err := s.engine("postgresql")
+	if err != nil {
+		return nil, err
+	}
+	pg, ok := eng.(*PostgreSQLEngine)
+	if !ok {
+		return nil, model.NewValidationError("postgresql engine is unavailable")
+	}
+	return pg, nil
+}
+
+// PgvectorStatus reports pgvector availability and per-database activation
+// for every managed PostgreSQL database.
+func (s *Service) PgvectorStatus(ctx context.Context) (PgvectorStatus, error) {
+	pg, err := s.postgresEngine()
+	if err != nil {
+		return PgvectorStatus{}, err
+	}
+	status := PgvectorStatus{Databases: map[string]bool{}}
+	status.Available, err = pg.VectorAvailableVersion(ctx)
+	if err != nil {
+		return PgvectorStatus{}, err
+	}
+	managed, err := s.ListDatabases(ctx)
+	if err != nil {
+		return PgvectorStatus{}, err
+	}
+	var names []string
+	for _, mdb := range managed {
+		if mdb.Engine == "postgresql" {
+			names = append(names, mdb.Name)
+		}
+	}
+	if len(names) > 0 {
+		status.Databases, err = pg.VectorEnabledDatabases(ctx, names)
+		if err != nil {
+			return PgvectorStatus{}, err
+		}
+	}
+	return status, nil
+}
+
+// EnableDatabaseVector activates the pgvector extension inside a managed
+// PostgreSQL database so RAG applications can use vector columns.
+func (s *Service) EnableDatabaseVector(ctx context.Context, id string) error {
+	mdb, err := s.GetDatabase(ctx, id)
+	if err != nil {
+		return err
+	}
+	if mdb.Engine != "postgresql" {
+		return model.NewValidationError("pgvector is only available for PostgreSQL databases")
+	}
+	pg, err := s.postgresEngine()
+	if err != nil {
+		return err
+	}
+	return pg.EnableVector(ctx, mdb.Name)
+}
+
+// PgvectorInstallScript builds the pgvector install script for the
+// currently installed PostgreSQL major version.
+func (s *Service) PgvectorInstallScript(ctx context.Context) (string, error) {
+	pg, err := s.postgresEngine()
+	if err != nil {
+		return "", err
+	}
+	major, err := pg.MajorVersion(ctx)
+	if err != nil {
+		return "", err
+	}
+	return pgvectorInstallScript(major), nil
+}
+
 // CreateDatabase creates a database on the engine and records it in the panel DB.
 func (s *Service) CreateDatabase(ctx context.Context, name, engineName, charset, createdBy string) (model.ManagedDatabase, error) {
 	if name == "" {
