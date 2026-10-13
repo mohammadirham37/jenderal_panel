@@ -5,6 +5,7 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
+	import { hasPermission, permissions } from '$lib/stores/auth';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface EngineStatus {
@@ -52,6 +53,8 @@ import { toast } from '$lib/stores/toast';
 	let error = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
+	let pgvector = $state<{ available_version: string; databases: Record<string, boolean> } | null>(null);
+	let enablingVector = $state('');
 	let engineOperationInProgress = $derived(actionInProgress !== null || !!currentTaskId);
 
 	// Search
@@ -386,7 +389,7 @@ import { toast } from '$lib/stores/toast';
 
 	async function refreshAll() {
 		error = '';
-		await Promise.all([loadEngines(), loadDatabases(), loadUsers(), loadGrants()]);
+		await Promise.all([loadEngines(), loadDatabases(), loadUsers(), loadGrants(), loadPgvector()]);
 	}
 
 	// ── Engine actions ────────────────────────────────────────────
@@ -400,6 +403,44 @@ import { toast } from '$lib/stores/toast';
 			fail(err, translate($language, 'db.install_failed').replace('{name}', engineLabel(engineName)));
 		} finally {
 			actionInProgress = null;
+		}
+	}
+
+	// ── pgvector (RAG embeddings) ─────────────────────────────────
+	async function loadPgvector() {
+		try {
+			pgvector = await api.get<{ available_version: string; databases: Record<string, boolean> }>(
+				'/api/v1/databases/engines/postgresql/pgvector'
+			);
+		} catch {
+			// PostgreSQL not installed (or not permitted): keep the row hidden.
+			pgvector = null;
+		}
+	}
+
+	async function installPgvector() {
+		actionInProgress = 'install-pgvector';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/databases/engines/postgresql/install-pgvector');
+			currentTaskId = result.task_id;
+			flash(translate($language, 'db.pgvectorInstallStarted'));
+		} catch (err) {
+			fail(err, translate($language, 'db.pgvectorInstallFailed'));
+		} finally {
+			actionInProgress = null;
+		}
+	}
+
+	async function enableVector(dbId: string, dbName: string) {
+		enablingVector = dbId;
+		try {
+			await api.post(`/api/v1/databases/${dbId}/enable-pgvector`);
+			flash(translate($language, 'db.pgvectorEnabled').replace('{name}', dbName));
+			await loadPgvector();
+		} catch (err) {
+			fail(err, translate($language, 'db.pgvectorEnableFailed').replace('{name}', dbName));
+		} finally {
+			enablingVector = '';
 		}
 	}
 
@@ -681,6 +722,30 @@ import { toast } from '$lib/stores/toast';
 								</button>
 							{/if}
 						</div>
+							{#if eng.name === 'postgresql' && eng.installed && pgvector}
+								<div class="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-gray-900/40 px-3 py-2">
+									<span class="text-[11px] text-gray-400">
+										pgvector
+										{#if pgvector.available_version}
+											<span class="ml-1 font-mono text-green-400">v{pgvector.available_version}</span>
+										{:else}
+											<span class="ml-1 text-gray-500">{translate($language, 'db.pgvectorMissing')}</span>
+										{/if}
+									</span>
+									{#if pgvector.available_version}
+										<span class="rounded-full bg-green-900/40 px-2 py-0.5 text-[10px] font-semibold text-green-400">{translate($language, 'db.installed')}</span>
+									{:else if hasPermission($permissions, 'databases.config')}
+										<button
+											type="button"
+											onclick={installPgvector}
+											disabled={engineOperationInProgress}
+											class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+										>
+											{actionInProgress === 'install-pgvector' ? translate($language, 'db.installing') : translate($language, 'db.pgvectorInstall')}
+										</button>
+									{/if}
+								</div>
+							{/if}
 					</div>
 				{/each}
 			</div>
@@ -807,6 +872,21 @@ import { toast } from '$lib/stores/toast';
 								{grantCountForDb(db.id)}
 							</span>
 						{/if}
+							{#if db.engine === 'postgresql' && pgvector?.available_version}
+								{#if pgvector.databases[db.name]}
+									<span class="hidden shrink-0 rounded-md border border-green-800/60 bg-green-900/30 px-2 py-0.5 text-[11px] font-semibold text-green-400 md:inline">vector</span>
+								{:else if hasPermission($permissions, 'databases.create')}
+									<button
+										type="button"
+										onclick={() => enableVector(db.id, db.name)}
+										disabled={enablingVector !== ''}
+										title={translate($language, 'db.pgvectorEnableTitle')}
+										class="shrink-0 cursor-pointer rounded-md border border-gray-700 bg-gray-900/60 px-2 py-0.5 text-[11px] font-medium text-gray-300 transition hover:border-green-700 hover:text-green-400 disabled:opacity-50"
+									>
+										{enablingVector === db.id ? '…' : '+ pgvector'}
+									</button>
+								{/if}
+							{/if}
 						<div class="flex shrink-0 items-center justify-end gap-1 relative">
 							{#if db.engine !== 'redis'}
 								<button
@@ -1321,5 +1401,5 @@ import { toast } from '$lib/stores/toast';
 		{/if}
 	</section>
 
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); }} />
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); loadPgvector(); }} />
 </div>
