@@ -205,6 +205,11 @@ func TestPgvectorInstallScript(t *testing.T) {
 			t.Errorf("install script missing %q:\n%s", want, script)
 		}
 	}
+	// PGDG publishes suites as <codename>-pgdg (e.g. noble-pgdg); a plain
+	// codename produces "repository ... does not have a Release file".
+	if !strings.Contains(script, "$(/usr/bin/lsb_release -cs)-pgdg main") {
+		t.Errorf("install script must use the <codename>-pgdg suite:\n%s", script)
+	}
 	if strings.Contains(script, "eval") {
 		t.Error("install script must not use eval")
 	}

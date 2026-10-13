@@ -412,7 +412,7 @@ func pgvectorInstallScript(majorVersion string) string {
 		"codename=$(/usr/bin/lsb_release -cs)\n" +
 		"install -d -m 0755 /usr/share/postgresql-common/pgdg\n" +
 		"/usr/bin/curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.asc\n" +
-		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n" +
+		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n" +
 		"apt-get update -qq\n" +
 		"apt-get install -y -o DPkg::Lock::Timeout=120 postgresql-" + majorVersion + "-pgvector\n" +
 		"echo 'pgvector installed'\n"
