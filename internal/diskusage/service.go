@@ -388,14 +388,31 @@ func (s *Service) collectDocker(ctx context.Context, o *Overview) {
 }
 
 // CleanupPlan returns the actions selected by opts, for the dry-run preview.
-func (s *Service) CleanupPlan(opts CleanupOptions) []CleanupAction {
-	return cleanupActions(opts)
+// The docker prune action is dropped when the docker CLI is unavailable so
+// the preview matches what will actually run.
+func (s *Service) CleanupPlan(ctx context.Context, opts CleanupOptions) []CleanupAction {
+	return cleanupActions(s.effectiveOptions(ctx, opts))
 }
 
 // CleanupCommands returns the argv command list for the selected actions,
-// ready for the task runner (which runs every command under sudo).
-func (s *Service) CleanupCommands(opts CleanupOptions) [][]string {
-	return cleanupCommands(opts)
+// ready for the task runner (which runs every command under sudo). Actions
+// whose tooling is absent are skipped instead of failing the whole cleanup.
+func (s *Service) CleanupCommands(ctx context.Context, opts CleanupOptions) [][]string {
+	return cleanupCommands(s.effectiveOptions(ctx, opts))
+}
+
+// effectiveOptions drops actions whose tooling is missing from the server.
+func (s *Service) effectiveOptions(ctx context.Context, opts CleanupOptions) CleanupOptions {
+	if opts.DockerPrune && !s.dockerAvailable(ctx) {
+		opts.DockerPrune = false
+	}
+	return opts
+}
+
+// dockerAvailable probes whether the docker CLI is usable.
+func (s *Service) dockerAvailable(ctx context.Context) bool {
+	res, err := s.exec.Run(ctx, "docker", "--version")
+	return err == nil && res != nil && res.ExitCode == 0
 }
 
 func cleanupActions(opts CleanupOptions) []CleanupAction {

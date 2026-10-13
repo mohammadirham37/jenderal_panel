@@ -151,10 +151,19 @@ func TestDirBreakdownHandlesMissingDirectory(t *testing.T) {
 }
 
 func TestCleanupCommandsBounds(t *testing.T) {
-	svc := NewService(nil, &executor.MockExecutor{})
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "docker" {
+				return &executor.Result{ExitCode: 0, Stdout: "Docker version 27.0.0"}, nil
+			}
+			return &executor.Result{}, errors.New("unexpected command " + name)
+		},
+	}
+	svc := NewService(nil, exec)
+	ctx := context.Background()
 
 	// Nothing selected -> no commands.
-	if cmds := svc.CleanupCommands(CleanupOptions{}); len(cmds) != 0 {
+	if cmds := svc.CleanupCommands(ctx, CleanupOptions{}); len(cmds) != 0 {
 		t.Errorf("expected no commands, got %d", len(cmds))
 	}
 
@@ -165,12 +174,12 @@ func TestCleanupCommandsBounds(t *testing.T) {
 		TmpCleanDays:    7,
 		DockerPrune:     true,
 	}
-	plan := svc.CleanupPlan(opts)
+	plan := svc.CleanupPlan(ctx, opts)
 	if len(plan) != 5 {
 		t.Fatalf("expected 5 planned actions, got %d", len(plan))
 	}
 
-	cmds := svc.CleanupCommands(opts)
+	cmds := svc.CleanupCommands(ctx, opts)
 	if len(cmds) != 5 {
 		t.Fatalf("expected 5 commands, got %d", len(cmds))
 	}
@@ -184,7 +193,7 @@ func TestCleanupCommandsBounds(t *testing.T) {
 	// The handler clamps at the extremes; the command builder must keep the
 	// user value as given so the preview matches what runs.
 	extreme := CleanupOptions{JournalVacuumMB: 99999, TmpCleanDays: 99999}
-	extremeCmds := svc.CleanupCommands(extreme)
+	extremeCmds := svc.CleanupCommands(ctx, extreme)
 	if extremeCmds[0][1] != "--vacuum-size=99999M" {
 		t.Errorf("expected raw value passthrough, got %v", extremeCmds[0])
 	}
@@ -278,15 +287,24 @@ func TestOverviewCollectsReport(t *testing.T) {
 }
 
 func TestCleanupCommandsLogArchives(t *testing.T) {
-	svc := NewService(nil, &executor.MockExecutor{})
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "docker" {
+				return &executor.Result{ExitCode: 0, Stdout: "Docker version 27.0.0"}, nil
+			}
+			return &executor.Result{}, errors.New("unexpected command " + name)
+		},
+	}
+	svc := NewService(nil, exec)
+	ctx := context.Background()
 
 	// Off by default: existing callers must see no change.
-	if cmds := svc.CleanupCommands(CleanupOptions{AptClean: true}); len(cmds) != 1 {
+	if cmds := svc.CleanupCommands(ctx, CleanupOptions{AptClean: true}); len(cmds) != 1 {
 		t.Fatalf("log_archives must default off; got %d commands", len(cmds))
 	}
 
 	opts := CleanupOptions{JournalVacuumMB: 100, AptClean: true, AptAutoremove: true, TmpCleanDays: 7, DockerPrune: true, LogArchives: true}
-	plan := svc.CleanupPlan(opts)
+	plan := svc.CleanupPlan(ctx, opts)
 	if len(plan) != 6 {
 		t.Fatalf("expected 6 planned actions, got %d", len(plan))
 	}
@@ -354,5 +372,44 @@ func TestCollectRotatedLogsDegradesGracefully(t *testing.T) {
 	}
 	if overview.RotatedLogBytes != 0 {
 		t.Fatalf("rotated log bytes = %d, want 0", overview.RotatedLogBytes)
+	}
+}
+
+func TestCleanupCommandsDropsDockerWhenCLIMissing(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			// docker CLI absent: exec fails like a missing binary does.
+			return nil, errors.New("exec: docker: not found")
+		},
+	}
+	svc := NewService(nil, exec)
+	cmds := svc.CleanupCommands(context.Background(), CleanupOptions{AptClean: true, DockerPrune: true})
+	if len(cmds) != 1 {
+		t.Fatalf("expected docker action dropped, got %d commands: %v", len(cmds), cmds)
+	}
+	for _, cmd := range cmds {
+		if cmd[0] == "docker" {
+			t.Errorf("docker prune must not run without the docker CLI: %v", cmd)
+		}
+	}
+	plan := svc.CleanupPlan(context.Background(), CleanupOptions{DockerPrune: true})
+	if len(plan) != 0 {
+		t.Fatalf("preview must match execution; got %d actions", len(plan))
+	}
+}
+
+func TestCleanupCommandsKeepsDockerWhenCLIPresent(t *testing.T) {
+	exec := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "docker" {
+				return &executor.Result{ExitCode: 0, Stdout: "Docker version 27.0.0"}, nil
+			}
+			return &executor.Result{}, errors.New("unexpected command " + name)
+		},
+	}
+	svc := NewService(nil, exec)
+	cmds := svc.CleanupCommands(context.Background(), CleanupOptions{DockerPrune: true})
+	if len(cmds) != 1 || cmds[0][0] != "docker" {
+		t.Fatalf("docker prune must stay when the CLI works, got %v", cmds)
 	}
 }

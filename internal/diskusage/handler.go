@@ -81,7 +81,7 @@ func (h *Handler) PlanCleanup(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
-	httputil.JSON(w, http.StatusOK, h.svc.CleanupPlan(opts))
+	httputil.JSON(w, http.StatusOK, h.svc.CleanupPlan(r.Context(), opts))
 }
 
 // RunCleanup executes the selected cleanup actions as a background task.
@@ -92,7 +92,7 @@ func (h *Handler) RunCleanup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commands := h.svc.CleanupCommands(opts)
+	commands := h.svc.CleanupCommands(r.Context(), opts)
 	if len(commands) == 0 {
 		httputil.HandleError(w, model.NewValidationError("no cleanup actions selected"))
 		return

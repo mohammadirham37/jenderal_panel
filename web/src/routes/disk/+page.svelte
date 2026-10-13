@@ -89,6 +89,7 @@
 	let starting = $state(false);
 	let startError = $state('');
 	let taskId = $state('');
+	let cleanupModalOpen = $state(false);
 
 	function formatBytes(bytes: number): string {
 		if (!bytes) return '0 B';
@@ -249,6 +250,7 @@
 		try {
 			const data = await api.post<{ task_id: string }>('/api/v1/disk/cleanup', options);
 			taskId = data.task_id;
+			cleanupModalOpen = true;
 		} catch (err) {
 			startError = err instanceof Error ? err.message : '';
 		} finally {
@@ -309,12 +311,15 @@
 		</div>
 	</div>
 
-	{#if taskId}
-		<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
-			<h3 class="mb-3 text-lg font-semibold text-white">{translate($language, 'dku.cleanup.plan')}</h3>
-			<TaskProgress bind:taskId storageKey="jenderal_disk_cleanup" onComplete={load} />
-		</div>
-	{/if}
+		{#if taskId && !cleanupModalOpen}
+			<button
+				type="button"
+				onclick={() => (cleanupModalOpen = true)}
+				class="cursor-pointer rounded-lg border border-blue-600 bg-blue-600/10 px-4 py-2 text-sm font-medium text-blue-300 transition-colors hover:bg-blue-600/20"
+			>
+				{translate($language, 'dku.cleanup.inProgress')}
+			</button>
+		{/if}
 
 	{#if loading}
 		<div class="rounded-lg border border-gray-700 bg-gray-800 p-8 text-center text-gray-400">
@@ -608,6 +613,7 @@
 						{#if overview && overview.old_kernels.length > 0}<span class="mt-1 block text-xs font-medium text-green-400/90">{overview.old_kernels.length} {translate($language, 'dku.cleanup.kernels')}</span>{/if}
 					</span>
 				</label>
+				{#if overview?.has_docker}
 				<label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors {options.docker_prune ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}">
 					<input type="checkbox" bind:checked={options.docker_prune} class="mt-0.5 h-4 w-4 accent-blue-500" />
 					<span>
@@ -615,6 +621,7 @@
 						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.dockerPrune.desc')}</span>
 					</span>
 				</label>
+				{/if}
 				<label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors {options.log_archives ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}">
 					<input type="checkbox" bind:checked={options.log_archives} class="mt-0.5 h-4 w-4 accent-blue-500" />
 					<span>
@@ -692,3 +699,36 @@
 		</div>
 	{/if}
 </div>
+
+{#if taskId && cleanupModalOpen}
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+		role="dialog"
+		aria-modal="true"
+		tabindex="-1"
+	>
+		<div class="w-full max-w-2xl rounded-xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<div class="mb-4 flex items-center justify-between gap-3">
+				<h3 class="text-lg font-semibold text-white">{translate($language, 'dku.cleanup.plan')}</h3>
+				<button
+					type="button"
+					onclick={() => (cleanupModalOpen = false)}
+					class="cursor-pointer rounded-lg px-2 py-1 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
+					aria-label={translate($language, 'dku.cleanup.close')}
+				>
+					✕
+				</button>
+			</div>
+			<TaskProgress bind:taskId storageKey="jenderal_disk_cleanup" onComplete={load} />
+			<div class="mt-4 flex justify-end">
+				<button
+					type="button"
+					onclick={() => (cleanupModalOpen = false)}
+					class="cursor-pointer rounded-lg bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition-colors hover:bg-gray-600"
+				>
+					{translate($language, 'dku.cleanup.close')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}

@@ -77,6 +77,8 @@ const en = {
 	'dku.cleanup.logArchives.desc': 'Deletes compressed or numbered /var/log archives older than 3 days; active logs are never touched.',
 	'dku.cleanup.kernels': 'old kernel packages',
 	'dku.cleanNow': 'Clean now',
+	'dku.cleanup.close': 'Close',
+	'dku.cleanup.inProgress': 'Cleanup in progress — view progress',
 	'dku.cleanup.journalVacuum.desc': 'Caps the systemd journal at the given size.',
 	'dku.cleanup.tmpClean.desc': 'Deletes files under /tmp not modified for the given number of days.'
 } as const;
@@ -156,6 +158,8 @@ const id: Record<keyof typeof en, string> = {
 	'dku.cleanup.logArchives.desc': 'Menghapus arsip /var/log terkompresi atau bernomor yang berumur lebih dari 3 hari; log aktif tidak disentuh.',
 	'dku.cleanup.kernels': 'paket kernel lama',
 	'dku.cleanNow': 'Bersihkan sekarang',
+	'dku.cleanup.close': 'Tutup',
+	'dku.cleanup.inProgress': 'Pembersihan berjalan — lihat progres',
 	'dku.cleanup.journalVacuum.desc': 'Membatasi jurnal systemd pada ukuran yang diberikan.',
 	'dku.cleanup.tmpClean.desc': 'Menghapus file di /tmp yang tidak dimodifikasi selama jumlah hari yang diberikan.'
 };
