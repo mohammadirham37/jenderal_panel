@@ -587,6 +587,7 @@ import { toast } from '$lib/stores/toast';
 		loadUsers();
 		loadGrants();
 		loadRestoreLimit();
+		loadPgvector();
 	});
 </script>
 
@@ -722,17 +723,17 @@ import { toast } from '$lib/stores/toast';
 								</button>
 							{/if}
 						</div>
-							{#if eng.name === 'postgresql' && eng.installed && pgvector}
+							{#if eng.name === 'postgresql' && eng.installed}
 								<div class="mt-3 flex items-center justify-between gap-2 rounded-lg border border-white/5 bg-gray-900/40 px-3 py-2">
 									<span class="text-[11px] text-gray-400">
 										pgvector
-										{#if pgvector.available_version}
+										{#if pgvector?.available_version}
 											<span class="ml-1 font-mono text-green-400">v{pgvector.available_version}</span>
 										{:else}
 											<span class="ml-1 text-gray-500">{translate($language, 'db.pgvectorMissing')}</span>
 										{/if}
 									</span>
-									{#if pgvector.available_version}
+									{#if pgvector?.available_version}
 										<span class="rounded-full bg-green-900/40 px-2 py-0.5 text-[10px] font-semibold text-green-400">{translate($language, 'db.installed')}</span>
 									{:else if hasPermission($permissions, 'databases.config')}
 										<button
