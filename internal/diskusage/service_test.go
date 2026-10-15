@@ -505,3 +505,34 @@ func TestWebsitesDirUsageSumsSiteHomes(t *testing.T) {
 		t.Errorf("empty overview row = %+v, want 0 bytes, not missing", empty)
 	}
 }
+
+func TestCleanupCommandsTruncateLogs(t *testing.T) {
+	svc := NewService(nil, &executor.MockExecutor{})
+	ctx := context.Background()
+
+	// Off by default.
+	if cmds := svc.CleanupCommands(ctx, CleanupOptions{AptClean: true}); len(cmds) != 1 {
+		t.Fatalf("truncate_logs must default off, got %d commands", len(cmds))
+	}
+
+	cmds := svc.CleanupCommands(ctx, CleanupOptions{TruncateLogs: true})
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+	joined := strings.Join(cmds[0], " ")
+	for _, want := range []string{"/var/log", "*.log", "syslog", "-size", "+1M", "truncate", "-s", "0"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("truncate command missing %q: %v", want, cmds[0])
+		}
+	}
+	// Journal files are managed by the vacuum action, not by truncation.
+	if strings.Contains(joined, "journal") {
+		t.Errorf("truncate command must not touch the journal: %v", cmds[0])
+	}
+	// Only a plain argv: safe to run under sudo without a shell.
+	for _, part := range cmds[0] {
+		if strings.ContainsAny(part, ";|&`") {
+			t.Errorf("command parts must not contain shell metacharacters: %q", part)
+		}
+	}
+}

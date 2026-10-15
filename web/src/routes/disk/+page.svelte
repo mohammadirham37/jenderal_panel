@@ -72,6 +72,7 @@
 		docker_prune: boolean;
 		log_archives: boolean;
 		log_archives_days: number;
+		truncate_logs: boolean;
 	}
 
 	let overview = $state<Overview | null>(null);
@@ -85,7 +86,8 @@
 		tmp_clean_days: 0,
 		docker_prune: false,
 		log_archives: false,
-		log_archives_days: 0
+		log_archives_days: 0,
+		truncate_logs: false
 	});
 	let plan = $state<CleanupAction[]>([]);
 	let starting = $state(false);
@@ -182,6 +184,29 @@
 
 	function scrollToCleanup() {
 		document.getElementById('dku-cleanup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	// Active (unrotated) log bytes: whatever /var/log holds beyond the
+	// journal and the already-rotated archives.
+	const activeLogBytes = $derived(
+		Math.max(0, dirBytes('/var/log') - (overview?.journal_bytes ?? 0) - (overview?.rotated_log_bytes ?? 0))
+	);
+
+	async function runLogCleanup() {
+		if (starting || !!taskId) return;
+		startError = '';
+		try {
+			const data = await api.post<{ task_id: string }>('/api/v1/disk/cleanup', {
+				journal_vacuum_mb: 100,
+				log_archives: true,
+				log_archives_days: 0,
+				truncate_logs: true
+			});
+			taskId = data.task_id;
+			cleanupModalOpen = true;
+		} catch (err) {
+			startError = err instanceof Error ? err.message : translate($language, 'dku.cleanup.logRunFailed');
+		}
 	}
 
 	// Per-website folder breakdown (expandable rows in "Websites by Size").
@@ -449,7 +474,22 @@
 			<p class="mb-4 text-xs text-gray-500">{translate($language, 'dku.dirs.desc')}</p>
 			<div class="divide-y divide-gray-700/60">
 				{#each dirRows as row (row.key)}
-					{@render usageBarRow(row.label, row.path, row.bytes, maxDirBytes, row.missing)}
+					<div class="flex items-center gap-2">
+						<div class="min-w-0 flex-1">
+							{@render usageBarRow(row.label, row.path, row.bytes, maxDirBytes, row.missing)}
+						</div>
+						{#if row.key === '/var/log' && !row.missing}
+							<button
+								type="button"
+								onclick={runLogCleanup}
+								disabled={starting || !!taskId}
+								title={translate($language, 'dku.cleanLogsTitle')}
+								class="shrink-0 cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-[11px] font-semibold text-gray-200 transition hover:border-green-600 hover:text-green-400 disabled:opacity-50"
+							>
+								{translate($language, 'dku.cleanLogs')}
+							</button>
+						{/if}
+					</div>
 				{/each}
 			</div>
 		</div>
@@ -630,6 +670,14 @@
 						<span class="block text-sm font-medium text-white">{translate($language, 'dku.cleanup.logArchives')}</span>
 						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.logArchives.desc')}</span>
 						{#if overview && overview.rotated_log_bytes > 0}<span class="mt-1 block text-xs font-medium text-green-400/90">≈ {formatBytes(overview.rotated_log_bytes)}</span>{/if}
+					</span>
+				</label>
+				<label class="flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 transition-colors {options.truncate_logs ? 'border-blue-500/60 bg-blue-500/5' : 'border-gray-700 hover:border-gray-600'}">
+					<input type="checkbox" bind:checked={options.truncate_logs} class="mt-0.5 h-4 w-4 accent-blue-500" />
+					<span>
+						<span class="block text-sm font-medium text-white">{translate($language, 'dku.cleanup.truncateLogs')}</span>
+						<span class="mt-0.5 block text-xs text-gray-500">{translate($language, 'dku.cleanup.truncateLogs.desc')}</span>
+						{#if activeLogBytes > 1024 * 1024}<span class="mt-1 block text-xs font-medium text-green-400/90">≈ {formatBytes(activeLogBytes)}</span>{/if}
 					</span>
 				</label>
 				<div class="flex flex-wrap items-end gap-3 rounded-xl border border-gray-700 p-3.5">

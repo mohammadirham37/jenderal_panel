@@ -102,6 +102,11 @@ type CleanupOptions struct {
 	// LogArchivesDays limits the archive deletion to files older than N
 	// days; 0 deletes every rotated archive (active logs are never touched).
 	LogArchivesDays int `json:"log_archives_days"`
+	// TruncateLogs empties large active log files in /var/log (rsyslog,
+	// nginx, fail2ban, ...). Deleting them would not free space while the
+	// writing process still holds the file open, so they are truncated
+	// instead.
+	TruncateLogs bool `json:"truncate_logs"`
 }
 
 // CleanupAction describes one planned cleanup step for the dry-run preview.
@@ -478,6 +483,14 @@ func cleanupActions(opts CleanupOptions) []CleanupAction {
 		}
 		cmd = append(cmd, "-delete")
 		actions = append(actions, CleanupAction{Name: "log_archives", Commands: [][]string{cmd}})
+	}
+	if opts.TruncateLogs {
+		actions = append(actions, CleanupAction{
+			Name: "truncate_logs",
+			Commands: [][]string{{"find", "/var/log", "-xdev", "-maxdepth", "2", "-type", "f",
+				"(", "-name", "*.log", "-o", "-name", "syslog", "-o", "-name", "messages", "-o", "-name", "debug", ")",
+				"-size", "+1M", "-exec", "truncate", "-s", "0", "{}", "+"}},
+		})
 	}
 	return actions
 }
