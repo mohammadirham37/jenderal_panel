@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // setupDiagnosticsDB prepares the shared test schema with the serving
@@ -167,5 +168,23 @@ func TestDiagnoseReportsNginxPermissionDenied(t *testing.T) {
 	}
 	if httpResponse == nil || httpResponse.Status != DiagFail {
 		t.Fatalf("expected http_response fail, got %+v", httpResponse)
+	}
+}
+
+func TestDiagnosticIndexFileForWordPress(t *testing.T) {
+	cases := []struct {
+		w    model.Website
+		want string
+	}{
+		{model.Website{AppType: "wordpress", Framework: "wordpress", NginxProfile: "wordpress"}, "index.php"},
+		{model.Website{AppType: "php"}, "index.php"},
+		{model.Website{AppType: "php", Framework: "laravel"}, "index.php"},
+		{model.Website{AppType: "static"}, "index.html"},
+		{model.Website{AppType: "static", NginxProfile: "php"}, "index.php"},
+	}
+	for _, c := range cases {
+		if got := diagnosticIndexFile(c.w); got != c.want {
+			t.Errorf("diagnosticIndexFile(%+v) = %q, want %q", c.w, got, c.want)
+		}
 	}
 }

@@ -100,11 +100,7 @@ func (s *Service) diagnoseWebsite(ctx context.Context, w model.Website) Diagnost
 	}
 
 	// Document root and index file present?
-	indexFile := "index.html"
-	if isLaravel || w.AppType == "php" {
-		indexFile = "index.php"
-	}
-	indexPath := docRoot + "/" + indexFile
+	indexPath := docRoot + "/" + diagnosticIndexFile(w)
 	if res, err := s.exec.RunSudo(ctx, "test", "-d", docRoot); err != nil {
 		add("docroot", DiagFail, err.Error(), "wd.diag.hint_deploy")
 	} else if res.ExitCode != 0 {
@@ -229,4 +225,18 @@ func (s *Service) checkHTTPResponse(ctx context.Context, domain string) (string,
 	default:
 		return DiagOK, "local nginx answered HTTP " + code, ""
 	}
+}
+
+// diagnosticIndexFile is the entry point the docroot and access checks look
+// for: index.php for every PHP-served site (Native PHP, WordPress, Laravel,
+// CodeIgniter), index.html for static and proxied sites.
+func diagnosticIndexFile(w model.Website) string {
+	if w.Framework == "laravel" || w.AppType == "php" || w.AppType == "wordpress" {
+		return "index.php"
+	}
+	switch NginxProfileForWebsite(w) {
+	case "php", "wordpress", "laravel", "laravel-octane", "codeigniter3", "codeigniter4":
+		return "index.php"
+	}
+	return "index.html"
 }
