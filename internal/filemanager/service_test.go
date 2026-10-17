@@ -347,6 +347,57 @@ func TestWriteFileTreatsFilenameAndContentAsLiteralData(t *testing.T) {
 	}
 }
 
+func TestWriteFileStreamStreamsContentAsWebsiteUser(t *testing.T) {
+	basePath := t.TempDir()
+	resolvedBasePath, err := filepath.EvalSymlinks(basePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := strings.Repeat("zip-bytes", 1024)
+	var writtenContent string
+	chmodCalled := false
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(_ context.Context, name string, args ...string) (*executor.Result, error) {
+			switch args[2] {
+			case "stat":
+				return &executor.Result{ExitCode: 1}, nil
+			case "chmod":
+				chmodCalled = true
+				return &executor.Result{ExitCode: 0}, nil
+			default:
+				return &executor.Result{ExitCode: 1}, nil
+			}
+		},
+		RunSudoWithInputStreamFunc: func(ctx context.Context, stdin io.Reader, _ io.Writer, name string, args ...string) (int, error) {
+			if _, ok := ctx.Deadline(); !ok {
+				t.Fatal("streamed upload write must carry its own deadline")
+			}
+			if name != "-u" || len(args) != 5 || args[1] != "--" || args[2] != "tee" || args[3] != "--" {
+				t.Fatalf("RunSudoWithInputStream = %q %q, want -u <user> -- tee -- <target>", name, args)
+			}
+			if args[4] != filepath.Join(resolvedBasePath, "big.zip") {
+				t.Fatalf("target = %q, want big.zip under base", args[4])
+			}
+			data, err := io.ReadAll(stdin)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writtenContent = string(data)
+			return 0, nil
+		},
+	}
+
+	if err := NewService(mock, nil).WriteFileStream(context.Background(), basePath, "big.zip", strings.NewReader(content)); err != nil {
+		t.Fatalf("WriteFileStream() error = %v", err)
+	}
+	if writtenContent != content {
+		t.Fatalf("streamed %d bytes, want %d", len(writtenContent), len(content))
+	}
+	if !chmodCalled {
+		t.Fatal("WriteFileStream did not set a readable mode on the new file")
+	}
+}
+
 func TestWriteFilePreservesExistingMode(t *testing.T) {
 	basePath := t.TempDir()
 	filePath := filepath.Join(basePath, "existing.sh")

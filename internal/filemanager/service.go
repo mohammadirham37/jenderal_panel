@@ -1,13 +1,16 @@
 package filemanager
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -304,6 +307,56 @@ func (s *Service) WriteFile(ctx context.Context, basePath, filePath, content str
 	}
 	if !existed {
 		result, err = s.runAsWebsiteUser(ctx, basePath, "chmod", "0644", "--", full)
+		if err != nil {
+			return fmt.Errorf("set new file mode: %w", err)
+		}
+		if result.ExitCode != 0 {
+			return model.NewDomainError("FILE_ERROR", "failed to set new file mode: "+result.Stderr, nil)
+		}
+	}
+
+	return nil
+}
+
+// uploadWriteTimeout bounds how long streaming one uploaded file onto disk
+// may take; the executor's default timeout is far too short for large files.
+const uploadWriteTimeout = 30 * time.Minute
+
+// WriteFileStream streams content into filePath as the website's Linux user,
+// like WriteFile, but without holding the whole file in memory. Used for
+// uploads, which can be hundreds of megabytes.
+func (s *Service) WriteFileStream(ctx context.Context, basePath, filePath string, content io.Reader) error {
+	if err := rejectWebsiteRoot(basePath, filePath); err != nil {
+		return err
+	}
+	full, err := s.resolveWebsitePath(ctx, basePath, filePath, true)
+	if err != nil {
+		return err
+	}
+	if err := s.rejectResolvedWebsiteRoot(ctx, basePath, full); err != nil {
+		return err
+	}
+
+	existsResult, err := s.runAsWebsiteUser(ctx, basePath, "stat", "--", full)
+	if err != nil {
+		return fmt.Errorf("check existing file: %w", err)
+	}
+	existed := existsResult.ExitCode == 0
+
+	writeCtx, cancel := context.WithTimeout(ctx, uploadWriteTimeout)
+	defer cancel()
+	webUser := filepath.Base(filepath.Clean(basePath))
+	var stderr bytes.Buffer
+	// tee's stdout copy is discarded by the streaming executor.
+	code, err := s.exec.RunSudoWithInputStream(writeCtx, content, &stderr, "-u", webUser, "--", "tee", "--", full)
+	if err != nil {
+		return fmt.Errorf("file write: %w", err)
+	}
+	if code != 0 {
+		return model.NewDomainError("FILE_ERROR", "failed to write file: "+strings.TrimSpace(stderr.String()), nil)
+	}
+	if !existed {
+		result, err := s.runAsWebsiteUser(ctx, basePath, "chmod", "0644", "--", full)
 		if err != nil {
 			return fmt.Errorf("set new file mode: %w", err)
 		}

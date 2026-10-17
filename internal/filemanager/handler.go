@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
 
@@ -16,7 +15,12 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
-const maxUploadBytes int64 = 32 << 20
+// maxUploadBytes caps one file-manager upload. Parts beyond
+// uploadMemoryBytes spill to a temporary file, so large archives never sit
+// in memory. A var so tests can lower it.
+var maxUploadBytes int64 = 2 << 30
+
+const uploadMemoryBytes int64 = 32 << 20
 
 // Handler handles file manager HTTP requests.
 type Handler struct {
@@ -392,13 +396,14 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce the request size before multipart parsing so io.ReadAll below
-	// cannot allocate beyond the documented upload limit.
+	// Enforce the request size before multipart parsing; file parts larger
+	// than uploadMemoryBytes are buffered on disk, not in memory.
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+	if err := r.ParseMultipartForm(uploadMemoryBytes); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
-			httputil.JSONError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE", "upload exceeds the 32 MB limit")
+			httputil.JSONError(w, http.StatusRequestEntityTooLarge, "FILE_TOO_LARGE",
+				fmt.Sprintf("upload exceeds the %d MB limit", maxUploadBytes>>20))
 			return
 		}
 		httputil.JSONError(w, http.StatusBadRequest, "VALIDATION_ERROR", "invalid multipart form")
@@ -412,20 +417,9 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	targetDir := r.FormValue("path")
-	if targetDir == "" {
-		targetDir = ""
-	}
+	filePath := filepath.Join(r.FormValue("path"), header.Filename)
 
-	filePath := filepath.Join(targetDir, header.Filename)
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		httputil.JSONError(w, http.StatusInternalServerError, "FILE_ERROR", "failed to read uploaded file")
-		return
-	}
-
-	if err := h.svc.WriteFile(r.Context(), basePath, filePath, string(content)); err != nil {
+	if err := h.svc.WriteFileStream(r.Context(), basePath, filePath, file); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}

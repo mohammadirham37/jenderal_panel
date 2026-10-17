@@ -59,6 +59,10 @@ func TestBrowseUsesWebsiteRouteID(t *testing.T) {
 }
 
 func TestUploadRejectsBodyLargerThanLimit(t *testing.T) {
+	previous := maxUploadBytes
+	maxUploadBytes = 1 << 20
+	t.Cleanup(func() { maxUploadBytes = previous })
+
 	db, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +81,7 @@ func TestUploadRejectsBodyLargerThanLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := part.Write(bytes.Repeat([]byte("x"), (32<<20)+1)); err != nil {
+	if _, err := part.Write(bytes.Repeat([]byte("x"), (1<<20)+1)); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
