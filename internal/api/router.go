@@ -523,6 +523,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/wp", websiteHandler.WpStatus)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/wp/{action}", websiteHandler.WpAction)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/wp/hardening", websiteHandler.WpHardening)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Put("/websites/{id}/wp/hardening", websiteHandler.ApplyWpHardening)
 
 			// PHP
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).

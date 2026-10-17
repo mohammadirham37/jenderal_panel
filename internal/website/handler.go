@@ -350,6 +350,33 @@ func (h *Handler) WpAction(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// WpHardening handles GET /api/websites/{id}/wp/hardening.
+func (h *Handler) WpHardening(w http.ResponseWriter, r *http.Request) {
+	settings, err := h.svc.GetWpHardening(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, settings)
+}
+
+// ApplyWpHardening handles PUT /api/websites/{id}/wp/hardening.
+func (h *Handler) ApplyWpHardening(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req WpHardening
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	settings, err := h.svc.ApplyWpHardening(r.Context(), id, req)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "wp_hardening", id, "applied WordPress security hardening")
+	httputil.JSON(w, http.StatusOK, settings)
+}
+
 // ConfigureDeployWebhook handles PUT /api/websites/{id}/deploy-webhook.
 // Stores the repository/branch the webhook deploys and returns the secret.
 func (h *Handler) ConfigureDeployWebhook(w http.ResponseWriter, r *http.Request) {

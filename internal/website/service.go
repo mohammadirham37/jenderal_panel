@@ -864,6 +864,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		filepath.Join("/etc/nginx/sites-enabled", w.Domain),
 		filepath.Join("/etc/nginx/sites-enabled", w.Domain+".suspended"),
 		confPath + ".suspended",
+		wpHardeningPath(w.Domain),
 	} {
 		if err := s.runSudoOK(ctx, "rm", "-f", path); err != nil {
 			return fmt.Errorf("delete website nginx config: %w", err)

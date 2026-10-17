@@ -116,6 +116,7 @@ var wpActions = map[string][]string{
 	"plugin-update":  {"plugin", "update", "--all"},
 	"theme-update":   {"theme", "update", "--all"},
 	"cache-flush":    {"cache", "flush"},
+	"shuffle-salts":  {"config", "shuffle-salts"},
 }
 
 // WpRunTask executes a wp-cli maintenance action as a visible background

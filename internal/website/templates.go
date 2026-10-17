@@ -344,7 +344,10 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
 		// the SQLite database directory (the auto-install keeps the database
 		// file under wp-content/database, which nginx must never serve) and
 		// for xmlrpc.php, which is almost exclusively abuse traffic.
-		return nginxProfileDirectives{Index: "index.php", Server: `    # Block direct access to the SQLite database directory (auto-install).
+		return nginxProfileDirectives{Index: "index.php", Server: `    # Optional hardening rules managed from the WordPress toolkit.
+    include ` + wpHardeningIncludeGlob(data.Domain) + `;
+
+    # Block direct access to the SQLite database directory (auto-install).
     location ^~ /wp-content/database/ {
         deny all;
         access_log off;
