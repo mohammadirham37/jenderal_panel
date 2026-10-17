@@ -93,6 +93,13 @@ func (h *Handler) serviceAction(w http.ResponseWriter, r *http.Request, action s
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// blockedCategory and blockedAction describe a Fail2ban ban as a security
+// event. Migration 045 rewrites events recorded with the old wording.
+const (
+	blockedCategory = "intrusion_blocked"
+	blockedAction   = "Fail2ban blocked this address automatically. No action is needed unless it is a trusted address; then unban it and add it to the management networks."
+)
+
 func (h *Handler) Bans(w http.ResponseWriter, r *http.Request) {
 	bans, err := h.service.Bans(r.Context())
 	if err != nil {
@@ -103,9 +110,11 @@ func (h *Handler) Bans(w http.ResponseWriter, r *http.Request) {
 		for _, ban := range bans {
 			evidence, _ := json.Marshal(map[string]string{"ip": ban.IP, "jail": ban.Jail})
 			_, _, _ = h.events.Record(r.Context(), security.EventInput{
-				Fingerprint: "fail2ban:" + ban.Jail + ":" + ban.IP, Category: "intrusion",
-				Severity: security.SeverityHigh, Component: "fail2ban", Resource: ban.Jail,
-				Evidence: string(evidence), RecommendedAction: "Review authentication logs and confirm whether the address is malicious.",
+				// A ban means Fail2ban already blocked the address: it is a
+				// record of protection working, not an open incident.
+				Fingerprint: "fail2ban:" + ban.Jail + ":" + ban.IP, Category: blockedCategory,
+				Severity: security.SeverityLow, Component: "fail2ban", Resource: ban.Jail,
+				Evidence: string(evidence), RecommendedAction: blockedAction,
 			}, time.Now().UTC())
 		}
 	}
@@ -138,9 +147,9 @@ func (h *Handler) Ban(w http.ResponseWriter, r *http.Request) {
 	if h.events != nil {
 		evidence, _ := json.Marshal(map[string]any{"ip": ban.IP, "jail": ban.Jail, "duration_seconds": request.DurationSeconds})
 		_, _, _ = h.events.Record(r.Context(), security.EventInput{
-			Fingerprint: "fail2ban:" + ban.Jail + ":" + ban.IP, Category: "intrusion",
-			Severity: security.SeverityHigh, Component: "fail2ban", Resource: ban.Jail,
-			Evidence: string(evidence), RecommendedAction: "Review authentication logs before extending any response.",
+			Fingerprint: "fail2ban:" + ban.Jail + ":" + ban.IP, Category: blockedCategory,
+			Severity: security.SeverityLow, Component: "fail2ban", Resource: ban.Jail,
+			Evidence: string(evidence), RecommendedAction: blockedAction,
 		}, time.Now().UTC())
 	}
 	httputil.JSON(w, http.StatusCreated, ban)

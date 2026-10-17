@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import FirewallPanel from '$lib/components/FirewallPanel.svelte';
@@ -25,6 +26,7 @@
 		summarizeTraffic
 	} from '$lib/traffic-guard.js';
 	import { buildSafeSetupRequest, normalizeSetupReview } from '$lib/security-setup.js';
+	import { blockedSummary, buildActionPlan, buildProtectionChecklist } from '$lib/security-plan.js';
 import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 
@@ -531,6 +533,99 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
+	// ─── Overview action plan ─────────────────────────────────────────
+
+	type PlanItem = ReturnType<typeof buildActionPlan>[number];
+	type CheckItem = ReturnType<typeof buildProtectionChecklist>[number];
+
+	const pageLabels: Record<string, string> = { '/nginx': 'Nginx', '/terminal': 'Terminal', '/firewall': 'Firewall', '/server': 'Server' };
+
+	let planData = $derived({
+		overview, fail2ban, events, malware, malwareSchedules, quarantine, waf: wafStatus,
+		trafficProfiles, websites, canFirewall: hasPermission($permissions, 'firewall.view')
+	});
+	let actionPlan = $derived(buildActionPlan(planData));
+	let urgentActions = $derived(actionPlan.filter((item) => item.severity !== 'low'));
+	let suggestedActions = $derived(actionPlan.filter((item) => item.severity === 'low'));
+	// The plan also covers missing protections the backend score ignores, so
+	// the headline takes the worse of the two.
+	let displayCondition = $derived(
+		actionPlan.some((item) => item.severity === 'critical') || overview.condition === 'critical'
+			? 'critical'
+			: urgentActions.length > 0 || overview.condition === 'needs_attention'
+				? 'needs_attention'
+				: overview.condition
+	);
+	let checklist = $derived(buildProtectionChecklist(planData));
+	let protectionsActive = $derived(checklist.filter((item) => item.status === 'ok').length);
+	let blocked = $derived(blockedSummary(fail2ban));
+
+	function fill(text: string, params: Record<string, string | number>): string {
+		return Object.entries(params).reduce((out, [key, value]) => out.replaceAll(`{${key}}`, String(value)), text);
+	}
+
+	function planText(item: PlanItem, part: 'title' | 'desc'): string {
+		const params: Record<string, string | number> = { ...item.params };
+		if (typeof params.component === 'string') params.component = params.component.replaceAll('_', ' ');
+		if (typeof params.category === 'string') params.category = params.category.replaceAll('_', ' ');
+		if (typeof params.name === 'string') params.name = params.name.replaceAll('_', ' ');
+		return fill(translate($language, `sec.plan.${item.code}.${part}`), params);
+	}
+
+	function targetLabel(target: { tab?: string; href?: string }): string {
+		if (target.tab) return translate($language, `sec.tab.${target.tab}`);
+		return pageLabels[target.href || ''] || target.href || '';
+	}
+
+	async function openTarget(target: { tab?: string; href?: string }) {
+		if (target.tab) {
+			activeTab = target.tab as Tab;
+			window.scrollTo({ top: 0, behavior: 'smooth' });
+		} else if (target.href) {
+			await goto(target.href);
+		}
+	}
+
+	async function resolvePlanEvents(item: PlanItem) {
+		const ids = item.eventIds || [];
+		if (ids.length === 0 || busy) return;
+		busy = `plan:${item.key}`;
+		try {
+			for (const id of ids) {
+				await api.post(`/api/v1/security/events/${id}/transition`, { status: 'resolved' });
+			}
+			toast.success(fill(translate($language, 'sec.plan.resolved'), { count: ids.length }));
+			await loadData();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'sec.errEventUpdate'));
+		} finally {
+			busy = '';
+		}
+	}
+
+	async function copyCommand(command: string) {
+		try {
+			await navigator.clipboard.writeText(command);
+			toast.success(translate($language, 'sec.plan.copied'));
+		} catch {
+			toast.error(command);
+		}
+	}
+
+	function checkTone(status: CheckItem['status']): string {
+		if (status === 'ok') return 'border-green-800 bg-green-900/20';
+		if (status === 'warn') return 'border-yellow-800 bg-yellow-900/20';
+		if (status === 'off') return 'border-red-900 bg-red-900/15';
+		return 'border-gray-700 bg-gray-900/50';
+	}
+
+	function severityBadge(severity: string): string {
+		if (severity === 'critical') return 'bg-red-900 text-red-300';
+		if (severity === 'high') return 'bg-orange-900 text-orange-300';
+		if (severity === 'medium') return 'bg-yellow-900 text-yellow-300';
+		return 'bg-gray-700 text-gray-300';
+	}
+
 	async function transitionEvent(event: SecurityEvent, status: 'acknowledged' | 'resolved' | 'false_positive') {
 		busy = `event:${event.id}`;
 		try {
@@ -642,34 +737,127 @@ import { toast } from '$lib/stores/toast';
 			</div>
 		</div>
 	{:else if activeTab === 'overview'}
-		{@const tone = conditionTone(overview.condition)}
-		<div class="grid gap-4 lg:grid-cols-[1.1fr_1.9fr]">
+		{@const tone = conditionTone(displayCondition)}
+		<div class="grid gap-4 md:grid-cols-3">
 			<section class="rounded-xl border p-5 {tone === 'critical' ? 'border-red-700 bg-red-900/30' : tone === 'warning' ? 'border-yellow-700 bg-yellow-900/25' : 'border-green-700 bg-green-900/20'}">
 				<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'sec.overview.condition')}</p>
-				<h3 class="mt-2 text-2xl font-semibold text-white">{overview.condition === 'needs_attention' ? translate($language, 'sec.cond.needs_attention') : overview.condition === 'good' ? translate($language, 'sec.cond.good') : overview.condition === 'critical' ? translate($language, 'sec.cond.critical') : translate($language, 'sec.cond.unknown')}</h3>
-				<ul class="mt-4 space-y-2 text-sm text-gray-300">
-					{#each overview.reasons as reason}<li class="flex gap-2"><span aria-hidden="true">•</span><span>{reason}</span></li>{/each}
-				</ul>
-				<p class="mt-4 text-xs text-gray-400">{translate($language, 'sec.overview.disclaimer')}</p>
+				<h3 class="mt-2 text-2xl font-semibold text-white">{displayCondition === 'needs_attention' ? translate($language, 'sec.cond.needs_attention') : displayCondition === 'good' ? translate($language, 'sec.cond.good') : displayCondition === 'critical' ? translate($language, 'sec.cond.critical') : translate($language, 'sec.cond.unknown')}</h3>
+				<p class="mt-2 text-sm text-gray-300">{urgentActions.length > 0 ? fill(translate($language, 'sec.stat.actions'), { count: urgentActions.length }) : translate($language, 'sec.stat.noActions')}</p>
 			</section>
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-				<div class="flex items-center justify-between"><h3 class="font-semibold text-white">{translate($language, 'sec.overview.components')}</h3><span class="text-sm text-gray-400">{translate($language, 'sec.overview.activeEvents').replace('{count}', String(overview.open_events))}</span></div>
-				{#if overview.components.length === 0}<p class="mt-4 text-sm text-gray-400">{translate($language, 'sec.overview.noComponents')}</p>{:else}
-					<div class="mt-4 grid gap-3 sm:grid-cols-2">
-						{#each overview.components as component}
-							<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-4">
-								<div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{component.name}</span><span class="rounded-full px-2 py-0.5 text-xs {component.healthy ? 'bg-green-900 text-green-300' : component.installed ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{component.state.replaceAll('_', ' ')}</span></div>
-								<p class="mt-2 text-sm text-gray-400">{component.message || (component.installed ? translate($language, 'sec.overview.statusChecked') : translate($language, 'sec.overview.optionalMissing'))}</p>
-							</div>
-						{/each}
-					</div>
-				{/if}
+				<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'sec.check.title')}</p>
+				<p class="mt-2 text-2xl font-semibold text-white">{protectionsActive}/{checklist.length}</p>
+				<div class="mt-3 h-2 overflow-hidden rounded-full bg-gray-700"><div class="h-full rounded-full {protectionsActive === checklist.length ? 'bg-green-500' : 'bg-blue-500'}" style="width: {Math.round((protectionsActive / Math.max(checklist.length, 1)) * 100)}%"></div></div>
+				<p class="mt-2 text-sm text-gray-400">{fill(translate($language, 'sec.stat.protections'), { ok: protectionsActive, total: checklist.length })}</p>
+			</section>
+			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+				<p class="text-xs font-semibold uppercase tracking-wider text-gray-400">Fail2ban</p>
+				<p class="mt-2 text-2xl font-semibold text-white">{blocked.current}</p>
+				<p class="mt-1 text-sm text-gray-300">{fill(translate($language, 'sec.stat.blocked'), { count: blocked.current })}</p>
+				<p class="mt-2 text-xs text-gray-500">{blocked.total > 0 ? fill(translate($language, 'sec.stat.blockedTotal'), { total: blocked.total }) : translate($language, 'sec.stat.blockedNone')}</p>
 			</section>
 		</div>
+
 		<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
-			<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><h3 class="font-semibold text-white">{translate($language, 'sec.overview.postureTitle')}</h3><p class="mt-1 text-sm text-gray-400">{translate($language, 'sec.overview.postureDesc')}</p></div><span class="text-xs text-gray-500">{overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : translate($language, 'sec.overview.notChecked')}</span></div>
-			{#if !overview.posture?.findings?.length}<p class="mt-4 text-sm text-green-300">{translate($language, 'sec.overview.noFindings')}</p>{:else}<div class="mt-4 grid gap-3 md:grid-cols-2">{#each overview.posture.findings as finding}<article class="rounded-lg border border-gray-700 bg-gray-900/50 p-4"><div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{finding.component.replaceAll('_', ' ')}</span><span class="rounded-full px-2 py-0.5 text-xs uppercase {finding.severity === 'critical' ? 'bg-red-900 text-red-300' : finding.severity === 'medium' || finding.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{finding.severity}</span></div><p class="mt-2 text-sm text-gray-200">{finding.summary}</p><p class="mt-1 text-xs text-gray-400">{finding.remediation}</p></article>{/each}</div>{/if}
+			<h3 class="font-semibold text-white">{translate($language, 'sec.plan.title')}</h3>
+			<p class="mt-1 text-sm text-gray-400">{translate($language, 'sec.plan.desc')}</p>
+			{#if urgentActions.length === 0}
+				<p class="mt-4 rounded-lg border border-green-800 bg-green-900/20 p-4 text-sm text-green-300">{translate($language, 'sec.plan.none')}</p>
+			{:else}
+				<ol class="mt-4 space-y-3">
+					{#each urgentActions as item, index (item.key)}
+						<li class="flex gap-3 rounded-lg border border-gray-700 bg-gray-900/50 p-4">
+							<span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-700 text-sm font-semibold text-white">{index + 1}</span>
+							<div class="min-w-0 flex-1">
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="rounded-full px-2 py-0.5 text-xs font-medium {severityBadge(item.severity)}">{translate($language, `sec.sev.${item.severity}`)}</span>
+									<span class="font-medium text-white">{planText(item, 'title')}</span>
+								</div>
+								<p class="mt-1 text-sm text-gray-400">{planText(item, 'desc')}</p>
+								{#if item.command}
+									<div class="mt-2 flex flex-wrap items-center gap-2">
+										<span class="text-xs text-gray-500">{translate($language, 'sec.plan.command')}</span>
+										<code class="rounded bg-gray-950 px-2 py-1 font-mono text-xs text-gray-200">{item.command}</code>
+										<button type="button" onclick={() => copyCommand(item.command || '')} class="rounded border border-gray-600 px-2 py-0.5 text-xs text-gray-300 hover:bg-gray-700">{translate($language, 'sec.plan.copy')}</button>
+									</div>
+								{/if}
+								<div class="mt-3 flex flex-wrap gap-2">
+									{#if item.tab || item.href}
+										<button type="button" onclick={() => openTarget(item)} class="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">{fill(translate($language, 'sec.plan.open'), { target: targetLabel(item) })}</button>
+									{/if}
+									{#if item.eventIds?.length}
+										<button type="button" onclick={() => resolvePlanEvents(item)} disabled={busy !== ''} class="rounded-lg border border-green-700 px-3 py-1.5 text-xs font-semibold text-green-300 hover:bg-green-900/30 disabled:opacity-50">{translate($language, 'sec.plan.resolveAll')}</button>
+									{/if}
+								</div>
+							</div>
+						</li>
+					{/each}
+				</ol>
+			{/if}
+
+			{#if suggestedActions.length > 0}
+				<h4 class="mt-6 text-sm font-semibold text-white">{translate($language, 'sec.plan.suggestions')}</h4>
+				<p class="mt-1 text-xs text-gray-500">{translate($language, 'sec.plan.suggestionsDesc')}</p>
+				<div class="mt-3 grid gap-3 md:grid-cols-2">
+					{#each suggestedActions as item (item.key)}
+						<div class="rounded-lg border border-gray-700 bg-gray-900/40 p-4">
+							<p class="text-sm font-medium text-gray-200">{planText(item, 'title')}</p>
+							<p class="mt-1 text-xs text-gray-400">{planText(item, 'desc')}</p>
+							{#if item.command}<code class="mt-2 block rounded bg-gray-950 px-2 py-1 font-mono text-xs text-gray-300">{item.command}</code>{/if}
+							{#if item.tab || item.href}
+								<button type="button" onclick={() => openTarget(item)} class="mt-3 rounded border border-blue-700 px-3 py-1 text-xs text-blue-300 hover:bg-blue-900/30">{fill(translate($language, 'sec.plan.open'), { target: targetLabel(item) })}</button>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</section>
+
+		<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+			<h3 class="font-semibold text-white">{translate($language, 'sec.check.title')}</h3>
+			<p class="mt-1 text-sm text-gray-400">{translate($language, 'sec.check.desc')}</p>
+			<div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+				{#each checklist as check (check.key)}
+					<button
+						type="button"
+						onclick={() => openTarget(check)}
+						disabled={!check.tab && !check.href}
+						class="rounded-lg border p-3 text-left transition enabled:hover:border-gray-500 disabled:cursor-default {checkTone(check.status)}"
+					>
+						<div class="flex items-center justify-between gap-2">
+							<span class="text-sm font-medium text-white">{translate($language, `sec.check.${check.key}`)}</span>
+							<span class="shrink-0 text-xs {check.status === 'ok' ? 'text-green-300' : check.status === 'warn' ? 'text-yellow-300' : check.status === 'off' ? 'text-red-300' : 'text-gray-400'}">{translate($language, `sec.check.status.${check.status}`)}</span>
+						</div>
+						<p class="mt-1 text-xs text-gray-400">{translate($language, `sec.check.${check.key}.desc`)}</p>
+					</button>
+				{/each}
+			</div>
+		</section>
+
+		<details class="rounded-xl border border-gray-700 bg-gray-800 p-5">
+			<summary class="cursor-pointer font-semibold text-white">{translate($language, 'sec.overview.technical')}</summary>
+			<div class="mt-4 space-y-4">
+				<div>
+					<div class="flex items-center justify-between"><h4 class="text-sm font-semibold text-white">{translate($language, 'sec.overview.components')}</h4><span class="text-sm text-gray-400">{translate($language, 'sec.overview.activeEvents').replace('{count}', String(overview.open_events))}</span></div>
+					{#if overview.components.length === 0}<p class="mt-3 text-sm text-gray-400">{translate($language, 'sec.overview.noComponents')}</p>{:else}
+						<div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+							{#each overview.components as component}
+								<div class="rounded-lg border border-gray-700 bg-gray-900/60 p-4">
+									<div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{component.name.replaceAll('_', ' ')}</span><span class="rounded-full px-2 py-0.5 text-xs {component.healthy ? 'bg-green-900 text-green-300' : component.installed ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{component.state.replaceAll('_', ' ')}</span></div>
+									<p class="mt-2 text-sm text-gray-400">{component.message || (component.installed ? translate($language, 'sec.overview.statusChecked') : translate($language, 'sec.overview.optionalMissing'))}</p>
+								</div>
+							{/each}
+						</div>
+					{/if}
+				</div>
+				<div>
+					<div class="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between"><h4 class="text-sm font-semibold text-white">{translate($language, 'sec.overview.postureTitle')}</h4><span class="text-xs text-gray-500">{overview.posture?.checked_at ? new Date(overview.posture.checked_at).toLocaleString() : translate($language, 'sec.overview.notChecked')}</span></div>
+					<p class="mt-1 text-xs text-gray-400">{translate($language, 'sec.overview.postureDesc')}</p>
+					{#if !overview.posture?.findings?.length}<p class="mt-3 text-sm text-green-300">{translate($language, 'sec.overview.noFindings')}</p>{:else}<div class="mt-3 grid gap-3 md:grid-cols-2">{#each overview.posture.findings as finding}<article class="rounded-lg border border-gray-700 bg-gray-900/50 p-4"><div class="flex items-center justify-between gap-2"><span class="font-medium capitalize text-white">{finding.component.replaceAll('_', ' ')}</span><span class="rounded-full px-2 py-0.5 text-xs uppercase {finding.severity === 'critical' ? 'bg-red-900 text-red-300' : finding.severity === 'medium' || finding.severity === 'high' ? 'bg-yellow-900 text-yellow-300' : 'bg-gray-700 text-gray-300'}">{finding.severity}</span></div><p class="mt-2 text-sm text-gray-200">{finding.summary}</p><p class="mt-1 text-xs text-gray-400">{finding.remediation}</p></article>{/each}</div>{/if}
+				</div>
+				<p class="text-xs text-gray-500">{translate($language, 'sec.overview.disclaimer')}</p>
+			</div>
+		</details>
 	{:else if activeTab === 'fail2ban'}
 		<div class="space-y-4">
 			<section class="rounded-xl border border-gray-700 bg-gray-800 p-5">
