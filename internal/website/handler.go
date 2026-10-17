@@ -350,6 +350,16 @@ func (h *Handler) WpAction(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// WpDetect handles GET /api/websites/{id}/wp/detect.
+func (h *Handler) WpDetect(w http.ResponseWriter, r *http.Request) {
+	detected, err := h.svc.DetectWordPress(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]bool{"wordpress": detected})
+}
+
 // WpHardening handles GET /api/websites/{id}/wp/hardening.
 func (h *Handler) WpHardening(w http.ResponseWriter, r *http.Request) {
 	settings, err := h.svc.GetWpHardening(r.Context(), chi.URLParam(r, "id"))

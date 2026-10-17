@@ -155,7 +155,7 @@ func (s *Service) ApplyWpHardening(ctx context.Context, websiteID string, h WpHa
 	if !safeDomainComponent(w.Domain) {
 		return WpHardening{}, fmt.Errorf("unsafe website domain %q", w.Domain)
 	}
-	if !s.hasProjectFile(ctx, wpCtx.path, "wp-config.php") {
+	if !s.hasWpConfig(ctx, wpCtx.path) {
 		return WpHardening{}, model.NewValidationError("WordPress is not installed yet (wp-config.php not found)")
 	}
 	if h.ForceSSLAdmin {

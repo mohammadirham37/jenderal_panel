@@ -124,8 +124,7 @@ func installationPlan(w websiteRow) ([]installStep, error) {
 		}
 		steps = append(steps,
 			userStep("prepare wp-cli directory", "installing wordpress", time.Minute, "mkdir", "-p", wpCLIDir),
-			userStep("download wp-cli", "installing wordpress", 5*time.Minute, "/usr/bin/curl", "-fsSL", "-o", wpCLI,
-				"https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar"),
+			userStep("download wp-cli", "installing wordpress", 5*time.Minute, "/usr/bin/curl", "-fsSL", "-o", wpCLI, wpCliURL),
 			wp("download WordPress core", 15*time.Minute, "core", "download"),
 			userStep("download SQLite integration plugin", "installing wordpress", 5*time.Minute, "/usr/bin/curl", "-fsSL",
 				"-o", filepath.Join(staging, "sqlite.zip"),

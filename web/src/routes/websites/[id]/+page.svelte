@@ -109,10 +109,27 @@ import { toast } from '$lib/stores/toast';
 		const tab = new URLSearchParams(page.url.search).get('tab');
 		return (allTabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'Overview';
 	}
+	// WordPress uploaded by hand onto a plain PHP site keeps app_type 'php';
+	// the backend detects it so the WP Toolkit tab still shows.
+	let wpDetected = $state(false);
+	let wpDetectDone = $state(false);
+	let wpDetectFor = '';
+	$effect(() => {
+		const site = website;
+		if (!site || site.id === wpDetectFor) return;
+		wpDetectFor = site.id;
+		wpDetected = false;
+		wpDetectDone = site.app_type === 'wordpress';
+		if (wpDetectDone) return;
+		api.get<{ wordpress: boolean }>(`/api/v1/websites/${site.id}/wp/detect`)
+			.then((res) => { wpDetected = res.wordpress; })
+			.catch(() => { wpDetected = false; })
+			.finally(() => { wpDetectDone = true; });
+	});
 	// The queue tab only applies to Laravel sites (Octane/artisan workers).
 	let tabs = $derived(allTabs.filter((t) =>
 		(t !== 'Queue' || website?.framework === 'laravel') &&
-		(t !== 'WP Toolkit' || website?.app_type === 'wordpress') &&
+		(t !== 'WP Toolkit' || website?.app_type === 'wordpress' || wpDetected) &&
 		(t !== 'PHP Settings' || website?.app_type !== 'static') &&
 		(t !== 'App' || website?.app_type === 'node' || website?.app_type === 'go' || website?.app_type === 'python' || website?.app_type === 'deno' || website?.app_type === 'bun')
 	));
@@ -120,7 +137,7 @@ import { toast } from '$lib/stores/toast';
 		if (website && activeTab === 'Queue' && website.framework !== 'laravel') {
 			activeTab = 'Overview';
 		}
-		if (website && activeTab === 'WP Toolkit' && website.app_type !== 'wordpress') {
+		if (website && wpDetectDone && activeTab === 'WP Toolkit' && website.app_type !== 'wordpress' && !wpDetected) {
 			activeTab = 'Overview';
 		}
 		if (website && activeTab === 'PHP Settings' && website.app_type === 'static') {

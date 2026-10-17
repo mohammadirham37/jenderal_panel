@@ -48,10 +48,70 @@ func (s *Service) wpContextForID(ctx context.Context, websiteID string) (wpConte
 	if err != nil {
 		return wpContext{}, model.Website{}, err
 	}
-	if w.AppType != "wordpress" {
+	if !s.isWordPressSite(ctx, w) {
 		return wpContext{}, model.Website{}, model.NewValidationError("the WordPress toolkit is only available for WordPress sites")
 	}
-	return s.wpContextFor(w), w, nil
+	wpCtx := s.wpContextFor(w)
+	if err := s.ensureWpCli(ctx, wpCtx); err != nil {
+		return wpContext{}, model.Website{}, err
+	}
+	return wpCtx, w, nil
+}
+
+// isWordPressSite reports whether the toolkit applies to w: sites created
+// from the WordPress template, plus plain PHP sites where WordPress was
+// uploaded or migrated by hand (wp-load.php in the document root).
+func (s *Service) isWordPressSite(ctx context.Context, w model.Website) bool {
+	if w.AppType == "wordpress" {
+		return true
+	}
+	if w.PHPVersion == "" || w.AppType == "laravel" || w.DocumentRoot == "" {
+		return false
+	}
+	return s.hasProjectFile(ctx, w.DocumentRoot, "wp-load.php")
+}
+
+// DetectWordPress reports whether the WordPress toolkit applies to a site.
+func (s *Service) DetectWordPress(ctx context.Context, websiteID string) (bool, error) {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return false, err
+	}
+	return s.isWordPressSite(ctx, w), nil
+}
+
+// wpCliURL is the official wp-cli phar, also used by the WordPress installer.
+const wpCliURL = "https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar"
+
+// ensureWpCli downloads wp-cli into the site home when it is missing. Sites
+// installed by the panel already have it; hand-uploaded WordPress sites
+// fetch it on first use.
+func (s *Service) ensureWpCli(ctx context.Context, wpCtx wpContext) error {
+	if res, err := s.exec.RunSudo(ctx, "test", "-f", wpCtx.phar); err == nil && res.ExitCode == 0 {
+		return nil
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	for _, args := range [][]string{
+		{"mkdir", "-p", filepath.Dir(wpCtx.phar)},
+		{"/usr/bin/curl", "-fsSL", "-o", wpCtx.phar, wpCliURL},
+	} {
+		res, err := s.exec.RunSudo(runCtx, "-u", append([]string{wpCtx.webUser, "--"}, args...)...)
+		if err != nil {
+			return fmt.Errorf("install wp-cli: %w", err)
+		}
+		if res.ExitCode != 0 {
+			return model.NewDomainError("WP_CLI_ERROR", "failed to install wp-cli: "+strings.TrimSpace(res.Stderr), nil)
+		}
+	}
+	return nil
+}
+
+// hasWpConfig reports whether wp-config.php exists in the document root or
+// its parent, the two places WordPress looks for it.
+func (s *Service) hasWpConfig(ctx context.Context, docRoot string) bool {
+	return s.hasProjectFile(ctx, docRoot, "wp-config.php") ||
+		s.hasProjectFile(ctx, filepath.Dir(docRoot), "wp-config.php")
 }
 
 // runWp executes one wp-cli invocation as the web user and returns the
@@ -83,7 +143,7 @@ func (s *Service) WpStatus(ctx context.Context, websiteID string) (WpStatus, err
 	}
 
 	// A missing wp-config means the automatic install has not completed.
-	if !s.hasProjectFile(ctx, wpCtx.path, "wp-config.php") {
+	if !s.hasWpConfig(ctx, wpCtx.path) {
 		return status, nil
 	}
 

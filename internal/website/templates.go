@@ -458,7 +458,9 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
         log_not_found off;
     }`}
 	default:
-		return nginxProfileDirectives{Index: "index.php index.html index.htm", Location: `    location / {
+		// Plain PHP sites may host a hand-uploaded WordPress; the WordPress
+		// toolkit's hardening rules apply to them through the same include.
+		return nginxProfileDirectives{Index: "index.php index.html index.htm", Server: "    include " + wpHardeningIncludeGlob(data.Domain) + ";\n", Location: `    location / {
 		try_files $uri $uri/ /index.php?$query_string;
 	}`, PHP: standardPHP, Hidden: standardHidden}
 	}
