@@ -16,6 +16,14 @@ test('uses Native PHP wording in the website template selector', () => {
 	assert.doesNotMatch(source, /PHP murni/);
 });
 
+test('offers the WordPress template in the website template selector', () => {
+	const source = readFileSync(new URL('../../src/routes/websites/+page.svelte', import.meta.url), 'utf8');
+	const dict = readFileSync(new URL('../../src/lib/i18n/domains/wl.ts', import.meta.url), 'utf8');
+	assert.match(source, /<option value="wordpress">\{translate\(\$language, 'wl\.optWordpress'\)\}<\/option>/);
+	assert.equal(dict.match(/'wl\.optWordpress': 'WordPress'/g)?.length, 2);
+	assert.equal(dict.match(/'wl\.wordpressHint':/g)?.length, 2);
+});
+
 const options = {
 	php_versions: [
 		{ version: '8.1', installed: false },

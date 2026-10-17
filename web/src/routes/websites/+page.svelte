@@ -415,6 +415,7 @@ import type { ServerInfo } from '$lib/types';
 								<option value="static">{translate($language, 'wl.optStatic')}</option>
 								<option value="reverse-proxy">{translate($language, 'wl.optReverseProxy')}</option>
 								<option value="php">{translate($language, 'wl.optPhp')}</option>
+								<option value="wordpress">{translate($language, 'wl.optWordpress')}</option>
 								<option value="codeigniter3">{translate($language, 'wl.optCi3')}</option>
 								<option value="codeigniter4">{translate($language, 'wl.optCi4')}</option>
 								<option value="laravel">{translate($language, 'wl.optLaravel')}</option>
@@ -426,6 +427,9 @@ import type { ServerInfo } from '$lib/types';
 								<option value="bun">{translate($language, 'wl.optBun')}</option>
 							</select>
 						</div>
+						{#if selection.template === 'wordpress'}
+							<p class="sm:col-span-2 lg:col-span-3 text-xs text-gray-500">{translate($language, 'wl.wordpressHint')}</p>
+						{/if}
 						{#if selection.template === 'go-build' || selection.template === 'go-binary'}
 							<p class="sm:col-span-2 lg:col-span-3 text-xs text-gray-500">{translate($language, 'wl.goTemplateHint')}</p>
 						{/if}
