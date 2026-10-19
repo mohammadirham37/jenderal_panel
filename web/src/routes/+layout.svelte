@@ -9,6 +9,7 @@
 	import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 	import { serverHostname } from '$lib/stores/server';
+	import { formatPageTitle, pageTitleKey } from '$lib/page-title.js';
 	import { api } from '$lib/api';
 	import type { ServerInfo } from '$lib/types';
 	import '../app.css';
@@ -92,6 +93,16 @@
 	];
 
 	const isAdmin = $derived($roles.some((r) => r.name === 'admin'));
+
+	// Routes outside the sidebar that still deserve a tab title.
+	const extraTitleRoutes = [{ href: '/firewall', labelKey: 'fw.title' }];
+	const titleRoutes = [...navGroups.flatMap((group) => group.items), ...extraTitleRoutes];
+	// Login stays host-only so the public page carries no section names.
+	let documentTitle = $derived.by(() => {
+		const host = $serverHostname || page.url.hostname || 'Panel';
+		const key = page.url.pathname === '/login' ? '' : pageTitleKey(page.url.pathname, titleRoutes);
+		return formatPageTitle(key ? translate($language, key) : '', host);
+	});
 
 	function navItemVisible(item: (typeof navGroups)[number]['items'][number]): boolean {
 		if (item.adminOnly && !isAdmin) return false;
@@ -200,7 +211,7 @@
 	<!-- Unauthenticated (login) pages have no server hostname yet; fall back
 		to the host the panel is reached at so the brand never shows up in
 		indexed page titles. -->
-	<title>{$serverHostname || page.url.hostname || 'Panel'}</title>
+	<title>{documentTitle}</title>
 </svelte:head>
 
 {#if loading}
