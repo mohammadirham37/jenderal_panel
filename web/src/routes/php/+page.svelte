@@ -1,9 +1,17 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { api } from '$lib/api';
-	import { parseSimplePHPConfig, switchPHPConfigMode, updateSimplePHPConfig } from '$lib/php-config.js';
+	import {
+		parseSimplePHPConfig,
+		phpConfigIsDirty,
+		phpConfigPresets,
+		phpConfigWarnings,
+		switchPHPConfigMode,
+		updateSimplePHPConfig
+	} from '$lib/php-config.js';
+	import { countExtensions, groupPHPVersions, listExtensions, websitesByPHPVersion } from '$lib/php-versions.js';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
-import { toast } from '$lib/stores/toast';
+	import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 
 	interface PhpVersion {
@@ -11,29 +19,70 @@ import { toast } from '$lib/stores/toast';
 		installed: boolean;
 		running: boolean;
 	}
+	interface ExtensionStatus {
+		enabled: string[];
+		disabled: string[];
+		available: string[];
+	}
+	type ExtensionFilter = 'all' | 'enabled' | 'disabled' | 'available';
+	type ManageTab = 'config' | 'extensions';
 
 	let phpVersions = $state<PhpVersion[]>([]);
 	let loading = $state(true);
+	let refreshing = $state(false);
 	let error = $state('');
 	let actionInProgress = $state<string | null>(null);
 	let currentTaskId = $state('');
 	let configSaving = $state(false);
 	let operationInProgress = $derived(actionInProgress !== null || !!currentTaskId || configSaving);
 
-	// Config editor
-	let configVersion = $state<string | null>(null);
+	let groups = $derived(groupPHPVersions(phpVersions));
+
+	// Websites per PHP version. Needs websites.view; without it the usage hints
+	// are simply hidden rather than shown as zero.
+	let usage = $state<Record<string, string[]> | null>(null);
+	let totalPHPSites = $derived(usage ? Object.values(usage).reduce((sum, domains) => sum + domains.length, 0) : 0);
+
+	// Manage panel: one selected version with php.ini and extension tabs.
+	let selectedVersion = $state<string | null>(null);
+	let activeTab = $state<ManageTab>('config');
+	let managePanel = $state<HTMLElement | null>(null);
+
+	// php.ini editor
 	let configContent = $state('');
+	let savedContent = $state('');
 	let configLoading = $state(false);
 	let configError = $state('');
-	let configSaveMsg = $state('');
 	let configMode = $state<'simple' | 'advanced'>('simple');
 	let simpleConfig = $state<Record<string, string>>(parseSimplePHPConfig(''));
+	let configDirty = $derived(!configLoading && phpConfigIsDirty({ mode: configMode, content: configContent, simpleConfig }, savedContent));
+	let configWarnings = $derived(configMode === 'simple' ? phpConfigWarnings(simpleConfig) : []);
+	const presets = [
+		{ key: 'default', label: 'phpv.preset.default' },
+		{ key: 'wordpress', label: 'phpv.preset.wordpress' },
+		{ key: 'laravel', label: 'phpv.preset.laravel' },
+		{ key: 'uploads', label: 'phpv.preset.uploads' }
+	] as const;
 
-	// Uninstall confirm
-	let uninstallConfirmVersion = $state<string | null>(null);
+	// Extensions
+	let extensions = $state<ExtensionStatus | null>(null);
+	let extLoading = $state(false);
+	let extBusy = $state('');
+	let extSearch = $state('');
+	let extFilter = $state<ExtensionFilter>('all');
+	let extCounts = $derived(countExtensions(extensions));
+	let extList = $derived(listExtensions(extensions, { query: extSearch, state: extFilter }));
+	const extFilters: { value: ExtensionFilter; label: string }[] = [
+		{ value: 'all', label: 'phpv.ext.all' },
+		{ value: 'enabled', label: 'phpv.ext.enabled' },
+		{ value: 'disabled', label: 'phpv.ext.disabled' },
+		{ value: 'available', label: 'phpv.ext.available' }
+	];
+
+	// Uninstall confirmation modal
+	let uninstallVersion = $state<string | null>(null);
 
 	async function loadPhp() {
-		loading = true;
 		error = '';
 		try {
 			// The API returns every version manageable on this OS (installed
@@ -44,6 +93,25 @@ import { toast } from '$lib/stores/toast';
 		} finally {
 			loading = false;
 		}
+	}
+
+	async function loadUsage() {
+		try {
+			usage = websitesByPHPVersion((await api.get<Parameters<typeof websitesByPHPVersion>[0]>('/api/v1/websites')) || []);
+		} catch {
+			usage = null;
+		}
+	}
+
+	async function refresh() {
+		if (refreshing) return;
+		refreshing = true;
+		await Promise.all([loadPhp(), loadUsage()]);
+		refreshing = false;
+	}
+
+	function sitesFor(version: string): string[] {
+		return usage?.[version] ?? [];
 	}
 
 	async function installPhp(version: string) {
@@ -75,94 +143,16 @@ import { toast } from '$lib/stores/toast';
 	function onTaskComplete() {
 		actionInProgress = null;
 		loadPhp();
-		if (extVersion) void loadExtensions(extVersion);
-	}
-
-	// ─── Extensions ─────────────────────────────────────────────────
-
-	interface ExtensionStatus {
-		enabled: string[];
-		disabled: string[];
-		available: string[];
-	}
-	let extVersion = $state<string | null>(null);
-	let extensions = $state<ExtensionStatus | null>(null);
-	let extLoading = $state(false);
-	let extBusy = $state('');
-	let extSearch = $state('');
-
-	async function openExtensions(version: string) {
-		extVersion = version;
-		extensions = null;
-		extSearch = '';
-		await loadExtensions(version);
-	}
-
-	async function loadExtensions(version: string) {
-		extLoading = true;
-		try {
-			extensions = await api.get<ExtensionStatus>(`/api/v1/php/${version}/extensions`);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errLoad'));
-		} finally {
-			extLoading = false;
-		}
-	}
-
-	async function enableExt(ext: string) {
-		if (!extVersion || extBusy) return;
-		extBusy = `enable-${ext}`;
-		try {
-			await api.post(`/api/v1/php/${extVersion}/extensions/${ext}/enable`);
-			toast.success(translate($language, 'phpv.ext.enableToast').replace('{ext}', ext));
-			await loadExtensions(extVersion);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
-		} finally {
-			extBusy = '';
-		}
-	}
-
-	async function disableExt(ext: string) {
-		if (!extVersion || extBusy) return;
-		extBusy = `disable-${ext}`;
-		try {
-			await api.post(`/api/v1/php/${extVersion}/extensions/${ext}/disable`);
-			toast.success(translate($language, 'phpv.ext.disableToast').replace('{ext}', ext));
-			await loadExtensions(extVersion);
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
-		} finally {
-			extBusy = '';
-		}
-	}
-
-	async function installExt(ext: string) {
-		if (!extVersion || extBusy || currentTaskId) return;
-		extBusy = `install-${ext}`;
-		try {
-			const result = await api.post<{ task_id: string }>(`/api/v1/php/${extVersion}/extensions/${ext}/install`);
-			currentTaskId = result.task_id;
-			toast.success(translate($language, 'phpv.ext.installToast').replace('{ext}', ext));
-		} catch (err) {
-			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
-		} finally {
-			extBusy = '';
-		}
-	}
-
-	function filterExts(list: string[]): string[] {
-		const query = extSearch.trim().toLowerCase();
-		if (!query) return list;
-		return list.filter((name) => name.includes(query));
+		if (selectedVersion && extensions) void loadExtensions(selectedVersion);
 	}
 
 	async function uninstallPhp(version: string) {
-		uninstallConfirmVersion = null;
+		uninstallVersion = null;
 		actionInProgress = `uninstall-${version}`;
 		try {
 			await api.post(`/api/v1/php/${version}/uninstall`);
 			toast.success(translate($language, 'phpv.toast.uninstalled').replace('{version}', version));
+			if (selectedVersion === version) closeManage(true);
 			await loadPhp();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.toast.uninstallFailed').replace('{version}', version));
@@ -184,16 +174,50 @@ import { toast } from '$lib/stores/toast';
 		}
 	}
 
-	async function loadConfig(version: string) {
+	// ─── Manage panel ───────────────────────────────────────────────
+
+	function confirmDiscard(): boolean {
+		return !configDirty || window.confirm(translate($language, 'phpv.config.discardConfirm'));
+	}
+
+	async function openManage(version: string, tab: ManageTab) {
 		if (configSaving) return;
-		configVersion = version;
+		if (selectedVersion !== version) {
+			if (!confirmDiscard()) return;
+			selectedVersion = version;
+			extensions = null;
+			extSearch = '';
+			extFilter = 'all';
+			void loadConfig(version);
+		}
+		activeTab = tab;
+		if (tab === 'extensions' && !extensions && !extLoading) void loadExtensions(version);
+		await tick();
+		managePanel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	function closeManage(force = false) {
+		if (configSaving || (!force && !confirmDiscard())) return;
+		selectedVersion = null;
+		extensions = null;
+		configContent = '';
+		savedContent = '';
+		configError = '';
+	}
+
+	function selectTab(tab: ManageTab) {
+		activeTab = tab;
+		if (tab === 'extensions' && selectedVersion && !extensions && !extLoading) void loadExtensions(selectedVersion);
+	}
+
+	async function loadConfig(version: string) {
 		configMode = 'simple';
 		configLoading = true;
 		configError = '';
-		configSaveMsg = '';
 		try {
 			const data = await api.get<{ content: string }>(`/api/v1/php/${version}/config`);
 			configContent = data.content || '';
+			savedContent = configContent;
 			simpleConfig = parseSimplePHPConfig(configContent);
 		} catch (err) {
 			configError = err instanceof Error ? err.message : translate($language, 'phpv.config.loadFailed');
@@ -203,15 +227,15 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	async function persistConfig(content: string) {
-		if (!configVersion || configSaving) return;
-		configSaveMsg = '';
+		if (!selectedVersion || configSaving) return;
 		configError = '';
 		configSaving = true;
 		try {
-			await api.put(`/api/v1/php/${configVersion}/config`, { content });
+			await api.put(`/api/v1/php/${selectedVersion}/config`, { content });
 			configContent = content;
+			savedContent = content;
 			simpleConfig = parseSimplePHPConfig(content);
-			configSaveMsg = translate($language, 'phpv.config.saved');
+			toast.success(translate($language, 'phpv.config.saved'));
 		} catch (err) {
 			configError = err instanceof Error ? err.message : translate($language, 'phpv.config.saveFailed');
 		} finally {
@@ -224,325 +248,549 @@ import { toast } from '$lib/stores/toast';
 		void persistConfig(updateSimplePHPConfig(configContent, simpleConfig));
 	}
 
+	function resetConfig() {
+		configContent = savedContent;
+		simpleConfig = parseSimplePHPConfig(savedContent);
+	}
+
+	function applyPreset(key: keyof typeof phpConfigPresets) {
+		simpleConfig = { ...simpleConfig, ...phpConfigPresets[key] };
+	}
+
 	function switchConfigMode(targetMode: 'simple' | 'advanced') {
 		if (configSaving) return;
-		const next = switchPHPConfigMode(
-			{ mode: configMode, content: configContent, simpleConfig },
-			targetMode
-		);
+		const next = switchPHPConfigMode({ mode: configMode, content: configContent, simpleConfig }, targetMode);
 		configMode = next.mode;
 		configContent = next.content;
 		simpleConfig = next.simpleConfig;
 	}
 
-	onMount(loadPhp);
+	// ─── Extensions ─────────────────────────────────────────────────
+
+	async function loadExtensions(version: string) {
+		extLoading = true;
+		try {
+			extensions = await api.get<ExtensionStatus>(`/api/v1/php/${version}/extensions`);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errLoad'));
+		} finally {
+			extLoading = false;
+		}
+	}
+
+	async function extensionAction(ext: string, action: 'enable' | 'disable' | 'install') {
+		if (!selectedVersion || extBusy || (action === 'install' && currentTaskId)) return;
+		const version = selectedVersion;
+		extBusy = `${action}-${ext}`;
+		try {
+			const result = await api.post<{ task_id?: string }>(`/api/v1/php/${version}/extensions/${ext}/${action}`);
+			toast.success(translate($language, `phpv.ext.${action}Toast`).replace('{ext}', ext));
+			if (action === 'install') currentTaskId = result?.task_id || '';
+			else await loadExtensions(version);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.ext.errAction'));
+		} finally {
+			extBusy = '';
+		}
+	}
+
+	function onWindowKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape' && uninstallVersion) uninstallVersion = null;
+	}
+
+	function onBeforeUnload(e: BeforeUnloadEvent) {
+		if (configDirty) e.preventDefault();
+	}
+
+	onMount(() => {
+		void Promise.all([loadPhp(), loadUsage()]);
+	});
+
+	const inputClass =
+		'w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40';
 </script>
 
+<svelte:window onkeydown={onWindowKeydown} onbeforeunload={onBeforeUnload} />
+
+{#snippet usageLine(version: string)}
+	{#if usage}
+		{@const sites = sitesFor(version)}
+		<p class="truncate text-xs {sites.length ? 'text-gray-300' : 'text-gray-500'}" title={sites.join(', ')}>
+			{#if sites.length === 0}
+				{translate($language, 'phpv.usage.none')}
+			{:else}
+				{translate($language, sites.length === 1 ? 'phpv.usage.one' : 'phpv.usage.many').replace('{count}', String(sites.length))}
+				<span class="text-gray-500">· {sites.slice(0, 2).join(', ')}{sites.length > 2 ? ` +${sites.length - 2}` : ''}</span>
+			{/if}
+		</p>
+	{/if}
+{/snippet}
+
 <div class="space-y-6">
-	<h2 class="text-2xl font-bold text-white">{translate($language, 'phpv.title')}</h2>
+	<div class="flex flex-wrap items-start justify-between gap-3">
+		<div>
+			<h2 class="text-2xl font-bold text-white">{translate($language, 'phpv.title')}</h2>
+			<p class="mt-0.5 text-sm text-gray-400">{translate($language, 'phpv.subtitle')}</p>
+		</div>
+		<button
+			type="button"
+			onclick={refresh}
+			disabled={refreshing || loading}
+			title={translate($language, 'phpv.refresh')}
+			aria-label={translate($language, 'phpv.refresh')}
+			class="cursor-pointer rounded-lg border border-gray-600 bg-gray-800 p-2 text-gray-300 transition hover:bg-gray-700 hover:text-white disabled:opacity-50"
+		>
+			<svg class="h-4 w-4 {refreshing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+			</svg>
+		</button>
+	</div>
 
-
+	<!-- Install/reinstall progress sits at the top so it is visible right after clicking -->
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} onMissing={() => { actionInProgress = null; }} />
 
 	{#if loading}
-		<div class="text-gray-400">{translate($language, 'phpv.loading')}</div>
-	{:else if error}
-		<div class="p-4 bg-red-900/50 border border-red-700 rounded-lg text-red-300">{error}</div>
-	{:else}
-		<!-- PHP Version Cards Grid -->
-		<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-			{#each phpVersions as php}
-				<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-					<div class="flex items-center justify-between mb-3">
-						<h3 class="text-lg font-bold text-white">PHP {php.version}</h3>
-					</div>
-
-					<div class="flex flex-wrap gap-2 mb-4">
-						<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {php.installed ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-400'}">
-							{php.installed ? translate($language, 'phpv.installed') : translate($language, 'phpv.notInstalled')}
-						</span>
-						{#if php.installed}
-							<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {php.running ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">
-								{php.running ? translate($language, 'phpv.running') : translate($language, 'phpv.stopped')}
-							</span>
-						{/if}
-					</div>
-
-					<div class="flex flex-wrap gap-2">
-						{#if !php.installed}
-							<button
-								onclick={() => installPhp(php.version)}
-								disabled={operationInProgress}
-								class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-							>
-								{actionInProgress === `install-${php.version}` ? translate($language, 'phpv.installing') : translate($language, 'phpv.install')}
-							</button>
-						{:else}
-							{#if php.running}
-								<button
-									onclick={() => restartPhp(php.version)}
-									disabled={operationInProgress}
-									class="px-3 py-1.5 bg-yellow-600 hover:bg-yellow-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-								>
-									{actionInProgress === `restart-${php.version}` ? translate($language, 'phpv.restarting') : translate($language, 'phpv.restart')}
-								</button>
-							{:else}
-								<button
-									onclick={() => reinstallPhp(php.version)}
-									disabled={operationInProgress}
-									title={translate($language, 'phpv.reinstallHint')}
-									class="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-								>
-									{actionInProgress === `reinstall-${php.version}` ? translate($language, 'phpv.reinstalling') : translate($language, 'phpv.reinstall')}
-								</button>
-							{/if}
-
-							<button
-								onclick={() => loadConfig(php.version)}
-								disabled={operationInProgress}
-								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-							>
-								{translate($language, 'phpv.config')}
-							</button>
-
-							<button
-								onclick={() => openExtensions(php.version)}
-								disabled={operationInProgress}
-								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-							>
-								{translate($language, 'phpv.ext.open')}
-							</button>
-
-							{#if uninstallConfirmVersion === php.version}
-								<div class="flex items-center gap-2 mt-2 w-full p-2 bg-red-900/30 border border-red-700 rounded-lg">
-									<span class="text-xs text-red-300">{translate($language, 'phpv.removeConfirm').replace('{version}', php.version)}</span>
-									<button
-										onclick={() => uninstallPhp(php.version)}
-										disabled={operationInProgress}
-										class="px-2.5 py-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs rounded transition-colors cursor-pointer"
-									>
-										{actionInProgress === `uninstall-${php.version}` ? translate($language, 'phpv.removing') : translate($language, 'phpv.yes')}
-									</button>
-									<button
-										onclick={() => (uninstallConfirmVersion = null)}
-										class="px-2.5 py-1 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors cursor-pointer"
-									>
-										{translate($language, 'phpv.no')}
-									</button>
-								</div>
-							{:else}
-								<button
-									onclick={() => (uninstallConfirmVersion = php.version)}
-									disabled={operationInProgress}
-									class="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm rounded transition-colors cursor-pointer"
-								>
-									{translate($language, 'phpv.uninstall')}
-								</button>
-							{/if}
-						{/if}
-					</div>
+		<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+			{#each Array(3) as _}
+				<div class="animate-pulse rounded-xl border border-gray-700 bg-gray-800 p-5">
+					<div class="mb-3 h-6 w-1/3 rounded bg-gray-700/60"></div>
+					<div class="mb-2 h-3 w-1/2 rounded bg-gray-700/40"></div>
+					<div class="mt-4 h-8 w-full rounded bg-gray-700/30"></div>
 				</div>
 			{/each}
 		</div>
+	{:else if error}
+		<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-700 bg-red-900/30 p-4 text-sm text-red-300">
+			<span>{error}</span>
+			<button type="button" onclick={refresh} class="cursor-pointer underline">{translate($language, 'phpv.retry')}</button>
+		</div>
+	{:else}
+		<!-- Summary -->
+		<div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+			<div class="rounded-xl border border-gray-700 bg-gray-800 px-3 py-2.5">
+				<p class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'phpv.stat.installed')}</p>
+				<p class="mt-0.5 text-xl font-bold tabular-nums text-white">{groups.installed.length}<span class="text-sm font-medium text-gray-500"> / {phpVersions.length}</span></p>
+			</div>
+			<div class="rounded-xl border border-gray-700 bg-gray-800 px-3 py-2.5">
+				<p class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'phpv.stat.running')}</p>
+				<p class="mt-0.5 text-xl font-bold tabular-nums {groups.running ? 'text-green-300' : 'text-gray-600'}">{groups.running}</p>
+			</div>
+			<div class="rounded-xl border border-gray-700 bg-gray-800 px-3 py-2.5">
+				<p class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'phpv.stat.stopped')}</p>
+				<p class="mt-0.5 text-xl font-bold tabular-nums {groups.stopped ? 'text-red-300' : 'text-gray-600'}">{groups.stopped}</p>
+			</div>
+			<div class="rounded-xl border border-gray-700 bg-gray-800 px-3 py-2.5">
+				<p class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'phpv.stat.sites')}</p>
+				<p class="mt-0.5 text-xl font-bold tabular-nums {totalPHPSites ? 'text-blue-300' : 'text-gray-600'}">{usage ? totalPHPSites : '—'}</p>
+			</div>
+		</div>
 
-		<!-- Extensions Manager -->
-		{#if extVersion}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-				<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-					<h3 class="text-lg font-semibold text-white">{translate($language, 'phpv.ext.title').replace('{version}', extVersion)}</h3>
-					<div class="flex items-center gap-2">
-						<input
-							type="search"
-							bind:value={extSearch}
-							placeholder={translate($language, 'phpv.ext.search')}
-							class="w-52 px-3 py-1.5 bg-gray-900 border border-gray-600 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-						/>
-						<button
-							onclick={() => { extVersion = null; extensions = null; }}
-							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
-						>
-							{translate($language, 'phpv.config.close')}
-						</button>
-					</div>
-				</div>
-				<p class="text-xs text-gray-500 mb-4">{translate($language, 'phpv.ext.reloadNote')}</p>
-
-				{#if extLoading}
-					<div class="text-gray-400 text-sm">{translate($language, 'phpv.ext.loading')}</div>
-				{:else if extensions}
-					<div class="grid gap-4 md:grid-cols-3">
-						<div class="rounded-lg border border-green-800/60 bg-green-950/20 p-4">
-							<h4 class="text-sm font-semibold uppercase tracking-wider text-green-300 mb-3">{translate($language, 'phpv.ext.enabled')} ({filterExts(extensions.enabled).length})</h4>
-							{#if filterExts(extensions.enabled).length === 0}
-								<p class="text-xs text-gray-500">{translate($language, 'phpv.ext.none')}</p>
-							{:else}
-								<ul class="space-y-1.5">
-									{#each filterExts(extensions.enabled) as ext (ext)}
-										<li class="flex items-center justify-between gap-2 rounded border border-gray-700 bg-gray-900/60 px-2.5 py-1.5">
-											<code class="text-xs text-gray-200 truncate">{ext}</code>
-											<button onclick={() => disableExt(ext)} disabled={!!extBusy} class="shrink-0 px-2 py-0.5 text-xs text-red-300 hover:bg-red-500/10 rounded transition-colors cursor-pointer disabled:opacity-50">
-												{extBusy === `disable-${ext}` ? translate($language, 'phpv.ext.working') : translate($language, 'phpv.ext.disable')}
-											</button>
-										</li>
-									{/each}
-								</ul>
-							{/if}
-						</div>
-						<div class="rounded-lg border border-gray-700 bg-gray-900/30 p-4">
-							<h4 class="text-sm font-semibold uppercase tracking-wider text-gray-300 mb-3">{translate($language, 'phpv.ext.disabled')} ({filterExts(extensions.disabled).length})</h4>
-							{#if filterExts(extensions.disabled).length === 0}
-								<p class="text-xs text-gray-500">{translate($language, 'phpv.ext.none')}</p>
-							{:else}
-								<ul class="space-y-1.5">
-									{#each filterExts(extensions.disabled) as ext (ext)}
-										<li class="flex items-center justify-between gap-2 rounded border border-gray-700 bg-gray-900/60 px-2.5 py-1.5">
-											<code class="text-xs text-gray-400 truncate">{ext}</code>
-											<button onclick={() => enableExt(ext)} disabled={!!extBusy} class="shrink-0 px-2 py-0.5 text-xs text-green-300 hover:bg-green-500/10 rounded transition-colors cursor-pointer disabled:opacity-50">
-												{extBusy === `enable-${ext}` ? translate($language, 'phpv.ext.working') : translate($language, 'phpv.ext.enable')}
-											</button>
-										</li>
-									{/each}
-								</ul>
-							{/if}
-						</div>
-						<div class="rounded-lg border border-blue-800/60 bg-blue-950/20 p-4">
-							<h4 class="text-sm font-semibold uppercase tracking-wider text-blue-300 mb-3">{translate($language, 'phpv.ext.available')} ({filterExts(extensions.available).length})</h4>
-							{#if filterExts(extensions.available).length === 0}
-								<p class="text-xs text-gray-500">{translate($language, 'phpv.ext.none')}</p>
-							{:else}
-								<ul class="space-y-1.5">
-									{#each filterExts(extensions.available) as ext (ext)}
-										<li class="flex items-center justify-between gap-2 rounded border border-gray-700 bg-gray-900/60 px-2.5 py-1.5">
-											<code class="text-xs text-gray-400 truncate">{ext}</code>
-											<button onclick={() => installExt(ext)} disabled={!!extBusy || !!currentTaskId} class="shrink-0 px-2 py-0.5 text-xs text-blue-300 hover:bg-blue-500/10 rounded transition-colors cursor-pointer disabled:opacity-50">
-												{extBusy === `install-${ext}` ? translate($language, 'phpv.ext.installing') : translate($language, 'phpv.ext.install')}
-											</button>
-										</li>
-									{/each}
-								</ul>
-							{/if}
-						</div>
-					</div>
-				{/if}
+		{#if groups.stopped > 0}
+			<div class="rounded-lg border border-yellow-700/50 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-200">
+				{translate($language, 'phpv.stoppedBanner')}
 			</div>
 		{/if}
 
-		<!-- php.ini Config Editor -->
-		{#if configVersion}
-			<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-				<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-					<h3 class="text-lg font-semibold text-white">{translate($language, 'phpv.config.title').replace('{version}', configVersion)}</h3>
-					<div class="flex items-center gap-2">
-						<div class="inline-flex rounded-lg border border-gray-600 p-0.5" aria-label={translate($language, 'phpv.config.modeAria')}>
-							<button
-								type="button"
-								onclick={() => switchConfigMode('simple')}
-								disabled={configSaving}
-								class="px-3 py-1 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 {configMode === 'simple' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-							>
-								{translate($language, 'phpv.config.simple')}
-							</button>
-							<button
-								type="button"
-								onclick={() => switchConfigMode('advanced')}
-								disabled={configSaving}
-								class="px-3 py-1 text-sm rounded-md transition-colors cursor-pointer disabled:opacity-50 {configMode === 'advanced' ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
-							>
-								{translate($language, 'phpv.config.advanced')}
-							</button>
-						</div>
+		<!-- Installed versions -->
+		<section class="space-y-3">
+			<h3 class="text-sm font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'phpv.section.installed')}</h3>
+			{#if groups.installed.length === 0}
+				<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-600 bg-gray-800/50 px-6 py-10 text-center">
+					<p class="font-medium text-gray-200">{translate($language, 'phpv.emptyTitle')}</p>
+					<p class="text-sm text-gray-400">{translate($language, 'phpv.emptyDesc')}</p>
+					{#if groups.available.length > 0}
 						<button
-							onclick={() => { configVersion = null; configContent = ''; configError = ''; configSaveMsg = ''; }}
-							disabled={configSaving}
-							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-sm rounded transition-colors cursor-pointer"
+							onclick={() => installPhp(groups.available[0].version)}
+							disabled={operationInProgress}
+							class="mt-2 cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 						>
-							{translate($language, 'phpv.config.close')}
+							{translate($language, 'phpv.installVersion').replace('{version}', groups.available[0].version)}
 						</button>
+					{/if}
+				</div>
+			{:else}
+				<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+					{#each groups.installed as php (php.version)}
+						{@const selected = selectedVersion === php.version}
+						<div class="flex flex-col rounded-xl border bg-gray-800 p-4 transition {selected ? 'border-blue-500 ring-1 ring-blue-500/40' : php.running ? 'border-gray-700 hover:border-gray-500' : 'border-red-800/70'}">
+							<div class="flex items-start gap-3">
+								<span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-indigo-500/15 font-mono text-sm font-bold text-indigo-300" aria-hidden="true">
+									{php.version}
+								</span>
+								<div class="min-w-0 flex-1">
+									<div class="flex flex-wrap items-center gap-2">
+										<h4 class="text-lg font-bold text-white">PHP {php.version}</h4>
+										{#if php.version === groups.newest}
+											<span class="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">{translate($language, 'phpv.newest')}</span>
+										{/if}
+									</div>
+									{@render usageLine(php.version)}
+								</div>
+								<span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {php.running ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'}">
+									<span class="h-1.5 w-1.5 rounded-full {php.running ? 'bg-green-400' : 'bg-red-400'}"></span>
+									{php.running ? translate($language, 'phpv.running') : translate($language, 'phpv.stopped')}
+								</span>
+							</div>
+
+							{#if !php.running}
+								<p class="mt-3 text-xs text-red-300/90">{translate($language, 'phpv.stoppedHint')}</p>
+							{/if}
+
+							<div class="mt-auto flex flex-wrap items-center gap-1.5 border-t border-gray-700/60 pt-3 {php.running ? 'mt-4' : 'mt-3'}">
+								<button
+									onclick={() => openManage(php.version, 'config')}
+									disabled={configSaving}
+									class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 {selected && activeTab === 'config' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'}"
+								>
+									{translate($language, 'phpv.config')}
+								</button>
+								<button
+									onclick={() => openManage(php.version, 'extensions')}
+									disabled={configSaving}
+									class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 {selected && activeTab === 'extensions' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-200 hover:bg-gray-600'}"
+								>
+									{translate($language, 'phpv.ext.open')}
+								</button>
+								<span class="ml-auto flex items-center gap-1">
+									<button
+										onclick={() => restartPhp(php.version)}
+										disabled={operationInProgress}
+										title={php.running ? translate($language, 'phpv.restart') : translate($language, 'phpv.start')}
+										aria-label={php.running ? translate($language, 'phpv.restart') : translate($language, 'phpv.start')}
+										class="cursor-pointer rounded-md p-1.5 text-gray-400 transition hover:bg-yellow-500/10 hover:text-yellow-300 disabled:opacity-40"
+									>
+										<svg class="h-4 w-4 {actionInProgress === `restart-${php.version}` ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+										</svg>
+									</button>
+									{#if !php.running}
+										<button
+											onclick={() => reinstallPhp(php.version)}
+											disabled={operationInProgress}
+											title={translate($language, 'phpv.reinstallHint')}
+											class="cursor-pointer rounded-md border border-purple-600/50 bg-purple-600/20 px-2.5 py-1 text-xs font-medium text-purple-200 transition hover:bg-purple-600/30 disabled:opacity-50"
+										>
+											{actionInProgress === `reinstall-${php.version}` ? translate($language, 'phpv.reinstalling') : translate($language, 'phpv.reinstall')}
+										</button>
+									{/if}
+									<button
+										onclick={() => (uninstallVersion = php.version)}
+										disabled={operationInProgress}
+										title={translate($language, 'phpv.uninstall')}
+										aria-label={translate($language, 'phpv.uninstall')}
+										class="cursor-pointer rounded-md p-1.5 text-gray-400 transition hover:bg-red-500/10 hover:text-red-400 disabled:opacity-40"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+										</svg>
+									</button>
+								</span>
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</section>
+
+		<!-- Manage panel -->
+		{#if selectedVersion}
+			<section bind:this={managePanel} class="scroll-mt-4 rounded-xl border border-gray-700 bg-gray-800">
+				<div class="flex flex-wrap items-center justify-between gap-3 border-b border-gray-700 px-5 pt-4">
+					<div class="flex items-end gap-5">
+						<h3 class="pb-3 text-lg font-semibold text-white">PHP {selectedVersion}</h3>
+						<div class="flex gap-1" role="tablist">
+							{#each [{ tab: 'config', label: 'phpv.tab.config' }, { tab: 'extensions', label: 'phpv.tab.extensions' }] as const as item}
+								<button
+									type="button"
+									role="tab"
+									aria-selected={activeTab === item.tab}
+									onclick={() => selectTab(item.tab)}
+									class="-mb-px cursor-pointer border-b-2 px-3 pb-3 text-sm font-medium transition {activeTab === item.tab ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'}"
+								>
+									{translate($language, item.label)}
+									{#if item.tab === 'config' && configDirty}
+										<span class="ml-1 inline-block h-1.5 w-1.5 rounded-full bg-yellow-400 align-middle" title={translate($language, 'phpv.config.unsaved')}></span>
+									{/if}
+								</button>
+							{/each}
+						</div>
 					</div>
+					<button
+						type="button"
+						onclick={() => closeManage()}
+						disabled={configSaving}
+						aria-label={translate($language, 'phpv.config.close')}
+						class="mb-3 cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white disabled:opacity-50"
+					>
+						<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+						</svg>
+					</button>
 				</div>
 
-				{#if configError}
-					<div class="mb-2 text-red-400 text-sm">{configError}</div>
-				{/if}
-				{#if configSaveMsg}
-					<div class="mb-2 text-green-400 text-sm">
-						{configSaveMsg}
-						<button onclick={() => (configSaveMsg = '')} class="ml-2 hover:underline cursor-pointer">{translate($language, 'phpv.config.dismiss')}</button>
-					</div>
-				{/if}
+				<div class="p-5">
+					{#if activeTab === 'config'}
+						{#if configError}
+							<div class="mb-3 rounded-lg border border-red-700 bg-red-900/30 px-3 py-2 text-sm text-red-300">{configError}</div>
+						{/if}
+						{#if configLoading}
+							<div class="text-sm text-gray-400">{translate($language, 'phpv.config.loading')}</div>
+						{:else}
+							<div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+								<p class="text-sm text-gray-400">{translate($language, configMode === 'simple' ? 'phpv.config.hint' : 'phpv.config.advancedHint')}</p>
+								<div class="inline-flex rounded-lg border border-gray-600 p-0.5" role="group" aria-label={translate($language, 'phpv.config.modeAria')}>
+									{#each ['simple', 'advanced'] as const as mode}
+										<button
+											type="button"
+											onclick={() => switchConfigMode(mode)}
+											disabled={configSaving}
+											aria-pressed={configMode === mode}
+											class="cursor-pointer rounded-md px-3 py-1 text-sm transition disabled:opacity-50 {configMode === mode ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+										>
+											{translate($language, `phpv.config.${mode}`)}
+										</button>
+									{/each}
+								</div>
+							</div>
 
-				{#if configLoading}
-					<div class="text-gray-400 text-sm">{translate($language, 'phpv.config.loading')}</div>
-				{:else if configMode === 'simple'}
-					<form onsubmit={saveSimpleConfig}>
-						<fieldset disabled={configSaving} class="space-y-4">
-						<p class="text-sm text-gray-400">
-							{translate($language, 'phpv.config.hint')}
-						</p>
-						<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.memoryLimit')}</span>
-								<input bind:value={simpleConfig.memory_limit} required pattern="-1|[0-9]+[KMGkmg]?" placeholder="128M" class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.memoryLimitHint')}</span>
-							</label>
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.uploadMaxFilesize')}</span>
-								<input bind:value={simpleConfig.upload_max_filesize} required pattern="[0-9]+[KMGkmg]?" placeholder="2M" class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.uploadMaxFilesizeHint')}</span>
-							</label>
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.postMaxSize')}</span>
-								<input bind:value={simpleConfig.post_max_size} required pattern="[0-9]+[KMGkmg]?" placeholder="8M" class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.postMaxSizeHint')}</span>
-							</label>
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.maxExecutionTime')}</span>
-								<input type="number" min="0" step="1" bind:value={simpleConfig.max_execution_time} required class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.maxExecutionTimeHint')}</span>
-							</label>
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.maxInputTime')}</span>
-								<input type="number" min="-1" step="1" bind:value={simpleConfig.max_input_time} required class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.maxInputTimeHint')}</span>
-							</label>
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.maxInputVars')}</span>
-								<input type="number" min="0" step="1" bind:value={simpleConfig.max_input_vars} required class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500" />
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.maxInputVarsHint')}</span>
-							</label>
-							<label class="space-y-1 text-sm text-gray-300">
-								<span>{translate($language, 'phpv.config.displayErrors')}</span>
-								<select bind:value={simpleConfig.display_errors} class="w-full px-3 py-2 bg-gray-950 border border-gray-700 rounded text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-									<option value="Off">{translate($language, 'phpv.config.displayErrorsOff')}</option>
-									<option value="On">{translate($language, 'phpv.config.displayErrorsOn')}</option>
-								</select>
-								<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.displayErrorsHint')}</span>
-							</label>
+							<form
+								onsubmit={(e) => {
+									if (configMode === 'simple') saveSimpleConfig(e);
+									else { e.preventDefault(); void persistConfig(configContent); }
+								}}
+							>
+								<fieldset disabled={configSaving} class="space-y-4">
+									{#if configMode === 'simple'}
+										<div class="flex flex-wrap items-center gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2">
+											<span class="text-xs font-medium text-gray-400">{translate($language, 'phpv.preset.label')}</span>
+											{#each presets as preset}
+												<button
+													type="button"
+													onclick={() => applyPreset(preset.key)}
+													class="cursor-pointer rounded-full border border-gray-600 bg-gray-800 px-3 py-1 text-xs font-medium text-gray-200 transition hover:border-blue-500 hover:text-white"
+												>
+													{translate($language, preset.label)}
+												</button>
+											{/each}
+											<span class="text-[11px] text-gray-500">{translate($language, 'phpv.preset.hint')}</span>
+										</div>
+
+										<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.memoryLimit')}</span>
+												<input bind:value={simpleConfig.memory_limit} required pattern="-1|[0-9]+[KMGkmg]?" placeholder="128M" class={inputClass} />
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.memoryLimitHint')}</span>
+											</label>
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.uploadMaxFilesize')}</span>
+												<input bind:value={simpleConfig.upload_max_filesize} required pattern="[0-9]+[KMGkmg]?" placeholder="2M" class={inputClass} />
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.uploadMaxFilesizeHint')}</span>
+											</label>
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.postMaxSize')}</span>
+												<input bind:value={simpleConfig.post_max_size} required pattern="[0-9]+[KMGkmg]?" placeholder="8M" class={inputClass} />
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.postMaxSizeHint')}</span>
+											</label>
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.maxExecutionTime')}</span>
+												<input type="number" min="0" step="1" bind:value={simpleConfig.max_execution_time} required class={inputClass} />
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.maxExecutionTimeHint')}</span>
+											</label>
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.maxInputTime')}</span>
+												<input type="number" min="-1" step="1" bind:value={simpleConfig.max_input_time} required class={inputClass} />
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.maxInputTimeHint')}</span>
+											</label>
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.maxInputVars')}</span>
+												<input type="number" min="0" step="1" bind:value={simpleConfig.max_input_vars} required class={inputClass} />
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.maxInputVarsHint')}</span>
+											</label>
+											<label class="space-y-1 text-sm text-gray-300">
+												<span>{translate($language, 'phpv.config.displayErrors')}</span>
+												<select bind:value={simpleConfig.display_errors} class={inputClass}>
+													<option value="Off">{translate($language, 'phpv.config.displayErrorsOff')}</option>
+													<option value="On">{translate($language, 'phpv.config.displayErrorsOn')}</option>
+												</select>
+												<span class="block text-xs text-gray-500">{translate($language, 'phpv.config.displayErrorsHint')}</span>
+											</label>
+										</div>
+
+										{#if configWarnings.length}
+											<ul class="space-y-1 rounded-lg border border-yellow-700/50 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-200">
+												{#each configWarnings as warning}
+													<li>{translate($language, warning)}</li>
+												{/each}
+											</ul>
+										{/if}
+									{:else}
+										<textarea
+											bind:value={configContent}
+											rows={22}
+											spellcheck="false"
+											class="w-full resize-y rounded-lg border border-gray-700 bg-gray-950 p-3 font-mono text-sm text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+										></textarea>
+									{/if}
+
+									<div class="flex flex-wrap items-center justify-end gap-2 border-t border-gray-700 pt-4">
+										{#if configDirty}
+											<span class="mr-auto inline-flex items-center gap-1.5 text-xs text-yellow-300">
+												<span class="h-1.5 w-1.5 rounded-full bg-yellow-400"></span>
+												{translate($language, 'phpv.config.unsaved')}
+											</span>
+										{/if}
+										<button
+											type="button"
+											onclick={resetConfig}
+											disabled={!configDirty}
+											class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:cursor-default disabled:opacity-40"
+										>
+											{translate($language, 'phpv.config.reset')}
+										</button>
+										<button
+											type="submit"
+											disabled={configSaving || !configDirty}
+											class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-default disabled:opacity-40"
+										>
+											{configSaving ? translate($language, 'phpv.config.saving') : translate($language, 'phpv.config.save')}
+										</button>
+									</div>
+								</fieldset>
+							</form>
+						{/if}
+					{:else}
+						<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+							<div class="flex flex-wrap gap-1.5">
+								{#each extFilters as filter}
+									<button
+										type="button"
+										onclick={() => (extFilter = filter.value)}
+										aria-pressed={extFilter === filter.value}
+										class="cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition {extFilter === filter.value ? 'bg-blue-600 text-white' : 'border border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700'}"
+									>
+										{translate($language, filter.label)}
+										<span class="ml-1 opacity-70">{extCounts[filter.value]}</span>
+									</button>
+								{/each}
+							</div>
+							<input type="search" bind:value={extSearch} placeholder={translate($language, 'phpv.ext.search')} aria-label={translate($language, 'phpv.ext.search')} class="{inputClass} sm:w-60" />
 						</div>
-						<button type="submit" disabled={configSaving} class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer">
-							{configSaving ? translate($language, 'phpv.config.saving') : translate($language, 'phpv.config.save')}
-						</button>
-						</fieldset>
-					</form>
-				{:else}
-					<textarea
-						bind:value={configContent}
-						disabled={configSaving}
-						rows={20}
-						class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-					></textarea>
-					<div class="mt-2">
-						<button
-							onclick={() => persistConfig(configContent)}
-							disabled={configSaving}
-							class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-						>
-							{configSaving ? translate($language, 'phpv.config.saving') : translate($language, 'phpv.config.save')}
-						</button>
-					</div>
-				{/if}
-			</div>
+						<p class="mb-4 text-xs text-gray-500">{translate($language, 'phpv.ext.reloadNote')}</p>
+
+						{#if extLoading && !extensions}
+							<div class="text-sm text-gray-400">{translate($language, 'phpv.ext.loading')}</div>
+						{:else if extList.length === 0}
+							<div class="rounded-lg border border-dashed border-gray-600 px-4 py-8 text-center text-sm text-gray-400">{translate($language, 'phpv.ext.none')}</div>
+						{:else}
+							<ul class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+								{#each extList as ext (ext.name)}
+									{@const busy = extBusy.endsWith(`-${ext.name}`)}
+									<li class="flex items-center justify-between gap-2 rounded-lg border border-gray-700 bg-gray-900/50 px-3 py-2">
+										<div class="flex min-w-0 items-center gap-2">
+											<span class="h-2 w-2 shrink-0 rounded-full {ext.state === 'enabled' ? 'bg-green-400' : ext.state === 'disabled' ? 'bg-gray-500' : 'bg-blue-400/60'}" title={translate($language, `phpv.ext.${ext.state}`)}></span>
+											<code class="truncate text-sm {ext.state === 'enabled' ? 'text-gray-100' : 'text-gray-400'}">{ext.name}</code>
+										</div>
+										{#if ext.state === 'available'}
+											<button
+												onclick={() => extensionAction(ext.name, 'install')}
+												disabled={!!extBusy || !!currentTaskId}
+												class="shrink-0 cursor-pointer rounded-md border border-blue-600/50 bg-blue-600/15 px-2.5 py-1 text-xs font-medium text-blue-200 transition hover:bg-blue-600/30 disabled:opacity-50"
+											>
+												{busy ? translate($language, 'phpv.ext.installing') : translate($language, 'phpv.ext.install')}
+											</button>
+										{:else}
+											<!-- Toggle switch: on = enabled -->
+											<button
+												type="button"
+												role="switch"
+												aria-checked={ext.state === 'enabled'}
+												aria-label={translate($language, ext.state === 'enabled' ? 'phpv.ext.disable' : 'phpv.ext.enable') + ' ' + ext.name}
+												title={translate($language, ext.state === 'enabled' ? 'phpv.ext.disable' : 'phpv.ext.enable')}
+												onclick={() => extensionAction(ext.name, ext.state === 'enabled' ? 'disable' : 'enable')}
+												disabled={!!extBusy}
+												class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition disabled:opacity-50 {ext.state === 'enabled' ? 'bg-green-600' : 'bg-gray-600'} {busy ? 'animate-pulse' : ''}"
+											>
+												<span class="inline-block h-4 w-4 rounded-full bg-white shadow transition {ext.state === 'enabled' ? 'translate-x-4.5' : 'translate-x-0.5'}"></span>
+											</button>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{/if}
+				</div>
+			</section>
+		{/if}
+
+		<!-- Versions available to install -->
+		{#if groups.available.length > 0}
+			<section class="space-y-3">
+				<div>
+					<h3 class="text-sm font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'phpv.section.available')}</h3>
+					<p class="mt-0.5 text-xs text-gray-500">{translate($language, 'phpv.section.availableHint')}</p>
+				</div>
+				<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+					{#each groups.available as php (php.version)}
+						<div class="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-600 bg-gray-800/40 p-3 text-center">
+							<p class="font-mono text-lg font-bold text-gray-200">PHP {php.version}</p>
+							{#if php.version === groups.newest}
+								<span class="-mt-1 rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">{translate($language, 'phpv.newest')}</span>
+							{/if}
+							<button
+								onclick={() => installPhp(php.version)}
+								disabled={operationInProgress}
+								class="w-full cursor-pointer rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+							>
+								{actionInProgress === `install-${php.version}` ? translate($language, 'phpv.installing') : translate($language, 'phpv.install')}
+							</button>
+						</div>
+					{/each}
+				</div>
+			</section>
 		{/if}
 	{/if}
-
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_php_task" onComplete={onTaskComplete} onMissing={() => { actionInProgress = null; }} />
 </div>
+
+{#if uninstallVersion}
+	{@const sites = sitesFor(uninstallVersion)}
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div
+		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
+		role="dialog"
+		aria-modal="true"
+		tabindex="-1"
+		aria-label={translate($language, 'phpv.uninstallTitle').replace('{version}', uninstallVersion)}
+		onclick={(e) => { if (e.target === e.currentTarget) uninstallVersion = null; }}
+	>
+		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
+			<h3 class="mb-3 text-base font-semibold text-white">{translate($language, 'phpv.uninstallTitle').replace('{version}', uninstallVersion)}</h3>
+			<p class="text-sm text-gray-300">{translate($language, 'phpv.removeConfirm').replace('{version}', uninstallVersion)}</p>
+			{#if sites.length > 0}
+				<div class="mt-3 rounded-lg border border-red-700/60 bg-red-900/25 p-3">
+					<p class="text-sm font-medium text-red-300">
+						{translate($language, 'phpv.uninstallInUse').replace('{count}', String(sites.length))}
+					</p>
+					<ul class="mt-2 max-h-32 space-y-0.5 overflow-y-auto font-mono text-xs text-red-200/90">
+						{#each sites as domain}<li>{domain}</li>{/each}
+					</ul>
+				</div>
+			{/if}
+			<div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
+				<button
+					type="button"
+					onclick={() => (uninstallVersion = null)}
+					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600"
+				>
+					{translate($language, 'phpv.no')}
+				</button>
+				<button
+					type="button"
+					onclick={() => uninstallVersion && uninstallPhp(uninstallVersion)}
+					class="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
+				>
+					{translate($language, sites.length > 0 ? 'phpv.uninstallAnyway' : 'phpv.uninstall')}
+				</button>
+			</div>
+		</div>
+	</div>
+{/if}
