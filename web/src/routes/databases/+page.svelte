@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { api, getCSRFToken } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 	import { hasPermission, permissions } from '$lib/stores/auth';
@@ -57,18 +58,27 @@ import { toast } from '$lib/stores/toast';
 	let enablingVector = $state('');
 	let engineOperationInProgress = $derived(actionInProgress !== null || !!currentTaskId);
 
-	// Search
+	// Search + engine filter per column
 	let dbSearch = $state('');
 	let userSearch = $state('');
+	let dbEngineFilter = $state('all');
+	let userEngineFilter = $state('all');
+
+	// Modals
+	let showCreateDb = $state(false);
+	let showCreateUser = $state(false);
+	type ConfirmAction =
+		| { kind: 'delete-db'; id: string; name: string }
+		| { kind: 'delete-user'; id: string; name: string }
+		| { kind: 'revoke'; userId: string; databaseId: string; username: string; name: string };
+	let confirmAction = $state<ConfirmAction | null>(null);
+	let confirmBusy = $state(false);
 
 	// Create database form
 	let newDbName = $state('');
 	let newDbEngine = $state('mysql');
 	let newDbCharset = $state('utf8mb4');
 	let creatingDb = $state(false);
-
-	// Delete database confirm
-	let deleteDbConfirmId = $state<string | null>(null);
 
 	// Create user form
 	let newUsername = $state('');
@@ -81,21 +91,27 @@ import { toast } from '$lib/stores/toast';
 	let genLength = $state(20);
 	let genSymbols = $state(true);
 
-	// Delete user confirm
-	let deleteUserConfirmId = $state<string | null>(null);
-
 	// Reset password state
 	let resetPasswordUserId = $state<string | null>(null);
 	let resetPasswordValue = $state('');
 	let showResetPassword = $state(false);
 
-	// Grant privileges state
+	// Grant modal: one user, their current access, and grantable databases
 	let grantUserId = $state<string | null>(null);
-	let grantDatabase = $state('');
+	let grantSearch = $state('');
+	let grantBusy = $state('');
+	let grantUser = $derived(dbUsers.find((u) => u.id === grantUserId) || null);
+	let grantCandidates = $derived.by(() => {
+		if (!grantUser) return [];
+		const q = grantSearch.trim().toLowerCase();
+		return databases.filter((d) => d.engine === grantUser.engine && !isGranted(grantUser.id, d.id) && (!q || d.name.toLowerCase().includes(q)));
+	});
+	let resetUser = $derived(dbUsers.find((u) => u.id === resetPasswordUserId) || null);
 
-	// Revoke confirm state
-	let revokeConfirm = $state<{ userId: string; databaseId: string } | null>(null);
-	let revoking = $state(false);
+	function openGrant(userId: string) {
+		grantUserId = userId;
+		grantSearch = '';
+	}
 
 	// Copy feedback
 	let copiedField = $state('');
@@ -307,13 +323,45 @@ import { toast } from '$lib/stores/toast';
 
 	let filteredDatabases = $derived.by(() => {
 		const q = dbSearch.trim().toLowerCase();
-		return q ? databases.filter((d) => d.name.toLowerCase().includes(q)) : databases;
+		return databases.filter((d) => (dbEngineFilter === 'all' || d.engine === dbEngineFilter) && (!q || d.name.toLowerCase().includes(q)));
 	});
 
 	let filteredUsers = $derived.by(() => {
 		const q = userSearch.trim().toLowerCase();
-		return q ? dbUsers.filter((u) => u.username.toLowerCase().includes(q)) : dbUsers;
+		return dbUsers.filter(
+			(u) =>
+				(userEngineFilter === 'all' || u.engine === userEngineFilter) &&
+				(!q || u.username.toLowerCase().includes(q) || grantsForUser(u.id).some((g) => g.database_name.toLowerCase().includes(q)))
+		);
 	});
+
+	let totalSize = $derived(databases.reduce((sum, d) => sum + (d.size_bytes || 0), 0));
+	let ungrantedUsers = $derived(dbUsers.filter((u) => !grants.some((g) => g.user_id === u.id)).length);
+	let sqlEngines = $derived(engines.filter((e) => e.name === 'mysql' || e.name === 'postgresql'));
+
+	function openCreateDb(engine = 'mysql') {
+		newDbEngine = engine;
+		newDbCharset = 'utf8mb4';
+		showCreateDb = true;
+	}
+
+	function openCreateUser(engine = 'mysql') {
+		newUserEngine = engine;
+		if (!newPassword) fillGenerated('new');
+		showCreateUser = true;
+	}
+
+	function openResetPassword(userId: string) {
+		resetPasswordUserId = userId;
+		resetPasswordValue = '';
+		showResetPassword = false;
+	}
+
+	function closeResetPassword() {
+		resetPasswordUserId = null;
+		resetPasswordValue = '';
+		showResetPassword = false;
+	}
 
 	function grantsForUser(userId: string): Grant[] {
 		return grants.filter((g) => g.user_id === userId);
@@ -468,6 +516,7 @@ import { toast } from '$lib/stores/toast';
 				charset: newDbCharset.trim() || 'utf8mb4'
 			});
 			flash(translate($language, 'db.created').replace('{name}', newDbName.trim()));
+			showCreateDb = false;
 			newDbName = '';
 			newDbEngine = 'mysql';
 			newDbCharset = 'utf8mb4';
@@ -480,11 +529,10 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	async function deleteDatabase(id: string, name: string) {
-		deleteDbConfirmId = null;
 		try {
 			await api.del(`/api/v1/databases/${id}`);
 			flash(translate($language, 'db.deleted').replace('{name}', name));
-			await loadDatabases();
+			await Promise.all([loadDatabases(), loadGrants()]);
 		} catch (err) {
 			fail(err, translate($language, 'db.delete_failed'));
 		}
@@ -501,6 +549,7 @@ import { toast } from '$lib/stores/toast';
 				engine: newUserEngine
 			});
 			flash(translate($language, 'db.user_created').replace('{name}', newUsername.trim()));
+			showCreateUser = false;
 			newUsername = '';
 			newPassword = '';
 			showNewPassword = false;
@@ -521,56 +570,63 @@ import { toast } from '$lib/stores/toast';
 				password: resetPasswordValue.trim()
 			});
 			flash(translate($language, 'db.password_reset'));
-			resetPasswordUserId = null;
-			resetPasswordValue = '';
-			showResetPassword = false;
+			closeResetPassword();
 		} catch (err) {
 			fail(err, translate($language, 'db.password_reset_failed'));
 		}
 	}
 
-	async function grantPrivileges(userId: string) {
-		if (!grantDatabase) return;
+	async function grantPrivileges(userId: string, databaseId: string) {
+		if (grantBusy) return;
+		grantBusy = databaseId;
 		try {
 			// Handler reads user_id and database_id from the body; the URL param
 			// is ignored. database_id is the managed_databases row ID.
 			await api.post(`/api/v1/databases/users/${userId}/grant`, {
 				user_id: userId,
-				database_id: grantDatabase
+				database_id: databaseId
 			});
-			const dbName = databases.find((d) => d.id === grantDatabase)?.name || grantDatabase;
+			const dbName = databases.find((d) => d.id === databaseId)?.name || databaseId;
 			flash(translate($language, 'db.granted').replace('{name}', dbName));
-			grantUserId = null;
-			grantDatabase = '';
 			await loadGrants();
 		} catch (err) {
 			fail(err, translate($language, 'db.grant_failed'));
+		} finally {
+			grantBusy = '';
 		}
 	}
 
 	async function revokePrivileges(userId: string, databaseId: string) {
-		if (revoking) return;
-		revoking = true;
 		try {
 			await api.post(`/api/v1/databases/users/${userId}/revoke`, {
 				database_id: databaseId
 			});
 			flash(translate($language, 'db.revoked').replace('{name}', databases.find((d) => d.id === databaseId)?.name || databaseId));
-			revokeConfirm = null;
 			await loadGrants();
 		} catch (err) {
 			fail(err, translate($language, 'db.revoke_failed'));
+		}
+	}
+
+	async function runConfirmed() {
+		const action = confirmAction;
+		if (!action || confirmBusy) return;
+		confirmBusy = true;
+		try {
+			if (action.kind === 'delete-db') await deleteDatabase(action.id, action.name);
+			else if (action.kind === 'delete-user') await deleteUser(action.id, action.name);
+			else await revokePrivileges(action.userId, action.databaseId);
 		} finally {
-			revoking = false;
+			confirmBusy = false;
+			confirmAction = null;
 		}
 	}
 
 	async function deleteUser(id: string, username: string) {
-		deleteUserConfirmId = null;
 		try {
 			await api.del(`/api/v1/databases/users/${id}`);
 			flash(translate($language, 'db.user_deleted').replace('{name}', username));
-			await loadUsers();
+			await Promise.all([loadUsers(), loadGrants()]);
 		} catch (err) {
 			fail(err, translate($language, 'db.user_delete_failed'));
 		}
@@ -753,34 +809,445 @@ import { toast } from '$lib/stores/toast';
 		{/if}
 	</section>
 
-	<!-- ═══════════════════════════ DATABASES ═══════════════════════════ -->
-	<section class="rounded-2xl border border-white/5 bg-gray-800/60" aria-label={translate($language, 'db.title')}>
-		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
-			<div class="flex items-center gap-2.5">
-				<h3 class="text-sm font-semibold text-white">{translate($language, 'db.title')}</h3>
-				{#if !loadingDatabases}
-					<span class="rounded-full bg-blue-900/40 px-2 py-0.5 text-[11px] font-semibold text-blue-300">{databases.length}</span>
-				{/if}
+	<!-- ═══════════════════ DATABASES (left) + USERS (right) ═══════════════════ -->
+	<div class="grid items-start gap-6 lg:grid-cols-2">
+		<!-- DATABASES -->
+		<section class="flex min-w-0 flex-col rounded-2xl border border-white/5 bg-gray-800/60" aria-label={translate($language, 'db.title')}>
+			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
+				<div class="flex items-center gap-3">
+					<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400" aria-hidden="true">
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
+							<ellipse cx="12" cy="5.5" rx="8" ry="3" />
+							<path d="M4 5.5v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6M4 11.5v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+						</svg>
+					</span>
+					<div>
+						<h3 class="text-sm font-semibold text-white">{translate($language, 'db.title')}</h3>
+						<p class="text-[11px] text-gray-500">
+							{translate($language, 'db.count_databases').replace('{count}', String(databases.length))}{totalSize > 0 ? ` · ${formatSize(totalSize)}` : ''}
+						</p>
+					</div>
+				</div>
+				<button
+					type="button"
+					onclick={() => openCreateDb()}
+					class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700"
+				>
+					<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" d="M12 5v14m7-7H5" /></svg>
+					{translate($language, 'db.create_database')}
+				</button>
 			</div>
-			<div class="relative w-full sm:w-56">
-				<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
-				</svg>
-				<input
-					type="text"
-					bind:value={dbSearch}
-					placeholder={translate($language, 'db.search_databases')}
-					aria-label={translate($language, 'db.search_databases')}
-					class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-				/>
-			</div>
-		</div>
 
-		<!-- Create database form -->
-		<form
-			class="flex flex-wrap items-end gap-3 border-b border-white/5 bg-gray-900/40 px-5 py-4"
-			onsubmit={(e) => { e.preventDefault(); createDatabase(); }}
+			<div class="flex gap-2 border-b border-white/5 px-5 py-3">
+				<div class="relative min-w-0 flex-1">
+					<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+					</svg>
+					<input
+						type="search"
+						bind:value={dbSearch}
+						placeholder={translate($language, 'db.search_databases')}
+						aria-label={translate($language, 'db.search_databases')}
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+					/>
+				</div>
+				<select
+					bind:value={dbEngineFilter}
+					aria-label={translate($language, 'db.filter_engine')}
+					class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+				>
+					<option value="all">{translate($language, 'db.all_engines')}</option>
+					<option value="mysql">MySQL</option>
+					<option value="postgresql">PostgreSQL</option>
+				</select>
+			</div>
+
+			{#if loadingDatabases}
+				<div class="divide-y divide-gray-700/40">
+					{#each Array(4) as _}
+						<div class="flex items-center gap-3 px-5 py-3">
+							<div class="h-9 w-9 animate-pulse rounded-lg bg-gray-700/50"></div>
+							<div class="h-4 w-44 animate-pulse rounded bg-gray-700/50"></div>
+							<div class="ml-auto h-4 w-20 animate-pulse rounded bg-gray-700/50"></div>
+						</div>
+					{/each}
+				</div>
+			{:else if filteredDatabases.length === 0}
+				<div class="flex flex-col items-center gap-2 px-5 py-12 text-center">
+					<p class="text-sm text-gray-400">{dbSearch ? translate($language, 'db.no_match').replace('{query}', dbSearch) : translate($language, 'db.none_yet')}</p>
+					{#if !dbSearch && dbEngineFilter === 'all'}
+						<button type="button" onclick={() => openCreateDb()} class="cursor-pointer text-sm font-medium text-blue-400 hover:underline">
+							+ {translate($language, 'db.create_database')}
+						</button>
+					{/if}
+				</div>
+			{:else}
+				<ul class="divide-y divide-gray-700/40">
+					{#each filteredDatabases as db (db.id)}
+						{@const users = grants.filter((g) => g.database_id === db.id)}
+						<li class="group px-5 py-3 transition hover:bg-white/[0.02]">
+							<div class="flex items-center gap-3">
+								<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-xs font-bold {engineIconBg(db.engine)}" title={engineLabel(db.engine)}>
+									{engineInitial(db.engine)}
+								</span>
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5">
+										<button
+											type="button"
+											onclick={() => copyText(db.name, `db-${db.id}`)}
+											title={translate($language, 'db.click_copy_name')}
+											class="cursor-pointer truncate text-left font-mono text-sm font-medium text-gray-100 hover:text-blue-300"
+										>
+											{db.name}
+										</button>
+										{#if copiedField === `db-${db.id}`}
+											<span class="text-[10px] font-medium text-green-400">{translate($language, 'db.copied')}</span>
+										{/if}
+										{#if db.engine === 'postgresql' && pgvector?.available_version && pgvector.databases[db.name]}
+											<span class="rounded border border-green-800/60 bg-green-900/30 px-1.5 text-[10px] font-semibold text-green-400">vector</span>
+										{/if}
+									</div>
+									<p class="truncate text-[11px] text-gray-500">
+										{engineLabel(db.engine)}{db.engine === 'mysql' && db.charset ? ` · ${db.charset}` : ''}{formatSize(db.size_bytes) ? ` · ${formatSize(db.size_bytes)}` : ''} · {formatDate(db.created_at)}
+									</p>
+								</div>
+								<div class="relative flex shrink-0 items-center gap-0.5">
+									{#if db.engine === 'postgresql' && pgvector?.available_version && !pgvector.databases[db.name] && hasPermission($permissions, 'databases.create')}
+										<button
+											type="button"
+											onclick={() => enableVector(db.id, db.name)}
+											disabled={enablingVector !== ''}
+											title={translate($language, 'db.pgvectorEnableTitle')}
+											class="cursor-pointer rounded-md border border-gray-700 px-1.5 py-0.5 text-[10px] font-medium text-gray-300 transition hover:border-green-700 hover:text-green-400 disabled:opacity-50"
+										>
+											{enablingVector === db.id ? '…' : '+ vector'}
+										</button>
+									{/if}
+									{#if db.engine !== 'redis'}
+										<button
+											type="button"
+											onclick={(e) => { e.stopPropagation(); exportMenuId = exportMenuId === db.id ? null : db.id; }}
+											title={translate($language, 'db.export_title')}
+											aria-haspopup="menu"
+											aria-expanded={exportMenuId === db.id}
+											class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white {exportMenuId === db.id ? 'bg-gray-700 text-white' : ''}"
+										>
+											<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+												<path stroke-linecap="round" stroke-linejoin="round" d="M7.5 7.5h-.75A2.25 2.25 0 0 0 4.5 9.75v7.5a2.25 2.25 0 0 0 2.25 2.25h7.5a2.25 2.25 0 0 0 2.25-2.25v-7.5a2.25 2.25 0 0 0-2.25-2.25h-.75m-6 3.75 3 3m0 0 3-3m-3 3V1.5m6 9h.75a2.25 2.25 0 0 1 2.25 2.25v7.5a2.25 2.25 0 0 1-2.25 2.25h-7.5a2.25 2.25 0 0 1-2.25-2.25v-.75" />
+											</svg>
+										</button>
+										{#if exportMenuId === db.id}
+											<div class="absolute top-full right-0 z-20 mt-1 w-48 overflow-hidden rounded-lg border border-gray-700 bg-gray-800 shadow-xl" role="menu">
+												<button type="button" role="menuitem" onclick={() => exportDatabase(db.id, db.name, 'sql')} class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700">
+													{translate($language, 'db.sql_dump')} <span class="text-gray-500">(.sql)</span>
+												</button>
+												<button type="button" role="menuitem" onclick={() => exportDatabase(db.id, db.name, 'sql.gz')} class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700">
+													{translate($language, 'db.sql_gz')} <span class="text-gray-500">(.sql.gz)</span>
+												</button>
+												<div class="border-t border-gray-700"></div>
+												<button type="button" role="menuitem" onclick={() => { exportMenuId = null; pickRestoreFile(db.id, db.name); }} class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-yellow-300 transition hover:bg-gray-700">
+													{translate($language, 'db.restore_from_file')}
+												</button>
+											</div>
+										{/if}
+									{/if}
+									<button
+										type="button"
+										onclick={() => (confirmAction = { kind: 'delete-db', id: db.id, name: db.name })}
+										title={translate($language, 'db.delete_title')}
+										aria-label={translate($language, 'db.delete_title')}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-500/15 hover:text-red-400"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+										</svg>
+									</button>
+								</div>
+							</div>
+							<div class="mt-1.5 flex flex-wrap items-center gap-1 pl-12">
+								{#if users.length === 0}
+									<span class="text-[11px] text-yellow-500/80">{translate($language, 'db.no_users_access')}</span>
+								{:else}
+									{#each users as g (g.user_id)}
+										<button
+											type="button"
+											onclick={() => openGrant(g.user_id)}
+											title={translate($language, 'db.manage_access_for').replace('{name}', g.username)}
+											class="inline-flex cursor-pointer items-center gap-1 rounded-md border border-gray-700 bg-gray-900/60 px-1.5 py-0.5 font-mono text-[10px] text-gray-300 transition hover:border-indigo-500/50 hover:text-indigo-200"
+										>
+											<svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+												<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0" />
+											</svg>
+											{g.username}
+										</button>
+									{/each}
+								{/if}
+							</div>
+							{#each [exportStatus, restoreStatus] as status}
+								{#if status?.id === db.id}
+									<p class="mt-1.5 pl-12 text-[11px] {status.error ? 'text-red-400' : 'text-green-400'}">{status.message}</p>
+								{/if}
+							{/each}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+
+		<!-- USERS -->
+		<section class="flex min-w-0 flex-col rounded-2xl border border-white/5 bg-gray-800/60" aria-label={translate($language, 'db.users_title')}>
+			<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
+				<div class="flex items-center gap-3">
+					<span class="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-500/10 text-indigo-400" aria-hidden="true">
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
+						</svg>
+					</span>
+					<div>
+						<h3 class="text-sm font-semibold text-white">{translate($language, 'db.users_title')}</h3>
+						<p class="text-[11px] text-gray-500">
+							{translate($language, 'db.count_users').replace('{count}', String(dbUsers.length))}{ungrantedUsers > 0 ? ` · ${translate($language, 'db.users_without_access').replace('{count}', String(ungrantedUsers))}` : ''}
+						</p>
+					</div>
+				</div>
+				<button
+					type="button"
+					onclick={() => openCreateUser()}
+					class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-indigo-700"
+				>
+					<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" d="M12 5v14m7-7H5" /></svg>
+					{translate($language, 'db.create_user')}
+				</button>
+			</div>
+
+			<div class="flex gap-2 border-b border-white/5 px-5 py-3">
+				<div class="relative min-w-0 flex-1">
+					<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
+					</svg>
+					<input
+						type="search"
+						bind:value={userSearch}
+						placeholder={translate($language, 'db.search_users')}
+						aria-label={translate($language, 'db.search_users')}
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+					/>
+				</div>
+				<select
+					bind:value={userEngineFilter}
+					aria-label={translate($language, 'db.filter_engine')}
+					class="rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+				>
+					<option value="all">{translate($language, 'db.all_engines')}</option>
+					<option value="mysql">MySQL</option>
+					<option value="postgresql">PostgreSQL</option>
+				</select>
+			</div>
+
+			{#if loadingUsers}
+				<div class="divide-y divide-gray-700/40">
+					{#each Array(3) as _}
+						<div class="flex items-center gap-3 px-5 py-3">
+							<div class="h-9 w-9 animate-pulse rounded-lg bg-gray-700/50"></div>
+							<div class="h-4 w-36 animate-pulse rounded bg-gray-700/50"></div>
+							<div class="ml-auto h-4 w-24 animate-pulse rounded bg-gray-700/50"></div>
+						</div>
+					{/each}
+				</div>
+			{:else if filteredUsers.length === 0}
+				<div class="flex flex-col items-center gap-2 px-5 py-12 text-center">
+					<p class="text-sm text-gray-400">{userSearch ? translate($language, 'db.no_users_match').replace('{query}', userSearch) : translate($language, 'db.no_users_yet')}</p>
+					{#if !userSearch && userEngineFilter === 'all'}
+						<button type="button" onclick={() => openCreateUser()} class="cursor-pointer text-sm font-medium text-indigo-400 hover:underline">
+							+ {translate($language, 'db.create_user')}
+						</button>
+					{/if}
+				</div>
+			{:else}
+				<ul class="divide-y divide-gray-700/40">
+					{#each filteredUsers as u (u.id)}
+						{@const userGrants = grantsForUser(u.id)}
+						<li class="px-5 py-3 transition hover:bg-white/[0.02]">
+							<div class="flex items-center gap-3">
+								<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg {engineIconBg(u.engine)}" title={engineLabel(u.engine)} aria-hidden="true">
+									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+									</svg>
+								</span>
+								<div class="min-w-0 flex-1">
+									<div class="flex items-center gap-1.5">
+										<button
+											type="button"
+											onclick={() => copyText(u.username, `user-${u.id}`)}
+											title={translate($language, 'db.click_copy_username')}
+											class="cursor-pointer truncate text-left font-mono text-sm font-medium text-gray-100 hover:text-blue-300"
+										>
+											{u.username}
+										</button>
+										{#if copiedField === `user-${u.id}`}
+											<span class="text-[10px] font-medium text-green-400">{translate($language, 'db.copied')}</span>
+										{/if}
+									</div>
+									<p class="text-[11px] text-gray-500">
+										{engineLabel(u.engine)} · {translate($language, userGrants.length === 1 ? 'db.access_count_one' : 'db.access_count').replace('{count}', String(userGrants.length))}
+									</p>
+								</div>
+								<div class="flex shrink-0 items-center gap-0.5">
+									<button
+										type="button"
+										onclick={() => openGrant(u.id)}
+										class="cursor-pointer rounded-lg border border-indigo-500/40 bg-indigo-500/10 px-2.5 py-1 text-[11px] font-semibold text-indigo-200 transition hover:bg-indigo-500/20"
+									>
+										{translate($language, 'db.grant')}
+									</button>
+									<button
+										type="button"
+										onclick={() => manageUser(u.id)}
+										title={translate($language, 'db.manage')}
+										aria-label={translate($language, 'db.manage')}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-700 hover:text-white"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 1.5v-1.5m0 0c0-.621.504-1.125 1.125-1.125m0 0h7.5" />
+										</svg>
+									</button>
+									<button
+										type="button"
+										onclick={() => openResetPassword(u.id)}
+										title={translate($language, 'db.reset_password')}
+										aria-label={translate($language, 'db.reset_password')}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-yellow-500/15 hover:text-yellow-300"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25Z" />
+										</svg>
+									</button>
+									<button
+										type="button"
+										onclick={() => (confirmAction = { kind: 'delete-user', id: u.id, name: u.username })}
+										title={translate($language, 'db.delete_user_title')}
+										aria-label={translate($language, 'db.delete_user_title')}
+										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-500/15 hover:text-red-400"
+									>
+										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+										</svg>
+									</button>
+								</div>
+							</div>
+							{#if userGrants.length > 0}
+								<div class="mt-1.5 flex flex-wrap items-center gap-1 pl-12">
+									{#each userGrants as g (g.database_id)}
+										<span class="inline-flex items-center gap-1 rounded-md border border-indigo-700/40 bg-indigo-900/20 py-0.5 pl-1.5 pr-0.5 font-mono text-[10px] text-indigo-300">
+											{g.database_name}
+											<button
+												type="button"
+												onclick={() => (confirmAction = { kind: 'revoke', userId: u.id, databaseId: g.database_id, username: u.username, name: g.database_name })}
+												title={translate($language, 'db.revoke')}
+												aria-label="{translate($language, 'db.revoke')} {g.database_name}"
+												class="cursor-pointer rounded px-0.5 text-indigo-400/70 transition hover:bg-red-500/20 hover:text-red-300"
+											>
+												<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true"><path stroke-linecap="round" d="M6 18L18 6M6 6l12 12" /></svg>
+											</button>
+										</span>
+									{/each}
+								</div>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	</div>
+
+	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); loadPgvector(); }} />
+</div>
+
+{#snippet passwordField(id: string, value: string, shown: boolean, oninput: (v: string) => void, toggle: () => void, generate: () => void, placeholder: string)}
+	<div class="flex items-center gap-2">
+		<div class="relative min-w-0 flex-1">
+			<input
+				{id}
+				type={shown ? 'text' : 'password'}
+				{value}
+				oninput={(e) => oninput(e.currentTarget.value)}
+				{placeholder}
+				autocomplete="new-password"
+				class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 pr-9 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+			/>
+			<button
+				type="button"
+				onclick={toggle}
+				title={shown ? translate($language, 'db.hide_password') : translate($language, 'db.show_password')}
+				aria-label={shown ? translate($language, 'db.hide_password') : translate($language, 'db.show_password')}
+				class="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer text-gray-500 transition hover:text-gray-200"
+			>
+				<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+					{#if shown}
+						<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+					{:else}
+						<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.964-7.178z" />
+						<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+					{/if}
+				</svg>
+			</button>
+		</div>
+		<button
+			type="button"
+			onclick={generate}
+			title={translate($language, 'db.generate_title')}
+			class="shrink-0 cursor-pointer rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-sm font-semibold text-blue-300 transition hover:bg-blue-500/20"
 		>
+			⚄ {translate($language, 'db.generate')}
+		</button>
+		{#if value}
+			<button
+				type="button"
+				onclick={() => copyText(value, `pw-${id}`)}
+				class="shrink-0 cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-2 text-sm text-gray-200 transition hover:bg-gray-600"
+			>
+				{copiedField === `pw-${id}` ? translate($language, 'db.copied') : translate($language, 'db.copy')}
+			</button>
+		{/if}
+	</div>
+	<div class="mt-2 flex flex-wrap items-center gap-4 text-xs text-gray-400">
+		<label class="flex items-center gap-2">
+			<span>{translate($language, 'db.length')}</span>
+			<input type="range" min="12" max="40" bind:value={genLength} class="w-28 accent-blue-500" />
+			<span class="w-6 text-center font-mono font-semibold text-gray-200">{genLength}</span>
+		</label>
+		<label class="flex cursor-pointer items-center gap-2">
+			<input type="checkbox" bind:checked={genSymbols} class="accent-blue-500" />
+			<span>{translate($language, 'db.include_symbols')}</span>
+		</label>
+	</div>
+{/snippet}
+
+{#if showCreateDb}
+	<Modal title={translate($language, 'db.new_database')} onclose={() => (showCreateDb = false)} busy={creatingDb} closeLabel={translate($language, 'db.cancel')}>
+		<form id="create-db-form" class="space-y-4" onsubmit={(e) => { e.preventDefault(); createDatabase(); }}>
+			<div>
+				<span class="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.engine')}</span>
+				<div class="grid grid-cols-2 gap-2">
+					{#each ['mysql', 'postgresql'] as engine}
+						{@const status = sqlEngines.find((e) => e.name === engine)}
+						<button
+							type="button"
+							onclick={() => (newDbEngine = engine)}
+							aria-pressed={newDbEngine === engine}
+							class="flex cursor-pointer items-center gap-2.5 rounded-xl border px-3 py-2.5 text-left transition {newDbEngine === engine ? 'border-blue-500 bg-blue-500/10' : 'border-gray-600 hover:border-gray-500'}"
+						>
+							<span class="flex h-8 w-8 items-center justify-center rounded-lg text-sm font-bold {engineIconBg(engine)}">{engineInitial(engine)}</span>
+							<span>
+								<span class="block text-sm font-medium text-white">{engineLabel(engine)}</span>
+								<span class="block text-[11px] {status?.running ? 'text-green-400' : 'text-gray-500'}">
+									{status?.installed ? (status.running ? translate($language, 'db.status_running') : translate($language, 'db.status_stopped')) : translate($language, 'db.not_installed')}
+								</span>
+							</span>
+						</button>
+					{/each}
+				</div>
+			</div>
 			<div>
 				<label for="db-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.name')}</label>
 				<input
@@ -788,262 +1255,46 @@ import { toast } from '$lib/stores/toast';
 					type="text"
 					bind:value={newDbName}
 					placeholder="my_database"
-					class="w-44 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+					autocomplete="off"
+					spellcheck="false"
+					class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 				/>
+				<p class="mt-1 text-[11px] text-gray-500">{translate($language, 'db.name_hint')}</p>
 			</div>
-			<div>
-				<label for="db-engine" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.engine')}</label>
-				<select
-					id="db-engine"
-					bind:value={newDbEngine}
-					class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-				>
-					<option value="mysql">MySQL</option>
-					<option value="postgresql">PostgreSQL</option>
-				</select>
-			</div>
-			<div>
-				<label for="db-charset" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.charset')}</label>
-				<input
-					id="db-charset"
-					type="text"
-					bind:value={newDbCharset}
-					placeholder="utf8mb4"
-					class="w-28 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-				/>
-			</div>
-			<button
-				type="submit"
-				disabled={creatingDb || !newDbName.trim()}
-				class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-			>
+			{#if newDbEngine === 'mysql'}
+				<div>
+					<label for="db-charset" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.charset')}</label>
+					<input
+						id="db-charset"
+						type="text"
+						list="db-charset-options"
+						bind:value={newDbCharset}
+						placeholder="utf8mb4"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+					/>
+					<datalist id="db-charset-options">
+						<option value="utf8mb4"></option>
+						<option value="utf8mb3"></option>
+						<option value="latin1"></option>
+					</datalist>
+				</div>
+			{/if}
+		</form>
+		{#snippet footer()}
+			<button type="button" onclick={() => (showCreateDb = false)} disabled={creatingDb} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
+				{translate($language, 'db.cancel')}
+			</button>
+			<button type="submit" form="create-db-form" disabled={creatingDb || !newDbName.trim()} class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">
 				{creatingDb ? translate($language, 'db.adding') : translate($language, 'db.create_database')}
 			</button>
-		</form>
+		{/snippet}
+	</Modal>
+{/if}
 
-		<!-- Databases table -->
-		{#if loadingDatabases}
-			<div class="divide-y divide-gray-700/40">
-				{#each Array(4) as _}
-					<div class="flex items-center gap-3 px-5 py-3">
-						<div class="h-9 w-9 animate-pulse rounded-lg bg-gray-700/50"></div>
-						<div class="h-4 w-44 animate-pulse rounded bg-gray-700/50"></div>
-						<div class="ml-auto h-4 w-20 animate-pulse rounded bg-gray-700/50"></div>
-					</div>
-				{/each}
-			</div>
-		{:else if filteredDatabases.length === 0}
-			<div class="px-5 py-10 text-center">
-				<p class="text-sm text-gray-400">{dbSearch ? translate($language, 'db.no_match').replace('{query}', dbSearch) : translate($language, 'db.none_yet')}</p>
-				{#if !dbSearch}
-					<p class="mt-1 text-xs text-gray-500">{translate($language, 'db.create_one_hint')}</p>
-				{/if}
-			</div>
-		{:else}
-			<div class="divide-y divide-gray-700/40">
-				{#each filteredDatabases as db (db.id)}
-					<div class="group flex items-center gap-3 px-5 py-3 transition hover:bg-gray-750">
-						<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-900/70 text-[10px] font-bold {engineIconBg(db.engine)}">
-							{engineInitial(db.engine)}
-						</span>
-						<div class="min-w-0 flex-1">
-							<button
-								type="button"
-								onclick={() => copyText(db.name, `db-${db.id}`)}
-								title={translate($language, 'db.click_copy_name')}
-								class="block cursor-pointer truncate text-left font-mono text-sm font-medium text-gray-100 hover:text-blue-300"
-							>
-								{db.name}
-							</button>
-							<p class="text-[11px] text-gray-500">
-								{db.charset || '—'}{formatSize(db.size_bytes) ? ` · ${formatSize(db.size_bytes)}` : ''} · {translate($language, 'db.created_at').replace('{date}', formatDate(db.created_at))}
-							</p>
-						</div>
-						<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(db.engine)}">
-							{engineLabel(db.engine)}
-						</span>
-						{#if grantCountForDb(db.id) > 0}
-							<span
-								class="hidden shrink-0 items-center gap-1 rounded-md border border-gray-700 bg-gray-900/60 px-2 py-0.5 text-[11px] font-medium text-gray-400 lg:inline-flex"
-								title={translate($language, 'db.granted_users_title').replace('{names}', grantNamesForDb(db.id))}
-							>
-								<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-									<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-								</svg>
-								{grantCountForDb(db.id)}
-							</span>
-						{/if}
-							{#if db.engine === 'postgresql' && pgvector?.available_version}
-								{#if pgvector.databases[db.name]}
-									<span class="hidden shrink-0 rounded-md border border-green-800/60 bg-green-900/30 px-2 py-0.5 text-[11px] font-semibold text-green-400 md:inline">vector</span>
-								{:else if hasPermission($permissions, 'databases.create')}
-									<button
-										type="button"
-										onclick={() => enableVector(db.id, db.name)}
-										disabled={enablingVector !== ''}
-										title={translate($language, 'db.pgvectorEnableTitle')}
-										class="shrink-0 cursor-pointer rounded-md border border-gray-700 bg-gray-900/60 px-2 py-0.5 text-[11px] font-medium text-gray-300 transition hover:border-green-700 hover:text-green-400 disabled:opacity-50"
-									>
-										{enablingVector === db.id ? '…' : '+ pgvector'}
-									</button>
-								{/if}
-							{/if}
-						<div class="flex shrink-0 items-center justify-end gap-1 relative">
-							{#if db.engine !== 'redis'}
-								<button
-									type="button"
-									onclick={(e) => { e.stopPropagation(); exportMenuId = exportMenuId === db.id ? null : db.id; }}
-									title={translate($language, 'db.export_title')}
-									class="cursor-pointer rounded-lg px-2 py-1 text-[11px] font-medium text-gray-400 transition hover:bg-gray-600 hover:text-white {exportMenuId === db.id ? 'bg-gray-600 text-white' : ''}"
-								>
-									{translate($language, 'db.export')}
-								</button>
-								{#if exportMenuId === db.id}
-									<div
-										class="absolute top-full right-0 z-20 mt-1 w-44 overflow-hidden rounded-lg border border-gray-700 bg-gray-800 shadow-xl"
-										role="menu"
-									>
-										<button
-											type="button"
-											onclick={() => exportDatabase(db.id, db.name, 'sql')}
-											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700"
-										>
-											{translate($language, 'db.sql_dump')} <span class="text-gray-500">(.sql)</span>
-										</button>
-										<button
-											type="button"
-											onclick={() => exportDatabase(db.id, db.name, 'sql.gz')}
-											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-gray-200 transition hover:bg-gray-700"
-										>
-											{translate($language, 'db.sql_gz')} <span class="text-gray-500">(.sql.gz)</span>
-										</button>
-										<div class="border-t border-gray-700"></div>
-										<button
-											type="button"
-											onclick={() => { exportMenuId = null; pickRestoreFile(db.id, db.name); }}
-											class="block w-full cursor-pointer px-3 py-2 text-left text-xs text-yellow-300 transition hover:bg-gray-700"
-										>
-											{translate($language, 'db.restore_from_file')}
-										</button>
-									</div>
-								{#if restorePending?.id === db.id}
-									<div class="absolute top-full right-0 z-20 mt-1 w-56 rounded-lg border border-yellow-700/60 bg-gray-800 p-3 shadow-xl">
-										<p class="text-[11px] leading-snug text-gray-300">
-											{translate($language, 'db.overwrite')} <span class="font-mono font-semibold text-white">{restorePending.name}</span> {translate($language, 'db.with')}
-											<span class="font-mono">{restorePending.fileName}</span>? {translate($language, 'db.data_lost')}
-										</p>
-										<div class="mt-2 flex justify-end gap-1.5">
-											<button type="button" onclick={() => (restorePending = null)}
-												class="cursor-pointer rounded-md bg-gray-700 px-2 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600">
-												{translate($language, 'db.cancel')}
-											</button>
-											<button type="button" onclick={confirmRestore} disabled={restoreBusy}
-												class="cursor-pointer rounded-md bg-yellow-600 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50">
-												{restoreBusy ? translate($language, 'db.restoring') : translate($language, 'db.restore')}
-											</button>
-										</div>
-									</div>
-								{/if}
-								{/if}
-							{/if}
-							{#if exportStatus?.id === db.id}
-								<span
-									class="absolute top-full right-0 z-20 mt-1 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] {exportStatus.error
-										? 'border-red-700 bg-red-900/50 text-red-300'
-										: 'border-green-700 bg-green-900/40 text-green-300'}"
-								>
-									{exportStatus.message}
-								</span>
-							{/if}
-							{#if restoreStatus?.id === db.id}
-								<span
-									class="absolute top-full right-0 z-20 mt-8 whitespace-nowrap rounded-md border px-2 py-1 text-[11px] {restoreStatus.error
-										? 'border-red-700 bg-red-900/50 text-red-300'
-										: 'border-green-700 bg-green-900/40 text-green-300'}"
-								>
-									{restoreStatus.message}
-								</span>
-							{/if}
-							{#if deleteDbConfirmId === db.id}
-								<span class="mr-1 text-[11px] text-red-400">{translate($language, 'db.delete_confirm')}</span>
-								<button
-									type="button"
-									onclick={() => deleteDatabase(db.id, db.name)}
-									class="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-red-700"
-								>
-									{translate($language, 'db.yes')}
-								</button>
-								<button
-									type="button"
-									onclick={() => (deleteDbConfirmId = null)}
-									class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600"
-								>
-									{translate($language, 'db.no')}
-								</button>
-							{:else}
-								<button
-									type="button"
-									onclick={() => copyText(db.name, `db-${db.id}`)}
-									title={translate($language, 'db.copy_name')}
-									class="cursor-pointer rounded-lg p-1.5 text-gray-400 opacity-0 transition hover:bg-gray-600 hover:text-white group-hover:opacity-100"
-								>
-									{#if copiedField === `db-${db.id}`}
-										<svg class="h-4 w-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
-											<path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
-										</svg>
-									{:else}
-										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-											<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
-										</svg>
-									{/if}
-								</button>
-								<button
-									type="button"
-									onclick={() => (deleteDbConfirmId = db.id)}
-									title={translate($language, 'db.delete_title')}
-									class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white"
-								>
-									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-										<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-									</svg>
-								</button>
-							{/if}
-						</div>
-					</div>
-				{/each}
-			</div>
-		{/if}
-	</section>
-
-	<!-- ═══════════════════════════ USERS ═══════════════════════════ -->
-	<section class="rounded-2xl border border-white/5 bg-gray-800/60" aria-label={translate($language, 'db.users_title')}>
-		<div class="flex flex-wrap items-center justify-between gap-3 border-b border-white/5 px-5 py-4">
-			<div class="flex items-center gap-2.5">
-				<h3 class="text-sm font-semibold text-white">{translate($language, 'db.users_title')}</h3>
-				{#if !loadingUsers}
-					<span class="rounded-full bg-blue-900/40 px-2 py-0.5 text-[11px] font-semibold text-blue-300">{dbUsers.length}</span>
-				{/if}
-			</div>
-			<div class="relative w-full sm:w-56">
-				<svg class="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-					<path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-4.35-4.35M17 10.5a6.5 6.5 0 11-13 0 6.5 6.5 0 0113 0z" />
-				</svg>
-				<input
-					type="text"
-					bind:value={userSearch}
-					placeholder={translate($language, 'db.search_users')}
-					aria-label={translate($language, 'db.search_users')}
-					class="w-full rounded-lg border border-gray-600 bg-gray-900 py-1.5 pl-8 pr-3 text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-				/>
-			</div>
-		</div>
-
-		<!-- Create user form -->
-		<form
-			class="border-b border-white/5 bg-gray-900/40 px-5 py-4"
-			onsubmit={(e) => { e.preventDefault(); createUser(); }}
-		>
-			<div class="flex flex-wrap items-end gap-3">
+{#if showCreateUser}
+	<Modal title={translate($language, 'db.new_user')} onclose={() => (showCreateUser = false)} busy={creatingUser} size="lg" closeLabel={translate($language, 'db.cancel')}>
+		<form id="create-user-form" class="space-y-4" onsubmit={(e) => { e.preventDefault(); createUser(); }}>
+			<div class="grid gap-4 sm:grid-cols-[1fr_auto]">
 				<div>
 					<label for="user-name" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.username')}</label>
 					<input
@@ -1052,7 +1303,8 @@ import { toast } from '$lib/stores/toast';
 						bind:value={newUsername}
 						placeholder="db_user"
 						autocomplete="off"
-						class="w-40 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+						spellcheck="false"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 					/>
 				</div>
 				<div>
@@ -1060,347 +1312,184 @@ import { toast } from '$lib/stores/toast';
 					<select
 						id="user-engine"
 						bind:value={newUserEngine}
-						class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
 					>
 						<option value="mysql">MySQL</option>
 						<option value="postgresql">PostgreSQL</option>
 					</select>
 				</div>
-				<div class="min-w-56 flex-1">
-					<label for="user-pass" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.password')}</label>
-					<div class="flex items-center gap-2">
-						<div class="relative min-w-0 flex-1">
-							<input
-								id="user-pass"
-								type={showNewPassword ? 'text' : 'password'}
-								bind:value={newPassword}
-								placeholder={translate($language, 'db.password_placeholder')}
-								autocomplete="new-password"
-								class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 pr-9 font-mono text-sm text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-							/>
-							<button
-								type="button"
-								onclick={() => (showNewPassword = !showNewPassword)}
-								title={showNewPassword ? translate($language, 'db.hide_password') : translate($language, 'db.show_password')}
-								class="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer text-gray-500 transition hover:text-gray-200"
-							>
-								{#if showNewPassword}
-									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-										<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-									</svg>
-								{:else}
-									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-										<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.964-7.178z" />
-										<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-									</svg>
-								{/if}
-							</button>
-						</div>
-						<button
-							type="button"
-							onclick={() => fillGenerated('new')}
-							title={translate($language, 'db.generate_title')}
-							class="shrink-0 cursor-pointer rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-2 text-sm font-semibold text-blue-300 transition hover:bg-blue-500/20"
-						>
-							⚄ {translate($language, 'db.generate')}
-						</button>
-					</div>
-				</div>
-				<button
-					type="submit"
-					disabled={creatingUser || !newUsername.trim() || !newPassword.trim()}
-					class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-				>
-					{creatingUser ? translate($language, 'db.creating') : translate($language, 'db.create_user')}
-				</button>
 			</div>
-			<!-- Generator options -->
-			<details class="mt-3 text-xs text-gray-400">
-				<summary class="inline-flex cursor-pointer select-none items-center gap-1.5 hover:text-gray-200">
-					<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-						<path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.506-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z" />
-						<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-					</svg>
-					{translate($language, 'db.gen_options')} — {translate($language, 'db.gen_length').replace('{count}', String(genLength))}{genSymbols ? translate($language, 'db.gen_symbols') : translate($language, 'db.gen_letters')}
-				</summary>
-				<div class="mt-2 flex flex-wrap items-center gap-4 rounded-lg border border-gray-700 bg-gray-900/60 px-3.5 py-2.5">
-					<label class="flex items-center gap-2.5">
-						<span>{translate($language, 'db.length')}</span>
-						<input type="range" min="12" max="40" bind:value={genLength} class="w-36 accent-blue-500" />
-						<span class="w-6 text-center font-mono font-semibold text-gray-200">{genLength}</span>
-					</label>
-					<label class="flex cursor-pointer items-center gap-2">
-						<input type="checkbox" bind:checked={genSymbols} class="accent-blue-500" />
-						<span>{translate($language, 'db.include_symbols')}</span>
-					</label>
-					<span class="font-mono text-gray-500">{translate($language, 'db.preview')} {generatedPreview}</span>
-				</div>
-			</details>
+			<div>
+				<label for="user-pass" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.password')}</label>
+				{@render passwordField('user-pass', newPassword, showNewPassword, (v) => (newPassword = v), () => (showNewPassword = !showNewPassword), () => fillGenerated('new'), translate($language, 'db.password_placeholder'))}
+				<p class="mt-2 text-[11px] text-gray-500">{translate($language, 'db.save_password_hint')}</p>
+			</div>
 		</form>
+		{#snippet footer()}
+			<button type="button" onclick={() => (showCreateUser = false)} disabled={creatingUser} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
+				{translate($language, 'db.cancel')}
+			</button>
+			<button type="submit" form="create-user-form" disabled={creatingUser || !newUsername.trim() || !newPassword.trim()} class="cursor-pointer rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">
+				{creatingUser ? translate($language, 'db.creating') : translate($language, 'db.create_user')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
 
-		<!-- Users table -->
-		{#if loadingUsers}
-			<div class="divide-y divide-gray-700/40">
-				{#each Array(3) as _}
-					<div class="flex items-center gap-3 px-5 py-3">
-						<div class="h-9 w-9 animate-pulse rounded-lg bg-gray-700/50"></div>
-						<div class="h-4 w-36 animate-pulse rounded bg-gray-700/50"></div>
-						<div class="ml-auto h-4 w-40 animate-pulse rounded bg-gray-700/50"></div>
-					</div>
-				{/each}
+{#if resetUser}
+	<Modal title={`${translate($language, 'db.reset_for')} ${resetUser.username}`} onclose={closeResetPassword} size="lg" closeLabel={translate($language, 'db.cancel')}>
+		<form id="reset-pw-form" onsubmit={(e) => { e.preventDefault(); if (resetUser) resetPassword(resetUser.id); }}>
+			<label for="reset-pass" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.new_password_placeholder')}</label>
+			{@render passwordField('reset-pass', resetPasswordValue, showResetPassword, (v) => (resetPasswordValue = v), () => (showResetPassword = !showResetPassword), () => fillGenerated('reset'), translate($language, 'db.new_password_placeholder'))}
+			<p class="mt-3 text-[11px] text-yellow-300/80">{translate($language, 'db.reset_warning')}</p>
+		</form>
+		{#snippet footer()}
+			<button type="button" onclick={closeResetPassword} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+				{translate($language, 'db.cancel')}
+			</button>
+			<button type="submit" form="reset-pw-form" disabled={!resetPasswordValue.trim()} class="cursor-pointer rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-yellow-700 disabled:cursor-not-allowed disabled:opacity-40">
+				{translate($language, 'db.save')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if grantUser}
+	{@const current = grantsForUser(grantUser.id)}
+	<Modal title={translate($language, 'db.grant_modal_title').replace('{name}', grantUser.username)} onclose={() => (grantUserId = null)} busy={!!grantBusy} size="lg" closeLabel={translate($language, 'db.cancel')}>
+		<div class="space-y-5">
+			<div class="flex items-center gap-2 text-xs text-gray-400">
+				<span class="rounded-md px-2 py-0.5 text-[11px] font-semibold {engineBadgeClass(grantUser.engine)}">{engineLabel(grantUser.engine)}</span>
+				{translate($language, 'db.grant_modal_hint').replace('{engine}', engineLabel(grantUser.engine))}
 			</div>
-		{:else if filteredUsers.length === 0}
-			<div class="px-5 py-10 text-center">
-				<p class="text-sm text-gray-400">{userSearch ? translate($language, 'db.no_users_match').replace('{query}', userSearch) : translate($language, 'db.no_users_yet')}</p>
-				{#if !userSearch}
-					<p class="mt-1 text-xs text-gray-500">{translate($language, 'db.create_one_hint')}</p>
-				{/if}
-			</div>
-		{:else}
-			<div class="divide-y divide-gray-700/40">
-				{#each filteredUsers as u (u.id)}
-					<div class="group px-5 py-3 transition hover:bg-gray-750">
-						<div class="flex items-center gap-3">
-							<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gray-900/70 {engineIconBg(u.engine)}" aria-hidden="true">
-								<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5">
-									<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-								</svg>
-							</span>
-							<div class="min-w-0 flex-1">
+
+			<div>
+				<h4 class="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-400">
+					{translate($language, 'db.current_access')} <span class="text-gray-500">({current.length})</span>
+				</h4>
+				{#if current.length === 0}
+					<p class="rounded-lg border border-dashed border-gray-600 px-3 py-3 text-center text-xs text-gray-500">{translate($language, 'db.no_access_yet')}</p>
+				{:else}
+					<ul class="divide-y divide-gray-700/60 rounded-lg border border-gray-700">
+						{#each current as g (g.database_id)}
+							<li class="flex items-center justify-between gap-2 px-3 py-2">
+								<span class="flex min-w-0 items-center gap-2">
+									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-400"></span>
+									<span class="truncate font-mono text-sm text-gray-100">{g.database_name}</span>
+								</span>
 								<button
 									type="button"
-									onclick={() => copyText(u.username, `user-${u.id}`)}
-									title={translate($language, 'db.click_copy_username')}
-									class="block cursor-pointer truncate text-left font-mono text-sm font-medium text-gray-100 hover:text-blue-300"
+									onclick={() => (confirmAction = { kind: 'revoke', userId: grantUser.id, databaseId: g.database_id, username: grantUser.username, name: g.database_name })}
+									class="shrink-0 cursor-pointer rounded-md px-2 py-1 text-xs text-red-300 transition hover:bg-red-500/15"
 								>
-									{u.username}
+									{translate($language, 'db.revoke')}
 								</button>
-								<div class="mt-1 flex flex-wrap items-center gap-1.5">
-									{#each grantsForUser(u.id) as g (g.database_id)}
-										{#if revokeConfirm?.userId === u.id && revokeConfirm?.databaseId === g.database_id}
-											<span class="inline-flex items-center gap-1.5 rounded-md border border-red-700/60 bg-red-900/30 px-2 py-0.5 text-[11px] text-red-300">
-												{translate($language, 'db.revoke_confirm').replace('{name}', g.database_name)}
-												<button
-													type="button"
-													onclick={() => revokePrivileges(u.id, g.database_id)}
-													disabled={revoking}
-													class="cursor-pointer font-semibold text-red-200 transition hover:text-white disabled:opacity-50"
-												>
-													{translate($language, 'db.yes')}
-												</button>
-												<button
-													type="button"
-													onclick={() => (revokeConfirm = null)}
-													class="cursor-pointer text-gray-400 transition hover:text-gray-200"
-												>
-													{translate($language, 'db.no')}
-												</button>
-											</span>
-										{:else}
-											<span class="inline-flex items-center gap-1 rounded-md border border-indigo-700/40 bg-indigo-900/20 px-2 py-0.5 text-[11px] font-medium text-indigo-300">
-												<svg class="h-2.5 w-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-													<ellipse cx="12" cy="5" rx="8" ry="3" />
-													<path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5" />
-												</svg>
-												{g.database_name}
-												<button
-													type="button"
-													onclick={() => (revokeConfirm = { userId: u.id, databaseId: g.database_id })}
-													title={translate($language, 'db.revoke')}
-													aria-label="{translate($language, 'db.revoke')} {g.database_name}"
-													class="-mr-0.5 cursor-pointer rounded px-0.5 text-indigo-400/70 transition hover:bg-red-500/20 hover:text-red-300"
-												>
-													<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" aria-hidden="true">
-														<path stroke-linecap="round" d="M6 18L18 6M6 6l12 12" />
-													</svg>
-												</button>
-											</span>
-										{/if}
-									{:else}
-										<p class="text-[11px] text-gray-500">
-											{copiedField === `user-${u.id}` ? translate($language, 'db.copied_hint') : translate($language, 'db.click_to_copy')}
-										</p>
-									{/each}
-								</div>
-							</div>
-							<span class="hidden shrink-0 rounded-md px-2 py-0.5 text-[11px] font-semibold sm:inline {engineBadgeClass(u.engine)}">
-								{engineLabel(u.engine)}
-							</span>
-							<div class="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
-								{#if deleteUserConfirmId === u.id}
-									<span class="mr-1 text-[11px] text-red-400">{translate($language, 'db.delete_user_confirm')}</span>
-									<button
-										type="button"
-										onclick={() => deleteUser(u.id, u.username)}
-										class="cursor-pointer rounded-lg bg-red-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-red-700"
-									>
-										{translate($language, 'db.yes')}
-									</button>
-									<button
-										type="button"
-										onclick={() => (deleteUserConfirmId = null)}
-										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1 text-[11px] text-gray-200 transition hover:bg-gray-600"
-									>
-										{translate($language, 'db.no')}
-									</button>
-								{:else}
-									<button
-										type="button"
-										onclick={() => manageUser(u.id)}
-										class="cursor-pointer rounded-lg bg-blue-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-blue-700"
-									>
-										{translate($language, 'db.manage')}
-									</button>
-									<button
-										type="button"
-										onclick={() => {
-											resetPasswordUserId = resetPasswordUserId === u.id ? null : u.id;
-											resetPasswordValue = '';
-											showResetPassword = false;
-											grantUserId = null;
-										}}
-										class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-200 transition hover:border-yellow-400/40 hover:bg-yellow-600/20 hover:text-yellow-200"
-									>
-										{translate($language, 'db.reset_password')}
-									</button>
-									<button
-										type="button"
-										onclick={() => {
-											grantUserId = grantUserId === u.id ? null : u.id;
-											grantDatabase = '';
-											resetPasswordUserId = null;
-										}}
-										class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1 text-[11px] font-medium text-gray-200 transition hover:border-indigo-400/40 hover:bg-indigo-600/20 hover:text-indigo-200"
-									>
-										{translate($language, 'db.grant')}
-									</button>
-									<button
-										type="button"
-										onclick={() => (deleteUserConfirmId = u.id)}
-										title={translate($language, 'db.delete_user_title')}
-										class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-red-600 hover:text-white"
-									>
-										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-											<path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-										</svg>
-									</button>
-								{/if}
-							</div>
-						</div>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 
-						<!-- Reset password inline form with generator -->
-						{#if resetPasswordUserId === u.id}
-							<div class="mt-3 rounded-xl border border-yellow-700/40 bg-yellow-900/10 px-4 py-3">
-								<p class="mb-2 text-xs font-semibold text-yellow-300">
-									{translate($language, 'db.reset_for')} <span class="font-mono">{u.username}</span>
-								</p>
-								<div class="flex flex-wrap items-center gap-2">
-									<div class="relative min-w-52 flex-1">
-										<input
-											type={showResetPassword ? 'text' : 'password'}
-											bind:value={resetPasswordValue}
-											placeholder={translate($language, 'db.new_password_placeholder')}
-											autocomplete="new-password"
-											class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-1.5 pr-9 font-mono text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-										/>
-										<button
-											type="button"
-											onclick={() => (showResetPassword = !showResetPassword)}
-											title={showResetPassword ? translate($language, 'db.hide_password') : translate($language, 'db.show_password')}
-											class="absolute right-2 top-1/2 -translate-y-1/2 cursor-pointer text-gray-500 transition hover:text-gray-200"
-										>
-											{#if showResetPassword}
-												<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-													<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-												</svg>
-											{:else}
-												<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
-													<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.964-7.178z" />
-													<path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-												</svg>
-											{/if}
-										</button>
-									</div>
-									<button
-										type="button"
-										onclick={() => fillGenerated('reset')}
-										title={translate($language, 'db.generate_title')}
-										class="shrink-0 cursor-pointer rounded-lg border border-blue-400/30 bg-blue-500/10 px-3 py-1.5 text-xs font-semibold text-blue-300 transition hover:bg-blue-500/20"
-									>
-										⚄ {translate($language, 'db.generate')}
-									</button>
-									{#if resetPasswordValue}
-										<button
-											type="button"
-											onclick={() => copyText(resetPasswordValue, `reset-${u.id}`)}
-											class="shrink-0 cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1.5 text-[11px] font-medium text-gray-200 transition hover:bg-gray-600"
-										>
-											{copiedField === `reset-${u.id}` ? translate($language, 'db.copied') : translate($language, 'db.copy')}
-										</button>
-									{/if}
-									<button
-										type="button"
-										onclick={() => resetPassword(u.id)}
-										disabled={!resetPasswordValue.trim()}
-										class="shrink-0 cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
-									>
-										{translate($language, 'db.save')}
-									</button>
-									<button
-										type="button"
-										onclick={() => { resetPasswordUserId = null; resetPasswordValue = ''; showResetPassword = false; }}
-										class="shrink-0 cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
-									>
-										{translate($language, 'db.cancel')}
-									</button>
-								</div>
-								<p class="mt-2 text-[11px] text-gray-500">
-									{translate($language, 'db.gen_note').replace('{count}', String(genLength)).replace('{suffix}', genSymbols ? translate($language, 'db.gen_symbols') : '')}
-								</p>
-							</div>
-						{/if}
-
-						<!-- Grant privileges inline form -->
-						{#if grantUserId === u.id}
-							<div class="mt-3 rounded-xl border border-indigo-700/40 bg-indigo-900/10 px-4 py-3">
-								<p class="mb-2 text-xs font-semibold text-indigo-300">
-									{translate($language, 'db.grant_to')} <span class="font-mono">{u.username}</span>
-								</p>
-								<div class="flex flex-wrap items-center gap-2">
-									<select
-										bind:value={grantDatabase}
-										class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-1.5 text-xs text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
-									>
-										<option value="">{translate($language, 'db.select_database')}</option>
-										{#each databases.filter((d) => d.engine === u.engine) as db (db.id)}
-											<option value={db.id} disabled={isGranted(u.id, db.id)}>
-												{db.name}{isGranted(u.id, db.id) ? ` — ${translate($language, 'db.already_granted')}` : ''}
-											</option>
-										{/each}
-									</select>
-									<button
-										type="button"
-										onclick={() => grantPrivileges(u.id)}
-										disabled={!grantDatabase}
-										class="cursor-pointer rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
-									>
-										{translate($language, 'db.grant')}
-									</button>
-									<button
-										type="button"
-										onclick={() => { grantUserId = null; grantDatabase = ''; }}
-										class="cursor-pointer rounded-lg bg-gray-700 px-2.5 py-1.5 text-xs text-gray-200 transition hover:bg-gray-600"
-									>
-										{translate($language, 'db.cancel')}
-									</button>
-								</div>
-							</div>
+			<div>
+				<div class="mb-2 flex items-center justify-between gap-2">
+					<h4 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'db.add_access')}</h4>
+					<input
+						type="search"
+						bind:value={grantSearch}
+						placeholder={translate($language, 'db.search_databases')}
+						aria-label={translate($language, 'db.search_databases')}
+						class="w-44 rounded-lg border border-gray-600 bg-gray-900 px-2.5 py-1 text-xs text-gray-200 placeholder:text-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+					/>
+				</div>
+				{#if grantCandidates.length === 0}
+					<div class="rounded-lg border border-dashed border-gray-600 px-3 py-4 text-center text-xs text-gray-500">
+						{grantSearch ? translate($language, 'db.no_match').replace('{query}', grantSearch) : translate($language, 'db.no_grantable').replace('{engine}', engineLabel(grantUser.engine))}
+						{#if !grantSearch}
+							<button
+								type="button"
+								onclick={() => { const engine = grantUser?.engine || 'mysql'; grantUserId = null; openCreateDb(engine); }}
+								class="mt-1 block w-full cursor-pointer font-medium text-blue-400 hover:underline"
+							>
+								+ {translate($language, 'db.create_database')}
+							</button>
 						{/if}
 					</div>
-				{/each}
+				{:else}
+					<ul class="max-h-64 divide-y divide-gray-700/60 overflow-y-auto rounded-lg border border-gray-700">
+						{#each grantCandidates as db (db.id)}
+							<li class="flex items-center justify-between gap-2 px-3 py-2">
+								<span class="min-w-0">
+									<span class="block truncate font-mono text-sm text-gray-200">{db.name}</span>
+									<span class="block text-[11px] text-gray-500">{formatSize(db.size_bytes) || '—'} · {formatDate(db.created_at)}</span>
+								</span>
+								<button
+									type="button"
+									onclick={() => grantUser && grantPrivileges(grantUser.id, db.id)}
+									disabled={!!grantBusy}
+									class="shrink-0 cursor-pointer rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
+								>
+									{grantBusy === db.id ? '…' : translate($language, 'db.grant')}
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
 			</div>
-		{/if}
-	</section>
+		</div>
+		{#snippet footer()}
+			<button type="button" onclick={() => (grantUserId = null)} disabled={!!grantBusy} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
+				{translate($language, 'db.done')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
 
-	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_db_task" onComplete={() => { currentTaskId = ''; loadEngines(); loadPgvector(); }} />
-</div>
+{#if restorePending}
+	<Modal title={translate($language, 'db.restore_title')} onclose={() => (restorePending = null)} busy={restoreBusy} closeLabel={translate($language, 'db.cancel')}>
+		<p class="text-sm leading-6 text-gray-300">
+			{translate($language, 'db.overwrite')} <span class="font-mono font-semibold text-white">{restorePending.name}</span> {translate($language, 'db.with')}
+			<span class="font-mono text-gray-100">{restorePending.fileName}</span>? {translate($language, 'db.data_lost')}
+		</p>
+		{#snippet footer()}
+			<button type="button" onclick={() => (restorePending = null)} disabled={restoreBusy} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
+				{translate($language, 'db.cancel')}
+			</button>
+			<button type="button" onclick={confirmRestore} disabled={restoreBusy} class="cursor-pointer rounded-lg bg-yellow-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-yellow-500 disabled:opacity-50">
+				{restoreBusy ? translate($language, 'db.restoring') : translate($language, 'db.restore')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
+
+{#if confirmAction}
+	{@const action = confirmAction}
+	<Modal
+		title={translate($language, action.kind === 'delete-db' ? 'db.delete_title' : action.kind === 'delete-user' ? 'db.delete_user_title' : 'db.revoke')}
+		onclose={() => (confirmAction = null)}
+		busy={confirmBusy}
+		size="sm"
+		closeLabel={translate($language, 'db.cancel')}
+	>
+		<p class="text-sm leading-6 text-gray-300">
+			{#if action.kind === 'delete-db'}
+				{translate($language, 'db.delete_db_body')}
+			{:else if action.kind === 'delete-user'}
+				{translate($language, 'db.delete_user_body')}
+			{:else}
+				{translate($language, 'db.revoke_body').replace('{user}', action.username)}
+			{/if}
+		</p>
+		<pre class="mt-3 overflow-x-auto rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap text-gray-200">{action.name}</pre>
+		{#if action.kind === 'delete-db' && grantCountForDb(action.id) > 0}
+			<p class="mt-2 text-xs text-yellow-300">{translate($language, 'db.delete_db_users_note').replace('{names}', grantNamesForDb(action.id))}</p>
+		{/if}
+		{#snippet footer()}
+			<button type="button" onclick={() => (confirmAction = null)} disabled={confirmBusy} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
+				{translate($language, 'db.no')}
+			</button>
+			<button type="button" onclick={runConfirmed} disabled={confirmBusy} class="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">
+				{confirmBusy ? '…' : translate($language, action.kind === 'revoke' ? 'db.revoke' : 'db.yes_delete')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
