@@ -3,6 +3,7 @@
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
+	import { countByGroup, filterWebsites, formatBytes, frameworkLabel, sortKeys, statusGroup, usesPHP } from '$lib/website-list.js';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
 import type { ServerInfo } from '$lib/types';
@@ -52,44 +53,116 @@ import type { ServerInfo } from '$lib/types';
 	let optionsError = $state('');
 	let repairTaskId = $state('');
 	let repairing = $state(false);
-	let repairConfirmId = $state<string | null>(null);
 	let repairBusy = $derived(repairing || !!repairTaskId);
+	let refreshing = $state(false);
 
-	// Toolbar: search + status filter
+	// Toolbar: search, status filter, sort, and grid/table view. Sort and view
+	// survive reloads so a long list keeps the operator's preferred layout.
+	const viewStorageKey = 'jenderal.websites.view';
+	const sortStorageKey = 'jenderal.websites.sort';
 	let search = $state('');
+	let searchInput = $state<HTMLInputElement | null>(null);
 	let statusFilter = $state('all');
+	let sortBy = $state(readPreference(sortStorageKey, sortKeys, 'newest'));
+	let viewMode = $state(readPreference(viewStorageKey, ['grid', 'table'], 'grid'));
 	const statusFilters = [
-		{ value: 'all', label: 'wl.filterAll' },
-		{ value: 'active', label: 'wl.filterActive' },
-		{ value: 'pending', label: 'wl.filterInProgress' },
-		{ value: 'failed', label: 'wl.filterFailed' },
-		{ value: 'suspended', label: 'wl.filterSuspended' }
-	];
+		{ value: 'all', label: 'wl.filterAll', tone: 'text-white', ring: 'ring-blue-500/60' },
+		{ value: 'active', label: 'wl.filterActive', tone: 'text-green-300', ring: 'ring-green-500/60' },
+		{ value: 'pending', label: 'wl.filterInProgress', tone: 'text-yellow-300', ring: 'ring-yellow-500/60' },
+		{ value: 'failed', label: 'wl.filterFailed', tone: 'text-red-300', ring: 'ring-red-500/60' },
+		{ value: 'suspended', label: 'wl.filterSuspended', tone: 'text-gray-300', ring: 'ring-gray-400/60' }
+	] as const;
 
-	const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
+	let filteredWebsites = $derived(filterWebsites(websites, { query: search, status: statusFilter, sort: sortBy }) as Website[]);
+	const counts = $derived(countByGroup(websites));
+	const hasFilters = $derived(search.trim() !== '' || statusFilter !== 'all');
 
-	let filteredWebsites = $derived.by(() => {
-		const query = search.trim().toLowerCase();
-		return websites.filter((w) => {
-			if (query && !w.domain.toLowerCase().includes(query)) return false;
-			if (statusFilter === 'all') return true;
-			if (statusFilter === 'pending') return pendingStatuses.includes(w.status);
-			if (statusFilter === 'suspended') return w.status === 'suspended' || w.status === 'disabled';
-			return w.status === statusFilter;
-		});
-	});
+	function readPreference(key: string, allowed: readonly string[], fallback: string): string {
+		try {
+			const value = localStorage.getItem(key);
+			return value && allowed.includes(value) ? value : fallback;
+		} catch {
+			return fallback;
+		}
+	}
 
-	const counts = $derived.by(() => ({
-		all: websites.length,
-		active: websites.filter((w) => w.status === 'active').length,
-		pending: websites.filter((w) => pendingStatuses.includes(w.status)).length,
-		failed: websites.filter((w) => w.status === 'failed').length,
-		suspended: websites.filter((w) => w.status === 'suspended' || w.status === 'disabled').length
-	}));
+	function savePreference(key: string, value: string) {
+		try {
+			localStorage.setItem(key, value);
+		} catch {
+			// Private mode or storage disabled: the preference just won't persist.
+		}
+	}
+
+	function setView(mode: 'grid' | 'table') {
+		viewMode = mode;
+		savePreference(viewStorageKey, mode);
+	}
+
+	function setSort(value: string) {
+		sortBy = value;
+		savePreference(sortStorageKey, value);
+	}
+
+	function toggleStatusFilter(value: string) {
+		statusFilter = statusFilter === value && value !== 'all' ? 'all' : value;
+	}
+
+	function clearFilters() {
+		search = '';
+		statusFilter = 'all';
+	}
+
+	function statusLabel(status: string): string {
+		const key = `wl.status.${status}`;
+		const label = translate($language, key);
+		return label === key ? status : label;
+	}
+
+	function siteUrl(website: Website): string {
+		return `http://${website.domain}`;
+	}
+
+	async function copyDomain(domain: string) {
+		try {
+			await navigator.clipboard.writeText(domain);
+			toast.success(translate($language, 'wl.toastDomainCopied').replace('{domain}', domain));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.dnsHelp.copyFailed'));
+		}
+	}
+
+	async function refresh() {
+		if (refreshing) return;
+		refreshing = true;
+		try {
+			websites = (await api.get<Website[]>('/api/v1/websites')) || [];
+			error = '';
+			if (shouldPoll(websites)) startPolling();
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorLoad'));
+		} finally {
+			refreshing = false;
+		}
+	}
+
+	function handleKeydown(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			closeConfirm();
+			return;
+		}
+		// "/" jumps to search, like most list UIs, unless the user is typing.
+		const target = e.target as HTMLElement | null;
+		const typing = target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+		if (e.key === '/' && !typing && !confirmModal && !dnsHelpOpen && searchInput) {
+			e.preventDefault();
+			searchInput.focus();
+		}
+	}
 
 	async function repairLaravel(id: string) {
 		if (repairBusy) return;
-		repairing = true; repairConfirmId = null;
+		repairing = true;
 		try {
 			const result = await api.post<{task_id: string}>(`/api/v1/websites/${id}/repair-laravel`, {confirm: true});
 			repairTaskId = result.task_id;
@@ -106,10 +179,16 @@ import type { ServerInfo } from '$lib/types';
 	let laravelVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel').map((item) => item.framework_version))] : []);
 	let laravelOctaneVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel-octane').map((item) => item.framework_version))] : []);
 
-	// Pending suspend/delete confirmed through the modal.
-	let confirmModal = $state<{ website: Website; action: 'suspend' | 'delete' } | null>(null);
+	// Every state-changing row action is confirmed through one modal.
+	type ConfirmAction = 'suspend' | 'delete' | 'enable' | 'repair';
+	let confirmModal = $state<{ website: Website; action: ConfirmAction } | null>(null);
 	let confirmBusy = $state(false);
-	let enableConfirmId = $state<string | null>(null);
+	const confirmCopy: Record<ConfirmAction, { title: string; body: string; yes: string; button: string }> = {
+		suspend: { title: 'wl.titleSuspend', body: 'wl.suspendConfirm', yes: 'wl.yesSuspend', button: 'bg-yellow-600 hover:bg-yellow-700' },
+		delete: { title: 'wl.titleDelete', body: 'wl.deleteConfirm', yes: 'wl.yesDelete', button: 'bg-red-600 hover:bg-red-700' },
+		enable: { title: 'wl.titleEnable', body: 'wl.enableConfirm', yes: 'wl.yesEnable', button: 'bg-green-600 hover:bg-green-700' },
+		repair: { title: 'wl.titleRepair', body: 'wl.repairConfirm', yes: 'wl.confirmRepair', button: 'bg-blue-600 hover:bg-blue-700' }
+	};
 
 	// DNS tutorial modal on the add-website form; the server's public IP is
 	// fetched once so beginners can copy it straight into their A record.
@@ -160,7 +239,7 @@ import type { ServerInfo } from '$lib/types';
 	}
 
 	function isPending(status: string): boolean {
-		return pendingStatuses.includes(status);
+		return statusGroup(status) === 'pending';
 	}
 
 	function statusBadgeClass(status: string): string {
@@ -195,22 +274,8 @@ import type { ServerInfo } from '$lib/types';
 		}
 	}
 
-	function frameworkLabel(website: Website): string {
-		const base = website.framework && website.framework !== 'none' ? website.framework : website.app_type;
-		return website.framework_version ? `${base} ${website.framework_version}` : base;
-	}
-
-	function formatBytes(bytes: number): string {
-		if (!bytes || bytes <= 0) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		let i = 0;
-		let size = bytes;
-		while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-		return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
-	}
-
 	function shouldPoll(sites: Website[]): boolean {
-		return sites.some((w) => pendingStatuses.includes(w.status));
+		return sites.some((w) => isPending(w.status));
 	}
 
 	function startPolling() {
@@ -279,6 +344,13 @@ import type { ServerInfo } from '$lib/types';
 	async function runConfirmed() {
 		if (!confirmModal || confirmBusy) return;
 		const { website, action } = confirmModal;
+		if (action === 'enable' || action === 'repair') {
+			// These report their own success/failure; close straight away.
+			confirmModal = null;
+			if (action === 'enable') await enableWebsite(website.id);
+			else await repairLaravel(website.id);
+			return;
+		}
 		confirmBusy = true;
 		try {
 			if (action === 'suspend') {
@@ -334,33 +406,108 @@ import type { ServerInfo } from '$lib/types';
 	});
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') closeConfirm(); }} />
+<svelte:window onkeydown={handleKeydown} />
+
+{#snippet statusBadge(status: string)}
+	<span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {statusBadgeClass(status)}">
+		<span class="h-1.5 w-1.5 rounded-full {statusDotClass(status)}"></span>
+		{statusLabel(status)}
+	</span>
+{/snippet}
+
+{#snippet iconButton(label: string, onclick: () => void, path: string, tone = 'text-gray-400 hover:bg-gray-700 hover:text-white')}
+	<button type="button" {onclick} title={label} aria-label={label} class="cursor-pointer rounded-md p-1.5 transition {tone}">
+		<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true">
+			<path stroke-linecap="round" stroke-linejoin="round" d={path} />
+		</svg>
+	</button>
+{/snippet}
+
+{#snippet rowActions(website: Website, compact: boolean)}
+	<div class="flex flex-wrap items-center gap-1.5 {compact ? 'justify-end' : ''}">
+		<a
+			href="/websites/{website.id}"
+			class="rounded-md bg-blue-600/90 font-medium text-white transition hover:bg-blue-600 {compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'}"
+		>
+			{translate($language, 'wl.manage')}
+		</a>
+		{#if website.status === 'failed'}
+			<button onclick={() => retryWebsite(website.id)} class="cursor-pointer rounded-md border border-yellow-600/50 bg-yellow-600/20 font-medium text-yellow-300 transition hover:bg-yellow-600/30 {compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'}">
+				{translate($language, 'wl.retry')}
+			</button>
+		{/if}
+		{#if website.status === 'suspended' || website.status === 'disabled'}
+			<button onclick={() => (confirmModal = { website, action: 'enable' })} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 font-medium text-green-300 transition hover:bg-green-600/30 {compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'}">
+				{translate($language, 'wl.enable')}
+			</button>
+		{/if}
+		{#if website.status === 'active' && website.framework === 'laravel' && website.setup_mode === 'auto-install'}
+			<button
+				disabled={repairBusy}
+				onclick={() => (confirmModal = { website, action: 'repair' })}
+				class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50 {compact ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'}"
+			>
+				{translate($language, 'wl.repair')}
+			</button>
+		{/if}
+		<span class="flex items-center {compact ? '' : 'ml-auto'}">
+			{#if website.status === 'active'}
+				{@render iconButton(translate($language, 'wl.suspend'), () => (confirmModal = { website, action: 'suspend' }), 'M15.75 5.25v13.5m-7.5-13.5v13.5', 'text-gray-400 hover:bg-yellow-500/10 hover:text-yellow-300')}
+			{/if}
+			{@render iconButton(translate($language, 'wl.delete'), () => (confirmModal = { website, action: 'delete' }), 'm14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0', 'text-gray-400 hover:bg-red-500/10 hover:text-red-400')}
+		</span>
+	</div>
+{/snippet}
+
+{#snippet domainLinks(website: Website)}
+	<span class="flex shrink-0 items-center">
+		{#if website.status === 'active'}
+			<a href={siteUrl(website)} target="_blank" rel="noopener noreferrer" title={translate($language, 'wl.visitSite')} aria-label={translate($language, 'wl.visitSite')} class="rounded-md p-1 text-gray-500 transition hover:bg-gray-700 hover:text-white">
+				<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+				</svg>
+			</a>
+		{/if}
+		<button type="button" onclick={() => copyDomain(website.domain)} title={translate($language, 'wl.copyDomain')} aria-label={translate($language, 'wl.copyDomain')} class="cursor-pointer rounded-md p-1 text-gray-500 transition hover:bg-gray-700 hover:text-white">
+			<svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+				<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75" />
+			</svg>
+		</button>
+	</span>
+{/snippet}
 
 <div class="space-y-5">
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div>
 			<h2 class="text-2xl font-bold text-white">{translate($language, 'wl.title')}</h2>
-			<p class="mt-0.5 text-sm text-gray-400">
-				{websites.length === 0
-					? translate($language, 'wl.subtitleEmpty')
-					: translate($language, 'wl.summaryCounts')
-							.replace('{active}', String(counts.active))
-							.replace('{pending}', String(counts.pending))
-							.replace('{failed}', String(counts.failed))
-							.replace('{suspended}', String(counts.suspended))}
-			</p>
+			<p class="mt-0.5 text-sm text-gray-400">{translate($language, 'wl.subtitleEmpty')}</p>
 		</div>
-		<button
-			onclick={() => (showCreateForm = !showCreateForm)}
-			class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-		>
-			<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
-				<path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-			</svg>
-			{showCreateForm ? translate($language, 'wl.cancel') : translate($language, 'wl.createWebsite')}
-		</button>
+		<div class="flex items-center gap-2">
+			{#if websites.length > 0}
+				<button
+					type="button"
+					onclick={refresh}
+					disabled={refreshing}
+					title={translate($language, 'wl.refresh')}
+					aria-label={translate($language, 'wl.refresh')}
+					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-800 p-2 text-gray-300 transition hover:bg-gray-700 hover:text-white disabled:opacity-50"
+				>
+					<svg class="h-4 w-4 {refreshing ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+					</svg>
+				</button>
+			{/if}
+			<button
+				onclick={() => (showCreateForm = !showCreateForm)}
+				class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+			>
+				<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+					<path stroke-linecap="round" stroke-linejoin="round" d={showCreateForm ? 'M6 18 18 6M6 6l12 12' : 'M12 4.5v15m7.5-7.5h-15'} />
+				</svg>
+				{showCreateForm ? translate($language, 'wl.cancel') : translate($language, 'wl.createWebsite')}
+			</button>
+		</div>
 	</div>
-
 
 	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') toast.success(translate($language, 'wl.toastRepairCompleted')); }} onMissing={() => { repairing = false; }} />
 
@@ -587,40 +734,82 @@ import type { ServerInfo } from '$lib/types';
 		</div>
 	{/if}
 
-	<!-- Toolbar -->
-	{#if !loading && websites.length > 3}
+	{#if !loading && !error && websites.length > 0}
+		<!-- Status overview doubles as the status filter -->
+		<div class="grid grid-cols-2 gap-2 sm:grid-cols-5">
+			{#each statusFilters as filter}
+				<button
+					type="button"
+					onclick={() => toggleStatusFilter(filter.value)}
+					aria-pressed={statusFilter === filter.value}
+					class="cursor-pointer rounded-xl border bg-gray-800 px-3 py-2.5 text-left transition hover:border-gray-500 {statusFilter === filter.value
+						? `border-transparent ring-2 ${filter.ring}`
+						: 'border-gray-700'} {filter.value === 'all' ? 'col-span-2 sm:col-span-1' : ''}"
+				>
+					<p class="text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, filter.label)}</p>
+					<p class="mt-0.5 text-xl font-bold tabular-nums {counts[filter.value] > 0 || filter.value === 'all' ? filter.tone : 'text-gray-600'}">{counts[filter.value]}</p>
+				</button>
+			{/each}
+		</div>
+
+		<!-- Toolbar -->
 		<div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-			<div class="relative sm:w-72">
+			<div class="relative flex-1 sm:max-w-sm">
 				<svg class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
 					<path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
 				</svg>
 				<input
+					bind:this={searchInput}
 					type="search"
 					bind:value={search}
+					onkeydown={(e) => { if (e.key === 'Escape' && search) { e.stopPropagation(); search = ''; } }}
 					placeholder={translate($language, 'wl.searchPlaceholder')}
 					aria-label={translate($language, 'wl.searchAria')}
-					class="w-full rounded-lg border border-gray-600 bg-gray-800 py-2 pl-9 pr-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+					class="w-full rounded-lg border border-gray-600 bg-gray-800 py-2 pl-9 pr-9 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40"
 				/>
+				{#if !search}
+					<kbd class="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded border border-gray-600 px-1.5 font-mono text-[10px] text-gray-500 sm:block">/</kbd>
+				{/if}
 			</div>
-			<div class="flex flex-wrap gap-1.5">
-				{#each statusFilters as filter}
-					<button
-						onclick={() => (statusFilter = filter.value)}
-						class="cursor-pointer rounded-full px-3 py-1 text-xs font-medium transition {statusFilter === filter.value
-							? 'bg-blue-600 text-white'
-							: 'border border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700'}"
-					>
-						{translate($language, filter.label)}
-						{#if counts[filter.value as keyof typeof counts] !== undefined}
-							<span class="ml-1 opacity-70">{counts[filter.value as keyof typeof counts]}</span>
-						{/if}
-					</button>
-				{/each}
+			<div class="flex items-center gap-2 sm:ml-auto">
+				<label for="website-sort" class="sr-only">{translate($language, 'wl.sortLabel')}</label>
+				<select
+					id="website-sort"
+					value={sortBy}
+					onchange={(e) => setSort(e.currentTarget.value)}
+					class="flex-1 rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 sm:flex-none"
+				>
+					{#each sortKeys as key}
+						<option value={key}>{translate($language, `wl.sort.${key}`)}</option>
+					{/each}
+				</select>
+				<div class="flex rounded-lg border border-gray-600 bg-gray-800 p-0.5" role="group" aria-label={translate($language, 'wl.viewLabel')}>
+					{#each [{ mode: 'grid', label: 'wl.viewGrid', path: 'M3.75 6A2.25 2.25 0 0 1 6 3.75h2.25A2.25 2.25 0 0 1 10.5 6v2.25a2.25 2.25 0 0 1-2.25 2.25H6a2.25 2.25 0 0 1-2.25-2.25V6ZM3.75 15.75A2.25 2.25 0 0 1 6 13.5h2.25a2.25 2.25 0 0 1 2.25 2.25V18a2.25 2.25 0 0 1-2.25 2.25H6A2.25 2.25 0 0 1 3.75 18v-2.25ZM13.5 6a2.25 2.25 0 0 1 2.25-2.25H18A2.25 2.25 0 0 1 20.25 6v2.25A2.25 2.25 0 0 1 18 10.5h-2.25a2.25 2.25 0 0 1-2.25-2.25V6ZM13.5 15.75a2.25 2.25 0 0 1 2.25-2.25H18a2.25 2.25 0 0 1 2.25 2.25V18A2.25 2.25 0 0 1 18 20.25h-2.25A2.25 2.25 0 0 1 13.5 18v-2.25Z' }, { mode: 'table', label: 'wl.viewTable', path: 'M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5' }] as const as option}
+						<button
+							type="button"
+							onclick={() => setView(option.mode)}
+							aria-pressed={viewMode === option.mode}
+							title={translate($language, option.label)}
+							aria-label={translate($language, option.label)}
+							class="cursor-pointer rounded-md p-1.5 transition {viewMode === option.mode ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white'}"
+						>
+							<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true">
+								<path stroke-linecap="round" stroke-linejoin="round" d={option.path} />
+							</svg>
+						</button>
+					{/each}
+				</div>
 			</div>
 		</div>
+		{#if hasFilters && filteredWebsites.length > 0}
+			<p class="-mt-2 text-xs text-gray-500">
+				{translate($language, 'wl.resultCount').replace('{shown}', String(filteredWebsites.length)).replace('{total}', String(websites.length))}
+				<button type="button" onclick={clearFilters} class="ml-1 cursor-pointer text-blue-400 hover:underline">{translate($language, 'wl.clearFilters')}</button>
+			</p>
+		{/if}
 	{/if}
 
-	<!-- Website Cards -->
+	<!-- Website list -->
 	{#if loading}
 		<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each Array(3) as _}
@@ -633,7 +822,10 @@ import type { ServerInfo } from '$lib/types';
 			{/each}
 		</div>
 	{:else if error}
-		<div class="rounded-lg border border-red-700 bg-red-900/30 p-4 text-sm text-red-300">{error}</div>
+		<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-700 bg-red-900/30 p-4 text-sm text-red-300">
+			<span>{error}</span>
+			<button type="button" onclick={loadWebsites} class="cursor-pointer underline">{translate($language, 'wl.retry')}</button>
+		</div>
 	{:else if websites.length === 0}
 		<div class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gray-600 bg-gray-800/50 px-6 py-12 text-center">
 			<span class="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400">
@@ -645,59 +837,99 @@ import type { ServerInfo } from '$lib/types';
 				<p class="font-medium text-gray-200">{translate($language, 'wl.emptyTitle')}</p>
 				<p class="mt-1 text-sm text-gray-400">{translate($language, 'wl.emptyDesc')}</p>
 			</div>
-			<button
-				onclick={() => (showCreateForm = true)}
-				class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-			>
-				{translate($language, 'wl.createWebsite')}
-			</button>
+			{#if !showCreateForm}
+				<button
+					onclick={() => (showCreateForm = true)}
+					class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+				>
+					{translate($language, 'wl.createWebsite')}
+				</button>
+			{/if}
 		</div>
 	{:else if filteredWebsites.length === 0}
 		<div class="rounded-xl border border-dashed border-gray-600 bg-gray-800/50 px-6 py-10 text-center">
 			<p class="text-sm text-gray-400">{translate($language, 'wl.emptyFiltered')}</p>
-			<button
-				onclick={() => { search = ''; statusFilter = 'all'; }}
-				class="mt-2 cursor-pointer text-sm text-blue-400 hover:underline"
-			>
+			<button onclick={clearFilters} class="mt-2 cursor-pointer text-sm text-blue-400 hover:underline">
 				{translate($language, 'wl.clearFilters')}
 			</button>
+		</div>
+	{:else if viewMode === 'table'}
+		<div class="overflow-x-auto rounded-xl border border-gray-700 bg-gray-800">
+			<table class="w-full min-w-[720px] text-sm">
+				<thead>
+					<tr class="border-b border-gray-700 text-left text-[11px] uppercase tracking-wider text-gray-400">
+						<th class="px-4 py-2.5 font-medium">{translate($language, 'wl.labelDomain')}</th>
+						<th class="px-3 py-2.5 font-medium">{translate($language, 'wl.labelStatus')}</th>
+						<th class="px-3 py-2.5 font-medium">{translate($language, 'wl.labelStack')}</th>
+						<th class="px-3 py-2.5 font-medium">PHP</th>
+						<th class="px-3 py-2.5 text-right font-medium" title={translate($language, 'wl.bandwidthMonthHint')}>{translate($language, 'wl.labelBandwidth')}</th>
+						<th class="px-3 py-2.5 font-medium">{translate($language, 'wl.labelCreated')}</th>
+						<th class="px-4 py-2.5"><span class="sr-only">{translate($language, 'wl.labelActions')}</span></th>
+					</tr>
+				</thead>
+				<tbody class="divide-y divide-gray-700/60">
+					{#each filteredWebsites as website (website.id)}
+						<tr class="transition hover:bg-gray-700/30">
+							<td class="max-w-[260px] px-4 py-2.5">
+								<div class="flex items-center gap-1">
+									<a href="/websites/{website.id}" class="truncate font-medium text-blue-400 hover:text-blue-300 hover:underline" title={website.domain}>{website.domain}</a>
+									{@render domainLinks(website)}
+								</div>
+								{#if isPending(website.status) && website.provision_stage}
+									<p class="truncate text-xs text-yellow-300">{website.provision_stage}</p>
+								{:else if website.status === 'failed' && website.error_message}
+									<p class="truncate text-xs text-red-400" title={website.error_message}>{website.error_message}</p>
+								{/if}
+							</td>
+							<td class="px-3 py-2.5">{@render statusBadge(website.status)}</td>
+							<td class="px-3 py-2.5 capitalize text-gray-300">{frameworkLabel(website)}</td>
+							<td class="px-3 py-2.5 text-gray-300">{usesPHP(website) ? website.php_version : '—'}</td>
+							<td class="px-3 py-2.5 text-right tabular-nums text-gray-300">{formatBytes(website.bandwidth_bytes)}</td>
+							<td class="px-3 py-2.5 text-gray-400" title={website.owner_email || translate($language, 'wl.ownerLegacy')}>{new Date(website.created_at).toLocaleDateString()}</td>
+							<td class="px-4 py-2.5">{@render rowActions(website, true)}</td>
+						</tr>
+					{/each}
+				</tbody>
+			</table>
 		</div>
 	{:else}
 		<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
 			{#each filteredWebsites as website (website.id)}
-				<div class="flex flex-col rounded-xl border border-gray-700 bg-gray-800 p-4 transition hover:border-gray-600 {isPending(website.status) ? 'ring-1 ring-yellow-500/20' : ''}">
-					<div class="flex items-start justify-between gap-2">
-						<a href="/websites/{website.id}" class="min-w-0 flex-1 truncate text-base font-semibold text-blue-400 hover:text-blue-300 hover:underline" title={website.domain}>
-							{website.domain}
-						</a>
-						<span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {statusBadgeClass(website.status)}">
-							<span class="h-1.5 w-1.5 rounded-full {statusDotClass(website.status)}"></span>
-							{website.status}
+				<div class="flex flex-col rounded-xl border bg-gray-800 p-4 transition hover:border-gray-500 {website.status === 'failed'
+					? 'border-red-800/70'
+					: isPending(website.status)
+						? 'border-yellow-700/50'
+						: 'border-gray-700'}">
+					<div class="flex items-start gap-3">
+						<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-700/60 text-sm font-bold uppercase text-gray-200" aria-hidden="true">
+							{website.domain.charAt(0)}
 						</span>
+						<div class="min-w-0 flex-1">
+							<div class="flex items-center gap-1">
+								<a href="/websites/{website.id}" class="truncate text-base font-semibold text-blue-400 hover:text-blue-300 hover:underline" title={website.domain}>
+									{website.domain}
+								</a>
+								{@render domainLinks(website)}
+							</div>
+							<p class="truncate text-xs capitalize text-gray-400">
+								{frameworkLabel(website)}{usesPHP(website) ? ` · PHP ${website.php_version}` : ''}
+							</p>
+						</div>
+						{@render statusBadge(website.status)}
 					</div>
 
-					<dl class="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+					<dl class="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-gray-900/40 px-3 py-2 text-xs">
 						<div class="min-w-0">
-							<dt class="text-gray-500">{translate($language, 'wl.labelStack')}</dt>
-							<dd class="truncate font-medium capitalize text-gray-300">{frameworkLabel(website)}</dd>
+							<dt class="text-gray-500" title={translate($language, 'wl.bandwidthMonthHint')}>{translate($language, 'wl.labelBandwidth')}</dt>
+							<dd class="font-medium tabular-nums text-gray-300">{formatBytes(website.bandwidth_bytes)}</dd>
 						</div>
-						<div>
-							<dt class="text-gray-500">PHP</dt>
-							<dd class="truncate font-medium text-gray-300">{website.app_type === 'static' ? '—' : website.php_version || '—'}</dd>
-						</div>
-						<div>
+						<div class="min-w-0">
 							<dt class="text-gray-500">{translate($language, 'wl.labelCreated')}</dt>
 							<dd class="font-medium text-gray-300">{new Date(website.created_at).toLocaleDateString()}</dd>
 						</div>
 						<div class="min-w-0">
 							<dt class="text-gray-500">{translate($language, 'wl.labelOwner')}</dt>
 							<dd class="truncate font-medium text-gray-300" title={website.owner_email}>{website.owner_email || translate($language, 'wl.ownerLegacy')}</dd>
-						</div>
-						<div class="col-span-2 flex items-center justify-between gap-2 border-t border-gray-700/50 pt-1.5">
-							<dt class="text-gray-500">{translate($language, 'wl.bandwidthMonth')}</dt>
-							<dd class="font-medium tabular-nums text-gray-300" title={translate($language, 'wl.bandwidthMonthHint')}>
-								{formatBytes(website.bandwidth_bytes)}
-							</dd>
 						</div>
 					</dl>
 
@@ -717,54 +949,8 @@ import type { ServerInfo } from '$lib/types';
 						</details>
 					{/if}
 
-					<div class="mt-auto pt-4">
-						{#if repairConfirmId === website.id}
-							<div class="rounded-lg border border-yellow-600/50 bg-yellow-900/20 p-2.5">
-								<p class="text-xs text-yellow-300">{translate($language, 'wl.repairConfirm')}</p>
-								<div class="mt-2 flex gap-2">
-									<button class="cursor-pointer rounded-md bg-blue-600 px-2.5 py-1 text-xs font-medium text-white disabled:opacity-50" onclick={() => repairLaravel(website.id)} disabled={repairBusy}>{translate($language, 'wl.confirmRepair')}</button>
-									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => repairConfirmId = null}>{translate($language, 'wl.cancel')}</button>
-								</div>
-							</div>
-						{:else if enableConfirmId === website.id}
-							<div class="rounded-lg border border-green-600/50 bg-green-900/20 p-2.5">
-								<p class="text-xs text-green-300">{translate($language, 'wl.enableConfirm').replace('{domain}', website.domain)}</p>
-								<div class="mt-2 flex gap-2">
-									<button class="cursor-pointer rounded-md bg-green-600 px-2.5 py-1 text-xs font-medium text-white transition hover:bg-green-700" onclick={() => { enableConfirmId = ''; enableWebsite(website.id); }}>{translate($language, 'wl.yesEnable')}</button>
-									<button class="cursor-pointer text-xs text-gray-400 hover:text-gray-200" onclick={() => (enableConfirmId = null)}>{translate($language, 'wl.cancel')}</button>
-								</div>
-							</div>
-						{:else}
-							<div class="flex flex-wrap items-center gap-2">
-								<a
-									href="/websites/{website.id}"
-									class="rounded-md bg-blue-600/90 px-3 py-2 text-sm font-medium text-white transition hover:bg-blue-600"
-								>
-									{translate($language, 'wl.manage')}
-								</a>
-								{#if website.status === 'active' && website.framework === 'laravel' && website.setup_mode === 'auto-install'}
-									<button class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50" disabled={repairBusy} onclick={() => repairConfirmId = website.id}>{translate($language, 'wl.repair')}</button>
-								{/if}
-								{#if website.status === 'failed'}
-									<button onclick={() => retryWebsite(website.id)} class="cursor-pointer rounded-md border border-yellow-600/50 bg-yellow-600/20 px-3 py-2 text-sm font-medium text-yellow-300 transition hover:bg-yellow-600/30">
-										{translate($language, 'wl.retry')}
-									</button>
-								{/if}
-								{#if website.status === 'active'}
-									<button onclick={() => (confirmModal = { website, action: 'suspend' })} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
-										{translate($language, 'wl.suspend')}
-									</button>
-								{/if}
-								{#if website.status === 'suspended' || website.status === 'disabled'}
-									<button onclick={() => (enableConfirmId = website.id)} class="cursor-pointer rounded-md border border-green-600/50 bg-green-600/20 px-3 py-2 text-sm font-medium text-green-300 transition hover:bg-green-600/30">
-										{translate($language, 'wl.enable')}
-									</button>
-								{/if}
-								<button onclick={() => (confirmModal = { website, action: 'delete' })} class="ml-auto cursor-pointer rounded-md px-3 py-2 text-sm text-red-400 transition hover:bg-red-500/10" title={translate($language, 'wl.titleDelete')}>
-									{translate($language, 'wl.delete')}
-								</button>
-							</div>
-						{/if}
+					<div class="mt-auto border-t border-gray-700/60 pt-3 {isPending(website.status) || website.status === 'failed' ? 'mt-3' : 'mt-4'}">
+						{@render rowActions(website, false)}
 					</div>
 				</div>
 			{/each}
@@ -773,22 +959,21 @@ import type { ServerInfo } from '$lib/types';
 </div>
 
 {#if confirmModal}
+	{@const copy = confirmCopy[confirmModal.action]}
 	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
 	<div
 		class="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm"
 		role="dialog"
 		aria-modal="true"
 		tabindex="-1"
-		aria-label={translate($language, confirmModal.action === 'suspend' ? 'wl.titleSuspend' : 'wl.titleDelete')}
+		aria-label={translate($language, copy.title)}
 		onclick={(e) => {
 			if (e.target === e.currentTarget) closeConfirm();
 		}}
 	>
 		<div class="w-full max-w-md rounded-2xl border border-gray-700 bg-gray-800 p-5 shadow-2xl">
 			<div class="mb-3 flex items-start justify-between gap-3">
-				<h3 class="text-base font-semibold text-white">
-					{translate($language, confirmModal.action === 'suspend' ? 'wl.titleSuspend' : 'wl.titleDelete')}
-				</h3>
+				<h3 class="text-base font-semibold text-white">{translate($language, copy.title)}</h3>
 				<button
 					type="button"
 					onclick={closeConfirm}
@@ -800,14 +985,8 @@ import type { ServerInfo } from '$lib/types';
 					</svg>
 				</button>
 			</div>
-			<p class="text-sm text-gray-300">
-				{#if confirmModal.action === 'suspend'}
-					{translate($language, 'wl.suspendConfirm').replace('{domain}', confirmModal.website.domain)}
-				{:else}
-					{translate($language, 'wl.deleteConfirm')}
-				{/if}
-			</p>
-			{#if confirmModal.action === 'delete'}
+			<p class="text-sm text-gray-300">{translate($language, copy.body).replace('{domain}', confirmModal.website.domain)}</p>
+			{#if confirmModal.action === 'delete' || confirmModal.action === 'repair'}
 				<pre class="mt-3 overflow-x-auto rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 font-mono text-xs break-all whitespace-pre-wrap text-gray-200">{confirmModal.website.domain}</pre>
 			{/if}
 			<div class="mt-4 flex items-center justify-end gap-2 border-t border-gray-700 pt-4">
@@ -822,9 +1001,8 @@ import type { ServerInfo } from '$lib/types';
 				<button
 					type="button"
 					onclick={runConfirmed}
-					disabled={confirmBusy}
-					class="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-40
-					{confirmModal.action === 'suspend' ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-red-600 hover:bg-red-700'}"
+					disabled={confirmBusy || (confirmModal.action === 'repair' && repairBusy)}
+					class="flex cursor-pointer items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white transition disabled:opacity-40 {copy.button}"
 				>
 					{#if confirmBusy}
 						<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -832,7 +1010,7 @@ import type { ServerInfo } from '$lib/types';
 							<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v4a4 4 0 0 0-4 4H4z" />
 						</svg>
 					{/if}
-					{translate($language, confirmModal.action === 'suspend' ? 'wl.yesSuspend' : 'wl.yesDelete')}
+					{translate($language, copy.yes)}
 				</button>
 			</div>
 		</div>
