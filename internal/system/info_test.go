@@ -2,11 +2,13 @@ package system
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 func TestInfoGet(t *testing.T) {
@@ -173,5 +175,45 @@ Thread(s) per core:       1`
 	}
 	if got := parseCPUCores("no cpu info here"); got != 0 {
 		t.Fatalf("parseCPUCores = %d, want 0 for missing data", got)
+	}
+}
+
+func TestInfoRejectsInvalidHostnameAndTimezone(t *testing.T) {
+	called := false
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			called = true
+			return &executor.Result{}, nil
+		},
+	}
+	info := NewInfo(mock)
+
+	for _, hostname := range []string{"", "-h", "--static", "bad_host", "a..b", "host.", strings.Repeat("a", 64), "spa ce"} {
+		err := info.SetHostname(context.Background(), hostname)
+		var domainErr *model.DomainError
+		if !errors.As(err, &domainErr) {
+			t.Errorf("SetHostname(%q) error = %v, want validation error", hostname, err)
+		}
+	}
+	for _, tz := range []string{"", "-x", "../etc/passwd", "Asia/../UTC", "Asia Jakarta", "/UTC"} {
+		err := info.SetTimezone(context.Background(), tz)
+		var domainErr *model.DomainError
+		if !errors.As(err, &domainErr) {
+			t.Errorf("SetTimezone(%q) error = %v, want validation error", tz, err)
+		}
+	}
+	if called {
+		t.Fatal("executor must not run for invalid input")
+	}
+
+	for _, hostname := range []string{"web01", "srv-1.example.com", "A1"} {
+		if err := info.SetHostname(context.Background(), hostname); err != nil {
+			t.Errorf("SetHostname(%q) unexpected error: %v", hostname, err)
+		}
+	}
+	for _, tz := range []string{"UTC", "Asia/Jakarta", "America/Argentina/Buenos_Aires", "Etc/GMT+7"} {
+		if err := info.SetTimezone(context.Background(), tz); err != nil {
+			t.Errorf("SetTimezone(%q) unexpected error: %v", tz, err)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
@@ -81,8 +82,46 @@ func (i *Info) Get(ctx context.Context) (model.ServerInfo, error) {
 	return info, nil
 }
 
+// hostnameLabel is one RFC 1123 label: alphanumerics and inner hyphens.
+var hostnameLabel = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+
+// timezonePart is one segment of an IANA zone name such as Etc/GMT+7.
+var timezonePart = regexp.MustCompile(`^[A-Za-z0-9_+-]+$`)
+
+// validHostname reports whether hostname is a dot-separated list of RFC 1123
+// labels. A leading hyphen is impossible, so the value can never be parsed
+// as a hostnamectl option.
+func validHostname(hostname string) bool {
+	if hostname == "" || len(hostname) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(hostname, ".") {
+		if !hostnameLabel.MatchString(label) {
+			return false
+		}
+	}
+	return true
+}
+
+// validTimezone accepts IANA-style names (Area/Location[/Sub]) and rejects
+// option-like values and path traversal before timedatectl sees them.
+func validTimezone(timezone string) bool {
+	if timezone == "" || len(timezone) > 64 || strings.HasPrefix(timezone, "-") {
+		return false
+	}
+	for _, part := range strings.Split(timezone, "/") {
+		if part == "" || part == "." || part == ".." || !timezonePart.MatchString(part) {
+			return false
+		}
+	}
+	return true
+}
+
 // SetHostname changes the system hostname.
 func (i *Info) SetHostname(ctx context.Context, hostname string) error {
+	if !validHostname(hostname) {
+		return model.NewValidationError("hostname must contain only letters, digits, hyphens, and dots (max 63 characters per label)")
+	}
 	res, err := i.exec.RunSudo(ctx, "hostnamectl", "set-hostname", hostname)
 	if err != nil {
 		return fmt.Errorf("set hostname: %w", err)
@@ -95,6 +134,9 @@ func (i *Info) SetHostname(ctx context.Context, hostname string) error {
 
 // SetTimezone changes the system timezone.
 func (i *Info) SetTimezone(ctx context.Context, timezone string) error {
+	if !validTimezone(timezone) {
+		return model.NewValidationError("invalid timezone name")
+	}
 	res, err := i.exec.RunSudo(ctx, "timedatectl", "set-timezone", timezone)
 	if err != nil {
 		return fmt.Errorf("set timezone: %w", err)
