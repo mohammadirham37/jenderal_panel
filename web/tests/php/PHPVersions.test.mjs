@@ -62,3 +62,19 @@ test('phpConfigIsDirty compares the editor with the saved php.ini', () => {
 	assert.equal(phpConfigIsDirty({ mode: 'advanced', content: saved, simpleConfig: simple }, saved), false);
 	assert.equal(phpConfigIsDirty({ mode: 'advanced', content: saved + 'x = 1\n', simpleConfig: simple }, saved), true);
 });
+
+test('summarizePatches groups vulnerable, updatable, EOL, and stuck versions', async () => {
+	const { summarizePatches, listsAgeHours } = await import('../../src/lib/php-versions.js');
+	const s = summarizePatches([
+		{ version: '8.1', update_available: false, vulnerable: false, end_of_life: true },
+		{ version: '8.3', update_available: true, vulnerable: true, end_of_life: false },
+		{ version: '8.2', update_available: false, vulnerable: true, end_of_life: false },
+		{ version: '8.4', update_available: true, vulnerable: false, end_of_life: false }
+	]);
+	assert.deepEqual(s.vulnerable.map((v) => v.version), ['8.3', '8.2']);
+	assert.deepEqual(s.updatable.map((v) => v.version), ['8.3', '8.4']);
+	assert.deepEqual(s.endOfLife.map((v) => v.version), ['8.1']);
+	assert.deepEqual(s.stuck.map((v) => v.version), ['8.2']);
+	assert.equal(listsAgeHours('2026-10-21T00:00:00Z', Date.parse('2026-10-22T06:30:00Z')), 30);
+	assert.equal(listsAgeHours(null), null);
+});

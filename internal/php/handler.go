@@ -2,6 +2,7 @@ package php
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -174,4 +175,57 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	h.logAction(r, "save_php_config", "php"+version+"/php.ini", "saved PHP "+version+" FPM config")
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// Updates reports the patch level of every installed PHP version from the
+// cached apt lists (no network access; call RefreshUpdates first for fresh
+// candidates).
+func (h *Handler) Updates(w http.ResponseWriter, r *http.Request) {
+	overview, err := h.svc.PatchOverview(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, overview)
+}
+
+// RefreshUpdates refreshes the apt package lists as a background task so
+// newly published PHP patch releases show up as candidates.
+func (h *Handler) RefreshUpdates(w http.ResponseWriter, r *http.Request) {
+	taskID := h.tasks.RunMultiple("Check PHP updates", h.svc.refreshListsCommands())
+	h.logAction(r, "check_php_updates", "php", "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// Upgrade applies patch updates to the installed packages of one PHP version
+// and restarts its FPM service.
+func (h *Handler) Upgrade(w http.ResponseWriter, r *http.Request) {
+	version := chi.URLParam(r, "version")
+	if err := h.svc.validateVersion(r.Context(), version); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.startUpgrade(w, r, "Update PHP "+version, []string{version})
+}
+
+// UpgradeAll applies patch updates to every installed PHP version at once.
+func (h *Handler) UpgradeAll(w http.ResponseWriter, r *http.Request) {
+	var versions []string
+	for _, v := range VersionsForCodename(Codename(r.Context(), h.svc.exec)) {
+		if h.svc.IsInstalled(r.Context(), v) {
+			versions = append(versions, v)
+		}
+	}
+	h.startUpgrade(w, r, "Update all PHP versions", versions)
+}
+
+func (h *Handler) startUpgrade(w http.ResponseWriter, r *http.Request, name string, versions []string) {
+	commands, err := h.svc.upgradeCommands(r.Context(), versions)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	taskID := h.tasks.RunMultiple(name, commands)
+	h.logAction(r, "upgrade_php", "php"+strings.Join(versions, ",php"), "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }

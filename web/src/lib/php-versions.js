@@ -77,3 +77,32 @@ export function countExtensions(status) {
 	const available = status?.available?.length || 0;
 	return { all: enabled + disabled + available, enabled, disabled, available };
 }
+
+/** @typedef {{ name: string, installed: string, candidate: string }} PackageUpdate */
+/** @typedef {{ version: string, current: string, latest: string, update_available: boolean, packages: PackageUpdate[], security_baseline: string, vulnerable: boolean, end_of_life: boolean, advisory_url?: string }} PatchStatus */
+
+/**
+ * Group patch statuses for the page banner and toolbar.
+ * @param {PatchStatus[]} versions
+ */
+export function summarizePatches(versions) {
+	return {
+		vulnerable: versions.filter((v) => v.vulnerable),
+		updatable: versions.filter((v) => v.update_available),
+		endOfLife: versions.filter((v) => v.end_of_life),
+		// Vulnerable but apt offers nothing newer: the lists are stale or the
+		// repository has not published the fix yet.
+		stuck: versions.filter((v) => v.vulnerable && !v.update_available)
+	};
+}
+
+/**
+ * Hours since apt last refreshed its lists; null when unknown.
+ * @param {string | null | undefined} listsUpdatedAt
+ * @param {number} [now]
+ */
+export function listsAgeHours(listsUpdatedAt, now = Date.now()) {
+	if (!listsUpdatedAt) return null;
+	const t = Date.parse(listsUpdatedAt);
+	return Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 3600000)) : null;
+}

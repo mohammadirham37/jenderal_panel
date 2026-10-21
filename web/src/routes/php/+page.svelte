@@ -9,7 +9,9 @@
 		switchPHPConfigMode,
 		updateSimplePHPConfig
 	} from '$lib/php-config.js';
-	import { countExtensions, groupPHPVersions, listExtensions, websitesByPHPVersion } from '$lib/php-versions.js';
+	import { countExtensions, groupPHPVersions, listExtensions, listsAgeHours, summarizePatches, websitesByPHPVersion } from '$lib/php-versions.js';
+	import Modal from '$lib/components/Modal.svelte';
+	import { hasPermission, permissions } from '$lib/stores/auth';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
@@ -82,6 +84,70 @@
 	// Uninstall confirmation modal
 	let uninstallVersion = $state<string | null>(null);
 
+	// Patch updates (apt candidates for installed versions)
+	interface PackageUpdate { name: string; installed: string; candidate: string }
+	interface PatchStatus {
+		version: string; current: string; latest: string; update_available: boolean; packages: PackageUpdate[];
+		security_baseline: string; vulnerable: boolean; end_of_life: boolean; advisory_url?: string;
+	}
+	let patchStatuses = $state<PatchStatus[]>([]);
+	let listsUpdatedAt = $state<string | null>(null);
+	let patchesLoaded = $state(false);
+	let upgradeTarget = $state<'all' | string | null>(null);
+	let patchSummary = $derived(summarizePatches(patchStatuses));
+	let listsAge = $derived(listsAgeHours(listsUpdatedAt));
+	let canManage = $derived(hasPermission($permissions, 'php.manage'));
+	let upgradeVersions = $derived(
+		upgradeTarget === 'all' ? patchSummary.updatable : patchStatuses.filter((p) => p.version === upgradeTarget)
+	);
+
+	function patchFor(version: string): PatchStatus | undefined {
+		return patchStatuses.find((p) => p.version === version);
+	}
+
+	async function loadPatches() {
+		try {
+			const overview = await api.get<{ versions: PatchStatus[]; lists_updated_at: string | null }>('/api/v1/php/updates');
+			patchStatuses = overview.versions || [];
+			listsUpdatedAt = overview.lists_updated_at;
+		} catch {
+			// The PHP list still works without patch data; keep the badges hidden.
+			patchStatuses = [];
+		} finally {
+			patchesLoaded = true;
+		}
+	}
+
+	async function checkUpdates() {
+		currentTaskId = '';
+		actionInProgress = 'check-updates';
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/php/updates/refresh');
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'phpv.patch.checkStarted'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.patch.checkFailed'));
+			actionInProgress = null;
+		}
+	}
+
+	async function runUpgrade() {
+		const target = upgradeTarget;
+		if (!target) return;
+		upgradeTarget = null;
+		currentTaskId = '';
+		actionInProgress = `upgrade-${target}`;
+		try {
+			const path = target === 'all' ? '/api/v1/php/updates/upgrade' : `/api/v1/php/${target}/upgrade`;
+			const result = await api.post<{ task_id: string }>(path);
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'phpv.patch.upgradeStarted'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.patch.upgradeFailed'));
+			actionInProgress = null;
+		}
+	}
+
 	async function loadPhp() {
 		error = '';
 		try {
@@ -106,7 +172,7 @@
 	async function refresh() {
 		if (refreshing) return;
 		refreshing = true;
-		await Promise.all([loadPhp(), loadUsage()]);
+		await Promise.all([loadPhp(), loadUsage(), loadPatches()]);
 		refreshing = false;
 	}
 
@@ -143,6 +209,7 @@
 	function onTaskComplete() {
 		actionInProgress = null;
 		loadPhp();
+		void loadPatches();
 		if (selectedVersion && extensions) void loadExtensions(selectedVersion);
 	}
 
@@ -303,7 +370,7 @@
 	}
 
 	onMount(() => {
-		void Promise.all([loadPhp(), loadUsage()]);
+		void Promise.all([loadPhp(), loadUsage(), loadPatches()]);
 	});
 
 	const inputClass =
@@ -321,6 +388,26 @@
 			{:else}
 				{translate($language, sites.length === 1 ? 'phpv.usage.one' : 'phpv.usage.many').replace('{count}', String(sites.length))}
 				<span class="text-gray-500">· {sites.slice(0, 2).join(', ')}{sites.length > 2 ? ` +${sites.length - 2}` : ''}</span>
+			{/if}
+		</p>
+	{/if}
+{/snippet}
+
+{#snippet patchLine(version: string)}
+	{@const patch = patchFor(version)}
+	{#if patch?.current}
+		<p class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs">
+			<span class="font-mono text-gray-300">{patch.current}</span>
+			{#if patch.vulnerable}
+				<span class="rounded-full bg-red-900/60 px-2 py-0.5 text-[10px] font-semibold text-red-200" title={translate($language, 'phpv.patch.vulnTitle')}>{translate($language, 'phpv.patch.vulnerable')}</span>
+			{/if}
+			{#if patch.update_available}
+				<span class="rounded-full bg-yellow-900/50 px-2 py-0.5 text-[10px] font-semibold text-yellow-200">→ {patch.latest !== patch.current ? patch.latest : translate($language, 'phpv.patch.newBuild')}</span>
+			{:else if !patch.vulnerable && !patch.end_of_life}
+				<span class="text-[10px] text-green-400">✓ {translate($language, 'phpv.patch.latest')}</span>
+			{/if}
+			{#if patch.end_of_life}
+				<span class="rounded-full bg-gray-700 px-2 py-0.5 text-[10px] font-semibold text-gray-200" title={translate($language, 'phpv.patch.eolHint')}>{translate($language, 'phpv.patch.eol')}</span>
 			{/if}
 		</p>
 	{/if}
@@ -385,6 +472,86 @@
 			</div>
 		</div>
 
+		{#if patchSummary.vulnerable.length > 0}
+			<div class="rounded-xl border border-red-700/70 bg-red-950/40 p-4">
+				<div class="flex flex-wrap items-start justify-between gap-3">
+					<div class="flex min-w-0 gap-3">
+						<svg class="mt-0.5 h-5 w-5 shrink-0 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+						</svg>
+						<div class="min-w-0">
+							<p class="font-semibold text-red-200">{translate($language, 'phpv.patch.vulnTitle')}</p>
+							<p class="mt-1 text-sm text-red-200/80">{translate($language, 'phpv.patch.vulnBody')}</p>
+							<ul class="mt-2 space-y-0.5 font-mono text-xs text-red-100">
+								{#each patchSummary.vulnerable as p (p.version)}
+									<li>PHP {p.current} → {translate($language, 'phpv.patch.needs')} ≥ {p.security_baseline}</li>
+								{/each}
+							</ul>
+							{#if patchSummary.stuck.length > 0}
+								<p class="mt-2 text-xs text-yellow-200">{translate($language, 'phpv.patch.stuckHint')}</p>
+							{/if}
+							{#if patchSummary.vulnerable[0]?.advisory_url}
+								<a href={patchSummary.vulnerable[0].advisory_url} target="_blank" rel="noopener noreferrer" class="mt-2 inline-block text-xs font-medium text-red-300 underline hover:text-red-100">{translate($language, 'phpv.patch.advisory')} ↗</a>
+							{/if}
+						</div>
+					</div>
+					{#if canManage}
+						<div class="flex shrink-0 gap-2">
+							{#if patchSummary.stuck.length > 0}
+								<button type="button" onclick={checkUpdates} disabled={operationInProgress} class="cursor-pointer rounded-lg border border-red-500/50 px-3 py-2 text-sm font-medium text-red-100 transition hover:bg-red-500/15 disabled:opacity-50">
+									{translate($language, 'phpv.patch.check')}
+								</button>
+							{/if}
+							{#if patchSummary.updatable.length > 0}
+								<button type="button" onclick={() => (upgradeTarget = 'all')} disabled={operationInProgress} class="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">
+									{translate($language, 'phpv.patch.updateNow')}
+								</button>
+							{/if}
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/if}
+
+		{#if patchesLoaded && patchStatuses.length > 0}
+			<div class="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-700 bg-gray-800 px-4 py-3">
+				<div class="flex min-w-0 items-center gap-3">
+					<span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg {patchSummary.updatable.length ? 'bg-yellow-500/15 text-yellow-300' : 'bg-green-500/15 text-green-300'}" aria-hidden="true">
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8">
+							<path stroke-linecap="round" stroke-linejoin="round" d={patchSummary.updatable.length ? 'M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3' : 'M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z'} />
+						</svg>
+					</span>
+					<div class="min-w-0">
+						<p class="text-sm font-medium text-white">
+							{patchSummary.updatable.length
+								? translate($language, 'phpv.patch.available').replace('{count}', String(patchSummary.updatable.length))
+								: translate($language, 'phpv.patch.upToDate')}
+						</p>
+						<p class="text-xs text-gray-500">
+							{listsAge === null
+								? translate($language, 'phpv.patch.neverChecked')
+								: listsAge < 1
+									? translate($language, 'phpv.patch.checkedRecently')
+									: translate($language, 'phpv.patch.checkedHours').replace('{hours}', String(listsAge))}
+							{#if listsAge !== null && listsAge >= 24}<span class="text-yellow-300"> · {translate($language, 'phpv.patch.stale')}</span>{/if}
+						</p>
+					</div>
+				</div>
+				{#if canManage}
+					<div class="flex items-center gap-2">
+						<button type="button" onclick={checkUpdates} disabled={operationInProgress} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">
+							{actionInProgress === 'check-updates' ? translate($language, 'phpv.patch.checking') : translate($language, 'phpv.patch.check')}
+						</button>
+						{#if patchSummary.updatable.length > 0}
+							<button type="button" onclick={() => (upgradeTarget = 'all')} disabled={operationInProgress} class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+								{translate($language, 'phpv.patch.updateAll')}
+							</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
+		{/if}
+
 		{#if groups.stopped > 0}
 			<div class="rounded-lg border border-yellow-700/50 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-200">
 				{translate($language, 'phpv.stoppedBanner')}
@@ -425,6 +592,7 @@
 										{/if}
 									</div>
 									{@render usageLine(php.version)}
+									{@render patchLine(php.version)}
 								</div>
 								<span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium {php.running ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300'}">
 									<span class="h-1.5 w-1.5 rounded-full {php.running ? 'bg-green-400' : 'bg-red-400'}"></span>
@@ -451,6 +619,15 @@
 								>
 									{translate($language, 'phpv.ext.open')}
 								</button>
+								{#if canManage && patchFor(php.version)?.update_available}
+									<button
+										onclick={() => (upgradeTarget = php.version)}
+										disabled={operationInProgress}
+										class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-semibold text-white transition disabled:opacity-50 {patchFor(php.version)?.vulnerable ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}"
+									>
+										{actionInProgress === `upgrade-${php.version}` ? translate($language, 'phpv.patch.updating') : translate($language, 'phpv.patch.update')}
+									</button>
+								{/if}
 								<span class="ml-auto flex items-center gap-1">
 									<button
 										onclick={() => restartPhp(php.version)}
@@ -750,6 +927,53 @@
 		{/if}
 	{/if}
 </div>
+
+{#if upgradeTarget && upgradeVersions.length > 0}
+	<Modal
+		title={upgradeTarget === 'all' ? translate($language, 'phpv.patch.modalTitleAll') : translate($language, 'phpv.patch.modalTitle').replace('{version}', upgradeTarget)}
+		onclose={() => (upgradeTarget = null)}
+		size="lg"
+		closeLabel={translate($language, 'phpv.no')}
+	>
+		<div class="space-y-4">
+			{#each upgradeVersions as p (p.version)}
+				<div class="rounded-lg border {p.vulnerable ? 'border-red-700/60' : 'border-gray-700'} p-3">
+					<div class="flex flex-wrap items-center justify-between gap-2">
+						<p class="font-semibold text-white">PHP {p.version}</p>
+						<p class="font-mono text-sm">
+							<span class="text-gray-400">{p.current}</span>
+							<span class="text-gray-500">→</span>
+							<span class="text-green-300">{p.latest}</span>
+						</p>
+					</div>
+					{#if p.vulnerable}
+						<p class="mt-1 text-xs text-red-300">{translate($language, 'phpv.patch.fixesSecurity')}</p>
+					{/if}
+					{#if sitesFor(p.version).length > 0}
+						<p class="mt-1 text-xs text-gray-400">{translate($language, 'phpv.patch.sitesRestart').replace('{count}', String(sitesFor(p.version).length))}</p>
+					{/if}
+					<details class="mt-2">
+						<summary class="cursor-pointer text-xs text-gray-400 hover:text-gray-200">{translate($language, 'phpv.patch.packages').replace('{count}', String(p.packages.length))}</summary>
+						<ul class="mt-1 max-h-40 space-y-0.5 overflow-y-auto font-mono text-[11px] text-gray-400">
+							{#each p.packages as pkg (pkg.name)}
+								<li><span class="text-gray-200">{pkg.name}</span> {pkg.installed} → {pkg.candidate}</li>
+							{/each}
+						</ul>
+					</details>
+				</div>
+			{/each}
+			<p class="text-xs text-gray-500">{translate($language, 'phpv.patch.modalNote')}</p>
+		</div>
+		{#snippet footer()}
+			<button type="button" onclick={() => (upgradeTarget = null)} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+				{translate($language, 'phpv.no')}
+			</button>
+			<button type="button" onclick={runUpgrade} disabled={operationInProgress} class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+				{translate($language, 'phpv.patch.confirmUpdate')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
 
 {#if uninstallVersion}
 	{@const sites = sitesFor(uninstallVersion)}

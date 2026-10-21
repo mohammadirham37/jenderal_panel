@@ -542,6 +542,14 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
 				Post("/php/{version}/restart", phpHandler.Restart)
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
+				Get("/php/updates", phpHandler.Updates)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/updates/refresh", phpHandler.RefreshUpdates)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/updates/upgrade", phpHandler.UpgradeAll)
+			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
+				Post("/php/{version}/upgrade", phpHandler.Upgrade)
+			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
 				Get("/php/{version}/config", phpHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "php.config")).
 				Put("/php/{version}/config", phpHandler.SaveConfig)
