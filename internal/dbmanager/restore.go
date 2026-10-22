@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strings"
 
@@ -75,6 +76,15 @@ func (s *Service) RestoreDatabase(ctx context.Context, id string, dump io.Reader
 		in = newCollationCompatReader(in, s.supportedCollations(ctx))
 	}
 
+	// Refuse dumps that carry client commands: the clients below run them
+	// instead of treating them as SQL.
+	staged, cleanup, err := stageCheckedDump(engineName, in)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	in = staged
+
 	bin, args, err := restoreCommand(engineName, name)
 	if err != nil {
 		return err
@@ -138,6 +148,13 @@ func (s *Service) ManageRestore(ctx context.Context, token, database string, dum
 		in = newCollationCompatReader(in, s.supportedCollations(ctx,
 			"--user="+session.Username, "--password="+session.Password))
 	}
+
+	staged, cleanup, err := stageCheckedDump(session.Engine, in)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	in = staged
 
 	var bin string
 	var args []string
@@ -209,4 +226,32 @@ func realPsqlErrors(stderr string) string {
 		msg = msg[:maxLen] + "…"
 	}
 	return msg
+}
+
+// stageCheckedDump validates the dump against the engine's client commands
+// and writes it to a private temporary file, so the database client is only
+// started once the whole dump is known to be plain SQL. The caller must call
+// the returned cleanup.
+func stageCheckedDump(engine string, in io.Reader) (*os.File, func(), error) {
+	checked, err := dbdump.NewSafeSQLReader(engine, in)
+	if err != nil {
+		return nil, nil, err
+	}
+	tmp, err := os.CreateTemp("", "jenderal-restore-*.sql")
+	if err != nil {
+		return nil, nil, fmt.Errorf("stage dump: %w", err)
+	}
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmp.Name())
+	}
+	if _, err := io.Copy(tmp, checked); err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("stage dump: %w", err)
+	}
+	return tmp, cleanup, nil
 }

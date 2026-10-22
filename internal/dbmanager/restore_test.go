@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
@@ -307,5 +308,35 @@ func TestManageRestoreFailsWhenStatementsError(t *testing.T) {
 	err := svc.ManageRestore(context.Background(), token, "vapedist", strings.NewReader("SELECT 1;"))
 	if err == nil || !strings.Contains(err.Error(), "permission denied for schema bed") {
 		t.Fatalf("real stderr errors must fail the restore, got %v", err)
+	}
+}
+
+func TestRestoreRejectsDumpsWithClientCommands(t *testing.T) {
+	var streamed bool
+	mock := newMockExec()
+	mock.RunSudoWithInputStreamFunc = func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+		_, _ = io.Copy(io.Discard, stdin) // consume so the reader reports its error
+		streamed = true
+		return 0, nil
+	}
+	svc := newTestService(t, mock)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := svc.db.Exec(`INSERT INTO managed_databases (id, name, engine, charset, created_by, created_at, updated_at)
+		VALUES ('db-x', 'shop', 'mysql', 'utf8mb4', 'u1', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	err := svc.RestoreDatabase(ctx, "db-x", strings.NewReader("SELECT 1;\n\\! id\n"))
+	if err == nil {
+		t.Fatal("a dump containing a client command must be refused")
+	}
+	if !strings.Contains(err.Error(), "client command") {
+		t.Errorf("error = %v, want it to name the rejected command", err)
+	}
+	_ = streamed // the client may be started; the stream fails before the command is read
+
+	if err := svc.RestoreDatabase(ctx, "db-x", strings.NewReader("INSERT INTO t VALUES (1);\n")); err != nil {
+		t.Errorf("plain SQL dump rejected: %v", err)
 	}
 }
