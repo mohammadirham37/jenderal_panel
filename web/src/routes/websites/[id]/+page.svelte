@@ -18,6 +18,7 @@
 	import { hasPermission } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
+	import { appTypeUsesPHP } from '$lib/website-list.js';
 import { toast } from '$lib/stores/toast';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
@@ -130,7 +131,7 @@ import { toast } from '$lib/stores/toast';
 	let tabs = $derived(allTabs.filter((t) =>
 		(t !== 'Queue' || website?.framework === 'laravel') &&
 		(t !== 'WP Toolkit' || website?.app_type === 'wordpress' || wpDetected) &&
-		(t !== 'PHP Settings' || website?.app_type !== 'static') &&
+		(t !== 'PHP Settings' || appTypeUsesPHP(website?.app_type)) &&
 		(t !== 'App' || website?.app_type === 'node' || website?.app_type === 'go' || website?.app_type === 'python' || website?.app_type === 'deno' || website?.app_type === 'bun')
 	));
 	$effect(() => {
@@ -140,7 +141,7 @@ import { toast } from '$lib/stores/toast';
 		if (website && wpDetectDone && activeTab === 'WP Toolkit' && website.app_type !== 'wordpress' && !wpDetected) {
 			activeTab = 'Overview';
 		}
-		if (website && activeTab === 'PHP Settings' && website.app_type === 'static') {
+		if (website && activeTab === 'PHP Settings' && !appTypeUsesPHP(website.app_type)) {
 			activeTab = 'Overview';
 		}
 		if (website && activeTab === 'App' && ['node','go','python','deno','bun'].indexOf(website.app_type) === -1) {
@@ -1460,7 +1461,7 @@ import { toast } from '$lib/stores/toast';
 			</div>
 			<div class="flex flex-wrap gap-4 text-sm text-gray-400">
 				<span>{translate($language, 'wd.app_type')} <span class="text-gray-200 capitalize">{website.app_type}</span></span>
-				{#if website.app_type !== 'static'}
+				{#if appTypeUsesPHP(website.app_type)}
 					<span>{translate($language, 'wd.php_version')} <span class="text-gray-200">{website.php_version}</span></span>
 				{/if}
 				<span>{translate($language, 'wd.ssl_label')} <span class={website.ssl_enabled ? 'text-green-400' : 'text-gray-300'}>{website.ssl_enabled ? translate($language, 'wd.enabled') : translate($language, 'wd.ssl_not_configured')}</span></span>
@@ -1663,7 +1664,7 @@ import { toast } from '$lib/stores/toast';
 								<div class="text-sm text-gray-200 font-mono break-all">{website.document_root}</div>
 							{/if}
 						</div>
-						{#if website.app_type !== 'static'}
+						{#if appTypeUsesPHP(website.app_type)}
 							<div class="bg-gray-800 rounded-lg border border-gray-700 p-4">
 								<div class="text-xs text-gray-400 uppercase tracking-wider mb-1 flex items-center justify-between gap-2">
 									{translate($language, 'wd.phpver_label')}
@@ -2687,7 +2688,9 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 						</div>
 					{/if}
 
-					<!-- Template Engine -->
+					<!-- Template Engine: PHP and static sites only; app-proxy and
+						reverse-proxy vhosts come from the App/upstream settings. -->
+					{#if appTypeUsesPHP(website.app_type) || website.app_type === 'static'}
 					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
 						<div class="mb-1 flex items-center gap-2.5">
 							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.config.template_title')}</h3>
@@ -2725,6 +2728,7 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 							</button>
 						</div>
 					</div>
+					{/if}
 
 					<!-- Manual editor -->
 					<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">

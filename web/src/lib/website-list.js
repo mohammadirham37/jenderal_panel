@@ -43,11 +43,21 @@ export function frameworkLabel(website) {
  * @param {ListWebsite} website
  */
 export function usesPHP(website) {
-	return !!website.php_version && !nonPHPAppTypes.includes(website.app_type);
+	return !!website.php_version && appTypeUsesPHP(website.app_type);
 }
 
 // App types that run without PHP-FPM even if an older row stored a version.
+// Mirrors nonPHPAppTypes in internal/website/profiles.go.
 const nonPHPAppTypes = ['static', 'reverse-proxy', 'node', 'go', 'python', 'deno', 'bun'];
+
+/**
+ * Whether a website of this app type runs on PHP-FPM (PHP version, PHP
+ * settings, and nginx PHP templates apply).
+ * @param {string | undefined} appType
+ */
+export function appTypeUsesPHP(appType) {
+	return !!appType && !nonPHPAppTypes.includes(appType);
+}
 
 /**
  * @param {ListWebsite} website

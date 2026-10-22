@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 func TestRetryHealsLegacyOverlongWebUser(t *testing.T) {
@@ -1283,5 +1285,46 @@ func TestProfileOptionsReportUsesPHP(t *testing.T) {
 		if !seen[template] {
 			t.Errorf("template %s missing from ProfileOptions", template)
 		}
+	}
+}
+
+func TestNonPHPWebsitesRejectPHPVersionAndNginxTemplates(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		return &executor.Result{ExitCode: 0}, nil
+	}}
+	svc := NewService(db, mock, nil)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, CreateRequest{Domain: "go.example.com", Template: "go-build", SetupMode: "config-only"})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET status = 'active' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	version := "8.3"
+	err = svc.Update(ctx, created.ID, UpdateRequest{PHPVersion: &version})
+	var domainErr *model.DomainError
+	if !errors.As(err, &domainErr) {
+		t.Fatalf("setting PHP on a Go site: err = %v, want validation error", err)
+	}
+	empty := ""
+	if err := svc.Update(ctx, created.ID, UpdateRequest{PHPVersion: &empty}); err != nil {
+		t.Fatalf("an empty php_version on a Go site is a no-op, got %v", err)
+	}
+
+	for _, profile := range []string{"php", "laravel", "static"} {
+		if _, err := svc.SetNginxProfile(ctx, created.ID, profile); !errors.As(err, &domainErr) {
+			t.Errorf("SetNginxProfile(%q) on a Go site: err = %v, want validation error", profile, err)
+		}
+	}
+	var stored string
+	if err := db.QueryRow(`SELECT COALESCE(nginx_profile, '') FROM websites WHERE id = ?`, created.ID).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != "app-proxy" {
+		t.Errorf("nginx_profile changed to %q on a Go site, want app-proxy", stored)
 	}
 }

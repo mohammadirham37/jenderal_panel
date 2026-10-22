@@ -54,3 +54,14 @@ test('usesPHP ignores php_version stored on non-PHP app types', () => {
 	}
 	assert.equal(usesPHP({ app_type: 'laravel', php_version: '8.3' }), true);
 });
+
+test('appTypeUsesPHP drives the PHP UI on the website detail page', async () => {
+	const { appTypeUsesPHP } = await import('../../src/lib/website-list.js');
+	for (const t of ['go', 'python', 'deno', 'bun', 'node', 'static', 'reverse-proxy', undefined]) assert.equal(appTypeUsesPHP(t), false, String(t));
+	for (const t of ['php', 'wordpress', 'laravel', 'codeigniter']) assert.equal(appTypeUsesPHP(t), true, t);
+
+	const { readFileSync } = await import('node:fs');
+	const page = readFileSync(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
+	assert.match(page, /\(t !== 'PHP Settings' \|\| appTypeUsesPHP\(website\?\.app_type\)\)/);
+	assert.match(page, /\{#if appTypeUsesPHP\(website\.app_type\)\}\s*<span>\{translate\(\$language, 'wd\.php_version'\)\}/);
+});

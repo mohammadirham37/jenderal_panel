@@ -730,14 +730,15 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 	phpChanged := false
 	if req.PHPVersion != nil {
 		newVersion := strings.TrimSpace(*req.PHPVersion)
-		if w.AppType == "static" {
+		if !appTypeUsesPHP(w.AppType) {
+			// Static, proxy, and Go/Python/Deno/Bun/Node sites run without
+			// PHP-FPM; an empty value is accepted as a no-op.
 			if newVersion != "" {
-				return model.NewValidationError("static websites cannot set a PHP version")
+				return model.NewValidationError(w.AppType + " websites do not use PHP")
 			}
 		} else if !phpVersionRegex.MatchString(newVersion) || !supportedPHP(newVersion) {
 			return model.NewValidationError("unsupported PHP version: " + newVersion)
-		}
-		if newVersion != w.PHPVersion {
+		} else if newVersion != w.PHPVersion {
 			if w.Status != "active" && w.Status != "failed" {
 				return model.NewValidationError("cannot change the PHP version while the website is " + w.Status)
 			}
@@ -1302,6 +1303,16 @@ func (s *Service) SetNginxProfile(ctx context.Context, id, profile string) (mode
 
 	unlock := s.mutations.Lock(id)
 	defer unlock()
+
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return model.Website{}, err
+	}
+	if !appTypeUsesPHP(current.AppType) && current.AppType != "static" {
+		// App-proxy and reverse-proxy vhosts are generated from the app/upstream
+		// settings; a PHP or static template would cut the site off.
+		return model.Website{}, model.NewValidationError("nginx templates do not apply to " + current.AppType + " websites")
+	}
 
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE websites SET nginx_profile = ?, updated_at = ? WHERE id = ?`,
