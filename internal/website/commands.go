@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
@@ -25,6 +26,28 @@ type CommandPreset struct {
 // frontend build. It is only offered while composer dependencies have not
 // been installed yet.
 const InitialSetupCommand = "initial setup"
+
+// Go site commands handled by the panel itself rather than a shell line:
+// the full build pipeline and the systemd app unit controls.
+const (
+	goBuildRestartCommand = "go build & restart"
+	goBuildCommand        = "go build"
+	appRestartCommand     = "app restart"
+	appStartCommand       = "app start"
+	appStopCommand        = "app stop"
+	appLogsCommand        = "app logs"
+)
+
+// goSiteCommands lists the panel-handled commands that only make sense on
+// Go websites.
+var goSiteCommands = map[string]bool{
+	goBuildRestartCommand: true, goBuildCommand: true,
+	appRestartCommand: true, appStartCommand: true, appStopCommand: true, appLogsCommand: true,
+}
+
+// goToolchainPath prepends the server-wide Go toolchain installed by the
+// panel; non-interactive shells for the website user do not have it.
+const goToolchainPath = "PATH=/usr/local/go/bin:$PATH"
 
 // allowedCommands maps human-readable command labels to the actual argument
 // slices that will be executed. Only commands present in this map may be run.
@@ -62,6 +85,10 @@ var allowedCommands = map[string][]string{
 	"yarn build":                                         {"yarn", "build"},
 	"pnpm install":                                       {"pnpm", "install"},
 	"pnpm build":                                         {"pnpm", "build"},
+	"go mod download":                                    {"go", "mod", "download"},
+	"go mod tidy":                                        {"go", "mod", "tidy"},
+	"go vet ./...":                                       {"go", "vet", "./..."},
+	"go test ./...":                                      {"go", "test", "./..."},
 }
 
 // serviceTaskRunners maps Service instances to their task runners. This avoids
@@ -173,6 +200,27 @@ func commandPresetsFor(w model.Website) []CommandPreset {
 		)
 	}
 
+	// Go sites: the deploy pipeline, toolchain commands, and app unit
+	// controls. Prebuilt binaries have no source to build or test.
+	if w.AppType == "go" {
+		if w.AppRuntime != "go-binary" {
+			presets = append(presets,
+				CommandPreset{Label: goBuildRestartCommand, Command: goBuildRestartCommand, Category: "go"},
+				CommandPreset{Label: goBuildCommand, Command: goBuildCommand, Category: "go"},
+				CommandPreset{Label: "go mod download", Command: "go mod download", Category: "go"},
+				CommandPreset{Label: "go mod tidy", Command: "go mod tidy", Category: "go"},
+				CommandPreset{Label: "go vet ./...", Command: "go vet ./...", Category: "go"},
+				CommandPreset{Label: "go test ./...", Command: "go test ./...", Category: "go"},
+			)
+		}
+		presets = append(presets,
+			CommandPreset{Label: appRestartCommand, Command: appRestartCommand, Category: "app"},
+			CommandPreset{Label: appStartCommand, Command: appStartCommand, Category: "app"},
+			CommandPreset{Label: appStopCommand, Command: appStopCommand, Category: "app", Danger: true},
+			CommandPreset{Label: appLogsCommand, Command: appLogsCommand, Category: "app"},
+		)
+	}
+
 	// Node/frontend commands are always available.
 	presets = append(presets,
 		CommandPreset{Label: "npm install", Command: "npm install", Category: "npm", Danger: false},
@@ -199,6 +247,8 @@ func projectMarkerFor(command string) string {
 		return "package.json"
 	case strings.HasPrefix(command, "cp .env.example"):
 		return ".env.example"
+	case strings.HasPrefix(command, "go "):
+		return "go.mod"
 	case strings.HasPrefix(command, "git"):
 		// .git is a directory, so findDirWithFile probes with test -e.
 		return ".git"
@@ -254,6 +304,10 @@ func usesNvmRuntime(binary string) bool {
 func buildCommandScript(w model.Website, workDir string, args []string, nodeVersion string) string {
 	joined := strings.Join(args, " ")
 	home := "/home/" + w.WebUser
+	if args[0] == "go" {
+		return "cd " + workDir + " && export " + goToolchainPath +
+			" && if ! command -v go >/dev/null; then echo \"Go toolchain is not installed — run 'go build & restart' once to install it\"; exit 127; fi && " + joined
+	}
 	if !usesNvmRuntime(args[0]) {
 		return "cd " + workDir + " && " + joined
 	}
@@ -292,6 +346,9 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 	if command == InitialSetupCommand {
 		return s.runInitialSetup(ctx, websiteID)
 	}
+	if goSiteCommands[command] {
+		return s.runGoSiteCommand(ctx, websiteID, command)
+	}
 	args, ok := allowedCommands[command]
 	if !ok {
 		return "", model.NewValidationError("command not allowed: " + command)
@@ -300,6 +357,9 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 	w, err := s.Get(ctx, websiteID)
 	if err != nil {
 		return "", err
+	}
+	if args[0] == "go" && w.AppType != "go" {
+		return "", model.NewValidationError(command + " is only available for Go websites")
 	}
 
 	tr := s.taskRunner()
@@ -405,4 +465,71 @@ func (s *Service) nvmWrappedCommand(ctx context.Context, w model.Website, workDi
 		"if [ -x %[1]s/nvm-exec ]; then NVM_DIR=%[2]s%[3]s %[2]s/nvm-exec %[4]s; else echo \"Node.js runtime is not installed for this website — install it from the website detail page first\"; exit 127; fi",
 		nvmDir, nvmDir, env, command,
 	)
+}
+
+// runGoSiteCommand runs a panel-handled Go command as a background task:
+// the full build pipeline, a build without restart, or an app unit action.
+func (s *Service) runGoSiteCommand(ctx context.Context, websiteID, command string) (string, error) {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return "", err
+	}
+	if w.AppType != "go" {
+		return "", model.NewValidationError(command + " is only available for Go websites")
+	}
+	if command == goBuildRestartCommand {
+		return s.RunAppBuildTask(ctx, websiteID)
+	}
+	tr := s.taskRunner()
+	if tr == nil {
+		return "", fmt.Errorf("task runner not available")
+	}
+	unit := appUnitName(w.ID)
+	return tr.RunFuncWithOptions(
+		taskrunner.Options{Name: command + " (" + w.Domain + ")", Module: "website", Timeout: 30 * time.Minute},
+		func(taskCtx context.Context, write func(string)) error {
+			switch command {
+			case goBuildCommand:
+				if w.AppRuntime == "go-binary" {
+					return model.NewValidationError("prebuilt binary sites have nothing to build")
+				}
+				root := s.appWorkDir(taskCtx, w)
+				if err := s.runGoBuild(taskCtx, w, root, write); err != nil {
+					return err
+				}
+				if err := s.checkAppExecutable(taskCtx, w, root, write); err != nil {
+					return err
+				}
+				write("Build finished. The running app is unchanged until you run 'app restart'.")
+				return nil
+			case appRestartCommand, appStartCommand, appStopCommand:
+				action := strings.TrimPrefix(command, "app ")
+				if err := s.AppAction(taskCtx, websiteID, action); err != nil {
+					return err
+				}
+				write("app " + action + " done")
+				if action == "stop" {
+					return nil
+				}
+				if err := s.waitAppHealthy(taskCtx, w.AppPort); err != nil {
+					report := s.appStartupReport(taskCtx, unit)
+					for _, line := range report.Logs {
+						write(line)
+					}
+					return model.NewDomainError("APP_HEALTH_CHECK_FAILED", report.explain(w.AppPort), nil)
+				}
+				write(fmt.Sprintf("app healthy on port %d", w.AppPort))
+				return nil
+			case appLogsCommand:
+				logs := s.octaneUnitLogs(taskCtx, unit, 100)
+				if len(logs) == 0 {
+					write("no log lines for " + unit)
+				}
+				for _, line := range logs {
+					write(line)
+				}
+				return nil
+			}
+			return model.NewValidationError("command not allowed: " + command)
+		}), nil
 }

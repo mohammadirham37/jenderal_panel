@@ -221,3 +221,63 @@ func TestInitialSetupPresetOnlyWhileComposerNotInstalled(t *testing.T) {
 		}
 	}
 }
+
+func presetLabels(presets []CommandPreset, category string) []string {
+	var labels []string
+	for _, p := range presets {
+		if p.Category == category {
+			labels = append(labels, p.Label)
+		}
+	}
+	return labels
+}
+
+func TestCommandPresetsForGoSites(t *testing.T) {
+	build := commandPresetsFor(model.Website{AppType: "go", AppRuntime: "go", Framework: "go"})
+	if got := strings.Join(presetLabels(build, "go"), ","); got != "go build & restart,go build,go mod download,go mod tidy,go vet ./...,go test ./..." {
+		t.Errorf("go presets = %s", got)
+	}
+	if got := strings.Join(presetLabels(build, "app"), ","); got != "app restart,app start,app stop,app logs" {
+		t.Errorf("app presets = %s", got)
+	}
+	for _, p := range build {
+		if p.Label == "app stop" && !p.Danger {
+			t.Error("app stop takes the site offline and must be marked dangerous")
+		}
+	}
+
+	binary := commandPresetsFor(model.Website{AppType: "go", AppRuntime: "go-binary", Framework: "go"})
+	if len(presetLabels(binary, "go")) != 0 || len(presetLabels(binary, "app")) != 4 {
+		t.Errorf("go-binary presets = %+v", binary)
+	}
+
+	php := commandPresetsFor(model.Website{AppType: "php", Framework: "php"})
+	if len(presetLabels(php, "go")) != 0 || len(presetLabels(php, "app")) != 0 {
+		t.Error("PHP sites must not get Go or app presets")
+	}
+}
+
+func TestBuildCommandScriptAddsGoToolchainToPath(t *testing.T) {
+	w := model.Website{WebUser: "web_go"}
+	script := buildCommandScript(w, "/home/web_go/app", allowedCommands["go mod tidy"], "")
+	for _, want := range []string{"cd /home/web_go/app && ", "PATH=/usr/local/go/bin:$PATH", "go mod tidy", "command -v go"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q: %s", want, script)
+		}
+	}
+	if projectMarkerFor("go test ./...") != "go.mod" {
+		t.Error("go commands must run in the go.mod directory")
+	}
+}
+
+func TestRunCommandRejectsGoCommandsOnNonGoSites(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	svc := NewService(db, &executor.MockExecutor{}, nil)
+	insertAppWebsite(t, db, "node.example.com", "node", "node", 8300)
+	for _, command := range []string{"go mod tidy", "go build & restart", "app restart", "app logs"} {
+		if _, err := svc.RunCommand(context.Background(), "w-node.example.com", command); err == nil || !strings.Contains(err.Error(), "Go websites") {
+			t.Errorf("RunCommand(%q) on node site: err = %v, want Go-only error", command, err)
+		}
+	}
+}
