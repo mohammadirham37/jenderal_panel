@@ -91,3 +91,19 @@ test('Laravel Inertia Svelte normalization preserves six profile fields', () => 
 		template: 'laravel', framework_version: '13', frontend_stack: 'inertia', inertia_adapter: 'svelte', project_variant: 'starter-kit', setup_mode: 'auto-install'
 	});
 });
+
+test('Go, Python, Deno, and Bun templates do not ask for PHP', async () => {
+	const { templateUsesPHP } = await import('../../src/lib/website-form.js');
+	for (const template of ['go-build', 'go-binary', 'python', 'deno', 'bun', 'static', 'reverse-proxy']) {
+		assert.equal(templateUsesPHP(template), false, template);
+		const options = { profiles: [{ template, framework_version: '', frontend_stack: '', inertia_adapter: '', project_variant: 'empty', setup_mode: 'config-only', enabled: true, uses_php: false }], php_versions: [{ version: '8.3', installed: true }], defaults: { php_version: '8.3' } };
+		assert.equal(normalizeWebsiteSelection({ template, php_version: '8.3', setup_mode: 'config-only' }, options).php_version, '', template);
+	}
+	for (const template of ['php', 'wordpress', 'laravel', 'codeigniter4']) assert.equal(templateUsesPHP(template), true, template);
+	// The backend flag wins over the local fallback list.
+	assert.equal(templateUsesPHP('php', { profiles: [{ template: 'php', uses_php: false }] }), false);
+
+	const source = readFileSync(new URL('../../src/routes/websites/+page.svelte', import.meta.url), 'utf8');
+	assert.match(source, /\{#if needsPHP\}/);
+	assert.doesNotMatch(source, /selection\.template !== 'static' && selection\.template !== 'reverse-proxy'/);
+});

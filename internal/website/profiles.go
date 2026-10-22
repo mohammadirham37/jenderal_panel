@@ -38,6 +38,30 @@ type Profile struct {
 	StarterCommit        string `json:"-"`
 }
 
+// nonPHPTemplates run without PHP-FPM: static files, proxies, and apps that
+// bring their own runtime behind the app-proxy profile.
+var nonPHPTemplates = map[string]bool{
+	"static": true, "reverse-proxy": true, "node": true, "python": true,
+	"deno": true, "bun": true, "go-build": true, "go-binary": true,
+}
+
+// nonPHPAppTypes is the persisted-row counterpart of nonPHPTemplates.
+var nonPHPAppTypes = map[string]bool{
+	"static": true, "reverse-proxy": true, "node": true, "python": true,
+	"deno": true, "bun": true, "go": true,
+}
+
+// templateUsesPHP reports whether a website template needs a PHP version and
+// a PHP-FPM pool. An empty template is a legacy app_type request (PHP).
+func templateUsesPHP(template string) bool {
+	return !nonPHPTemplates[template]
+}
+
+// appTypeUsesPHP reports whether a stored website runs on PHP-FPM.
+func appTypeUsesPHP(appType string) bool {
+	return !nonPHPAppTypes[appType]
+}
+
 var laravelMinimumPHP = map[string]string{
 	"8": "8.1", "9": "8.1", "10": "8.1", "11": "8.2", "12": "8.2", "13": "8.3",
 }
@@ -440,7 +464,7 @@ func websiteProfileOptions() []ProfileOption {
 		option := ProfileOption{
 			Template: req.Template, FrameworkVersion: req.FrameworkVersion, FrontendStack: req.FrontendStack,
 			InertiaAdapter: req.InertiaAdapter, ProjectVariant: valueOr(req.ProjectVariant, "empty"), SetupMode: req.SetupMode,
-			Enabled: err == nil,
+			Enabled: err == nil, UsesPHP: templateUsesPHP(req.Template),
 		}
 		if err != nil {
 			option.Reason = err.Error()
@@ -458,7 +482,7 @@ func websiteProfileOptions() []ProfileOption {
 				option.Prerequisites = append(option.Prerequisites, "node")
 			}
 		}
-		if req.Template != "static" && req.Template != "reverse-proxy" {
+		if option.UsesPHP {
 			for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
 				compatible := option.MinimumPHP == "" || comparePHP(version, option.MinimumPHP) >= 0
 				compatibility := CompatibilityOption{Version: version, Enabled: compatible}

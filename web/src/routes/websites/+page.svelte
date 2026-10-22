@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination } from '$lib/website-form.js';
+	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination, templateUsesPHP } from '$lib/website-form.js';
 	import { countByGroup, filterWebsites, formatBytes, frameworkLabel, sortKeys, statusGroup, usesPHP } from '$lib/website-list.js';
 import { toast } from '$lib/stores/toast';
 import { language, translate } from '$lib/stores/language';
@@ -33,6 +33,7 @@ import type { ServerInfo } from '$lib/types';
 		template: string; framework_version: string; frontend_stack: string; inertia_adapter: string;
 		project_variant: string; setup_mode: string; enabled: boolean; reason: string; minimum_php: string;
 		document_root: string; prerequisites: string[]; php_compatibility: { version: string; enabled: boolean; reason: string }[];
+		uses_php?: boolean;
 	}
 	interface WebsiteSelection {
 		node_version: string;
@@ -176,6 +177,7 @@ import type { ServerInfo } from '$lib/types';
 	let creating = $state(false);
 	let installedPHP = $derived(options ? availablePHPVersions(options) as RuntimeOption[] : []);
 	let combination = $derived(options ? selectedCombination(options, selection) : null);
+	let needsPHP = $derived(templateUsesPHP(selection.template, options));
 	let laravelVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel').map((item) => item.framework_version))] : []);
 	let laravelOctaneVersions = $derived(options ? [...new Set(options.profiles.filter((item) => item.template === 'laravel-octane').map((item) => item.framework_version))] : []);
 
@@ -580,7 +582,7 @@ import type { ServerInfo } from '$lib/types';
 						{#if selection.template === 'go-build' || selection.template === 'go-binary'}
 							<p class="sm:col-span-2 lg:col-span-3 text-xs text-gray-500">{translate($language, 'wl.goTemplateHint')}</p>
 						{/if}
-						{#if selection.template !== 'static' && selection.template !== 'reverse-proxy'}
+						{#if needsPHP}
 							<div>
 								<label for="create-php-version" class="mb-1 block text-xs text-gray-400">{translate($language, 'wl.labelPhpVersion')}</label>
 								<select
@@ -724,7 +726,7 @@ import type { ServerInfo } from '$lib/types';
 					</button>
 					<button
 						onclick={createWebsite}
-						disabled={creating || !createDomain.trim() || !options || !combination?.enabled || (selection.template !== 'static' && selection.template !== 'reverse-proxy' && !selection.php_version) || (selection.template === 'reverse-proxy' && (!selection.proxy_host.trim() || !selection.proxy_port.trim()))}
+						disabled={creating || !createDomain.trim() || !options || !combination?.enabled || (needsPHP && !selection.php_version) || (selection.template === 'reverse-proxy' && (!selection.proxy_host.trim() || !selection.proxy_port.trim()))}
 						class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
 					>
 						{creating ? translate($language, 'wl.creating') : translate($language, 'wl.createWebsite')}

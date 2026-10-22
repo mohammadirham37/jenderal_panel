@@ -2,7 +2,9 @@ package website
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -1222,5 +1224,64 @@ func TestCreateGoSitePersistsDefaults(t *testing.T) {
 	}
 	if runtime != "go" || start != "./app" || build != "go build -o app ." || docRoot != "/home/web_api_example_com/app/public" {
 		t.Fatalf("persisted row = runtime %q start %q build %q docroot %q", runtime, start, build, docRoot)
+	}
+}
+
+func TestCreateNonPHPAppsNeedNoPHP(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	// A server with no PHP at all: every `test -d/-x/-f` probe fails.
+	mock := &executor.MockExecutor{RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "test" {
+			return &executor.Result{ExitCode: 1}, nil
+		}
+		return &executor.Result{ExitCode: 0}, nil
+	}}
+	svc := NewService(db, mock, nil)
+
+	for i, template := range []string{"go-build", "go-binary", "python", "deno", "bun"} {
+		domain := fmt.Sprintf("app%d.example.com", i)
+		// A stale php_version from the form must be dropped, not stored.
+		created, err := svc.Create(context.Background(), CreateRequest{
+			Domain: domain, Template: template, SetupMode: "config-only", PHPVersion: "8.3",
+		})
+		if err != nil {
+			t.Fatalf("Create(%s) without PHP installed: %v", template, err)
+		}
+		var php sql.NullString
+		if err := db.QueryRow(`SELECT php_version FROM websites WHERE id = ?`, created.ID).Scan(&php); err != nil {
+			t.Fatal(err)
+		}
+		if php.String != "" {
+			t.Errorf("%s stored php_version %q, want empty", template, php.String)
+		}
+	}
+
+	if _, err := svc.Create(context.Background(), CreateRequest{Domain: "shop.example.com", Template: "php", SetupMode: "config-only"}); err == nil {
+		t.Error("a PHP site must still require an installed PHP version")
+	}
+}
+
+func TestProfileOptionsReportUsesPHP(t *testing.T) {
+	want := map[string]bool{"go-build": false, "go-binary": false, "python": false, "deno": false, "bun": false,
+		"static": false, "reverse-proxy": false, "php": true, "wordpress": true, "laravel": true}
+	seen := map[string]bool{}
+	for _, option := range websiteProfileOptions() {
+		expected, tracked := want[option.Template]
+		if !tracked {
+			continue
+		}
+		seen[option.Template] = true
+		if option.UsesPHP != expected {
+			t.Errorf("%s uses_php = %v, want %v", option.Template, option.UsesPHP, expected)
+		}
+		if !option.UsesPHP && len(option.PHPCompatibility) > 0 {
+			t.Errorf("%s must not list PHP compatibility", option.Template)
+		}
+	}
+	for template := range want {
+		if !seen[template] {
+			t.Errorf("template %s missing from ProfileOptions", template)
+		}
 	}
 }

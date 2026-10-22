@@ -43,8 +43,11 @@ export function frameworkLabel(website) {
  * @param {ListWebsite} website
  */
 export function usesPHP(website) {
-	return !!website.php_version && !['static', 'reverse-proxy'].includes(website.app_type);
+	return !!website.php_version && !nonPHPAppTypes.includes(website.app_type);
 }
+
+// App types that run without PHP-FPM even if an older row stored a version.
+const nonPHPAppTypes = ['static', 'reverse-proxy', 'node', 'go', 'python', 'deno', 'bun'];
 
 /**
  * @param {ListWebsite} website

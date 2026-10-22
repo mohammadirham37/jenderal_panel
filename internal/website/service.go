@@ -145,6 +145,9 @@ type ProfileOption struct {
 	DocumentRoot     string                `json:"document_root"`
 	Prerequisites    []string              `json:"prerequisites"`
 	PHPCompatibility []CompatibilityOption `json:"php_compatibility"`
+	// UsesPHP is false for templates that run without PHP-FPM (static,
+	// reverse proxy, Go, Python, Deno, Bun); the form hides PHP for them.
+	UsesPHP bool `json:"uses_php"`
 }
 
 type CompatibilityOption struct {
@@ -244,7 +247,7 @@ func parseDependencyVersion(name, output string) string {
 }
 
 func (s *Service) validateRuntimeRequirements(ctx context.Context, phpVersion string, profile Profile) error {
-	if profile.Template != "static" {
+	if templateUsesPHP(profile.Template) && profile.AppType != "static" {
 		installed, err := s.phpRuntimeInstalled(ctx, phpVersion)
 		if err != nil {
 			return fmt.Errorf("check PHP %s: %w", phpVersion, err)
@@ -275,7 +278,11 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (model.Website,
 		return model.Website{}, model.NewValidationError("invalid domain name")
 	}
 
-	if req.Template != "static" && req.Template != "reverse-proxy" && req.AppType != "static" && req.PHPVersion == "" {
+	if !templateUsesPHP(req.Template) {
+		// Go/Python/Deno/Bun/static/proxy sites never get a PHP-FPM pool, so a
+		// php_version left over from the form must not be stored.
+		req.PHPVersion = ""
+	} else if req.AppType != "static" && req.PHPVersion == "" {
 		req.PHPVersion = "8.2"
 	}
 	profile, err := ResolveProfile(req)

@@ -2,7 +2,7 @@
 /** @typedef {{ name: string, installed: boolean, version: string, manage_url: string }} DependencyOption */
 /** @typedef {{ version: string, enabled: boolean, reason: string }} CompatibilityOption */
 /** @typedef {{ template: string, php_version: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, node_version?: string, proxy_scheme?: string, proxy_host?: string, proxy_port?: string }} WebsiteSelection */
-/** @typedef {{ template: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, enabled: boolean, reason: string, document_root: string, prerequisites: string[], php_compatibility: CompatibilityOption[] }} ProfileOption */
+/** @typedef {{ template: string, framework_version: string, frontend_stack: string, inertia_adapter: string, project_variant: string, setup_mode: string, enabled: boolean, reason: string, document_root: string, prerequisites: string[], php_compatibility: CompatibilityOption[], uses_php?: boolean }} ProfileOption */
 /** @typedef {{ php_versions: PHPOption[], dependencies: DependencyOption[], profiles: ProfileOption[], inertia_adapters: string[], defaults: WebsiteSelection }} WebsiteFormOptions */
 
 /**
@@ -21,6 +21,22 @@ export function normalizeNodeVersion(profile, selected) {
  */
 export function availablePHPVersions(options) {
 	return (options?.php_versions || []).filter((item) => item.installed);
+}
+
+// Fallback for when options have not loaded yet; the backend reports the
+// authoritative answer per profile as `uses_php`.
+const nonPHPTemplates = new Set(['static', 'reverse-proxy', 'node', 'python', 'deno', 'bun', 'go-build', 'go-binary']);
+
+/**
+ * Whether a template needs a PHP version (and a PHP-FPM pool).
+ * @param {string} template
+ * @param {WebsiteFormOptions | null | undefined} [options]
+ * @returns {boolean}
+ */
+export function templateUsesPHP(template, options) {
+	const profile = (options?.profiles || []).find((item) => item.template === template);
+	if (profile && typeof profile.uses_php === 'boolean') return profile.uses_php;
+	return !nonPHPTemplates.has(template);
 }
 
 /**
@@ -45,12 +61,11 @@ export function normalizeWebsiteSelection(selection, options) {
 		proxy_port: ''
 	};
 
-	if (normalized.template === 'static') {
+	if (!templateUsesPHP(normalized.template, options)) {
 		normalized.php_version = '';
 	}
 	const reverseProxy = normalized.template === 'reverse-proxy';
 	if (reverseProxy) {
-		normalized.php_version = '';
 		normalized.proxy_scheme = selection.proxy_scheme === 'https' ? 'https' : 'http';
 		normalized.proxy_host = (selection.proxy_host || '').trim();
 		normalized.proxy_port = String(selection.proxy_port || '').trim();

@@ -47,3 +47,10 @@ test('usesPHP and formatBytes', () => {
 	assert.equal(formatBytes(0), '0 B');
 	assert.equal(formatBytes(1536), '1.5 KB');
 });
+
+test('usesPHP ignores php_version stored on non-PHP app types', () => {
+	for (const app_type of ['go', 'python', 'deno', 'bun', 'node']) {
+		assert.equal(usesPHP({ app_type, php_version: '8.2' }), false, app_type);
+	}
+	assert.equal(usesPHP({ app_type: 'laravel', php_version: '8.3' }), true);
+});

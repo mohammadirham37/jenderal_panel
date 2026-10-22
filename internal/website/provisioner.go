@@ -377,8 +377,8 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 		return
 	}
 
-	// Render and write PHP-FPM pool config (if not static).
-	if w.AppType != "static" && w.PHPVersion != "" {
+	// Render and write PHP-FPM pool config (PHP app types only).
+	if appTypeUsesPHP(w.AppType) && w.PHPVersion != "" {
 		poolData := PoolData{
 			Domain:     w.Domain,
 			WebUser:    w.WebUser,
@@ -446,7 +446,7 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	}
 
 	// Restart PHP-FPM if applicable.
-	if w.AppType != "static" && w.PHPVersion != "" {
+	if appTypeUsesPHP(w.AppType) && w.PHPVersion != "" {
 		fpmService := "php" + w.PHPVersion + "-fpm"
 		result, err = p.exec.RunSudo(ctx, "systemctl", "restart", fpmService)
 		if err != nil {
