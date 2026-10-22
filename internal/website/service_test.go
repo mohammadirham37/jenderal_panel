@@ -1328,3 +1328,95 @@ func TestNonPHPWebsitesRejectPHPVersionAndNginxTemplates(t *testing.T) {
 		t.Errorf("nginx_profile changed to %q on a Go site, want app-proxy", stored)
 	}
 }
+
+// dbReadingTLSRegen mimics internal/ssl: it reads the website row from the
+// database when asked to re-render the HTTPS vhost.
+type dbReadingTLSRegen struct {
+	db   *sql.DB
+	seen []string
+}
+
+func (r *dbReadingTLSRegen) RegenerateTLSVhost(ctx context.Context, websiteID string) error {
+	var php, root string
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(php_version, ''), document_root FROM websites WHERE id = ?`, websiteID).Scan(&php, &root); err != nil {
+		return err
+	}
+	r.seen = append(r.seen, php+"|"+root)
+	return nil
+}
+
+func TestUpdatePHPVersionRegeneratesHTTPSWithNewVersion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock := &executor.MockExecutor{
+		RunFunc:     func(ctx context.Context, name string, args ...string) (*executor.Result, error) { return &executor.Result{}, nil },
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) { return &executor.Result{}, nil },
+	}
+	svc := NewService(db, mock, nil)
+	regen := &dbReadingTLSRegen{db: db}
+	svc.SetTLSVhostRegenerator(regen)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, CreateRequest{Domain: "shop.example.com", Template: "php", PHPVersion: "8.1", SetupMode: "config-only"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET status = 'active' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	version := "8.2"
+	if err := svc.Update(ctx, created.ID, UpdateRequest{PHPVersion: &version}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(regen.seen) == 0 || !strings.HasPrefix(regen.seen[len(regen.seen)-1], "8.2|") {
+		t.Fatalf("HTTPS vhost was rendered with %v, want PHP 8.2 — the old socket is removed right after, causing 502", regen.seen)
+	}
+}
+
+type failingTLSRegen struct{}
+
+func (failingTLSRegen) RegenerateTLSVhost(context.Context, string) error {
+	return errors.New("nginx -t failed")
+}
+
+func TestUpdatePHPVersionRestoresRowWhenVhostFails(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var removed []string
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) { return &executor.Result{}, nil },
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "rm" {
+				removed = append(removed, strings.Join(args, " "))
+			}
+			return &executor.Result{}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+	ctx := context.Background()
+	created, err := svc.Create(ctx, CreateRequest{Domain: "shop.example.com", Template: "php", PHPVersion: "8.1", SetupMode: "config-only"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE websites SET status = 'active' WHERE id = ?`, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	svc.SetTLSVhostRegenerator(failingTLSRegen{})
+
+	version := "8.2"
+	if err := svc.Update(ctx, created.ID, UpdateRequest{PHPVersion: &version}); err == nil {
+		t.Fatal("Update must fail when the vhost cannot be regenerated")
+	}
+	var php string
+	if err := db.QueryRow(`SELECT php_version FROM websites WHERE id = ?`, created.ID).Scan(&php); err != nil {
+		t.Fatal(err)
+	}
+	if php != "8.1" {
+		t.Errorf("php_version = %q after a failed switch, want the old 8.1", php)
+	}
+	for _, r := range removed {
+		if strings.Contains(r, "/etc/php/8.1/") {
+			t.Errorf("the old pool must stay when the switch fails: rm %s", r)
+		}
+	}
+}

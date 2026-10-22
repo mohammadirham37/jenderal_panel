@@ -727,6 +727,7 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 	// pool is only removed afterwards. The site must not be mid-provisioning
 	// or suspended — the pool/vhost surgery would fight those flows.
 	oldPHPVersion := w.PHPVersion
+	oldDocumentRoot := w.DocumentRoot
 	phpChanged := false
 	if req.PHPVersion != nil {
 		newVersion := strings.TrimSpace(*req.PHPVersion)
@@ -794,8 +795,31 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 		}
 	}
 
+	// Persist the new values before rendering: the HTTPS vhost is rebuilt by
+	// the ssl service from the database row, so rendering first would keep
+	// HTTPS on the old PHP socket (502 once the old pool is removed) and on
+	// the old document root. A failed render restores the previous row.
+	persist := func(phpVersion, root string) error {
+		_, err := s.db.ExecContext(ctx,
+			`UPDATE websites SET php_version = ?, document_root = ?, updated_at = ? WHERE id = ?`,
+			nullableString(phpVersion), root, time.Now().UTC().Format(time.RFC3339), id,
+		)
+		return err
+	}
+	if err := persist(w.PHPVersion, w.DocumentRoot); err != nil {
+		return fmt.Errorf("update website: %w", err)
+	}
+
 	if phpChanged || rootChanged {
 		if err := s.regenerateConfig(ctx, w, ""); err != nil {
+			previous := w
+			previous.PHPVersion = oldPHPVersion
+			previous.DocumentRoot = oldDocumentRoot
+			if restoreErr := persist(oldPHPVersion, oldDocumentRoot); restoreErr != nil {
+				return fmt.Errorf("regenerate vhost: %w (restoring settings failed: %v)", err, restoreErr)
+			}
+			// Best effort: point both vhosts back at the old, still running pool.
+			_ = s.regenerateConfig(ctx, previous, "")
 			return fmt.Errorf("regenerate vhost: %w", err)
 		}
 	}
@@ -810,15 +834,6 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 		if err := s.runSudoOK(ctx, "systemctl", "restart", "php"+oldPHPVersion+"-fpm"); err != nil {
 			return fmt.Errorf("restart PHP %s-FPM: %w", oldPHPVersion, err)
 		}
-	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx,
-		`UPDATE websites SET php_version = ?, document_root = ?, updated_at = ? WHERE id = ?`,
-		nullableString(w.PHPVersion), w.DocumentRoot, now, id,
-	)
-	if err != nil {
-		return fmt.Errorf("update website: %w", err)
 	}
 
 	return nil
