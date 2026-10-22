@@ -29,6 +29,46 @@ type siteRecord struct {
 	Aliases          []string
 	AppPort          int
 	ForceHTTPS       bool
+	// Fields the website service also renders into the vhost; without them
+	// HTTPS (and the HTTP vhost the ssl service rewrites) lost the chosen
+	// nginx template, the Octane upstream, and the reverse-proxy target.
+	NginxProfile string
+	OctanePort   int
+	ProxyScheme  string
+	ProxyHost    string
+	ProxyPort    int
+}
+
+// vhostBase builds the vhost data for a site exactly as the website service
+// does (internal/website regenerateConfig), so HTTP and HTTPS stay in sync.
+// The per-site security snippet is only included when it exists: nginx
+// refuses to load a vhost that includes a missing file.
+func (s *Service) vhostBase(ctx context.Context, site siteRecord) websiteconfig.VhostData {
+	securityInclude := "/etc/nginx/jenderal/security/sites/" + site.WebsiteID + ".conf"
+	if probe, err := s.exec.RunSudo(ctx, "test", "-f", securityInclude); err != nil || probe == nil || probe.ExitCode != 0 {
+		securityInclude = ""
+	}
+	return websiteconfig.VhostData{
+		Domain:            site.PrimaryDomain,
+		Aliases:           strings.Join(site.Aliases, " "),
+		DocumentRoot:      site.DocumentRoot,
+		ACMEChallengeRoot: websiteconfig.DefaultACMEChallengeRoot,
+		LogDir:            site.LogDir,
+		PHPVersion:        site.PHPVersion,
+		AppType:           site.AppType,
+		Profile: websiteconfig.NginxProfileForWebsite(model.Website{
+			NginxProfile: site.NginxProfile, Framework: site.Framework,
+			FrameworkVersion: site.FrameworkVersion, AppType: site.AppType,
+		}),
+		IPv6:            s.ipv6Available(),
+		ForceHTTPS:      site.ForceHTTPS,
+		SecurityInclude: securityInclude,
+		OctanePort:      site.OctanePort,
+		AppPort:         site.AppPort,
+		ProxyScheme:     site.ProxyScheme,
+		ProxyHost:       site.ProxyHost,
+		ProxyPort:       site.ProxyPort,
+	}
 }
 
 type activationRequest struct {
@@ -58,7 +98,9 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 	var forceHTTPS int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT w.id, w.domain, d.name, w.document_root, w.php_version, w.app_type, w.status, w.web_user,
-		        w.framework, w.framework_version, w.app_port, w.force_https
+		        w.framework, w.framework_version, w.app_port, w.force_https,
+		        COALESCE(w.nginx_profile, ''), COALESCE(w.octane_port, 0),
+		        COALESCE(w.proxy_scheme, ''), COALESCE(w.proxy_host, ''), COALESCE(w.proxy_port, 0)
 		 FROM websites w
 		 JOIN domains d ON d.website_id = w.id
 		 WHERE w.id = ? AND d.name = ?`,
@@ -67,6 +109,7 @@ func (s *Service) loadSiteForDomain(ctx context.Context, websiteID, domain strin
 		&site.WebsiteID, &site.PrimaryDomain, &site.Domain, &site.DocumentRoot,
 		&phpVersion, &site.AppType, &site.Status, &webUser, &framework, &frameworkVersion,
 		&site.AppPort, &forceHTTPS,
+		&site.NginxProfile, &site.OctanePort, &site.ProxyScheme, &site.ProxyHost, &site.ProxyPort,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -150,21 +193,8 @@ func (s *Service) beginCertificateActivation(ctx context.Context, req activation
 		return fail(fmt.Errorf("install private key: %w", err))
 	}
 
-	aliases := strings.Join(req.Site.Aliases, " ")
-	base := websiteconfig.VhostData{
-		Domain:            req.Site.PrimaryDomain,
-		Aliases:           aliases,
-		DocumentRoot:      req.Site.DocumentRoot,
-		ACMEChallengeRoot: websiteconfig.DefaultACMEChallengeRoot,
-		LogDir:            req.Site.LogDir,
-		PHPVersion:        req.Site.PHPVersion,
-		AppType:           req.Site.AppType,
-		Profile:           websiteconfig.NginxProfileFor(req.Site.Framework, req.Site.FrameworkVersion, req.Site.AppType),
-		AppPort:           req.Site.AppPort,
-		IPv6:              s.ipv6Available(),
-		RedirectDomains:   req.RedirectDomains,
-		ForceHTTPS:        req.Site.ForceHTTPS,
-	}
+	base := s.vhostBase(ctx, req.Site)
+	base.RedirectDomains = req.RedirectDomains
 	httpConfig, err := websiteconfig.RenderVhost(base)
 	if err != nil {
 		return fail(fmt.Errorf("render HTTP configuration: %w", err))
@@ -224,19 +254,9 @@ func (a *activationSession) rollback() error {
 }
 
 func (s *Service) syncHTTPConfig(ctx context.Context, site siteRecord, redirectDomains []string) error {
-	config, err := websiteconfig.RenderVhost(websiteconfig.VhostData{
-		Domain:            site.PrimaryDomain,
-		Aliases:           strings.Join(site.Aliases, " "),
-		DocumentRoot:      site.DocumentRoot,
-		ACMEChallengeRoot: websiteconfig.DefaultACMEChallengeRoot,
-		LogDir:            site.LogDir,
-		PHPVersion:        site.PHPVersion,
-		AppType:           site.AppType,
-		Profile:           websiteconfig.NginxProfileFor(site.Framework, site.FrameworkVersion, site.AppType),
-		IPv6:              s.ipv6Available(),
-		RedirectDomains:   redirectDomains,
-		ForceHTTPS:        site.ForceHTTPS,
-	})
+	data := s.vhostBase(ctx, site)
+	data.RedirectDomains = redirectDomains
+	config, err := websiteconfig.RenderVhost(data)
 	if err != nil {
 		return fmt.Errorf("render HTTP configuration: %w", err)
 	}

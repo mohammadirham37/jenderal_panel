@@ -60,20 +60,7 @@ func (s *Service) rewriteTLSVhost(ctx context.Context, site siteRecord, domain s
 		return nil
 	}
 
-	aliases := strings.Join(site.Aliases, " ")
-	base := websiteconfig.VhostData{
-		Domain:            site.PrimaryDomain,
-		Aliases:           aliases,
-		DocumentRoot:      site.DocumentRoot,
-		ACMEChallengeRoot: websiteconfig.DefaultACMEChallengeRoot,
-		LogDir:            site.LogDir,
-		PHPVersion:        site.PHPVersion,
-		AppType:           site.AppType,
-		Profile:           websiteconfig.NginxProfileFor(site.Framework, site.FrameworkVersion, site.AppType),
-		AppPort:           site.AppPort,
-		IPv6:              s.ipv6Available(),
-		ForceHTTPS:        site.ForceHTTPS,
-	}
+	base := s.vhostBase(ctx, site)
 	tlsConfig, err := websiteconfig.RenderTLSVhost(websiteconfig.TLSVhostData{
 		VhostData:       base,
 		TLSDomain:       domain,
