@@ -29,3 +29,19 @@ func CanManageResource(isAdmin bool, userID, createdBy string) bool {
 	}
 	return createdBy != "" && createdBy == userID
 }
+
+type terminalUserKey struct{}
+
+// WithTerminalUser records the account a terminal session may run as, as
+// resolved by the scope middleware from the website record: a website's
+// web user, or "" for the admin-only root shell.
+func WithTerminalUser(ctx context.Context, webUser string) context.Context {
+	return context.WithValue(ctx, terminalUserKey{}, webUser)
+}
+
+// TerminalUserFromContext returns the resolved terminal account; ok is false
+// when the scope middleware did not authorize a terminal session.
+func TerminalUserFromContext(ctx context.Context) (webUser string, ok bool) {
+	webUser, ok = ctx.Value(terminalUserKey{}).(string)
+	return webUser, ok
+}

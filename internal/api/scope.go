@@ -66,31 +66,50 @@ func (d *Dependencies) ScopeMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		case pattern == "/ws/terminal":
-			// Website-scoped sessions require owning the website; the
+			// The shell account is derived from the website record; the
+			// client's web_user is only a selector and must match it. The
 			// unscoped root shell is admin-only.
-			websiteID := r.URL.Query().Get("website_id")
-			webUser := r.URL.Query().Get("web_user")
-			if websiteID == "" && webUser != "" {
-				website, err := d.WebsiteSvc.GetByWebUser(ctx, webUser)
-				if err != nil {
-					httputil.HandleError(w, err)
-					return
-				}
-				websiteID = website.ID
-			}
-			if websiteID == "" {
-				if !admin {
-					httputil.HandleError(w, model.ErrForbidden)
-					return
-				}
-			} else if !d.canManageWebsite(ctx, admin, user.ID, websiteID) {
-				httputil.HandleError(w, model.ErrForbidden)
+			shellUser, err := d.resolveTerminalUser(ctx, admin, user.ID,
+				r.URL.Query().Get("website_id"), r.URL.Query().Get("web_user"))
+			if err != nil {
+				httputil.HandleError(w, err)
 				return
 			}
+			r = r.WithContext(auth.WithTerminalUser(ctx, shellUser))
 		}
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// resolveTerminalUser decides which account a terminal session runs as.
+// A website-scoped session always runs as that website's web user, and only
+// for callers who may manage the website; "" (root) is admin-only and only
+// when no website was requested.
+func (d *Dependencies) resolveTerminalUser(ctx context.Context, admin bool, userID, websiteID, webUser string) (string, error) {
+	if websiteID == "" && webUser == "" {
+		if !admin {
+			return "", model.ErrForbidden
+		}
+		return "", nil
+	}
+	var site model.Website
+	var err error
+	if websiteID != "" {
+		site, err = d.WebsiteSvc.Get(ctx, websiteID)
+	} else {
+		site, err = d.WebsiteSvc.GetByWebUser(ctx, webUser)
+	}
+	if err != nil || site.WebUser == "" {
+		return "", model.ErrForbidden
+	}
+	if webUser != "" && webUser != site.WebUser {
+		return "", model.ErrForbidden
+	}
+	if !auth.CanManageResource(admin, userID, site.CreatedBy) {
+		return "", model.ErrForbidden
+	}
+	return site.WebUser, nil
 }
 
 func (d *Dependencies) canManageWebsite(ctx context.Context, admin bool, userID, websiteID string) bool {

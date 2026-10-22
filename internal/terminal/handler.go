@@ -81,15 +81,21 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The account comes from the scope middleware (website record), never
+	// from the query string; without it there is no authorized session.
+	webUser, authorized := auth.TerminalUserFromContext(r.Context())
+	if !authorized {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
 	defer conn.Close()
 
-	// Check for website-scoped terminal query parameters.
 	websiteID := r.URL.Query().Get("website_id")
-	webUser := r.URL.Query().Get("web_user")
 	workdir := r.URL.Query().Get("workdir")
 
 	// Log session start.
@@ -116,12 +122,8 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), sessionTimeout)
 	defer cancel()
 
-	var session *executor.Session
-	if webUser != "" {
-		session, err = starter.StartSession(ctx, "/usr/bin/sudo", "-u", webUser, "bash", "--norc")
-	} else {
-		session, err = starter.StartSession(ctx, "/usr/bin/sudo", "bash", "--norc")
-	}
+	command := shellCommand(webUser)
+	session, err := starter.StartSession(ctx, command[0], command[1:]...)
 	if err != nil {
 		h.sendError(conn, "failed to start shell: "+err.Error())
 		return
@@ -286,4 +288,13 @@ func (h *Handler) sendError(conn *websocket.Conn, message string) {
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 	_ = conn.WriteMessage(websocket.TextMessage, data)
+}
+
+// shellCommand is the argv of the interactive shell: the website's web user
+// for scoped sessions, root for the admin-only unscoped terminal.
+func shellCommand(webUser string) []string {
+	if webUser != "" {
+		return []string{"/usr/bin/sudo", "-u", webUser, "bash", "--norc"}
+	}
+	return []string{"/usr/bin/sudo", "bash", "--norc"}
 }

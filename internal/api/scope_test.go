@@ -120,3 +120,48 @@ func TestScopeMiddlewareBlocksOtherUsersOnAPIRoutes(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveTerminalUser(t *testing.T) {
+	f := newScopeFixture(t)
+	d := Dependencies{WebsiteSvc: website.NewService(f.db, &executor.MockExecutor{}, nil)}
+	ctx := context.Background()
+	var ownerID string
+	if err := f.db.QueryRow(`SELECT created_by FROM websites WHERE id = 'site-1'`).Scan(&ownerID); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name              string
+		admin             bool
+		userID            string
+		websiteID, user   string
+		wantUser          string
+		wantErr           bool
+	}{
+		{name: "owner by web_user (the website page)", userID: ownerID, user: "web_owned", wantUser: "web_owned"},
+		{name: "owner by website_id", userID: ownerID, websiteID: "site-1", wantUser: "web_owned"},
+		{name: "owner website_id with matching web_user", userID: ownerID, websiteID: "site-1", user: "web_owned", wantUser: "web_owned"},
+		{name: "owner website_id with web_user=root", userID: ownerID, websiteID: "site-1", user: "root", wantErr: true},
+		{name: "owner website_id with another account", userID: ownerID, websiteID: "site-1", user: "web_other", wantErr: true},
+		{name: "owner unscoped root shell", userID: ownerID, wantErr: true},
+		{name: "owner web_user=root without website", userID: ownerID, user: "root", wantErr: true},
+		{name: "other user on owned site", userID: "someone-else", websiteID: "site-1", wantErr: true},
+		{name: "admin unscoped root shell", admin: true, userID: "admin", wantUser: ""},
+		{name: "admin on a site uses the site account", admin: true, userID: "admin", websiteID: "site-1", wantUser: "web_owned"},
+		{name: "admin web_user=root is still refused", admin: true, userID: "admin", user: "root", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := d.resolveTerminalUser(ctx, tc.admin, tc.userID, tc.websiteID, tc.user)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("got shell user %q, want refusal", got)
+				}
+				return
+			}
+			if err != nil || got != tc.wantUser {
+				t.Fatalf("got %q, %v; want %q", got, err, tc.wantUser)
+			}
+		})
+	}
+}

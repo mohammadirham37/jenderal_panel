@@ -1096,7 +1096,8 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Use(deps.ScopeMiddleware)
 		r.Get("/ws/metrics", systemHandler.WSMetrics)
 		r.Get("/ws/logs", systemHandler.StreamLog)
-		r.Get("/ws/terminal", terminalHandler.HandleWS)
+		r.With(auth.RequirePermission(deps.RBAC, "terminal.access")).
+			Get("/ws/terminal", terminalHandler.HandleWS)
 	})
 
 	// Static files (SPA frontend)
