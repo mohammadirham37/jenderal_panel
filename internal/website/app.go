@@ -38,6 +38,9 @@ type AppServiceStatus struct {
 	Unit         string `json:"unit"`
 	Active       bool   `json:"active"`
 	NodeVersion  string `json:"node_version"`
+	// AutoBuild (Go sites) runs build + restart after every git deploy;
+	// when false the operator builds from the Deployment tab instead.
+	AutoBuild bool `json:"auto_build"`
 }
 
 func appUnitName(websiteID string) string {
@@ -126,7 +129,40 @@ func (s *Service) GetAppService(ctx context.Context, websiteID string) (AppServi
 		Unit:         unit,
 		Active:       active,
 		NodeVersion:  w.NodeVersion,
+		AutoBuild:    s.appAutoBuild(ctx, w.ID),
 	}, nil
+}
+
+// appAutoBuild reports whether git deploys build and restart the app; on by
+// default and for rows the column cannot be read for.
+func (s *Service) appAutoBuild(ctx context.Context, websiteID string) bool {
+	var enabled int
+	if err := s.db.QueryRowContext(ctx, `SELECT app_auto_build FROM websites WHERE id = ?`, websiteID).Scan(&enabled); err != nil {
+		return true
+	}
+	return enabled != 0
+}
+
+// SetAppAutoBuild turns the post-deploy build + restart of a Go site on or
+// off. It never touches the running service.
+func (s *Service) SetAppAutoBuild(ctx context.Context, websiteID string, enabled bool) error {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return err
+	}
+	if w.AppType != "go" {
+		return model.NewValidationError("auto build only applies to Go websites")
+	}
+	value := 0
+	if enabled {
+		value = 1
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE websites SET app_auto_build = ?, updated_at = ? WHERE id = ?`,
+		value, time.Now().UTC().Format(time.RFC3339), websiteID)
+	if err != nil {
+		return fmt.Errorf("save auto build: %w", err)
+	}
+	return nil
 }
 
 // buildAppUnit renders the systemd unit for an app service, dispatching on
@@ -373,12 +409,21 @@ func (s *Service) RunAppBuildTask(ctx context.Context, websiteID string) (string
 	if w.AppType != "node" && w.AppType != "go" && w.AppType != "python" && w.AppType != "deno" && w.AppType != "bun" {
 		return "", model.NewValidationError("the app service is only available for node, go, python, deno, and bun sites")
 	}
-	if strings.TrimSpace(w.AppBuildCommand) == "" && w.AppType != "python" {
+	if w.AppType != "go" && strings.TrimSpace(w.AppBuildCommand) == "" && w.AppType != "python" {
 		return "", model.NewValidationError("no build command configured")
 	}
 	tr := s.taskRunner()
 	if tr == nil {
 		return "", fmt.Errorf("task runner not available")
+	}
+	if w.AppType == "go" {
+		// Manual Build & Restart runs the same pipeline as a git deploy:
+		// build, executable check, unit refresh, restart, health check.
+		return tr.RunFuncWithOptions(
+			taskrunner.Options{Name: "Build & restart — " + w.Domain, Module: "website", Timeout: 30 * time.Minute},
+			func(taskCtx context.Context, write func(string)) error {
+				return s.deployGoApp(taskCtx, websiteID, write)
+			}), nil
 	}
 
 	return tr.RunFuncWithOptions(

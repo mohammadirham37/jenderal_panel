@@ -22,6 +22,26 @@ func (s *Service) RunDeployHook(ctx context.Context, websiteID string, write fun
 	if w.AppType != "go" {
 		return nil
 	}
+	// go-binary uploads always restart (there is nothing to build); go-build
+	// sites can opt out and build from the Deployment tab.
+	if w.AppRuntime != "go-binary" && !s.appAutoBuild(ctx, websiteID) {
+		write("auto build is off: code updated, app not rebuilt; use Build & Restart on the Deployment tab")
+		return nil
+	}
+	return s.deployGoApp(ctx, websiteID, write)
+}
+
+// deployGoApp builds (go-build), verifies the start executable, refreshes the
+// unit, restarts it, and waits for the app port. Shared by git deploys and
+// the manual Build & Restart.
+func (s *Service) deployGoApp(ctx context.Context, websiteID string, write func(string)) error {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return err
+	}
+	if w.AppType != "go" {
+		return model.NewValidationError("build & restart is only available for Go websites")
+	}
 	if w.AppPort <= 0 {
 		return model.NewValidationError("app port is not allocated yet; finish provisioning first")
 	}

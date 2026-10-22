@@ -300,6 +300,28 @@ func (h *Handler) SaveAppService(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, status)
 }
 
+// SetAppAutoBuild handles PUT /api/websites/{id}/app/auto-build.
+func (h *Handler) SetAppAutoBuild(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		AutoBuild *bool `json:"auto_build"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if req.AutoBuild == nil {
+		httputil.HandleError(w, model.NewValidationError("auto_build is required"))
+		return
+	}
+	if err := h.svc.SetAppAutoBuild(r.Context(), id, *req.AutoBuild); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "set_app_auto_build", id, "auto build on deploy: "+strconv.FormatBool(*req.AutoBuild))
+	httputil.JSON(w, http.StatusOK, map[string]bool{"auto_build": *req.AutoBuild})
+}
+
 // AppAction handles POST /api/websites/{id}/app/{action} for
 // start/stop/restart.
 func (h *Handler) AppAction(w http.ResponseWriter, r *http.Request) {

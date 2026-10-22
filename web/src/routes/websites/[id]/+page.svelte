@@ -12,6 +12,7 @@
 	import WebsiteWpToolkitSection from '$lib/components/WebsiteWpToolkitSection.svelte';
 	import WebsitePhpSettingsSection from '$lib/components/WebsitePhpSettingsSection.svelte';
 	import WebsiteAppSection from '$lib/components/WebsiteAppSection.svelte';
+	import WebsiteGoBuildSection from '$lib/components/WebsiteGoBuildSection.svelte';
 	import WebsiteDiagnosticsSection from '$lib/components/WebsiteDiagnosticsSection.svelte';
 	import WebsiteBandwidthSection from '$lib/components/WebsiteBandwidthSection.svelte';
 	import { permissions, user as authUser } from '$lib/stores/auth';
@@ -498,6 +499,8 @@ import { toast } from '$lib/stores/toast';
 	let expandedDeploymentId = $state<string | null>(null);
 
 	let deploymentTabInitialized = $state(false);
+	// Loaded by WebsiteGoBuildSection; null until known.
+	let goAutoBuild = $state<boolean | null>(null);
 
 	// ─── Commands ─────────────────────────────────────────────────────
 
@@ -1940,11 +1943,14 @@ import { toast } from '$lib/stores/toast';
 			<!-- ============================================================ -->
 			{:else if activeTab === 'Deployment'}
 				<div class="space-y-6">
+					{#if website.app_type === 'go'}
+						<WebsiteGoBuildSection websiteID={website.id} canUpdate={canUpdateWebsite} bind:autoBuild={goAutoBuild} />
+					{/if}
 					<!-- Git Repository -->
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 							<div class="mb-4 flex flex-wrap items-center gap-2">
 								<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.deploy.repo_title')}</h3>
-								{#if website?.app_type === 'go'}
+								{#if website?.app_type === 'go' && goAutoBuild !== false}
 									<span class="rounded-full bg-green-900/50 px-2.5 py-0.5 text-[11px] font-medium text-green-400">{translate($language, 'wd.deploy.autoBuild')}</span>
 								{/if}
 							</div>

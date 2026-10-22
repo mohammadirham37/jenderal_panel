@@ -284,3 +284,62 @@ func TestRunDeployHook_StartPathIsDirectory_DoesNotRestart(t *testing.T) {
 		t.Fatalf("unit restarted although the start path is a directory; calls = %#v", *sudoCalls)
 	}
 }
+
+func TestRunDeployHook_AutoBuildOff_SkipsBuildAndRestart(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock, sudoCalls := deployHookExecutor(t, 0, "", "active")
+	svc := NewService(db, mock, nil)
+	id := insertAppWebsite(t, db, "go.example.com", "go", "go", 8210)
+	if err := svc.SetAppAutoBuild(context.Background(), id, false); err != nil {
+		t.Fatalf("SetAppAutoBuild: %v", err)
+	}
+	status, err := svc.GetAppService(context.Background(), id)
+	if err != nil || status.AutoBuild {
+		t.Fatalf("GetAppService auto_build = %v, err %v; want false", status.AutoBuild, err)
+	}
+
+	var logged []string
+	if err := svc.RunDeployHook(context.Background(), id, func(l string) { logged = append(logged, l) }); err != nil {
+		t.Fatalf("RunDeployHook error = %v", err)
+	}
+	for _, c := range *sudoCalls {
+		if c[0] == "-u" || (c[0] == "systemctl" && (len(c) > 1 && (c[1] == "restart" || c[1] == "start"))) {
+			t.Fatalf("auto build off must not build or restart; calls = %#v", *sudoCalls)
+		}
+	}
+	if !strings.Contains(strings.Join(logged, "\n"), "auto build is off") {
+		t.Errorf("log should explain the skipped build: %v", logged)
+	}
+}
+
+func TestAutoBuildDefaultsOnAndRejectsNonGo(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock, _ := deployHookExecutor(t, 0, "", "active")
+	svc := NewService(db, mock, nil)
+	id := insertAppWebsite(t, db, "go.example.com", "go", "go", 8210)
+	status, err := svc.GetAppService(context.Background(), id)
+	if err != nil || !status.AutoBuild {
+		t.Fatalf("new go site auto_build = %v, err %v; want true", status.AutoBuild, err)
+	}
+	nodeID := insertAppWebsite(t, db, "node.example.com", "node", "node", 8211)
+	if err := svc.SetAppAutoBuild(context.Background(), nodeID, false); err == nil {
+		t.Error("auto build applies to Go sites only")
+	}
+}
+
+func TestRunAppBuildTask_GoUsesDeployPipeline(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock, _ := deployHookExecutor(t, 0, "", "active")
+	svc := NewService(db, mock, nil)
+	id := insertAppWebsite(t, db, "bin.example.com", "go", "go-binary", 8212)
+	// go-binary has no build command; manual Build & Restart must still work.
+	if _, err := db.Exec(`UPDATE websites SET app_build_command = '' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.RunAppBuildTask(context.Background(), id); err != nil && strings.Contains(err.Error(), "no build command") {
+		t.Fatalf("go-binary manual restart rejected: %v", err)
+	}
+}

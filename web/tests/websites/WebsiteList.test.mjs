@@ -65,3 +65,12 @@ test('appTypeUsesPHP drives the PHP UI on the website detail page', async () => 
 	assert.match(page, /\(t !== 'PHP Settings' \|\| appTypeUsesPHP\(website\?\.app_type\)\)/);
 	assert.match(page, /\{#if appTypeUsesPHP\(website\.app_type\)\}\s*<span>\{translate\(\$language, 'wd\.php_version'\)\}/);
 });
+
+test('Go sites get the Build & Run card on the Deployment tab', async () => {
+	const { readFileSync } = await import('node:fs');
+	const page = readFileSync(new URL('../../src/routes/websites/[id]/+page.svelte', import.meta.url), 'utf8');
+	assert.match(page, /\{#if website\.app_type === 'go'\}\s*<WebsiteGoBuildSection /);
+	const card = readFileSync(new URL('../../src/lib/components/WebsiteGoBuildSection.svelte', import.meta.url), 'utf8');
+	assert.match(card, /appAPI\('auto-build'\)/);
+	assert.match(card, /appAPI\('build'\)/);
+});

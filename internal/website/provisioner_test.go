@@ -68,6 +68,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 		,proxy_scheme TEXT NOT NULL DEFAULT ''
 		,proxy_host TEXT NOT NULL DEFAULT ''
 		,proxy_port INTEGER NOT NULL DEFAULT 0
+		,app_auto_build INTEGER NOT NULL DEFAULT 1
 	);
 	CREATE TABLE IF NOT EXISTS domains (
 		id         TEXT PRIMARY KEY,
