@@ -47,6 +47,10 @@ func deployHookExecutor(t *testing.T, buildExit int, buildStderr string, isActiv
 				}
 				return &executor.Result{ExitCode: 0}, nil
 			}
+			if name == "stat" {
+				// The built binary is a regular executable file.
+				return &executor.Result{ExitCode: 0, Stdout: "regular file\n"}, nil
+			}
 			if name == "systemctl" && len(args) >= 2 && args[0] == "is-active" {
 				return &executor.Result{ExitCode: exitForActive(isActive), Stdout: isActive}, nil
 			}
@@ -256,4 +260,27 @@ func mustGetWebsite(t *testing.T, svc *Service, id string) model.Website {
 		t.Fatal(err)
 	}
 	return w
+}
+
+func TestRunDeployHook_StartPathIsDirectory_DoesNotRestart(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	mock, sudoCalls := deployHookExecutor(t, 0, "", "active")
+	base := mock.RunSudoFunc
+	mock.RunSudoFunc = func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		if name == "stat" {
+			*sudoCalls = append(*sudoCalls, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0, Stdout: "directory\n"}, nil
+		}
+		return base(ctx, name, args...)
+	}
+	svc := NewService(db, mock, nil)
+	insertAppWebsite(t, db, "go.example.com", "go", "go", 8210)
+	err := svc.RunDeployHook(context.Background(), "w-go.example.com", func(string) {})
+	if err == nil || !strings.Contains(err.Error(), "is a directory") || !strings.Contains(err.Error(), "./server") {
+		t.Fatalf("err = %v, want directory guidance", err)
+	}
+	if hasSystemctlAction(sudoCalls, "restart") || hasSystemctlAction(sudoCalls, "start") {
+		t.Fatalf("unit restarted although the start path is a directory; calls = %#v", *sudoCalls)
+	}
 }

@@ -44,6 +44,10 @@ func (s *Service) RunDeployHook(ctx context.Context, websiteID string, write fun
 		write("go-binary site: skipping build")
 	}
 
+	if err := s.checkAppExecutable(ctx, w, root, write); err != nil {
+		return err
+	}
+
 	// Rewrite the unit on every deploy so sites created before a unit
 	// template fix (e.g. the PORT override) pick it up without re-provisioning.
 	if err := writeAppUnitFiles(ctx, s.exec, w); err != nil {
@@ -71,7 +75,7 @@ func (s *Service) RunDeployHook(ctx context.Context, websiteID string, write fun
 				write(line)
 			}
 		}
-		return model.NewDomainError("APP_HEALTH_CHECK_FAILED", report.explain(w.AppPort), err)
+		return model.NewDomainError("APP_HEALTH_CHECK_FAILED", report.explain(w.AppPort), nil)
 	}
 	write(fmt.Sprintf("app healthy on port %d", w.AppPort))
 	return nil

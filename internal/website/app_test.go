@@ -436,3 +436,88 @@ func TestAppStartupReportExplainsCrashLoopAndSilentApp(t *testing.T) {
 		t.Errorf("silent explain = %s", msg)
 	}
 }
+
+func execCheckMock(statType string, statExit, testXExit int, mountOpts string, calls *[][]string) *executor.MockExecutor {
+	return &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			*calls = append(*calls, append([]string{name}, args...))
+			switch name {
+			case "stat":
+				return &executor.Result{ExitCode: statExit, Stdout: statType + "\n"}, nil
+			case "test":
+				return &executor.Result{ExitCode: testXExit}, nil
+			case "findmnt":
+				return &executor.Result{Stdout: mountOpts + "\n"}, nil
+			}
+			return &executor.Result{}, nil
+		},
+	}
+}
+
+func TestCheckAppExecutable(t *testing.T) {
+	w := model.Website{AppRuntime: "go", AppStartCommand: "./app --flag", AppBuildCommand: "go build -o app ."}
+	root := "/home/u/app"
+
+	cases := []struct {
+		name, statType     string
+		statExit, testExit int
+		mount              string
+		wantErr            []string
+		wantChmod          bool
+	}{
+		{name: "ok", statType: "regular file", mount: "rw,relatime"},
+		{name: "directory", statType: "directory", mount: "rw", wantErr: []string{"/home/u/app/app is a directory", "go build -o server .", "./server"}},
+		{name: "missing", statExit: 1, mount: "rw", wantErr: []string{"does not exist", "/home/u/app/app"}},
+		{name: "not executable", statType: "regular file", testExit: 1, mount: "rw", wantChmod: true},
+		{name: "noexec", statType: "regular file", mount: "rw,nosuid,nodev,noexec", wantErr: []string{"noexec"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls [][]string
+			svc := &Service{exec: execCheckMock(tc.statType, tc.statExit, tc.testExit, tc.mount, &calls)}
+			var notes []string
+			err := svc.checkAppExecutable(context.Background(), w, root, func(s string) { notes = append(notes, s) })
+			if len(tc.wantErr) == 0 && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			for _, want := range tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Errorf("error %v missing %q", err, want)
+				}
+			}
+			chmod := false
+			for _, c := range calls {
+				if c[0] == "stat" && c[len(c)-1] != "/home/u/app/app" {
+					t.Errorf("stat must check the executable without its arguments: %v", c)
+				}
+				if c[0] == "chmod" {
+					chmod = true
+				}
+			}
+			if chmod != tc.wantChmod {
+				t.Errorf("chmod called = %v, want %v (calls %v)", chmod, tc.wantChmod, calls)
+			}
+		})
+	}
+}
+
+func TestAppExecPath(t *testing.T) {
+	for start, want := range map[string]string{
+		"./app":              "/home/u/app/app",
+		"./bin/server -v":    "/home/u/app/bin/server",
+		"server":             "/home/u/app/server",
+		"/usr/local/bin/foo": "/usr/local/bin/foo",
+	} {
+		if got := appExecPath(start, "/home/u/app"); got != want {
+			t.Errorf("appExecPath(%q) = %q, want %q", start, got, want)
+		}
+	}
+}
+
+func TestAppStartupReportExplainsPermissionDenied(t *testing.T) {
+	r := appStartupReport{ActiveState: "activating", SubState: "auto-restart", Restarts: 5,
+		Logs: []string{"/usr/bin/env: '/home/u/app/app': Permission denied"}}
+	if msg := r.explain(8200); !strings.Contains(msg, "Permission denied") || !strings.Contains(msg, "./server") {
+		t.Errorf("explain = %s", msg)
+	}
+}

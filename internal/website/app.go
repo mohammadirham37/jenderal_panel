@@ -226,7 +226,7 @@ func buildBinaryAppUnit(w model.Website, projectRoot string) (string, error) {
 	exec := start
 	if strings.HasPrefix(exec, "./") {
 		exec = projectRoot + "/" + strings.TrimPrefix(exec, "./")
-	} else if !strings.ContainsAny(exec, "/") {
+	} else if !strings.ContainsAny(strings.Fields(exec)[0], "/") {
 		// A bare command runs from the working directory.
 		exec = projectRoot + "/" + exec
 	}
@@ -524,6 +524,68 @@ func (s *Service) waitAppHealthy(ctx context.Context, port int) error {
 		fmt.Sprintf("the app is not listening on %s after 30s; check the app unit logs", addr), nil)
 }
 
+// appExecPath resolves the executable of a start command the same way the
+// unit does: "./x" and bare names live in the project root; arguments are
+// dropped.
+func appExecPath(start, projectRoot string) string {
+	fields := strings.Fields(start)
+	if len(fields) == 0 {
+		return ""
+	}
+	exe := fields[0]
+	if strings.HasPrefix(exe, "./") {
+		return projectRoot + "/" + strings.TrimPrefix(exe, "./")
+	}
+	if !strings.Contains(exe, "/") {
+		return projectRoot + "/" + exe
+	}
+	return exe
+}
+
+// checkAppExecutable verifies, before the unit is restarted, that the start
+// command points at something systemd can execute. The common trap is a
+// repository with an "app/" directory: `go build -o app .` then writes the
+// binary inside that directory, and exec'ing the directory fails with
+// "Permission denied" (status 126) in an endless restart loop.
+func (s *Service) checkAppExecutable(ctx context.Context, w model.Website, projectRoot string, write func(string)) error {
+	start := strings.TrimSpace(w.AppStartCommand)
+	path := appExecPath(start, projectRoot)
+	if path == "" {
+		return model.NewValidationError("start command is required")
+	}
+	res, err := s.exec.RunSudo(ctx, "stat", "-c", "%F", path)
+	if err != nil || res == nil || res.ExitCode != 0 {
+		return model.NewValidationError(fmt.Sprintf(
+			"the start command %q points to %s, which does not exist; check the build output (-o) and the start command on the App tab",
+			start, path))
+	}
+	switch kind := strings.TrimSpace(res.Stdout); kind {
+	case "regular file", "regular empty file":
+	case "directory":
+		return model.NewValidationError(fmt.Sprintf(
+			"%s is a directory in your repository, so the build put the binary inside it instead of creating the file; "+
+				"on the App tab set the build command to `go build -o server .` and the start command to `./server`",
+			path))
+	default:
+		return model.NewValidationError(fmt.Sprintf("%s is a %s, not an executable file", path, kind))
+	}
+	if res, err := s.exec.RunSudo(ctx, "findmnt", "-no", "OPTIONS", "-T", path); err == nil && res != nil {
+		for _, opt := range strings.Split(strings.TrimSpace(res.Stdout), ",") {
+			if opt == "noexec" {
+				return model.NewValidationError(fmt.Sprintf(
+					"the filesystem holding %s is mounted noexec, so binaries there cannot run; remount it without noexec", path))
+			}
+		}
+	}
+	if res, err := s.exec.RunSudo(ctx, "test", "-x", path); err == nil && res != nil && res.ExitCode != 0 {
+		if res, err := s.exec.RunSudo(ctx, "chmod", "+x", path); err != nil || res == nil || res.ExitCode != 0 {
+			return model.NewValidationError(path + " is not executable and could not be made executable")
+		}
+		write("made " + path + " executable")
+	}
+	return nil
+}
+
 // appStartupReport explains why an app unit did not come up on its port.
 type appStartupReport struct {
 	ActiveState string
@@ -580,6 +642,12 @@ func (r appStartupReport) explain(port int) string {
 			strings.Join(r.Listening, ", "), want, port)
 	}
 	if r.ActiveState != "active" || r.Restarts > 0 {
+		for _, line := range r.Logs {
+			if strings.Contains(line, "Permission denied") {
+				return "the app cannot be executed (Permission denied); the start command must point to the built binary file — " +
+					"if your repository has a directory with the same name, build to another name such as `go build -o server .` and start `./server`"
+			}
+		}
 		return fmt.Sprintf("the app exits right after starting (state %s/%s, restarted %d times); see the app log above",
 			r.ActiveState, r.SubState, r.Restarts)
 	}
