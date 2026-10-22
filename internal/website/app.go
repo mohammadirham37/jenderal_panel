@@ -238,6 +238,14 @@ func buildBinaryAppUnit(w model.Website, projectRoot string) (string, error) {
 			"EnvironmentFile=-" + projectRoot + "/.env\n"
 	}
 
+	if envLines != "" {
+		// systemd lets EnvironmentFile= override Environment=, so a PORT in
+		// the app's .env would win and the app would listen where nginx and
+		// the deploy health check never look. env(1) on the command line has
+		// the last word; it execs the binary, so MainPID stays the app.
+		exec = "/usr/bin/env PORT=" + strconv.Itoa(w.AppPort) + " " + exec
+	}
+
 	return `[Unit]
 Description=Jenderal App ` + w.Domain + `
 After=network.target
@@ -514,6 +522,68 @@ func (s *Service) waitAppHealthy(ctx context.Context, port int) error {
 	}
 	return model.NewDomainError("APP_HEALTH_CHECK_FAILED",
 		fmt.Sprintf("the app is not listening on %s after 30s; check the app unit logs", addr), nil)
+}
+
+// appStartupReport explains why an app unit did not come up on its port.
+type appStartupReport struct {
+	ActiveState string
+	SubState    string
+	MainPID     int
+	Restarts    int
+	// Listening lists the TCP addresses the unit's main process listens on.
+	Listening []string
+	Logs      []string
+}
+
+// appStartupReport collects the unit state, the ports its process actually
+// listens on, and its last journal lines.
+func (s *Service) appStartupReport(ctx context.Context, unit string) appStartupReport {
+	var report appStartupReport
+	if res, err := s.exec.RunSudo(ctx, "systemctl", "show", "--property=ActiveState,SubState,MainPID,NRestarts", unit); err == nil && res != nil {
+		for _, line := range strings.Split(res.Stdout, "\n") {
+			key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+			if !ok {
+				continue
+			}
+			switch key {
+			case "ActiveState":
+				report.ActiveState = value
+			case "SubState":
+				report.SubState = value
+			case "MainPID":
+				report.MainPID, _ = strconv.Atoi(value)
+			case "NRestarts":
+				report.Restarts, _ = strconv.Atoi(value)
+			}
+		}
+	}
+	if report.MainPID > 0 {
+		if res, err := s.exec.RunSudo(ctx, "ss", "-ltnpH"); err == nil && res != nil {
+			marker := "pid=" + strconv.Itoa(report.MainPID) + ","
+			for _, line := range strings.Split(res.Stdout, "\n") {
+				fields := strings.Fields(line)
+				if len(fields) >= 4 && strings.Contains(line, marker) {
+					report.Listening = append(report.Listening, fields[3])
+				}
+			}
+		}
+	}
+	report.Logs = s.octaneUnitLogs(ctx, unit, 20)
+	return report
+}
+
+// explain turns the report into an actionable deploy error message.
+func (r appStartupReport) explain(port int) string {
+	want := fmt.Sprintf("127.0.0.1:%d", port)
+	if len(r.Listening) > 0 {
+		return fmt.Sprintf("the app is listening on %s instead of %s; make it listen on the port from the PORT environment variable (the panel sets PORT=%d)",
+			strings.Join(r.Listening, ", "), want, port)
+	}
+	if r.ActiveState != "active" || r.Restarts > 0 {
+		return fmt.Sprintf("the app exits right after starting (state %s/%s, restarted %d times); see the app log above",
+			r.ActiveState, r.SubState, r.Restarts)
+	}
+	return fmt.Sprintf("the app is running but not listening on %s after 30s; make it listen on the PORT environment variable (the panel sets PORT=%d)", want, port)
 }
 
 // sortedAppPorts is a tiny helper for deterministic tests.

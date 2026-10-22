@@ -153,7 +153,9 @@ func TestBuildGoAppUnit_PortEnvEnvFileAndWorkingDir(t *testing.T) {
 		"WorkingDirectory=/home/u/app\n",
 		"Environment=PORT=8210\n",
 		"EnvironmentFile=-/home/u/app/.env\n",
-		"ExecStart=/home/u/app/app\n",
+		// EnvironmentFile overrides Environment=, so a PORT in .env would win;
+		// passing it on the command line keeps the panel-allocated port.
+		"ExecStart=/usr/bin/env PORT=8210 /home/u/app/app\n",
 	} {
 		if !strings.Contains(unit, want) {
 			t.Errorf("unit missing %q\nunit:\n%s", want, unit)
@@ -389,5 +391,48 @@ func TestWaitAppHealthy_ClosedPortTimesOut(t *testing.T) {
 	var domainErr *model.DomainError
 	if !errors.As(err, &domainErr) || domainErr.Code != "APP_HEALTH_CHECK_FAILED" {
 		t.Fatalf("err = %v, want APP_HEALTH_CHECK_FAILED domain error", err)
+	}
+}
+
+func TestAppStartupReportFindsWrongPortAndLogs(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch name {
+			case "systemctl":
+				return &executor.Result{Stdout: "ActiveState=active\nSubState=running\nMainPID=4242\nNRestarts=0\n"}, nil
+			case "ss":
+				return &executor.Result{Stdout: "LISTEN 0 4096 *:8080 *:* users:((\"app\",pid=4242,fd=3))\n" +
+					"LISTEN 0 4096 127.0.0.1:5432 0.0.0.0:* users:((\"postgres\",pid=900,fd=5))\n" +
+					"LISTEN 0 4096 [::]:9090 [::]:* users:((\"app\",pid=4242,fd=7))\n"}, nil
+			case "journalctl":
+				return &executor.Result{Stdout: "server starting on :8080\n"}, nil
+			}
+			return &executor.Result{}, nil
+		},
+	}
+	svc := &Service{exec: mock}
+	report := svc.appStartupReport(context.Background(), "jenderal-app-x.service")
+	if report.MainPID != 4242 || strings.Join(report.Listening, ",") != "*:8080,[::]:9090" {
+		t.Fatalf("report = %+v", report)
+	}
+	if len(report.Logs) != 1 {
+		t.Fatalf("logs = %v", report.Logs)
+	}
+	msg := report.explain(8200)
+	for _, want := range []string{"*:8080", "127.0.0.1:8200", "PORT"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("explain missing %q: %s", want, msg)
+		}
+	}
+}
+
+func TestAppStartupReportExplainsCrashLoopAndSilentApp(t *testing.T) {
+	crash := appStartupReport{ActiveState: "activating", SubState: "auto-restart", Restarts: 3}
+	if msg := crash.explain(8200); !strings.Contains(msg, "exits") || !strings.Contains(msg, "3") {
+		t.Errorf("crash loop explain = %s", msg)
+	}
+	silent := appStartupReport{ActiveState: "active", SubState: "running", MainPID: 10}
+	if msg := silent.explain(8200); !strings.Contains(msg, "not listening on 127.0.0.1:8200") || !strings.Contains(msg, "PORT") {
+		t.Errorf("silent explain = %s", msg)
 	}
 }

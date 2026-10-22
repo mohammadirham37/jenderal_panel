@@ -58,6 +58,10 @@ func deployHookExecutor(t *testing.T, buildExit int, buildStderr string, isActiv
 			}
 			return &executor.Result{ExitCode: 0}, nil
 		},
+		RunSudoWithInputFunc: func(ctx context.Context, input string, name string, args ...string) (*executor.Result, error) {
+			sudoCalls = append(sudoCalls, append([]string{name}, args...))
+			return &executor.Result{ExitCode: 0}, nil
+		},
 	}, &sudoCalls
 }
 
@@ -109,6 +113,18 @@ func TestRunDeployHook_GoBuildsRestartsAndHealthChecks(t *testing.T) {
 	}
 	if !hasSystemctlAction(sudoCalls, "restart") {
 		t.Fatalf("restart not called; calls = %#v", *sudoCalls)
+	}
+	rewritten, reloaded := false, false
+	for _, c := range *sudoCalls {
+		if c[0] == "tee" && strings.HasPrefix(c[1], "/etc/systemd/system/jenderal-app-") {
+			rewritten = true
+		}
+		if len(c) == 2 && c[0] == "systemctl" && c[1] == "daemon-reload" {
+			reloaded = true
+		}
+	}
+	if !rewritten || !reloaded {
+		t.Errorf("deploy must rewrite the unit and daemon-reload; calls = %#v", *sudoCalls)
 	}
 	joined := strings.Join(logged, "\n")
 	if !strings.Contains(joined, "app healthy on port") {
