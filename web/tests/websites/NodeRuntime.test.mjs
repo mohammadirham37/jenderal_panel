@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import { nodeRuntimeState, summarizeNodeRuntimes } from '../../src/lib/node-runtimes.js';
 
 // Execute the page's actual handlers, replacing only Svelte lifecycle/reactivity
 // and network boundaries. No DOM or real VPS is required for payload/state tests.
@@ -24,11 +25,12 @@ function harness(overrides = {}) {
 		api, apiRaw: async (method, path, payload) => { calls.push({method, path, payload}); return {data: {task_id: 'remove-1'}}; },
 		toast: {success: () => {}, error: () => {}, info: () => {}},
 		translate: (lang, key) => key, $language: 'en',
-		$state: (value) => value, $derived: (value) => value, onMount: () => {}
+		$state: (value) => value, $derived: (value) => value, onMount: () => {},
+		summarizeNodeRuntimes, nodeRuntimeState, hasPermission: () => true, $permissions: []
 	});
 	vm.runInContext(javascript + `
 	globalThis.handlers = {
-		load, removeGlobal, createApp, appAction,
+		load, removeGlobal, createApp, appAction, updateRuntime, updateAll,
 		select: (runtime, version) => { selectedRuntime = runtime; createWebsiteId = runtime.website_id; },
 		confirm: (value) => { confirmGlobal = value; },
 		lock: (value) => { busy = value; },
@@ -72,4 +74,31 @@ test('load failure exits loading state and reports actionable output', async () 
 	await handlers.load();
 	assert.equal(handlers.state().loading, false);
 	assert.equal(handlers.state().error, 'Runtime unavailable');
+});
+
+test('summarizeNodeRuntimes and nodeRuntimeState classify website runtimes', async () => {
+	const { summarizeNodeRuntimes, nodeRuntimeState } = await import('../../src/lib/node-runtimes.js');
+	const runtimes = [
+		{ website_id: 'a', domain: 'a.test', selected_version: '22', installed: true, installed_version: 'v22.20.0', vulnerable: true },
+		{ website_id: 'b', domain: 'b.test', selected_version: '24', installed: true, installed_version: 'v24.22.1' },
+		{ website_id: 'c', domain: 'c.test', selected_version: '20', installed: true, installed_version: 'v20.19.0', end_of_life: true },
+		{ website_id: 'd', domain: 'd.test', selected_version: '24', installed: false, installed_version: '' },
+		{ website_id: 'e', domain: 'e.test', selected_version: '', installed: false, installed_version: '' }
+	];
+	const s = summarizeNodeRuntimes(runtimes);
+	assert.deepEqual(s.selected.map((r) => r.website_id), ['a', 'b', 'c', 'd']);
+	assert.deepEqual(s.vulnerable.map((r) => r.website_id), ['a']);
+	assert.deepEqual(s.endOfLife.map((r) => r.website_id), ['c']);
+	assert.deepEqual(s.notInstalled.map((r) => r.website_id), ['d']);
+	assert.deepEqual(runtimes.map(nodeRuntimeState), ['vulnerable', 'ok', 'eol', 'missing', 'none']);
+});
+
+test('update buttons post to the runtime update endpoints', async () => {
+	const {handlers, calls} = harness();
+	await handlers.updateRuntime('site-1');
+	assert.deepEqual(calls.at(-1), {method: 'POST', path: '/api/v1/nodejs/runtimes/site-1/update', payload: undefined});
+	assert.equal(handlers.state().currentTaskId, 'task-1');
+	handlers.lock(false);
+	await handlers.updateAll();
+	assert.deepEqual(calls.at(-1), {method: 'POST', path: '/api/v1/nodejs/runtimes/update', payload: undefined});
 });

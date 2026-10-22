@@ -31,6 +31,11 @@ type RuntimeInfo struct {
 	NVMVersion       string `json:"nvm_version"`
 	NVMState         string `json:"nvm_state"`
 	ErrorMessage     string `json:"error_message,omitempty"`
+	// Security status of the installed patch (see security.go).
+	SecurityBaseline string `json:"security_baseline,omitempty"`
+	Vulnerable       bool   `json:"vulnerable"`
+	EndOfLife        bool   `json:"end_of_life"`
+	AdvisoryURL      string `json:"advisory_url,omitempty"`
 }
 
 type GlobalStatus struct {
@@ -118,6 +123,7 @@ func (s *Service) fillRuntimeStatus(ctx context.Context, runtime *RuntimeInfo) {
 	runtime.NPMVersion = status.NPMVersion
 	runtime.NVMVersion = status.NVMVersion
 	runtime.NVMState = status.NVMState
+	annotateSecurity(runtime)
 }
 
 type unitSnapshot struct {

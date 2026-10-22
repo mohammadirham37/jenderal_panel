@@ -234,3 +234,33 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	h.logAction(r, "delete_node_app", id, "deleted Node.js app")
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
+
+// UpdateRuntime handles POST /api/v1/nodejs/runtimes/{websiteID}/update:
+// install the newest patch of the website's Node.js major and restart its
+// apps, as a background task.
+func (h *Handler) UpdateRuntime(w http.ResponseWriter, r *http.Request) {
+	websiteID := chi.URLParam(r, "websiteID")
+	website, err := h.svc.loadWebsiteRuntime(r.Context(), websiteID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if website.NodeVersion == "" {
+		httputil.HandleError(w, model.NewValidationError(website.Domain+" has no Node.js runtime selected"))
+		return
+	}
+	taskID := h.tasks.RunFunc("Update Node.js "+website.NodeVersion+" — "+website.Domain, func(ctx context.Context, log func(string)) error {
+		return h.svc.UpdateRuntime(ctx, websiteID, log)
+	})
+	h.logAction(r, "update_website_node_runtime", websiteID, "Node.js "+website.NodeVersion+" task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
+// UpdateAllRuntimes handles POST /api/v1/nodejs/runtimes/update.
+func (h *Handler) UpdateAllRuntimes(w http.ResponseWriter, r *http.Request) {
+	taskID := h.tasks.RunFunc("Update Node.js for all websites", func(ctx context.Context, log func(string)) error {
+		return h.svc.UpdateAllRuntimes(ctx, log)
+	})
+	h.logAction(r, "update_all_node_runtimes", "nodejs", "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}

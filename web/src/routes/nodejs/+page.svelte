@@ -4,11 +4,14 @@
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
+	import { hasPermission, permissions } from '$lib/stores/auth';
+	import { nodeRuntimeState, summarizeNodeRuntimes } from '$lib/node-runtimes.js';
 
 	interface Runtime {
 		error_message?: string;
 		website_id: string; domain: string; web_user: string; selected_version: string;
 		installed: boolean; installed_version: string; npm_version: string; nvm_version: string; nvm_state: string;
+		security_baseline?: string; vulnerable?: boolean; end_of_life?: boolean; advisory_url?: string;
 	}
 	interface NodeApp {
 		id: string; website_id: string; node_version: string; package_mgr: string;
@@ -32,6 +35,31 @@ import { toast } from '$lib/stores/toast';
 	let createPort = $state(3000);
 	let availableWebsites = $derived(runtimes.filter((runtime) => runtime.installed));
 	let selectedRuntime = $derived(runtimes.find((runtime) => runtime.website_id === createWebsiteId));
+	let runtimeSummary = $derived(summarizeNodeRuntimes(runtimes));
+	let canManage = $derived(hasPermission($permissions, 'nodejs.manage'));
+	let updateAllConfirm = $state(false);
+
+	async function updateRuntime(websiteID: string) {
+		if (busy) return;
+		acting = true;
+		try {
+			const result = await api.post<{ task_id: string }>(`/api/v1/nodejs/runtimes/${encodeURIComponent(websiteID)}/update`);
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'nd.update.started'));
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'nd.update.failed')); }
+		finally { acting = false; }
+	}
+
+	async function updateAll() {
+		if (busy) return;
+		acting = true; updateAllConfirm = false;
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/nodejs/runtimes/update');
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'nd.update.started'));
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'nd.update.failed')); }
+		finally { acting = false; }
+	}
 
 	async function load() {
 		loading = true; error = '';
@@ -88,6 +116,78 @@ import { toast } from '$lib/stores/toast';
 	<p class="text-sm text-gray-400">{translate($language, 'nd.hint')}</p>
 	{#if error}<div role="alert" class="rounded border border-red-800 p-4 text-red-400">{error} <button onclick={load} disabled={busy} class="underline">{translate($language, 'nd.retry')}</button></div>{/if}
 	<TaskProgress bind:taskId={currentTaskId} storageKey="jenderal_nodejs_task" onComplete={() => { currentTaskId = ''; void load(); }} />
+
+	{#if runtimeSummary.vulnerable.length > 0 || runtimeSummary.endOfLife.length > 0}
+		<section role="alert" class="rounded-xl border border-red-700/70 bg-red-950/40 p-4 space-y-2">
+			<p class="font-semibold text-red-200">{translate($language, 'nd.sec.title')}</p>
+			<p class="text-sm text-red-200/80">{translate($language, 'nd.sec.body')}</p>
+			<ul class="font-mono text-xs text-red-100 space-y-0.5">
+				{#each runtimeSummary.vulnerable as r (r.website_id)}
+					<li>{r.domain}: {r.installed_version} → {translate($language, 'nd.sec.needs')} ≥ v{r.security_baseline}</li>
+				{/each}
+				{#each runtimeSummary.endOfLife as r (r.website_id)}
+					<li>{r.domain}: Node.js {r.selected_version} — {translate($language, 'nd.sec.eolLine')}</li>
+				{/each}
+			</ul>
+			<div class="flex flex-wrap items-center gap-3 pt-1">
+				{#if canManage && runtimeSummary.vulnerable.length > 0}
+					<button onclick={() => (updateAllConfirm = true)} disabled={busy} class="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'nd.update.all')}</button>
+				{/if}
+				<a href="https://nodejs.org/en/blog/vulnerability/october-2026-security-releases" target="_blank" rel="noopener noreferrer" class="text-xs font-medium text-red-300 underline hover:text-red-100">{translate($language, 'nd.sec.advisory')} ↗</a>
+			</div>
+		</section>
+	{/if}
+
+	<!-- Website runtimes: patch level and updates -->
+	<section class="rounded-lg border border-gray-700 bg-gray-800 p-5 space-y-3">
+		<div class="flex flex-wrap items-center justify-between gap-3">
+			<div>
+				<h3 class="text-lg font-semibold text-white">{translate($language, 'nd.rt.title')}</h3>
+				<p class="text-sm text-gray-400">{translate($language, 'nd.rt.hint')}</p>
+			</div>
+			{#if canManage && runtimeSummary.selected.length > 0}
+				{#if updateAllConfirm}
+					<div class="flex items-center gap-2 text-sm">
+						<span class="text-yellow-300">{translate($language, 'nd.update.allConfirm').replace('{count}', String(runtimeSummary.selected.length))}</span>
+						<button onclick={updateAll} disabled={busy} class="rounded bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">{translate($language, 'nd.update.yes')}</button>
+						<button onclick={() => (updateAllConfirm = false)} class="px-2 py-1.5 text-gray-300">{translate($language, 'nd.cancel')}</button>
+					</div>
+				{:else}
+					<button onclick={() => (updateAllConfirm = true)} disabled={busy} class="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'nd.update.all')}</button>
+				{/if}
+			{/if}
+		</div>
+		{#if !loading && runtimeSummary.selected.length === 0}
+			<p class="text-sm text-gray-400">{translate($language, 'nd.rt.empty')}</p>
+		{:else}
+			<ul class="divide-y divide-gray-700/60">
+				{#each runtimeSummary.selected as r (r.website_id)}
+					{@const state = nodeRuntimeState(r)}
+					<li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+						<div class="min-w-0">
+							<a href="/websites/{r.website_id}" class="truncate font-medium text-blue-400 hover:underline">{r.domain}</a>
+							<p class="text-xs text-gray-400">
+								Node.js {r.selected_version}
+								{#if r.installed_version}<span class="font-mono text-gray-300"> · {r.installed_version}</span>{/if}
+								{#if r.npm_version}<span class="text-gray-500"> · npm {r.npm_version}</span>{/if}
+							</p>
+						</div>
+						<div class="flex items-center gap-2">
+							<span class="rounded-full px-2 py-0.5 text-[11px] font-semibold {state === 'ok' ? 'bg-green-900/50 text-green-300' : state === 'vulnerable' ? 'bg-red-900/60 text-red-200' : state === 'eol' ? 'bg-gray-700 text-gray-200' : 'bg-yellow-900/50 text-yellow-200'}">
+								{translate($language, `nd.rt.state.${state}`)}
+							</span>
+							{#if canManage && state !== 'eol'}
+								<button onclick={() => updateRuntime(r.website_id)} disabled={busy} class="rounded-md px-3 py-1 text-xs font-semibold text-white transition disabled:opacity-50 {state === 'vulnerable' ? 'bg-red-600 hover:bg-red-700' : 'bg-gray-700 hover:bg-gray-600'}">
+									{translate($language, state === 'missing' ? 'nd.update.install' : 'nd.update.one')}
+								</button>
+							{/if}
+						</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+		<p class="text-xs text-gray-500">{translate($language, 'nd.rt.panelNote')}</p>
+	</section>
 
 	{#if globalNode.installed}
 		<section class="rounded-lg border border-yellow-800 p-5 space-y-3">
