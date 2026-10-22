@@ -40,6 +40,9 @@ func newMockExec() *executor.MockExecutor {
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return okResult(""), nil
 		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			return okResult(""), nil
+		},
 	}
 }
 

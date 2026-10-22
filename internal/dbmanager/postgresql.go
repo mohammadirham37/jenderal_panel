@@ -107,6 +107,9 @@ func (p *PostgreSQLEngine) Restart(ctx context.Context) error {
 
 // CreateDatabase creates a new PostgreSQL database.
 func (p *PostgreSQLEngine) CreateDatabase(ctx context.Context, name, charset string) error {
+	if err := checkPostgresName("database", name); err != nil {
+		return err
+	}
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "createdb", name)
 	if err != nil {
 		return fmt.Errorf("postgresql create database: %w", err)
@@ -119,6 +122,9 @@ func (p *PostgreSQLEngine) CreateDatabase(ctx context.Context, name, charset str
 
 // DropDatabase drops a PostgreSQL database.
 func (p *PostgreSQLEngine) DropDatabase(ctx context.Context, name string) error {
+	if err := checkPostgresName("database", name); err != nil {
+		return err
+	}
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "dropdb", "--if-exists", name)
 	if err != nil {
 		return fmt.Errorf("postgresql drop database: %w", err)
@@ -189,8 +195,15 @@ func (p *PostgreSQLEngine) DatabaseSizes(ctx context.Context, names []string) (m
 
 // CreateUser creates a new PostgreSQL user with a password.
 func (p *PostgreSQLEngine) CreateUser(ctx context.Context, username, password string) error {
-	stmt := fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s'", username, password)
-	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", stmt)
+	if err := checkPostgresName("user", username); err != nil {
+		return err
+	}
+	if err := checkPassword(password); err != nil {
+		return err
+	}
+	// The statement carries the password, so it goes on stdin, not argv.
+	stmt := fmt.Sprintf("CREATE USER %s WITH PASSWORD %s;\n", username, postgresString(password))
+	result, err := p.exec.RunSudoWithInput(ctx, stmt, "sudo", "-u", "postgres", "psql", "--set", "ON_ERROR_STOP=on")
 	if err != nil {
 		return fmt.Errorf("postgresql create user: %w", err)
 	}
@@ -202,6 +215,9 @@ func (p *PostgreSQLEngine) CreateUser(ctx context.Context, username, password st
 
 // DropUser drops a PostgreSQL user.
 func (p *PostgreSQLEngine) DropUser(ctx context.Context, username string) error {
+	if err := checkPostgresName("user", username); err != nil {
+		return err
+	}
 	stmt := fmt.Sprintf("DROP USER IF EXISTS %s", username)
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", stmt)
 	if err != nil {
@@ -253,6 +269,12 @@ func (p *PostgreSQLEngine) ListUsers(ctx context.Context) ([]string, error) {
 // grant also covers databases where it is not (restored dumps, older
 // clusters).
 func (p *PostgreSQLEngine) GrantPrivileges(ctx context.Context, username, database string) error {
+	if err := checkPostgresName("user", username); err != nil {
+		return err
+	}
+	if err := checkPostgresName("database", database); err != nil {
+		return err
+	}
 	dbStmt := fmt.Sprintf("GRANT ALL PRIVILEGES ON DATABASE %s TO %s", database, username)
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", dbStmt)
 	if err != nil {
@@ -278,6 +300,12 @@ func (p *PostgreSQLEngine) GrantPrivileges(ctx context.Context, username, databa
 // ownership moves back to postgres first — an owner cannot be stripped of
 // their own database privileges.
 func (p *PostgreSQLEngine) RevokePrivileges(ctx context.Context, username, database string) error {
+	if err := checkPostgresName("user", username); err != nil {
+		return err
+	}
+	if err := checkPostgresName("database", database); err != nil {
+		return err
+	}
 	owner, err := p.databaseOwner(ctx, database)
 	if err != nil {
 		return err
@@ -311,7 +339,7 @@ func (p *PostgreSQLEngine) RevokePrivileges(ctx context.Context, username, datab
 
 // databaseOwner returns the role name that owns a database.
 func (p *PostgreSQLEngine) databaseOwner(ctx context.Context, database string) (string, error) {
-	stmt := fmt.Sprintf("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = '%s'", database)
+	stmt := fmt.Sprintf("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = %s", postgresString(database))
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-tAc", stmt)
 	if err != nil {
 		return "", fmt.Errorf("postgresql database owner: %w", err)
@@ -324,8 +352,14 @@ func (p *PostgreSQLEngine) databaseOwner(ctx context.Context, database string) (
 
 // ResetPassword changes the password for an existing PostgreSQL user.
 func (p *PostgreSQLEngine) ResetPassword(ctx context.Context, username, password string) error {
-	stmt := fmt.Sprintf("ALTER USER %s WITH PASSWORD '%s'", username, password)
-	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-c", stmt)
+	if err := checkPostgresName("user", username); err != nil {
+		return err
+	}
+	if err := checkPassword(password); err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf("ALTER USER %s WITH PASSWORD %s;\n", username, postgresString(password))
+	result, err := p.exec.RunSudoWithInput(ctx, stmt, "sudo", "-u", "postgres", "psql", "--set", "ON_ERROR_STOP=on")
 	if err != nil {
 		return fmt.Errorf("postgresql reset password: %w", err)
 	}
@@ -390,6 +424,9 @@ func (p *PostgreSQLEngine) VectorEnabledDatabases(ctx context.Context, names []s
 // EnableVector creates the pgvector extension inside a database so RAG
 // applications can use vector columns and similarity operators.
 func (p *PostgreSQLEngine) EnableVector(ctx context.Context, database string) error {
+	if err := checkPostgresName("database", database); err != nil {
+		return err
+	}
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-d", database,
 		"-c", "CREATE EXTENSION IF NOT EXISTS vector")
 	if err != nil {

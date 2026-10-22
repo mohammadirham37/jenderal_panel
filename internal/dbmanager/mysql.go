@@ -116,6 +116,12 @@ func (m *MySQLEngine) CreateDatabase(ctx context.Context, name, charset string) 
 	if charset == "" {
 		charset = "utf8mb4"
 	}
+	if err := checkMySQLDatabase(name); err != nil {
+		return err
+	}
+	if err := checkCharset(charset); err != nil {
+		return err
+	}
 	stmt := fmt.Sprintf("CREATE DATABASE `%s` CHARACTER SET %s", name, charset)
 	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
 	if err != nil {
@@ -129,6 +135,9 @@ func (m *MySQLEngine) CreateDatabase(ctx context.Context, name, charset string) 
 
 // DropDatabase drops a MySQL database.
 func (m *MySQLEngine) DropDatabase(ctx context.Context, name string) error {
+	if err := checkMySQLDatabase(name); err != nil {
+		return err
+	}
 	stmt := fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", name)
 	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
 	if err != nil {
@@ -199,8 +208,15 @@ func (m *MySQLEngine) DatabaseSizes(ctx context.Context, names []string) (map[st
 
 // CreateUser creates a new MySQL user identified by password.
 func (m *MySQLEngine) CreateUser(ctx context.Context, username, password string) error {
-	stmt := fmt.Sprintf("CREATE USER '%s'@'localhost' IDENTIFIED BY '%s'", username, password)
-	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
+	if err := checkMySQLUser(username); err != nil {
+		return err
+	}
+	if err := checkPassword(password); err != nil {
+		return err
+	}
+	// The statement carries the password, so it goes on stdin, not argv.
+	stmt := fmt.Sprintf("CREATE USER '%s'@'localhost' IDENTIFIED BY %s;\n", username, mysqlString(password))
+	result, err := m.exec.RunSudoWithInput(ctx, stmt, "mysql")
 	if err != nil {
 		return fmt.Errorf("mysql create user: %w", err)
 	}
@@ -212,6 +228,9 @@ func (m *MySQLEngine) CreateUser(ctx context.Context, username, password string)
 
 // DropUser drops a MySQL user.
 func (m *MySQLEngine) DropUser(ctx context.Context, username string) error {
+	if err := checkMySQLUser(username); err != nil {
+		return err
+	}
 	stmt := fmt.Sprintf("DROP USER IF EXISTS '%s'@'localhost'", username)
 	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
 	if err != nil {
@@ -249,6 +268,12 @@ func (m *MySQLEngine) ListUsers(ctx context.Context) ([]string, error) {
 
 // GrantPrivileges grants all privileges on a database to a user.
 func (m *MySQLEngine) GrantPrivileges(ctx context.Context, username, database string) error {
+	if err := checkMySQLUser(username); err != nil {
+		return err
+	}
+	if err := checkMySQLDatabase(database); err != nil {
+		return err
+	}
 	stmt := fmt.Sprintf("GRANT ALL ON `%s`.* TO '%s'@'localhost'; FLUSH PRIVILEGES", database, username)
 	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
 	if err != nil {
@@ -262,6 +287,12 @@ func (m *MySQLEngine) GrantPrivileges(ctx context.Context, username, database st
 
 // RevokePrivileges removes all privileges a user holds on a database.
 func (m *MySQLEngine) RevokePrivileges(ctx context.Context, username, database string) error {
+	if err := checkMySQLUser(username); err != nil {
+		return err
+	}
+	if err := checkMySQLDatabase(database); err != nil {
+		return err
+	}
 	stmt := fmt.Sprintf("REVOKE ALL PRIVILEGES ON `%s`.* FROM '%s'@'localhost'; FLUSH PRIVILEGES", database, username)
 	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
 	if err != nil {
@@ -275,8 +306,14 @@ func (m *MySQLEngine) RevokePrivileges(ctx context.Context, username, database s
 
 // ResetPassword changes the password for an existing MySQL user.
 func (m *MySQLEngine) ResetPassword(ctx context.Context, username, password string) error {
-	stmt := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY '%s'", username, password)
-	result, err := m.exec.RunSudo(ctx, "mysql", "-e", stmt)
+	if err := checkMySQLUser(username); err != nil {
+		return err
+	}
+	if err := checkPassword(password); err != nil {
+		return err
+	}
+	stmt := fmt.Sprintf("ALTER USER '%s'@'localhost' IDENTIFIED BY %s;\n", username, mysqlString(password))
+	result, err := m.exec.RunSudoWithInput(ctx, stmt, "mysql")
 	if err != nil {
 		return fmt.Errorf("mysql reset password: %w", err)
 	}
