@@ -3,6 +3,7 @@ package website
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -281,5 +282,43 @@ func TestDiagnoseGoSiteFlagsStaleVhostAndDownApp(t *testing.T) {
 	}
 	if got["http_response"].Hint != "wd.diag.hint_app_vhost" {
 		t.Errorf("a 403 on a Go site should point at the vhost, got %+v", got["http_response"])
+	}
+}
+
+func TestRepairSitesContinuesPastFailures(t *testing.T) {
+	var repaired []string
+	var log []string
+	sites := []repairSite{{"a", "a.test"}, {"b", "b.test"}, {"c", "c.test"}}
+	err := repairSites(context.Background(), sites, func(_ context.Context, id string) error {
+		repaired = append(repaired, id)
+		if id == "b" {
+			return errors.New("nginx -t failed")
+		}
+		return nil
+	}, func(line string) { log = append(log, line) })
+	if strings.Join(repaired, ",") != "a,b,c" {
+		t.Errorf("repaired = %v, want every site attempted", repaired)
+	}
+	if err == nil || !strings.Contains(err.Error(), "b.test") || strings.Contains(err.Error(), "a.test") {
+		t.Errorf("err = %v, want only b.test named", err)
+	}
+	if !strings.Contains(strings.Join(log, "\n"), "Done: 2 repaired, 1 failed.") {
+		t.Errorf("summary missing: %v", log)
+	}
+}
+
+func TestActiveSitesForRepairSkipsInactive(t *testing.T) {
+	db := setupDiagnosticsDB(t)
+	defer db.Close()
+	insertTestWebsite(t, db, "s1", "live.example.com", "php", "8.3", "active")
+	insertTestWebsite(t, db, "s2", "off.example.com", "php", "8.3", "suspended")
+	insertTestWebsite(t, db, "s3", "new.example.com", "php", "8.3", "pending")
+	svc := NewService(db, &executor.MockExecutor{}, nil)
+	sites, err := svc.activeSitesForRepair(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sites) != 1 || sites[0].domain != "live.example.com" {
+		t.Errorf("sites = %+v, want only the active one", sites)
 	}
 }

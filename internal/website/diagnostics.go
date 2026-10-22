@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
 // Diagnostic check statuses.
@@ -314,4 +315,71 @@ func diagnosticIndexFile(w model.Website) string {
 		return "index.php"
 	}
 	return "index.html"
+}
+
+// RunRepairAllTask re-applies web server access and rebuilds the HTTP and
+// HTTPS vhosts of every active website as one background task (admin
+// maintenance after a panel fix to the vhost templates).
+func (s *Service) RunRepairAllTask(ctx context.Context) (string, error) {
+	tr := s.taskRunner()
+	if tr == nil {
+		return "", fmt.Errorf("task runner not available")
+	}
+	sites, err := s.activeSitesForRepair(ctx)
+	if err != nil {
+		return "", err
+	}
+	return tr.RunFuncWithOptions(
+		taskrunner.Options{Name: "Repair all websites", Module: "website", Timeout: 60 * time.Minute},
+		func(taskCtx context.Context, write func(string)) error {
+			return repairSites(taskCtx, sites, s.RepairServing, write)
+		}), nil
+}
+
+type repairSite struct{ id, domain string }
+
+// activeSitesForRepair lists websites whose vhosts are live: suspended,
+// pending, and failed sites are managed by their own flows.
+func (s *Service) activeSitesForRepair(ctx context.Context) ([]repairSite, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, domain FROM websites WHERE status = 'active' ORDER BY domain`)
+	if err != nil {
+		return nil, fmt.Errorf("list websites: %w", err)
+	}
+	defer rows.Close()
+	var sites []repairSite
+	for rows.Next() {
+		var site repairSite
+		if err := rows.Scan(&site.id, &site.domain); err != nil {
+			return nil, fmt.Errorf("scan website: %w", err)
+		}
+		sites = append(sites, site)
+	}
+	return sites, rows.Err()
+}
+
+// repairSites repairs each site in turn, continuing past failures, and
+// returns an error naming the sites that could not be repaired.
+func repairSites(ctx context.Context, sites []repairSite, repair func(context.Context, string) error, write func(string)) error {
+	if len(sites) == 0 {
+		write("No active websites to repair.")
+		return nil
+	}
+	var failed []string
+	for i, site := range sites {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		write(fmt.Sprintf("==> [%d/%d] %s", i+1, len(sites), site.domain))
+		if err := repair(ctx, site.id); err != nil {
+			failed = append(failed, site.domain)
+			write("ERROR: " + err.Error())
+			continue
+		}
+		write("repaired")
+	}
+	write(fmt.Sprintf("Done: %d repaired, %d failed.", len(sites)-len(failed), len(failed)))
+	if len(failed) > 0 {
+		return fmt.Errorf("repair failed for %s", strings.Join(failed, ", "))
+	}
+	return nil
 }

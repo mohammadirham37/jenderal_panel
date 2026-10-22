@@ -152,3 +152,24 @@ func GenerateCSRFToken() string {
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
+
+// RequireRole returns middleware that only lets users with the named role
+// through (e.g. "admin" for fleet-wide maintenance actions). Returns 403
+// Forbidden otherwise.
+func RequireRole(rbac *RBAC, role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, ok := UserFromContext(r.Context())
+			if !ok {
+				httputil.HandleError(w, model.ErrUnauthorized)
+				return
+			}
+			allowed, err := rbac.HasRole(r.Context(), user.ID, role)
+			if err != nil || !allowed {
+				httputil.HandleError(w, model.ErrForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}

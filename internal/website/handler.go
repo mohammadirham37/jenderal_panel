@@ -270,6 +270,19 @@ func (h *Handler) RepairServing(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "repaired"})
 }
 
+// RepairAll handles POST /api/websites/repair-all (admin only): rebuild the
+// web server access and HTTP/HTTPS vhosts of every active website as one
+// background task.
+func (h *Handler) RepairAll(w http.ResponseWriter, r *http.Request) {
+	taskID, err := h.svc.RunRepairAllTask(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "website.repair_all", "websites", "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // GetAppService handles GET /api/websites/{id}/app.
 func (h *Handler) GetAppService(w http.ResponseWriter, r *http.Request) {
 	status, err := h.svc.GetAppService(r.Context(), chi.URLParam(r, "id"))

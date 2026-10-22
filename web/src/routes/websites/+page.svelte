@@ -2,6 +2,8 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import Modal from '$lib/components/Modal.svelte';
+	import { roles } from '$lib/stores/auth';
 	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination, templateUsesPHP } from '$lib/website-form.js';
 	import { countByGroup, filterWebsites, formatBytes, frameworkLabel, sortKeys, statusGroup, usesPHP } from '$lib/website-list.js';
 import { toast } from '$lib/stores/toast';
@@ -56,6 +58,28 @@ import type { ServerInfo } from '$lib/types';
 	let repairing = $state(false);
 	let repairBusy = $derived(repairing || !!repairTaskId);
 	let refreshing = $state(false);
+
+	// Admin maintenance: rebuild web server access and HTTP/HTTPS vhosts of
+	// every active website in one background task.
+	const isAdmin = $derived($roles.some((r) => r.name === 'admin'));
+	let repairAllOpen = $state(false);
+	let repairAllStarting = $state(false);
+	let repairAllTaskId = $state('');
+
+	async function repairAllWebsites() {
+		if (repairAllStarting || repairAllTaskId) return;
+		repairAllStarting = true;
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/websites/repair-all');
+			repairAllTaskId = result.task_id;
+			repairAllOpen = false;
+			toast.success(translate($language, 'wl.repairAll.started'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wl.repairAll.failed'));
+		} finally {
+			repairAllStarting = false;
+		}
+	}
 
 	// Toolbar: search, status filter, sort, and grid/table view. Sort and view
 	// survive reloads so a long list keeps the operator's preferred layout.
@@ -485,6 +509,20 @@ import type { ServerInfo } from '$lib/types';
 			<p class="mt-0.5 text-sm text-gray-400">{translate($language, 'wl.subtitleEmpty')}</p>
 		</div>
 		<div class="flex items-center gap-2">
+			{#if isAdmin && websites.length > 0}
+				<button
+					type="button"
+					onclick={() => (repairAllOpen = true)}
+					disabled={!!repairAllTaskId}
+					title={translate($language, 'wl.repairAll.hint')}
+					class="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-700 disabled:opacity-50"
+				>
+					<svg class="h-4 w-4 {repairAllTaskId ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8" aria-hidden="true">
+						<path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437 1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008Z" />
+					</svg>
+					{translate($language, 'wl.repairAll.button')}
+				</button>
+			{/if}
 			{#if websites.length > 0}
 				<button
 					type="button"
@@ -511,6 +549,15 @@ import type { ServerInfo } from '$lib/types';
 		</div>
 	</div>
 
+	<TaskProgress
+		bind:taskId={repairAllTaskId}
+		storageKey="website-repair-all-task"
+		onComplete={(task) => {
+			repairAllTaskId = '';
+			if (task.status === 'completed') toast.success(translate($language, 'wl.repairAll.done'));
+			void refresh();
+		}}
+	/>
 	<TaskProgress bind:taskId={repairTaskId} storageKey="website-laravel-repair-task" onComplete={(task) => { repairing = false; repairTaskId = ''; if (task.status === 'completed') toast.success(translate($language, 'wl.toastRepairCompleted')); }} onMissing={() => { repairing = false; }} />
 
 	<!-- Create Form -->
@@ -1106,4 +1153,25 @@ import type { ServerInfo } from '$lib/types';
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if repairAllOpen}
+	<Modal title={translate($language, 'wl.repairAll.title')} onclose={() => (repairAllOpen = false)} busy={repairAllStarting} closeLabel={translate($language, 'wl.cancel')}>
+		<div class="space-y-3 text-sm text-gray-300">
+			<p>{translate($language, 'wl.repairAll.body').replace('{count}', String(counts.active))}</p>
+			<ul class="list-disc space-y-1 pl-5 text-xs text-gray-400">
+				<li>{translate($language, 'wl.repairAll.effectAccess')}</li>
+				<li>{translate($language, 'wl.repairAll.effectVhost')}</li>
+				<li>{translate($language, 'wl.repairAll.effectSkip')}</li>
+			</ul>
+		</div>
+		{#snippet footer()}
+			<button type="button" onclick={() => (repairAllOpen = false)} disabled={repairAllStarting} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
+				{translate($language, 'wl.cancel')}
+			</button>
+			<button type="button" onclick={repairAllWebsites} disabled={repairAllStarting || counts.active === 0} class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50">
+				{repairAllStarting ? translate($language, 'wl.repairAll.starting') : translate($language, 'wl.repairAll.confirm')}
+			</button>
+		{/snippet}
+	</Modal>
 {/if}
