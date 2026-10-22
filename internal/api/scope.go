@@ -33,7 +33,10 @@ func (d *Dependencies) ScopeMiddleware(next http.Handler) http.Handler {
 		r = r.WithContext(auth.WithAdminFlag(r.Context(), admin))
 		ctx := r.Context()
 
-		pattern := chi.RouteContext(ctx).RoutePattern()
+		// chi reports the full pattern including the mount prefix
+		// ("/api/v1/websites/{id}"); match on the resource path so the
+		// ownership checks below apply to the API routes.
+		pattern := strings.TrimPrefix(chi.RouteContext(ctx).RoutePattern(), "/api/v1")
 		switch {
 		case pattern == "/websites/{id}" || strings.HasPrefix(pattern, "/websites/{id}/"):
 			if !d.canManageWebsite(ctx, admin, user.ID, chi.URLParam(r, "id")) {
