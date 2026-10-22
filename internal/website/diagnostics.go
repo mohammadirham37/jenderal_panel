@@ -72,16 +72,19 @@ func (s *Service) RepairServing(ctx context.Context, websiteID string) error {
 	if err := s.prov.RestoreServingAccess(ctx, websiteID); err != nil {
 		return err
 	}
-	// App-service vhosts are rendered from the current template so older
-	// sites lose the "$uri/" fallback that answers 403 on "/".
+	// Re-render the HTTP and HTTPS vhosts from the current templates and
+	// settings: fixes vhosts written by older panel versions (the app-proxy
+	// "$uri/" 403, HTTPS without the Octane/proxy/template settings).
 	w, err := s.Get(ctx, websiteID)
 	if err != nil {
 		return err
 	}
-	if NginxProfileForWebsite(w) == "app-proxy" {
-		if err := s.regenerateConfig(ctx, w, ""); err != nil {
-			return fmt.Errorf("regenerate vhost: %w", err)
-		}
+	if w.Status == "suspended" {
+		// The suspended vhost is managed by Suspend/Enable.
+		return nil
+	}
+	if err := s.regenerateConfig(ctx, w, ""); err != nil {
+		return fmt.Errorf("regenerate vhost: %w", err)
 	}
 	return nil
 }

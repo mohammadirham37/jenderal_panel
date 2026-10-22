@@ -125,15 +125,18 @@
 			{/each}
 		</ul>
 
-		{#if needsPermissionRepair && canManage}
-			<button
-				type="button"
-				onclick={repairServing}
-				disabled={repairing}
-				class="mt-3 rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
-			>
-				{repairing ? translate($language, 'wd.diag.repairing') : translate($language, 'wd.diag.repair')}
-			</button>
+		{#if canManage}
+			<div class="mt-3 flex flex-wrap items-center gap-2">
+				<button
+					type="button"
+					onclick={repairServing}
+					disabled={repairing}
+					class="rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-40 {needsPermissionRepair ? 'bg-blue-600 text-white hover:bg-blue-700' : 'border border-gray-600 bg-gray-700 text-gray-200 hover:bg-gray-600'}"
+				>
+					{repairing ? translate($language, 'wd.diag.repairing') : translate($language, 'wd.diag.repair')}
+				</button>
+				<span class="text-[11px] text-gray-500">{translate($language, 'wd.diag.repair_hint')}</span>
+			</div>
 		{/if}
 
 		{#if report.error_log}

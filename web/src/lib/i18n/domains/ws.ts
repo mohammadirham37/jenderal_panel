@@ -474,8 +474,9 @@ const en = {
 	'wd.diag.hint_app_error': 'The application errored — check storage/logs/laravel.log over SSH.',
 	'wd.diag.errorlog': 'Recent site error log',
 	'wd.diag.repair': 'Repair web server access',
+	'wd.diag.repair_hint': 'Re-applies file permissions and rebuilds the HTTP and HTTPS nginx config from the current settings.',
 	'wd.diag.repairing': 'Repairing…',
-	'wd.diag.repair_done': 'Web server access repaired. Re-running diagnose…',
+	'wd.diag.repair_done': 'Web server access and nginx config repaired. Re-running diagnose…',
 	'wd.diag.repair_failed': 'Repair failed',
 } as const;
 
@@ -950,6 +951,7 @@ const id: Record<keyof typeof en, string> = {
 	'wd.diag.hint_app_error': 'Aplikasi mengalami error — periksa storage/logs/laravel.log lewat SSH.',
 	'wd.diag.errorlog': 'Log error situs terakhir',
 	'wd.diag.repair': 'Perbaiki akses web server',
+	'wd.diag.repair_hint': 'Menerapkan ulang izin file dan membuat ulang konfigurasi nginx HTTP dan HTTPS dari pengaturan saat ini.',
 	'wd.diag.repairing': 'Memperbaiki…',
 	'wd.diag.repair_done': 'Akses web server diperbaiki. Menjalankan diagnosa ulang…',
 	'wd.diag.repair_failed': 'Perbaikan gagal',
