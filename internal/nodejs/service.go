@@ -55,6 +55,16 @@ type Service struct {
 	runtime     runtimeManager
 	mutations   *siteops.Coordinator
 	runtimeGate sync.RWMutex
+	// websiteApp rewrites and restarts the website's own app service (unit
+	// pinned to NODE_VERSION) after a runtime change; wired from main to
+	// the website service to avoid an import cycle.
+	websiteApp func(ctx context.Context, websiteID string) error
+}
+
+// SetWebsiteAppRefresher wires the callback that refreshes a website's own
+// app service after its Node.js runtime changes.
+func (s *Service) SetWebsiteAppRefresher(refresh func(ctx context.Context, websiteID string) error) {
+	s.websiteApp = refresh
 }
 
 // NewService creates a new Node.js management service.

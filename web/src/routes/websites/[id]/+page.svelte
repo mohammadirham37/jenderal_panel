@@ -20,6 +20,8 @@
 	import { language, translate } from '$lib/stores/language';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
 	import { appTypeUsesPHP } from '$lib/website-list.js';
+	import { nodeRuntimeState } from '$lib/node-runtimes.js';
+	import Modal from '$lib/components/Modal.svelte';
 import { toast } from '$lib/stores/toast';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
@@ -73,6 +75,10 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	interface NodeRuntime {
+		domain?: string;
+		security_baseline?: string;
+		vulnerable?: boolean;
+		end_of_life?: boolean;
 		website_id: string;
 		web_user: string;
 		selected_version: string;
@@ -177,6 +183,19 @@ import { toast } from '$lib/stores/toast';
 	let nodeRuntimeError = $state('');
 	let nodeRuntimeTaskId = $state('');
 	let nodeRuntimeInitialized = $state(false);
+	let nodeSwitchConfirm = $state(false);
+	// Node 20 is end of life: only offered while a site still uses it.
+	let nodeVersionOptions = $derived(nodeRuntime?.selected_version === '20' ? ['24', '22', '20'] : ['24', '22']);
+	let nodeState = $derived(nodeRuntime ? nodeRuntimeState({ ...nodeRuntime, domain: nodeRuntime.domain ?? '' }) : 'none');
+	let nodeAction = $derived.by(() => {
+		if (!nodeRuntime?.selected_version || !nodeRuntime.installed) return 'install';
+		return nodeRuntimeChoice === nodeRuntime.selected_version ? 'update' : 'switch';
+	});
+
+	function requestNodeRuntime() {
+		if (nodeAction === 'switch') nodeSwitchConfirm = true;
+		else void installNodeRuntime();
+	}
 
 	// Laravel Octane (FrankenPHP)
 	interface OctaneStatus {
@@ -1720,32 +1739,46 @@ import { toast } from '$lib/stores/toast';
 												{nodeRuntime.installed ? translate($language, 'wd.node.installed').replace('{version}', nodeRuntime.installed_version).replace('{npm}', nodeRuntime.npm_version) : translate($language, 'wd.node.not_installed')}
 												· NVM {nodeRuntime.nvm_version || nodeRuntime.nvm_state}
 											</p>
-											<p class="text-xs text-gray-400">{translate($language, 'wd.node.selected').replace('{version}', nodeRuntime.selected_version || translate($language, 'wd.none'))}</p>
+											<p class="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+												{translate($language, 'wd.node.selected').replace('{version}', nodeRuntime.selected_version || translate($language, 'wd.none'))}
+												{#if nodeState !== 'none'}
+													<span class="rounded-full px-2 py-0.5 text-[10px] font-semibold {nodeState === 'ok' ? 'bg-green-900/50 text-green-300' : nodeState === 'vulnerable' ? 'bg-red-900/60 text-red-200' : nodeState === 'eol' ? 'bg-gray-700 text-gray-200' : 'bg-yellow-900/50 text-yellow-200'}">{translate($language, `nd.rt.state.${nodeState}`)}</span>
+												{/if}
+											</p>
 											{#if nodeRuntime.error_message}<p class="text-sm text-red-400">{nodeRuntime.error_message}</p>{/if}
 										{:else}
 											<p class="text-sm text-gray-400">{translate($language, 'wd.node.none_configured')}</p>
 										{/if}
 									</div>
 									{#if canUpdateWebsite}
-										<div class="flex gap-2">
+										<div class="flex flex-wrap gap-2">
 											<select
 												bind:value={nodeRuntimeChoice}
 												aria-label={translate($language, 'wd.node.version_label')}
 												disabled={!!nodeRuntimeTaskId}
 												class="rounded border border-gray-600 bg-gray-900 px-3 py-2 text-gray-200"
 											>
-												{#each ['20', '22', '24'] as version}<option value={version}>Node.js {version}</option>{/each}
+												{#each nodeVersionOptions as version}<option value={version}>Node.js {version}{version === '20' ? ' (EOL)' : version === '24' ? ` (${translate($language, 'wd.node.recommended')})` : ''}</option>{/each}
 											</select>
 											<button
-												onclick={installNodeRuntime}
+												onclick={requestNodeRuntime}
 												disabled={!!nodeRuntimeTaskId}
-												class="rounded bg-blue-600 px-4 py-2 text-white text-sm disabled:opacity-50"
+												class="rounded px-4 py-2 text-white text-sm font-semibold disabled:opacity-50 {nodeAction === 'update' && nodeState === 'vulnerable' ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}"
 											>
-												{nodeRuntime?.installed ? translate($language, 'wd.node.install_update') : translate($language, 'wd.install')}
+												{nodeAction === 'update'
+													? translate($language, 'wd.node.update_patch')
+													: nodeAction === 'switch'
+														? translate($language, 'wd.node.switch_to').replace('{version}', nodeRuntimeChoice)
+														: translate($language, 'wd.node.install_version').replace('{version}', nodeRuntimeChoice)}
 											</button>
 										</div>
 									{/if}
 								</div>
+								{#if nodeState === 'vulnerable'}
+									<p class="mt-3 text-xs text-red-300">{translate($language, 'wd.node.vulnerable_hint').replace('{baseline}', nodeRuntime?.security_baseline ?? '')}</p>
+								{:else if nodeState === 'eol'}
+									<p class="mt-3 text-xs text-yellow-300">{translate($language, 'wd.node.eol_hint')}</p>
+								{/if}
 							<TaskProgress bind:taskId={nodeRuntimeTaskId} storageKey="nodejs-task-{website.id}" onComplete={() => { nodeRuntimeTaskId = ''; void loadNodeRuntime(); }} />
 						{/if}
 					</div>
@@ -2968,4 +3001,22 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if nodeSwitchConfirm && nodeRuntime}
+	<Modal title={translate($language, 'wd.node.switch_title').replace('{from}', nodeRuntime.selected_version).replace('{to}', nodeRuntimeChoice)} onclose={() => (nodeSwitchConfirm = false)} closeLabel={translate($language, 'wd.cancel')}>
+		<ul class="list-disc space-y-1.5 pl-5 text-sm text-gray-300">
+			<li>{translate($language, 'wd.node.switch_restart')}</li>
+			<li>{translate($language, 'wd.node.switch_modules')}</li>
+			<li>{translate($language, 'wd.node.switch_rollback')}</li>
+		</ul>
+		{#snippet footer()}
+			<button type="button" onclick={() => (nodeSwitchConfirm = false)} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+				{translate($language, 'wd.cancel')}
+			</button>
+			<button type="button" onclick={() => { nodeSwitchConfirm = false; void installNodeRuntime(); }} class="cursor-pointer rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700">
+				{translate($language, 'wd.node.switch_to').replace('{version}', nodeRuntimeChoice)}
+			</button>
+		{/snippet}
+	</Modal>
 {/if}

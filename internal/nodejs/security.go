@@ -84,9 +84,13 @@ func (s *Service) UpdateRuntime(ctx context.Context, websiteID string, log func(
 	if err := s.ChangeRuntime(ctx, websiteID, website.NodeVersion, log); err != nil {
 		return err
 	}
-	// try-restart is a no-op for units that are not running or do not exist.
-	if err := s.runSudoOK(ctx, "systemctl", "try-restart", websiteAppUnit(websiteID)); err != nil {
-		return fmt.Errorf("restart website app: %w", err)
+	// ChangeRuntime refreshes the website app through the wired callback;
+	// without it, still restart the unit so it loads the new patch.
+	if s.websiteApp == nil {
+		// try-restart is a no-op for units that are not running or do not exist.
+		if err := s.runSudoOK(ctx, "systemctl", "try-restart", websiteAppUnit(websiteID)); err != nil {
+			return fmt.Errorf("restart website app: %w", err)
+		}
 	}
 	if status, err := s.runtime.Detect(ctx, website.WebUser, website.NodeVersion); err == nil && log != nil {
 		log(fmt.Sprintf("%s now runs Node.js %s", website.Domain, status.NodeVersion))

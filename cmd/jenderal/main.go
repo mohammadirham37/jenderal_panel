@@ -323,6 +323,8 @@ func cmdServe() {
 	deploySvc.SetServingAccessRestorer(provisioner)
 	deploySvc.SetDeployHook(websiteSvc)
 	websiteSvc.SetTLSVhostRegenerator(sslSvc)
+	// Node runtime changes must rewrite the website's own app unit too.
+	nodeSvc.SetWebsiteAppRefresher(websiteSvc.RefreshNodeAppUnit)
 	panelDomainSvc := paneldomain.NewService(db, exec, auditSvc)
 	if cfg.Server.TLS.Enabled {
 		// The panel serves TLS on the upstream port (self-signed), so the

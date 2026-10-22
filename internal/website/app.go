@@ -569,6 +569,33 @@ func (s *Service) waitAppHealthy(ctx context.Context, port int) error {
 		fmt.Sprintf("the app is not listening on %s after 30s; check the app unit logs", addr), nil)
 }
 
+// RefreshNodeAppUnit rewrites a Node website's app unit from the current row
+// (NODE_VERSION is pinned in ExecStart) and restarts it if it is running.
+// Other app types and Node sites without a start command are a no-op.
+func (s *Service) RefreshNodeAppUnit(ctx context.Context, websiteID string) error {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return err
+	}
+	if w.AppType != "node" || strings.TrimSpace(w.AppStartCommand) == "" || w.NodeVersion == "" {
+		return nil
+	}
+	if w.AppRuntime == "" {
+		w.AppRuntime = "node"
+	}
+	if err := writeAppUnitFiles(ctx, s.exec, w); err != nil {
+		return err
+	}
+	res, err := s.exec.RunSudo(ctx, "systemctl", "try-restart", appUnitName(w.ID))
+	if err != nil {
+		return fmt.Errorf("restart app service: %w", err)
+	}
+	if res != nil && res.ExitCode != 0 {
+		return fmt.Errorf("restart app service: %s", strings.TrimSpace(res.Stderr))
+	}
+	return nil
+}
+
 // appExecPath resolves the executable of a start command the same way the
 // unit does: "./x" and bare names live in the project root; arguments are
 // dropped.

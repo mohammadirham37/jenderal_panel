@@ -110,3 +110,28 @@ func TestUpdateAllRuntimesSkipsSitesWithoutNodeAndReportsFailures(t *testing.T) 
 		t.Errorf("err = %v, want the failed site named", err)
 	}
 }
+
+func TestChangeRuntimeRefreshesWebsiteAppUnit(t *testing.T) {
+	db := setupTestDB(t)
+	db.SetMaxOpenConns(1)
+	insertTestWebsite(t, db, "site-a", "a.example.com", "web_a", "/home/web_a/public")
+	svc := NewService(db, newMockExec(), nil)
+	svc.runtime = installedRuntime("22")
+	var refreshed []string
+	svc.SetWebsiteAppRefresher(func(_ context.Context, websiteID string) error {
+		var version string
+		if err := db.QueryRow(`SELECT node_version FROM websites WHERE id = ?`, websiteID).Scan(&version); err != nil {
+			return err
+		}
+		refreshed = append(refreshed, websiteID+"@"+version)
+		return nil
+	})
+	if err := svc.ChangeRuntime(context.Background(), "site-a", "22", func(string) {}); err != nil {
+		t.Fatalf("ChangeRuntime: %v", err)
+	}
+	// The refresher must run after the new version is committed so the
+	// rewritten unit pins NODE_VERSION=22, not the old 24.
+	if strings.Join(refreshed, ",") != "site-a@22" {
+		t.Errorf("website app refresh = %v, want site-a@22", refreshed)
+	}
+}

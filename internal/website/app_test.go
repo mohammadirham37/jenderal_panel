@@ -524,3 +524,48 @@ func TestAppStartupReportExplainsPermissionDenied(t *testing.T) {
 		t.Errorf("explain = %s", msg)
 	}
 }
+
+func TestRefreshNodeAppUnitRewritesUnitWithCurrentVersion(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	var unit string
+	var restarted bool
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) { return &executor.Result{}, nil },
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if name == "systemctl" && len(args) > 0 && args[0] == "try-restart" {
+				restarted = true
+			}
+			if name == "test" {
+				return &executor.Result{ExitCode: 1}, nil
+			}
+			return &executor.Result{}, nil
+		},
+		RunSudoWithInputFunc: func(ctx context.Context, input, name string, args ...string) (*executor.Result, error) {
+			unit = input
+			return &executor.Result{}, nil
+		},
+	}
+	svc := NewService(db, mock, nil)
+	if _, err := db.Exec(`INSERT INTO websites (id, domain, app_type, app_runtime, app_port, app_start_command, node_version,
+		document_root, web_user, status, framework, created_at, updated_at)
+		VALUES ('n1', 'node.example.com', 'node', 'node', 8300, 'server.js', '24', '/home/web_node_example_com/public',
+		'web_node_example_com', 'active', 'node', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RefreshNodeAppUnit(context.Background(), "n1"); err != nil {
+		t.Fatalf("RefreshNodeAppUnit: %v", err)
+	}
+	if !strings.Contains(unit, "NODE_VERSION=24") || !restarted {
+		t.Errorf("unit not rewritten with NODE_VERSION=24 / not restarted (restarted=%v):\n%s", restarted, unit)
+	}
+
+	// Non-node and unconfigured sites are a no-op.
+	unit, restarted = "", false
+	if _, err := db.Exec(`UPDATE websites SET app_start_command = '' WHERE id = 'n1'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RefreshNodeAppUnit(context.Background(), "n1"); err != nil || unit != "" || restarted {
+		t.Errorf("unconfigured node site must be a no-op: err=%v unit=%q restarted=%v", err, unit, restarted)
+	}
+}

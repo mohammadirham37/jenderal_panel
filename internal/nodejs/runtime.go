@@ -234,6 +234,16 @@ func (s *Service) ChangeRuntime(ctx context.Context, websiteID, version string, 
 	if log != nil {
 		log(fmt.Sprintf("Activated Node.js %s for %s", version, website.Domain))
 	}
+	// The website's own app unit pins NODE_VERSION; rewrite and restart it
+	// so a Node website actually runs on the new runtime.
+	if s.websiteApp != nil {
+		if log != nil {
+			log("Refreshing the website app service")
+		}
+		if err := s.websiteApp(ctx, websiteID); err != nil {
+			return fmt.Errorf("Node.js %s is active, but restarting the website app failed: %w", version, err)
+		}
+	}
 	return nil
 }
 

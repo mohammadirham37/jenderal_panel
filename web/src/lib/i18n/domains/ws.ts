@@ -119,6 +119,16 @@ const en = {
 	'wd.node.none_configured': 'No Node.js runtime is configured for this website yet.',
 	'wd.node.version_label': 'Node.js version',
 	'wd.node.install_update': 'Install / update',
+	'wd.node.recommended': 'recommended',
+	'wd.node.update_patch': 'Update patch',
+	'wd.node.switch_to': 'Switch to Node.js {version}',
+	'wd.node.install_version': 'Install Node.js {version}',
+	'wd.node.vulnerable_hint': 'This patch has known security vulnerabilities; update to v{baseline} or newer.',
+	'wd.node.eol_hint': 'Node.js 20 is end of life and receives no security fixes. Switch to Node.js 22 or 24.',
+	'wd.node.switch_title': 'Switch Node.js {from} → {to}',
+	'wd.node.switch_restart': 'The new version is installed for this website and its Node apps and app service restart on it.',
+	'wd.node.switch_modules': 'Native modules in node_modules are built for one Node.js version: run "npm install" (Commands tab) and rebuild afterwards.',
+	'wd.node.switch_rollback': 'If installing or activating the new version fails, the previous version stays active.',
 
 	// Laravel Octane (FrankenPHP)
 	'wd.octane.loading': 'Loading Octane status...',
@@ -587,6 +597,16 @@ const id: Record<keyof typeof en, string> = {
 	'wd.node.none_configured': 'Belum ada runtime Node.js yang dikonfigurasi untuk situs web ini.',
 	'wd.node.version_label': 'Versi Node.js',
 	'wd.node.install_update': 'Pasang / perbarui',
+	'wd.node.recommended': 'disarankan',
+	'wd.node.update_patch': 'Perbarui patch',
+	'wd.node.switch_to': 'Ganti ke Node.js {version}',
+	'wd.node.install_version': 'Pasang Node.js {version}',
+	'wd.node.vulnerable_hint': 'Patch ini punya celah keamanan yang diketahui; perbarui ke v{baseline} atau lebih baru.',
+	'wd.node.eol_hint': 'Node.js 20 sudah end of life dan tidak mendapat perbaikan keamanan. Ganti ke Node.js 22 atau 24.',
+	'wd.node.switch_title': 'Ganti Node.js {from} → {to}',
+	'wd.node.switch_restart': 'Versi baru dipasang untuk website ini, lalu aplikasi Node dan service aplikasinya di-restart dengan versi tersebut.',
+	'wd.node.switch_modules': 'Native module di node_modules dibangun untuk satu versi Node.js: jalankan "npm install" (tab Commands) lalu build ulang setelahnya.',
+	'wd.node.switch_rollback': 'Jika pemasangan atau aktivasi versi baru gagal, versi sebelumnya tetap aktif.',
 
 	// Laravel Octane (FrankenPHP)
 	'wd.octane.loading': 'Memuat status Octane...',
