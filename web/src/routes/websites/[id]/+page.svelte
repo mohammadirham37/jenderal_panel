@@ -1635,7 +1635,7 @@ import { toast } from '$lib/stores/toast';
 						</div>
 					{/if}
 
-					<WebsiteDiagnosticsSection websiteId={website.id} canManage={canUpdateWebsite} />
+					<WebsiteDiagnosticsSection websiteId={website.id} canManage={canUpdateWebsite} appService={['go', 'node', 'python', 'deno', 'bun'].includes(website.app_type)} />
 
 					{#if pendingStatuses.includes(website.status)}
 						<div class="p-3 bg-yellow-900/30 border border-yellow-700 rounded-lg text-yellow-300 text-sm">

@@ -5,10 +5,13 @@
 
 	let {
 		websiteId,
-		canManage
+		canManage,
+		appService = false
 	}: {
 		websiteId: string;
 		canManage: boolean;
+		/** Go/Node/Python/Deno/Bun sites are diagnosed as apps, not files. */
+		appService?: boolean;
 	} = $props();
 
 	interface DiagnosticCheck {
@@ -37,11 +40,13 @@
 		nginx_access: 'wd.diag.check.nginx_access',
 		http_response: 'wd.diag.check.http_response',
 		php_fpm: 'wd.diag.check.php_fpm',
-		laravel_project: 'wd.diag.check.laravel_project'
+		laravel_project: 'wd.diag.check.laravel_project',
+		app_vhost: 'wd.diag.check.app_vhost',
+		app_service: 'wd.diag.check.app_service'
 	};
 
 	const needsPermissionRepair = $derived(
-		!!report?.checks.some((c) => c.id === 'nginx_access' && c.status !== 'ok')
+		!!report?.checks.some((c) => (c.id === 'nginx_access' || c.id === 'app_vhost') && c.status !== 'ok')
 	);
 
 	function statusIcon(status: string): string {
@@ -95,7 +100,7 @@
 			{running ? translate($language, 'wd.diag.running') : translate($language, 'wd.diag.run')}
 		</button>
 	</div>
-	<p class="mt-1 text-xs text-gray-500">{translate($language, 'wd.diag.desc')}</p>
+	<p class="mt-1 text-xs text-gray-500">{translate($language, appService ? 'wd.diag.desc_app' : 'wd.diag.desc')}</p>
 
 	{#if report}
 		<p class="mt-3 text-xs font-semibold {statusColor(report.overall)}">

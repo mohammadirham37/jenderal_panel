@@ -390,7 +390,10 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
 		}
 		mapVar := "$jenderal_app_" + websocketMapSuffix(data.Domain, tls)
 		upstream := "http://127.0.0.1:" + strconv.Itoa(data.AppPort)
-		location := "    location / {\n        try_files $uri $uri/ @app;\n    }\n\n    location @app {\n        proxy_pass " + upstream + ";\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection " + mapVar + ";\n        proxy_read_timeout 300s;\n        proxy_send_timeout 300s;\n    }"
+		// Static files first, everything else to the app. "$uri/" is left
+		// out on purpose: "/" would match the index-less document root and
+		// nginx would answer 403 instead of proxying to the app.
+		location := "    location / {\n        try_files $uri @app;\n    }\n\n    location @app {\n        proxy_pass " + upstream + ";\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n        proxy_set_header Upgrade $http_upgrade;\n        proxy_set_header Connection " + mapVar + ";\n        proxy_read_timeout 300s;\n        proxy_send_timeout 300s;\n    }"
 		return nginxProfileDirectives{Index: "index.html index.htm", Header: "map $http_upgrade " + mapVar + ` {
     default upgrade;
     ''      close;

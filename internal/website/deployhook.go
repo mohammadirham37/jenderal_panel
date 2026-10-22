@@ -73,6 +73,10 @@ func (s *Service) deployGoApp(ctx context.Context, websiteID string, write func(
 	if err := writeAppUnitFiles(ctx, s.exec, w); err != nil {
 		return err
 	}
+	// Same for the vhost: older app-proxy vhosts answered 403 on "/".
+	if err := s.regenerateConfig(ctx, w, ""); err != nil {
+		return fmt.Errorf("regenerate vhost: %w", err)
+	}
 
 	unit := appUnitName(w.ID)
 	action := "start"

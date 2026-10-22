@@ -53,8 +53,11 @@ func TestAppProxyNginxProfile(t *testing.T) {
 	if !strings.Contains(d.Location, "proxy_pass http://127.0.0.1:8200;") {
 		t.Errorf("proxy target wrong: %q", d.Location)
 	}
-	if !strings.Contains(d.Location, "try_files $uri $uri/ @app;") {
-		t.Errorf("static-first try_files missing: %q", d.Location)
+	// Static files first, everything else to the app. "$uri/" must not be
+	// tried: "/" would match the (index-less) document root directory and
+	// nginx would answer 403 instead of proxying.
+	if !strings.Contains(d.Location, "try_files $uri @app;") || strings.Contains(d.Location, "$uri/") {
+		t.Errorf("app-proxy try_files must be \"$uri @app\": %q", d.Location)
 	}
 	if !strings.Contains(d.Location, "Upgrade $http_upgrade") {
 		t.Errorf("websocket upgrade header missing: %q", d.Location)

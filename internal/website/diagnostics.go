@@ -3,8 +3,11 @@ package website
 import (
 	"context"
 	"fmt"
+	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
@@ -66,7 +69,21 @@ func (s *Service) RepairServing(ctx context.Context, websiteID string) error {
 	}
 	unlock := s.mutations.Lock(websiteID)
 	defer unlock()
-	return s.prov.RestoreServingAccess(ctx, websiteID)
+	if err := s.prov.RestoreServingAccess(ctx, websiteID); err != nil {
+		return err
+	}
+	// App-service vhosts are rendered from the current template so older
+	// sites lose the "$uri/" fallback that answers 403 on "/".
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return err
+	}
+	if NginxProfileForWebsite(w) == "app-proxy" {
+		if err := s.regenerateConfig(ctx, w, ""); err != nil {
+			return fmt.Errorf("regenerate vhost: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) diagnoseWebsite(ctx context.Context, w model.Website) DiagnosticsReport {
@@ -97,6 +114,14 @@ func (s *Service) diagnoseWebsite(ctx context.Context, w model.Website) Diagnost
 		add("nginx_config", DiagFail, strings.TrimSpace(tRes.Stderr), "wd.diag.hint_nginx_config")
 	} else {
 		add("nginx_config", DiagOK, "nginx -t passed", "")
+	}
+
+	// App-service sites (Go/Node/Python/Deno/Bun) are served by the app on
+	// its loopback port, not from files: check the vhost, the unit, and the
+	// port instead of index.html and file access.
+	if NginxProfileForWebsite(w) == "app-proxy" {
+		s.diagnoseAppProxy(ctx, w, add)
+		return s.finishDiagnostics(ctx, checks, logDir)
 	}
 
 	// Document root and index file present?
@@ -160,9 +185,13 @@ func (s *Service) diagnoseWebsite(ctx context.Context, w model.Website) Diagnost
 		}
 	}
 
-	report := DiagnosticsReport{Checks: checks}
+	return s.finishDiagnostics(ctx, checks, logDir)
+}
 
-	// Recent site error log: it names the exact failing path and errno.
+// finishDiagnostics attaches the recent site error log: it names the exact
+// failing path and errno.
+func (s *Service) finishDiagnostics(ctx context.Context, checks []DiagnosticCheck, logDir string) DiagnosticsReport {
+	report := DiagnosticsReport{Checks: checks}
 	if res, err := s.exec.RunSudo(ctx, "tail", "-n", "20", logDir+"/error.log"); err == nil && res.ExitCode == 0 {
 		logText := strings.TrimSpace(res.Stdout)
 		if len(logText) > 4096 {
@@ -171,6 +200,49 @@ func (s *Service) diagnoseWebsite(ctx context.Context, w model.Website) Diagnost
 		report.ErrorLog = logText
 	}
 	return report
+}
+
+// diagnoseAppProxy checks an app-service site: the vhost proxies "/" to the
+// app, the systemd unit runs, the app accepts connections on its port, and
+// the local nginx answers end to end.
+func (s *Service) diagnoseAppProxy(ctx context.Context, w model.Website, add func(id, status, detail, hint string)) {
+	vhostPath := "/etc/nginx/sites-enabled/" + w.Domain
+	if res, err := s.exec.RunSudo(ctx, "cat", vhostPath); err == nil && res != nil && res.ExitCode == 0 {
+		switch {
+		case strings.Contains(res.Stdout, "try_files $uri $uri/ @app;"):
+			add("app_vhost", DiagFail, "the vhost tries the document root directory before the app, so \"/\" answers 403", "wd.diag.hint_app_vhost")
+		case w.AppPort > 0 && !strings.Contains(res.Stdout, "127.0.0.1:"+strconv.Itoa(w.AppPort)):
+			add("app_vhost", DiagFail, fmt.Sprintf("the vhost does not proxy to the app port %d", w.AppPort), "wd.diag.hint_app_vhost")
+		default:
+			add("app_vhost", DiagOK, fmt.Sprintf("proxies to 127.0.0.1:%d", w.AppPort), "")
+		}
+	}
+
+	unit := appUnitName(w.ID)
+	if w.AppPort <= 0 {
+		add("app_service", DiagFail, "no app port allocated yet", "wd.diag.hint_app_down")
+	} else if res, err := s.exec.RunSudo(ctx, "systemctl", "is-active", unit); err != nil || res == nil || strings.TrimSpace(res.Stdout) != "active" {
+		state := "unknown"
+		if res != nil {
+			state = strings.TrimSpace(res.Stdout)
+		}
+		add("app_service", DiagFail, unit+" is "+state, "wd.diag.hint_app_down")
+	} else if conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", w.AppPort), 2*time.Second); err != nil {
+		add("app_service", DiagFail, s.appStartupReport(ctx, unit).explain(w.AppPort), "wd.diag.hint_app_port")
+	} else {
+		_ = conn.Close()
+		add("app_service", DiagOK, fmt.Sprintf("%s active, listening on 127.0.0.1:%d", unit, w.AppPort), "")
+	}
+
+	status, detail, hint := s.checkHTTPResponse(ctx, w.Domain)
+	switch hint {
+	case "wd.diag.hint_permissions":
+		// A 403/404 here comes from the vhost, not from file permissions.
+		hint = "wd.diag.hint_app_vhost"
+	case "wd.diag.hint_app_error":
+		hint = "wd.diag.hint_app_error_service"
+	}
+	add("http_response", status, detail, hint)
 }
 
 // checkNginxAccess walks every path component of the document root and

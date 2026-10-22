@@ -3,6 +3,8 @@ package website
 import (
 	"context"
 	"database/sql"
+	"net"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -186,5 +188,98 @@ func TestDiagnosticIndexFileForWordPress(t *testing.T) {
 		if got := diagnosticIndexFile(c.w); got != c.want {
 			t.Errorf("diagnosticIndexFile(%+v) = %q, want %q", c.w, got, c.want)
 		}
+	}
+}
+
+func goDiagnosticsMock(vhost string, unitState string, curlCode string) *executor.MockExecutor {
+	return &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 0}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := name + " " + strings.Join(args, " ")
+			switch {
+			case strings.HasPrefix(joined, "cat /etc/nginx/sites-enabled/"):
+				return &executor.Result{Stdout: vhost}, nil
+			case name == "curl":
+				return &executor.Result{Stdout: curlCode}, nil
+			case name == "systemctl" && len(args) > 0 && args[0] == "is-active":
+				code := 0
+				if unitState != "active" {
+					code = 3
+				}
+				return &executor.Result{Stdout: unitState + "\n", ExitCode: code}, nil
+			case name == "systemctl":
+				return &executor.Result{Stdout: "ActiveState=" + unitState + "\nSubState=running\nMainPID=0\nNRestarts=0\n"}, nil
+			}
+			return &executor.Result{ExitCode: 0}, nil
+		},
+	}
+}
+
+func TestDiagnoseGoSiteChecksAppNotFiles(t *testing.T) {
+	db := setupDiagnosticsDB(t)
+	defer db.Close()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	id := insertAppWebsite(t, db, "go.example.com", "go", "go", port)
+	if _, err := db.Exec(`UPDATE websites SET nginx_profile = 'app-proxy' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+
+	vhost := "location / {\n    try_files $uri @app;\n}\nlocation @app {\n    proxy_pass http://127.0.0.1:" + strconv.Itoa(port) + ";\n}\n"
+	svc := NewService(db, goDiagnosticsMock(vhost, "active", "200"), nil)
+	report, err := svc.Diagnose(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]DiagnosticCheck{}
+	for _, c := range report.Checks {
+		got[c.ID] = c
+	}
+	for _, unwanted := range []string{"docroot", "nginx_access", "php_fpm"} {
+		if _, ok := got[unwanted]; ok {
+			t.Errorf("Go site must not run the %s file check: %+v", unwanted, got[unwanted])
+		}
+	}
+	for _, id := range []string{"vhost", "nginx_config", "app_vhost", "app_service", "http_response"} {
+		if got[id].Status != DiagOK {
+			t.Errorf("check %s = %+v, want ok", id, got[id])
+		}
+	}
+	if report.Overall != DiagOK {
+		t.Errorf("overall = %s", report.Overall)
+	}
+}
+
+func TestDiagnoseGoSiteFlagsStaleVhostAndDownApp(t *testing.T) {
+	db := setupDiagnosticsDB(t)
+	defer db.Close()
+	// Port 1 is never listening in tests.
+	id := insertAppWebsite(t, db, "go.example.com", "go", "go", 1)
+	if _, err := db.Exec(`UPDATE websites SET nginx_profile = 'app-proxy' WHERE id = ?`, id); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(db, goDiagnosticsMock("location / {\n    try_files $uri $uri/ @app;\n}\n", "activating", "403"), nil)
+	report, err := svc.Diagnose(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]DiagnosticCheck{}
+	for _, c := range report.Checks {
+		got[c.ID] = c
+	}
+	if got["app_vhost"].Status != DiagFail || got["app_vhost"].Hint != "wd.diag.hint_app_vhost" {
+		t.Errorf("stale try_files not flagged: %+v", got["app_vhost"])
+	}
+	if got["app_service"].Status != DiagFail || got["app_service"].Hint != "wd.diag.hint_app_down" {
+		t.Errorf("down app not flagged: %+v", got["app_service"])
+	}
+	if got["http_response"].Hint != "wd.diag.hint_app_vhost" {
+		t.Errorf("a 403 on a Go site should point at the vhost, got %+v", got["http_response"])
 	}
 }
