@@ -442,6 +442,20 @@ func cmdServe() {
 	defer bgCancel()
 
 	metricsCollector.Start(bgCtx)
+	// Task output, deployment logs, and audit entries grow with every
+	// action; without this the panel database is a silent disk consumer.
+	database.StartRetention(bgCtx, db, func(report database.RetentionReport, err error) {
+		if err != nil {
+			logger.Warn("database retention failed", "error", err)
+			return
+		}
+		if report.Tasks+report.DeploymentLogs+report.AuditEntries > 0 {
+			logger.Info("database retention",
+				"tasks_removed", report.Tasks,
+				"deployment_logs_cleared", report.DeploymentLogs,
+				"audit_entries_removed", report.AuditEntries)
+		}
+	})
 	if err := provisioner.RepairServingPermissions(bgCtx); err != nil {
 		logger.Warn("website permission reconciliation failed", "error", err)
 	}
