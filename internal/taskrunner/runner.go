@@ -3,7 +3,9 @@ package taskrunner
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os/exec"
@@ -209,7 +211,7 @@ type Options struct {
 func (r *Runner) startTask(options Options) *Task {
 	now := time.Now().UTC()
 	task := &Task{
-		ID:        ulid.Make().String(),
+		ID:        newTaskID(),
 		Name:      options.Name,
 		Module:    options.Module,
 		Status:    "running",
@@ -286,4 +288,16 @@ func boundOutput(output string) string {
 		start++
 	}
 	return outputTruncatedMarker + output[start:]
+}
+
+// newTaskID returns an unguessable task id. A task is readable by whoever
+// holds its id, so the id must not be derivable from another task's.
+func newTaskID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		// crypto/rand failing is fatal for uniqueness guarantees; fall back
+		// to a ULID so the panel keeps working.
+		return ulid.Make().String()
+	}
+	return hex.EncodeToString(raw)
 }

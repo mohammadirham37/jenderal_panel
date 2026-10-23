@@ -187,3 +187,22 @@ func TestRawVhostEditorIsAdminOnly(t *testing.T) {
 		t.Errorf("site owner GET %s = 403, want the config to stay readable", path)
 	}
 }
+
+// Server logs and the global task list expose other tenants' and the
+// admin's activity, so they are not open to every signed-in account.
+func TestServerLogsAndTaskListAreRestricted(t *testing.T) {
+	f := newScopeFixture(t)
+	for _, path := range []string{"/api/v1/logs?path=/var/log/syslog", "/api/v1/tasks"} {
+		if code := f.status(t, f.other, http.MethodGet, path); code != http.StatusForbidden {
+			t.Errorf("user-role GET %s = %d, want 403", path, code)
+		}
+		if code := f.status(t, f.admin, http.MethodGet, path); code == http.StatusForbidden {
+			t.Errorf("admin GET %s = 403, admins must keep access", path)
+		}
+	}
+	// A task the caller holds the id of stays readable, so progress views
+	// keep working for every role.
+	if code := f.status(t, f.other, http.MethodGet, "/api/v1/tasks/does-not-exist"); code == http.StatusForbidden {
+		t.Error("reading a task by id must stay available")
+	}
+}

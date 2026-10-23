@@ -908,8 +908,12 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "backups.create")).
 				Post("/backups/{id}/upload", backupHandler.RetryUpload)
 
-			// Tasks (background operations)
-			r.Get("/tasks", taskHandler.List)
+			// Tasks (background operations). The full list covers every
+			// tenant's and the admin's work, so it stays admin-only; a
+			// single task is readable by whoever holds its id, which is
+			// how progress views follow their own task.
+			r.With(auth.RequireRole(deps.RBAC, "admin")).
+				Get("/tasks", taskHandler.List)
 			r.Get("/tasks/{id}", taskHandler.Get)
 
 			// Alerts
@@ -1098,7 +1102,8 @@ func NewRouter(deps Dependencies) http.Handler {
 		r.Use(auth.SessionMiddleware(deps.AuthSvc))
 		r.Use(deps.ScopeMiddleware)
 		r.Get("/ws/metrics", systemHandler.WSMetrics)
-		r.Get("/ws/logs", systemHandler.StreamLog)
+		r.With(auth.RequirePermission(deps.RBAC, "logs.view")).
+			Get("/ws/logs", systemHandler.StreamLog)
 		r.With(auth.RequirePermission(deps.RBAC, "terminal.access")).
 			Get("/ws/terminal", terminalHandler.HandleWS)
 	})
