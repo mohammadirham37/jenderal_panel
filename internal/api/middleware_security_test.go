@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -127,5 +128,50 @@ func TestSafeRealIPTrustsLoopbackOnly(t *testing.T) {
 		if seen != tc.want {
 			t.Errorf("peer %s: RemoteAddr = %q, want %q", tc.peer, seen, tc.want)
 		}
+	}
+}
+
+func TestSecurityHeadersSetContentSecurityPolicy(t *testing.T) {
+	rec := httptest.NewRecorder()
+	SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	csp := rec.Header().Get("Content-Security-Policy")
+	for _, want := range []string{
+		"default-src 'self'",
+		"frame-ancestors 'none'",
+		"base-uri 'self'",
+		"object-src 'none'",
+		"form-action 'self'",
+		// The panel's own bootstrap scripts and component styles are inline,
+		// and QR codes and charts render from data:/blob: URLs.
+		"script-src 'self' 'unsafe-inline'",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: blob:",
+		// Live metrics, logs, and the terminal use WebSockets.
+		"connect-src 'self' ws: wss:",
+	} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP missing %q: %s", want, csp)
+		}
+	}
+}
+
+// Behind a TLS-terminating proxy the panel sees plain HTTP, but the browser
+// spoke HTTPS and should still be told to keep doing so.
+func TestSecurityHeadersSendHSTSBehindATLSProxy(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(rec, req)
+	if rec.Header().Get("Strict-Transport-Security") == "" {
+		t.Error("no HSTS header behind a TLS proxy")
+	}
+
+	rec = httptest.NewRecorder()
+	SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Header().Get("Strict-Transport-Security") != "" {
+		t.Error("HSTS must not be sent on a plain HTTP request")
 	}
 }

@@ -67,6 +67,21 @@ func isTrustedProxyIP(host string) bool {
 	return ip.IsLoopback()
 }
 
+// panelCSP keeps the page to its own origin: no third-party scripts, no
+// framing, no plugin content. Inline script and style are allowed because
+// the app's bootstrap (theme, title) and component styles are inline, and
+// WebSockets carry live metrics, logs, and the terminal.
+const panelCSP = "default-src 'self'; " +
+	"script-src 'self' 'unsafe-inline'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data: blob:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self' ws: wss:; " +
+	"frame-ancestors 'none'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'; " +
+	"object-src 'none'"
+
 // SecurityHeaders sets conservative response headers on every panel response.
 // They cannot affect the SPA or API behaviour but blunt common browser-side
 // attacks: MIME sniffing, framing/clickjacking, and referrer leakage. HSTS is
@@ -77,7 +92,10 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		if r.TLS != nil {
+		h.Set("Content-Security-Policy", panelCSP)
+		// Behind a TLS-terminating proxy the panel itself sees plain HTTP,
+		// but the browser spoke HTTPS and should keep doing so.
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		next.ServeHTTP(w, r)
