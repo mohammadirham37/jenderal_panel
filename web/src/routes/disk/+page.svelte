@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { language, translate } from '$lib/stores/language';
+	import { hasPermission, permissions } from '$lib/stores/auth';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 
 	interface FilesystemStat {
@@ -46,6 +47,40 @@
 		size: string;
 	}
 
+	interface TableUsage {
+		name: string;
+		rows: number;
+		bytes: number;
+	}
+
+	interface PanelDataUsage {
+		database_path: string;
+		database_bytes: number;
+		state_bytes: number;
+		tables: TableUsage[];
+	}
+
+	interface GrowthEntry {
+		path: string;
+		label: string;
+		delta_bytes: number;
+		bytes: number;
+	}
+
+	interface GrowthReport {
+		days: number;
+		used_bytes: number;
+		previous_bytes: number;
+		delta_bytes: number;
+		points: { day: string; used_bytes: number }[];
+		top_growers: GrowthEntry[];
+	}
+
+	interface LargeFile {
+		path: string;
+		bytes: number;
+	}
+
 	interface Overview {
 		filesystems: FilesystemStat[];
 		dirs: DirUsage[];
@@ -57,6 +92,8 @@
 		old_kernels: string[];
 		has_docker: boolean;
 		docker: DockerUsage[];
+		panel_data: PanelDataUsage;
+		growth: GrowthReport;
 	}
 
 	interface CleanupAction {
@@ -94,6 +131,59 @@
 	let startError = $state('');
 	let taskId = $state('');
 	let cleanupModalOpen = $state(false);
+	const canManage = $derived(hasPermission($permissions, 'disk.manage'));
+
+	// Largest files: an on-demand deep scan, because folder totals alone do
+	// not say which file is responsible.
+	let scanRoot = $state('/');
+	let scanning = $state(false);
+	let scanError = $state('');
+	let largestFiles = $state<LargeFile[] | null>(null);
+	const scanRoots = ['/', '/home', '/var', '/var/log', '/var/lib', '/tmp', '/opt', '/usr'];
+
+	// Compacting the panel database (old task output, audit entries).
+	let compacting = $state(false);
+	let compactMsg = $state('');
+	let compactError = $state('');
+
+	async function scanLargestFiles() {
+		if (scanning) return;
+		scanning = true;
+		scanError = '';
+		try {
+			largestFiles = (await api.get<LargeFile[]>(
+				`/api/v1/disk/largest-files?root=${encodeURIComponent(scanRoot)}&limit=25`
+			)) || [];
+		} catch (err) {
+			scanError = err instanceof Error ? err.message : translate($language, 'dku.files.failed');
+		} finally {
+			scanning = false;
+		}
+	}
+
+	async function compactPanelData() {
+		if (compacting) return;
+		compacting = true;
+		compactMsg = '';
+		compactError = '';
+		try {
+			const result = await api.post<{ bytes_freed: number; tasks_removed: number }>(
+				'/api/v1/disk/panel-data/compact'
+			);
+			compactMsg = translate($language, 'dku.panel.compacted')
+				.replace('{size}', formatBytes(result.bytes_freed))
+				.replace('{tasks}', String(result.tasks_removed));
+			await load();
+		} catch (err) {
+			compactError = err instanceof Error ? err.message : translate($language, 'dku.panel.compactFailed');
+		} finally {
+			compacting = false;
+		}
+	}
+
+	function growthLabel(entry: GrowthEntry): string {
+		return entry.label ? translate($language, labelKey(entry.label)) : entry.path;
+	}
 
 	function formatBytes(bytes: number): string {
 		if (!bytes) return '0 B';
@@ -465,6 +555,122 @@
 						</tbody>
 					</table>
 				</div>
+			{/if}
+		</div>
+
+		<!-- What grew -->
+		{#if overview.growth.points.length > 1}
+			<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+				<div class="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+					<h3 class="text-lg font-semibold text-white">{translate($language, 'dku.growth.title')}</h3>
+					<p class="text-sm font-semibold tabular-nums {overview.growth.delta_bytes > 0 ? 'text-yellow-300' : 'text-green-400'}">
+						{overview.growth.delta_bytes > 0 ? '+' : ''}{formatBytes(Math.abs(overview.growth.delta_bytes))}
+						<span class="text-xs font-normal text-gray-500">
+							{translate($language, 'dku.growth.window').replace('{days}', String(overview.growth.points.length))}
+						</span>
+					</p>
+				</div>
+				<p class="mb-4 text-xs text-gray-500">{translate($language, 'dku.growth.desc')}</p>
+				{#if overview.growth.top_growers.length > 0}
+					<div class="divide-y divide-gray-700/60">
+						{#each overview.growth.top_growers as entry (entry.path)}
+							<div class="flex items-center justify-between gap-3 py-2">
+								<div class="min-w-0">
+									<p class="truncate text-sm text-gray-200">{growthLabel(entry)}</p>
+									<p class="truncate font-mono text-[11px] text-gray-500">{entry.path}</p>
+								</div>
+								<div class="shrink-0 text-right">
+									<p class="text-sm font-semibold tabular-nums text-yellow-300">+{formatBytes(entry.delta_bytes)}</p>
+									<p class="text-[11px] tabular-nums text-gray-500">{translate($language, 'dku.growth.now')} {formatBytes(entry.bytes)}</p>
+								</div>
+							</div>
+						{/each}
+					</div>
+				{:else}
+					<p class="text-sm text-gray-400">{translate($language, 'dku.growth.noneGrew')}</p>
+				{/if}
+			</div>
+		{:else}
+			<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+				<h3 class="mb-1 text-lg font-semibold text-white">{translate($language, 'dku.growth.title')}</h3>
+				<p class="text-sm text-gray-400">{translate($language, 'dku.growth.collecting')}</p>
+			</div>
+		{/if}
+
+		<!-- Panel data -->
+		<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+			<div class="mb-1 flex flex-wrap items-baseline justify-between gap-2">
+				<h3 class="text-lg font-semibold text-white">{translate($language, 'dku.panel.title')}</h3>
+				<p class="text-sm font-semibold tabular-nums text-white">{formatBytes(overview.panel_data.database_bytes)}</p>
+			</div>
+			<p class="mb-4 text-xs text-gray-500">{translate($language, 'dku.panel.desc')}</p>
+			{#if overview.panel_data.tables.length > 0}
+				<div class="divide-y divide-gray-700/60">
+					{#each overview.panel_data.tables.slice(0, 5) as table (table.name)}
+						<div class="flex items-center justify-between gap-3 py-2">
+							<div class="min-w-0">
+								<p class="truncate text-sm text-gray-200">{translate($language, `dku.panel.table.${table.name}`)}</p>
+								<p class="truncate font-mono text-[11px] text-gray-500">{table.name} · {table.rows.toLocaleString()} {translate($language, 'dku.panel.rows')}</p>
+							</div>
+							<p class="shrink-0 text-sm tabular-nums text-gray-300">{formatBytes(table.bytes)}</p>
+						</div>
+					{/each}
+				</div>
+			{/if}
+			{#if canManage}
+				<div class="mt-4 flex flex-wrap items-center gap-3 border-t border-gray-700 pt-4">
+					<button
+						type="button"
+						onclick={compactPanelData}
+						disabled={compacting}
+						class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm font-semibold text-gray-200 transition hover:border-green-600 hover:text-green-400 disabled:opacity-50"
+					>
+						{compacting ? translate($language, 'dku.panel.compacting') : translate($language, 'dku.panel.compact')}
+					</button>
+					<p class="text-xs text-gray-500">{translate($language, 'dku.panel.compactHint')}</p>
+				</div>
+				{#if compactMsg}<p class="mt-2 text-xs text-green-400">{compactMsg}</p>{/if}
+				{#if compactError}<p class="mt-2 text-xs text-red-400">{compactError}</p>{/if}
+			{/if}
+		</div>
+
+		<!-- Largest files -->
+		<div class="rounded-lg border border-gray-700 bg-gray-800 p-5">
+			<h3 class="mb-1 text-lg font-semibold text-white">{translate($language, 'dku.files.title')}</h3>
+			<p class="mb-4 text-xs text-gray-500">{translate($language, 'dku.files.desc')}</p>
+			<div class="flex flex-wrap items-center gap-2">
+				<label for="scan-root" class="sr-only">{translate($language, 'dku.files.root')}</label>
+				<select
+					id="scan-root"
+					bind:value={scanRoot}
+					disabled={scanning}
+					class="rounded-lg border border-gray-600 bg-gray-900 px-3 py-1.5 text-sm text-gray-200 focus:border-blue-500 focus:outline-none"
+				>
+					{#each scanRoots as root}<option value={root}>{root}</option>{/each}
+				</select>
+				<button
+					type="button"
+					onclick={scanLargestFiles}
+					disabled={scanning}
+					class="cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
+				>
+					{scanning ? translate($language, 'dku.files.scanning') : translate($language, 'dku.files.scan')}
+				</button>
+			</div>
+			{#if scanError}<p class="mt-3 text-sm text-red-400">{scanError}</p>{/if}
+			{#if largestFiles}
+				{#if largestFiles.length === 0}
+					<p class="mt-3 text-sm text-gray-400">{translate($language, 'dku.files.none')}</p>
+				{:else}
+					<div class="mt-3 divide-y divide-gray-700/60">
+						{#each largestFiles as file (file.path)}
+							<div class="flex items-center justify-between gap-3 py-2">
+								<p class="truncate font-mono text-xs text-gray-300" title={file.path}>{file.path}</p>
+								<p class="shrink-0 text-sm font-semibold tabular-nums text-white">{formatBytes(file.bytes)}</p>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			{/if}
 		</div>
 

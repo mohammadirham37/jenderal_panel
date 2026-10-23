@@ -197,9 +197,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).
 				Get("/disk/usage", diskUsageHandler.Overview)
 			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).
+				Get("/disk/largest-files", diskUsageHandler.LargestFiles)
+			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).
 				Post("/disk/plan", diskUsageHandler.PlanCleanup)
 			r.With(auth.RequirePermission(deps.RBAC, "disk.manage")).
 				Post("/disk/cleanup", diskUsageHandler.RunCleanup)
+			r.With(auth.RequirePermission(deps.RBAC, "disk.manage")).
+				Post("/disk/panel-data/compact", diskUsageHandler.CompactPanelData)
 			// Folder-level breakdown of one website's home; the scope
 			// middleware enforces ownership for /websites/{id}/... patterns.
 			r.With(auth.RequirePermission(deps.RBAC, "disk.view")).

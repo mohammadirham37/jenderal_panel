@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -20,6 +21,8 @@ import (
 type Service struct {
 	db   *sql.DB
 	exec executor.CommandExecutor
+	// dbPath is the panel's SQLite file, reported as part of panel data.
+	dbPath string
 }
 
 // NewService creates a new diskusage Service.
@@ -40,6 +43,7 @@ var analyzedPaths = []analyzedPath{
 	{"/var/cache/apt", "apt_cache"},
 	{"/var/lib/jenderal/backups", "panel_backups"},
 	{"/tmp", "temp_files"},
+	{"/var/lib/jenderal", "panel_data"},
 }
 
 // FilesystemStat is one mounted filesystem from df.
@@ -82,6 +86,10 @@ type Overview struct {
 	OldKernels      []string         `json:"old_kernels"`
 	HasDocker       bool             `json:"has_docker"`
 	Docker          []DockerUsage    `json:"docker"`
+	// PanelData is the panel's own storage, including its database.
+	PanelData PanelDataUsage `json:"panel_data"`
+	// Growth compares today with the recorded history.
+	Growth GrowthReport `json:"growth"`
 }
 
 // DockerUsage is one row of `docker system df`.
@@ -138,6 +146,16 @@ func (s *Service) Overview(ctx context.Context) (Overview, error) {
 	s.collectRotatedLogs(ctx, &overview)
 	s.collectKernels(ctx, &overview)
 	s.collectDocker(ctx, &overview)
+	overview.PanelData = s.PanelData(ctx)
+
+	// Each report doubles as a daily sample, so the page can show what grew
+	// instead of only what is big. Failures here never fail the report.
+	now := time.Now()
+	if err := s.recordUsageSnapshot(ctx, now, overview); err == nil {
+		if growth, err := s.Growth(ctx, now, 30); err == nil {
+			overview.Growth = growth
+		}
+	}
 
 	return overview, nil
 }

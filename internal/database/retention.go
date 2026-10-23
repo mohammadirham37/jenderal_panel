@@ -89,11 +89,26 @@ func ApplyRetention(ctx context.Context, db *sql.DB, now time.Time) (RetentionRe
 // Vacuum rebuilds the database file so deleted rows actually return their
 // space to the filesystem, and reports the size before and after.
 func Vacuum(ctx context.Context, db *sql.DB, path string) (before, after int64, err error) {
-	before = fileSize(path)
+	before = databaseBytes(path)
 	if _, err := db.ExecContext(ctx, `VACUUM`); err != nil {
 		return before, before, fmt.Errorf("vacuum database: %w", err)
 	}
-	return before, fileSize(path), nil
+	// In WAL mode the rebuilt pages sit in the write-ahead log until a
+	// checkpoint folds them back, so the file on disk only shrinks here.
+	if _, err := db.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+		return before, databaseBytes(path), nil
+	}
+	return before, databaseBytes(path), nil
+}
+
+// databaseBytes is the on-disk footprint of the database: the file plus its
+// write-ahead log sidecars.
+func databaseBytes(path string) int64 {
+	var total int64
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		total += fileSize(path + suffix)
+	}
+	return total
 }
 
 func execCount(ctx context.Context, db *sql.DB, query string, args ...any) (int64, error) {

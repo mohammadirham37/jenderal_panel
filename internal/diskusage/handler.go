@@ -2,6 +2,7 @@ package diskusage
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -77,6 +78,41 @@ func (h *Handler) WebsiteBreakdown(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httputil.JSON(w, http.StatusOK, breakdown)
+}
+
+// LargestFiles scans a directory tree for the biggest files, which answers
+// "what is actually using the space" when the folder totals are not enough.
+func (h *Handler) LargestFiles(w http.ResponseWriter, r *http.Request) {
+	root := r.URL.Query().Get("root")
+	if root == "" {
+		root = "/"
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	files, err := h.svc.LargestFiles(r.Context(), root, limit)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, files)
+}
+
+// CompactPanelData trims and rebuilds the panel database on demand.
+func (h *Handler) CompactPanelData(w http.ResponseWriter, r *http.Request) {
+	result, err := h.svc.CompactPanelData(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "compact_panel_data",
+		Module: "disk",
+		Target: "database",
+		Detail: "freed " + strconv.FormatInt(result.BytesFreed, 10) + " bytes",
+		IP:     r.RemoteAddr,
+	})
+	httputil.JSON(w, http.StatusOK, result)
 }
 
 // PlanCleanup previews the commands that would run for the given options,

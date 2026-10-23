@@ -17,12 +17,11 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/backup"
-	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 	"github.com/mohammadirham37/jenderal_panel/internal/cloudflared"
 	"github.com/mohammadirham37/jenderal_panel/internal/config"
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
-	"github.com/mohammadirham37/jenderal_panel/internal/dbconfig"
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
+	"github.com/mohammadirham37/jenderal_panel/internal/dbconfig"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
@@ -44,6 +43,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
+	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
 	"github.com/mohammadirham37/jenderal_panel/internal/server"
@@ -247,6 +247,7 @@ func cmdServe() {
 	firewallSvc := firewall.NewService(exec, auditSvc)
 	processSvc := process.NewService(exec)
 	diskUsageSvc := diskusage.NewService(db, exec)
+	diskUsageSvc.SetDatabasePath(cfg.Database.Path)
 	logSvc := system.NewLogService(exec)
 	var acmeEmail string
 	_ = db.QueryRow(`SELECT email FROM users WHERE is_active = 1 ORDER BY created_at LIMIT 1`).Scan(&acmeEmail)
