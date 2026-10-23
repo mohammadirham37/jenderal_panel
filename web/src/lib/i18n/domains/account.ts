@@ -136,6 +136,8 @@ const en = {
 	'set.totp.disableConfirmTitle': 'Disable Two-Factor Authentication?',
 	'set.totp.disableConfirmBody': 'This will remove the extra security layer from your account.',
 	'set.totp.confirmDisable': 'Confirm Disable',
+	'set.totp.passwordLabel': 'Confirm with your account password',
+	'set.totp.passwordRequired': 'Enter your account password to continue.',
 	'set.totp.disable2fa': 'Disable 2FA',
 
 	// ─── Settings page: SSH keys ──────────────────────────────────
@@ -324,6 +326,8 @@ const id: Record<keyof typeof en, string> = {
 	'set.totp.disableConfirmTitle': 'Nonaktifkan autentikasi dua faktor?',
 	'set.totp.disableConfirmBody': 'Ini akan menghapus lapisan keamanan ekstra dari akun Anda.',
 	'set.totp.confirmDisable': 'Konfirmasi Nonaktifkan',
+	'set.totp.passwordLabel': 'Konfirmasi dengan kata sandi akun Anda',
+	'set.totp.passwordRequired': 'Masukkan kata sandi akun Anda untuk melanjutkan.',
 	'set.totp.disable2fa': 'Nonaktifkan 2FA',
 
 	// ─── Settings page: SSH keys ──────────────────────────────────

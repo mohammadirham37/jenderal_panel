@@ -25,6 +25,8 @@ import { toast } from '$lib/stores/toast';
 	let totpCode = $state('');
 	let totpMsg = $state('');
 	let totpError = $state('');
+	// Changing an active second factor is confirmed with the account password.
+	let totpPassword = $state('');
 	let showTotpSetup = $state(false);
 	let disableTotpConfirm = $state(false);
 
@@ -276,7 +278,7 @@ import { toast } from '$lib/stores/toast';
 		totpMsg = '';
 		totpError = '';
 		try {
-			const data = await api.post<{ url: string }>('/api/v1/auth/totp/setup');
+			const data = await api.post<{ url: string }>('/api/v1/auth/totp/setup', totpEnabled ? { password: totpPassword } : {});
 			totpSetupUrl = data.url;
 			totpQrDataUrl = await QRCode.toDataURL(data.url, { margin: 1, width: 200 });
 			showTotpSetup = true;
@@ -306,11 +308,16 @@ import { toast } from '$lib/stores/toast';
 	}
 
 	async function disableTotp() {
-		disableTotpConfirm = false;
 		totpMsg = '';
 		totpError = '';
+		if (!totpPassword.trim()) {
+			totpError = translate($language, 'set.totp.passwordRequired');
+			return;
+		}
 		try {
-			await api.post('/api/v1/auth/totp/disable');
+			await api.post('/api/v1/auth/totp/disable', { password: totpPassword });
+			disableTotpConfirm = false;
+			totpPassword = '';
 			totpMsg = translate($language, 'set.totp.disabledMsg');
 			totpEnabled = false;
 		} catch (err) {
@@ -509,9 +516,18 @@ import { toast } from '$lib/stores/toast';
 				<div class="p-4 bg-red-950 border border-red-700 rounded-lg">
 					<p class="text-red-300 text-sm font-medium mb-1">{translate($language, 'set.totp.disableConfirmTitle')}</p>
 					<p class="text-red-400 text-xs mb-3">{translate($language, 'set.totp.disableConfirmBody')}</p>
+					<label class="mb-3 block text-xs text-red-200">
+						{translate($language, 'set.totp.passwordLabel')}
+						<input
+							type="password"
+							bind:value={totpPassword}
+							autocomplete="current-password"
+							class="mt-1 w-full max-w-xs rounded border border-red-700 bg-gray-950 px-3 py-1.5 text-sm text-gray-200 focus:border-red-500 focus:outline-none"
+						/>
+					</label>
 					<div class="flex gap-2">
 						<button onclick={disableTotp} class="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition-colors cursor-pointer">{translate($language, 'set.totp.confirmDisable')}</button>
-						<button onclick={() => (disableTotpConfirm = false)} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer">{translate($language, 'set.totp.cancel')}</button>
+						<button onclick={() => { disableTotpConfirm = false; totpPassword = ''; }} class="px-3 py-1.5 bg-gray-600 hover:bg-gray-500 text-white text-sm rounded transition-colors cursor-pointer">{translate($language, 'set.totp.cancel')}</button>
 					</div>
 				</div>
 			{:else}

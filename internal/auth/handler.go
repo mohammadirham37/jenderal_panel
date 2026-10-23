@@ -445,11 +445,18 @@ func (h *Handler) TOTPStatus(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]bool{"enabled": enabled})
 }
 
-// TOTPSetup initiates TOTP enrolment for the authenticated user.
+// TOTPSetup initiates TOTP enrolment for the authenticated user. Enrolling
+// again replaces the stored secret and leaves TOTP disabled, so while TOTP
+// is active the account password must be supplied.
 func (h *Handler) TOTPSetup(w http.ResponseWriter, r *http.Request) {
 	user, ok := UserFromContext(r.Context())
 	if !ok {
 		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+
+	if err := h.confirmPasswordWhenTOTPEnabled(r, user); err != nil {
+		httputil.HandleError(w, err)
 		return
 	}
 
@@ -503,11 +510,18 @@ func (h *Handler) TOTPEnable(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// TOTPDisable removes TOTP for the authenticated user.
+// TOTPDisable removes TOTP for the authenticated user. Removing the second
+// factor requires the account password, so a hijacked session alone cannot
+// strip it.
 func (h *Handler) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 	user, ok := UserFromContext(r.Context())
 	if !ok {
 		httputil.HandleError(w, model.ErrUnauthorized)
+		return
+	}
+
+	if err := h.confirmPasswordWhenTOTPEnabled(r, user); err != nil {
+		httputil.HandleError(w, err)
 		return
 	}
 
@@ -526,4 +540,29 @@ func (h *Handler) TOTPDisable(w http.ResponseWriter, r *http.Request) {
 	})
 
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// confirmPasswordWhenTOTPEnabled requires the account password before a
+// change that would weaken or replace an active second factor. While TOTP is
+// off, first-time enrolment stays a one-step flow.
+func (h *Handler) confirmPasswordWhenTOTPEnabled(r *http.Request, user model.User) error {
+	enabled, err := h.auth.IsTOTPEnabled(r.Context(), user.ID)
+	if err != nil {
+		return err
+	}
+	if !enabled {
+		return nil
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	// An empty body is a missing password, not a decoding failure.
+	_ = httputil.DecodeJSON(r, &req)
+	if req.Password == "" {
+		return model.NewValidationError("your account password is required to change two-factor authentication")
+	}
+	if _, err := h.auth.Authenticate(r.Context(), user.Username, req.Password); err != nil {
+		return model.NewValidationError("the password you entered is incorrect")
+	}
+	return nil
 }
