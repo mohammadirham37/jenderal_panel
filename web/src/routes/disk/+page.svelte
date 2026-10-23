@@ -141,6 +141,7 @@
 	let scanning = $state(false);
 	let scanError = $state('');
 	let largestFiles = $state<LargeFile[] | null>(null);
+	let scanPartial = $state(false);
 	const scanRoots = ['/', '/home', '/var', '/var/log', '/var/lib', '/tmp', '/opt', '/usr'];
 
 	// Compacting the panel database (old task output, audit entries).
@@ -153,9 +154,11 @@
 		scanning = true;
 		scanError = '';
 		try {
-			largestFiles = (await api.get<LargeFile[]>(
+			const report = await api.get<{ files: LargeFile[]; partial: boolean }>(
 				`/api/v1/disk/largest-files?root=${encodeURIComponent(scanRoot)}&limit=25`
-			)) || [];
+			);
+			largestFiles = report?.files || [];
+			scanPartial = !!report?.partial;
 		} catch (err) {
 			scanError = err instanceof Error ? err.message : translate($language, 'dku.files.failed');
 		} finally {
@@ -695,8 +698,12 @@
 					{scanning ? translate($language, 'dku.files.scanning') : translate($language, 'dku.files.scan')}
 				</button>
 			</div>
+			{#if scanning}<p class="mt-3 text-xs text-gray-500">{translate($language, 'dku.files.scanningHint')}</p>{/if}
 			{#if scanError}<p class="mt-3 text-sm text-red-400">{scanError}</p>{/if}
 			{#if releaseMsg}<p class="mt-3 text-sm text-green-400">{releaseMsg}</p>{/if}
+			{#if largestFiles && scanPartial}
+				<p class="mt-3 text-xs text-yellow-400">{translate($language, 'dku.files.partial')}</p>
+			{/if}
 			{#if largestFiles}
 				{#if largestFiles.length === 0}
 					<p class="mt-3 text-sm text-gray-400">{translate($language, 'dku.files.none')}</p>

@@ -120,7 +120,7 @@ func TestGrowthRecordsSnapshotsAndReportsDeltas(t *testing.T) {
 func TestLargestFilesParsesAndSorts(t *testing.T) {
 	exec := &executor.MockExecutor{
 		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
-			if name != "find" {
+			if !strings.Contains(strings.Join(args, " "), "find / -xdev") {
 				return &executor.Result{}, nil
 			}
 			return &executor.Result{Stdout: "" +
@@ -131,10 +131,11 @@ func TestLargestFilesParsesAndSorts(t *testing.T) {
 		},
 	}
 	svc := NewService(nil, exec)
-	files, err := svc.LargestFiles(context.Background(), "/", 10)
+	report, err := svc.LargestFiles(context.Background(), "/", 10)
 	if err != nil {
 		t.Fatalf("LargestFiles: %v", err)
 	}
+	files := report.Files
 	if len(files) != 3 {
 		t.Fatalf("files = %+v, want the three parsable rows", files)
 	}
@@ -145,6 +146,28 @@ func TestLargestFilesParsesAndSorts(t *testing.T) {
 		if _, err := svc.LargestFiles(context.Background(), bad, 10); err == nil {
 			t.Errorf("scan root %q must be refused", bad)
 		}
+	}
+}
+
+// A big filesystem can outlast the scan's time limit; the files found so far
+// are still reported instead of a generic failure.
+func TestLargestFilesReportsPartialResultsOnTimeout(t *testing.T) {
+	saved := largestFilesTimeout
+	largestFilesTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { largestFilesTimeout = saved })
+
+	svc := NewService(nil, &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			<-ctx.Done()
+			return &executor.Result{Stdout: "104857600\t/var/log/btmp\n"}, ctx.Err()
+		},
+	})
+	report, err := svc.LargestFiles(context.Background(), "/", 10)
+	if err != nil {
+		t.Fatalf("timeout must not fail the scan: %v", err)
+	}
+	if !report.Partial || len(report.Files) != 1 || report.Files[0].Release != ReleaseTruncate {
+		t.Errorf("unexpected report %+v", report)
 	}
 }
 

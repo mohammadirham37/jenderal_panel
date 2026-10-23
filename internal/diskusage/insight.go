@@ -135,9 +135,22 @@ type LargeFile struct {
 // refused so the scan cannot be pointed at arbitrary paths.
 var largestFilesRoots = []string{"/", "/home", "/var", "/var/log", "/var/lib", "/tmp", "/opt", "/root", "/usr"}
 
+// largestFilesTimeout bounds the scan. The executor's default timeout is far
+// too short to walk a whole filesystem full of vendor and node_modules trees.
+var largestFilesTimeout = 4 * time.Minute
+
+// LargestFilesReport is the result of a largest-files scan. Partial means
+// the scan hit its time limit and only covers what it walked so far.
+type LargestFilesReport struct {
+	Files   []LargeFile `json:"files"`
+	Partial bool        `json:"partial"`
+}
+
 // LargestFiles lists the biggest files under root, largest first. The scan
-// stays on one filesystem and ignores virtual ones.
-func (s *Service) LargestFiles(ctx context.Context, root string, limit int) ([]LargeFile, error) {
+// stays on one filesystem, ignores virtual ones, and runs at idle IO
+// priority so it does not slow down the websites while it walks.
+func (s *Service) LargestFiles(ctx context.Context, root string, limit int) (LargestFilesReport, error) {
+	report := LargestFilesReport{Files: []LargeFile{}}
 	root = filepath.Clean(root)
 	allowed := false
 	for _, candidate := range largestFilesRoots {
@@ -147,24 +160,30 @@ func (s *Service) LargestFiles(ctx context.Context, root string, limit int) ([]L
 		}
 	}
 	if !allowed {
-		return nil, model.NewValidationError("scan root must be one of: " + strings.Join(largestFilesRoots, ", "))
+		return report, model.NewValidationError("scan root must be one of: " + strings.Join(largestFilesRoots, ", "))
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
 
+	scanCtx, cancel := context.WithTimeout(ctx, largestFilesTimeout)
+	defer cancel()
 	// -xdev keeps the scan on one filesystem; printing size and path lets
 	// the panel sort without walking the tree twice.
-	res, err := s.exec.RunSudo(ctx, "find", root, "-xdev", "-type", "f", "-size", "+20M",
-		"-printf", "%s\\t%p\\n")
+	res, err := s.exec.RunSudo(scanCtx, "ionice", "-c", "3", "nice", "-n", "19",
+		"find", root, "-xdev", "-type", "f", "-size", "+20M", "-printf", "%s\\t%p\\n")
 	if err != nil {
-		return nil, fmt.Errorf("scan for large files: %w", err)
+		// A scan cut off by its time limit still printed every large file it
+		// reached; report those rather than nothing.
+		if scanCtx.Err() == nil || ctx.Err() != nil || res == nil {
+			return report, fmt.Errorf("scan for large files: %w", err)
+		}
+		report.Partial = true
 	}
 	if res == nil {
-		return []LargeFile{}, nil
+		return report, nil
 	}
 
-	files := make([]LargeFile, 0, limit)
 	for _, line := range strings.Split(res.Stdout, "\n") {
 		size, path, ok := strings.Cut(strings.TrimSpace(line), "\t")
 		if !ok {
@@ -174,13 +193,13 @@ func (s *Service) LargestFiles(ctx context.Context, root string, limit int) ([]L
 		if convErr != nil || path == "" {
 			continue
 		}
-		files = append(files, LargeFile{Path: path, Bytes: bytes, Release: releaseActionFor(path)})
+		report.Files = append(report.Files, LargeFile{Path: path, Bytes: bytes, Release: releaseActionFor(path)})
 	}
-	sort.SliceStable(files, func(i, j int) bool { return files[i].Bytes > files[j].Bytes })
-	if len(files) > limit {
-		files = files[:limit]
+	sort.SliceStable(report.Files, func(i, j int) bool { return report.Files[i].Bytes > report.Files[j].Bytes })
+	if len(report.Files) > limit {
+		report.Files = report.Files[:limit]
 	}
-	return files, nil
+	return report, nil
 }
 
 // GrowthPoint is one day of recorded usage.
