@@ -871,7 +871,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/backups", backupHandler.List)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
 				Get("/backups/stats", backupHandler.Stats)
-			r.With(auth.RequirePermission(deps.RBAC, "backups.delete")).
+			// Pruning deletes expired backups for every tenant.
+			r.With(auth.RequireRole(deps.RBAC, "admin")).
 				Post("/backups/prune", backupHandler.Prune)
 			r.With(auth.RequirePermission(deps.RBAC, "backups.view")).
 				Get("/backups/{id}", backupHandler.Get)

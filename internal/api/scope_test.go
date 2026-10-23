@@ -136,12 +136,12 @@ func TestResolveTerminalUser(t *testing.T) {
 	}
 
 	cases := []struct {
-		name              string
-		admin             bool
-		userID            string
-		websiteID, user   string
-		wantUser          string
-		wantErr           bool
+		name            string
+		admin           bool
+		userID          string
+		websiteID, user string
+		wantUser        string
+		wantErr         bool
 	}{
 		{name: "owner by web_user (the website page)", userID: ownerID, user: "web_owned", wantUser: "web_owned"},
 		{name: "owner by website_id", userID: ownerID, websiteID: "site-1", wantUser: "web_owned"},

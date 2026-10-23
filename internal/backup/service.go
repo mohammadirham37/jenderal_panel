@@ -485,6 +485,15 @@ func (s *Service) RequestRestore(ctx context.Context, caller Caller, id, compone
 	if !auth.CanManageResource(caller.Admin, caller.UserID, b.CreatedBy) {
 		return "", model.ErrForbidden
 	}
+	// The backup names its target. Ownership of that name can have moved
+	// since the backup was taken, so it is checked again before writing.
+	if b.Type == "website" || b.Type == "database" {
+		if err := s.authorizeTarget(ctx, caller, b.Type, b.Target); err != nil {
+			return "", err
+		}
+	} else if !caller.Admin {
+		return "", model.ErrForbidden
+	}
 
 	component = strings.TrimSpace(strings.ToLower(component))
 	switch b.Type {
@@ -913,11 +922,16 @@ type BackupStats struct {
 }
 
 // Stats returns counts, total size, and free disk space of the backup store.
-func (s *Service) Stats(ctx context.Context) (BackupStats, error) {
+func (s *Service) Stats(ctx context.Context, caller Caller) (BackupStats, error) {
 	var stats BackupStats
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM backups WHERE status = 'completed'`,
-	).Scan(&stats.Count, &stats.TotalBytes)
+	// Non-admins only see their own backups in the totals.
+	query := `SELECT COUNT(*), COALESCE(SUM(size_bytes), 0) FROM backups WHERE status = 'completed'`
+	args := []any{}
+	if !caller.Admin {
+		query += ` AND created_by = ?`
+		args = append(args, caller.UserID)
+	}
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&stats.Count, &stats.TotalBytes)
 	if err != nil {
 		return stats, fmt.Errorf("backup stats: %w", err)
 	}

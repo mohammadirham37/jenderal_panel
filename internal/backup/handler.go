@@ -89,7 +89,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 // Stats handles GET /api/backups/stats.
 func (h *Handler) Stats(w http.ResponseWriter, r *http.Request) {
-	stats, err := h.svc.Stats(r.Context())
+	stats, err := h.svc.Stats(r.Context(), callerFromContext(r))
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
@@ -103,6 +103,12 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 	b, err := h.svc.Get(r.Context(), id)
 	if err != nil {
 		httputil.HandleError(w, err)
+		return
+	}
+	// A backup's metadata names its target and on-disk path, so it is only
+	// shown to its owner.
+	if !auth.CanManageResource(auth.AdminFromContext(r.Context()), callerFromContext(r).UserID, b.CreatedBy) {
+		httputil.HandleError(w, model.ErrForbidden)
 		return
 	}
 	httputil.JSON(w, http.StatusOK, b)
