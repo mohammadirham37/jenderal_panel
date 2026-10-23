@@ -461,8 +461,8 @@ func TestDeployPreservesEnvAndStorageAcrossWipe(t *testing.T) {
 		t.Errorf("restore must happen after the wipe: restore at %d, wipe at %d", restoreIdx, wipeIdx)
 	}
 	for _, want := range []string{
-		"cp -a /home/web_example/app/.env /home/web_example/.deploy-preserve/.env",
-		"cp -a /home/web_example/app/storage /home/web_example/.deploy-preserve/storage",
+		"-u web_example -- cp -a --no-dereference /home/web_example/app/.env /home/web_example/.deploy-preserve/.env",
+		"-u web_example -- cp -a --no-dereference /home/web_example/app/storage /home/web_example/.deploy-preserve/storage",
 		"cp -a /home/web_example/.deploy-preserve/storage/. /home/web_example/app/storage/",
 		"rm -rf /home/web_example/.deploy-preserve",
 	} {

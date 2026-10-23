@@ -303,11 +303,13 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 				if probeErr != nil || probe == nil || probe.ExitCode != 0 {
 					continue
 				}
-				if _, err := s.exec.RunSudo(ctx, "mkdir", "-p", preserveDir); err != nil {
+				// Copied as the site account: root would follow a symlink
+				// planted at .env or storage and read/write its target.
+				if _, err := s.exec.RunSudo(ctx, "-u", webUser, "--", "mkdir", "-p", preserveDir); err != nil {
 					s.failDeployment(ctx, deploymentID, "prepare deploy preserve dir: "+err.Error(), int(time.Since(start).Milliseconds()))
 					return
 				}
-				if _, err := s.exec.RunSudo(ctx, "cp", "-a", projectRoot+"/"+name, preserveDir+"/"+name); err != nil {
+				if _, err := s.exec.RunSudo(ctx, "-u", webUser, "--", "cp", "-a", "--no-dereference", projectRoot+"/"+name, preserveDir+"/"+name); err != nil {
 					s.failDeployment(ctx, deploymentID, "preserve "+name+": "+err.Error(), int(time.Since(start).Milliseconds()))
 					return
 				}

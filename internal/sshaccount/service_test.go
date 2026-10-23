@@ -204,6 +204,11 @@ func (f *fakeSSHExecutor) RunSudoWithInput(ctx context.Context, input, name stri
 		f.chpasswdInput = input
 	case "tee":
 		f.teeWrites = append(f.teeWrites, input+" -> "+args[len(args)-1])
+	case "-u":
+		// Writes performed as the site account: sudo -u <user> -- tee <path>
+		if len(args) > 2 && args[2] == "tee" {
+			f.teeWrites = append(f.teeWrites, input+" -> "+args[len(args)-1])
+		}
 	}
 	return f.RunSudo(ctx, name, args...)
 }
@@ -476,7 +481,9 @@ func TestGrantWebsiteAppliesGroupCooperationAndUmask(t *testing.T) {
 				groupWriteFiles = true
 			}
 		}
-		if call[0] == "chown" && strings.Contains(joined, "admin:admin /home/admin/.bash_profile") {
+		// The profile is written and mode-set as the account itself, so no
+		// root chown is involved any more.
+		if call[0] == "-u" && strings.Contains(joined, "-u admin -- chmod 600 /home/admin/.bash_profile") {
 			profileOwned = true
 		}
 	}
@@ -492,7 +499,7 @@ func TestGrantWebsiteAppliesGroupCooperationAndUmask(t *testing.T) {
 		t.Errorf("umask 0002 was not written to the SSH profile, writes=%v", fake.teeWrites)
 	}
 	if !profileOwned {
-		t.Error("the umask profile must be owned by the SSH account")
+		t.Error("the umask profile must be written and mode-set as the SSH account")
 	}
 }
 

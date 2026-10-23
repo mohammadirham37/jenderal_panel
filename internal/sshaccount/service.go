@@ -510,7 +510,9 @@ func (s *Service) ensureUmaskProfile(ctx context.Context, username string) error
 		return nil
 	}
 	snippet := "\n# Managed by Jenderal Panel - keep files group-writable for site accounts\numask 0002\n"
-	result, err := s.exec.RunSudoWithInput(ctx, snippet, "tee", "-a", profile)
+	// Appended as the account itself: a root append would follow a symlink
+	// planted in the home directory.
+	result, err := s.exec.RunSudoWithInput(ctx, snippet, "-u", username, "--", "tee", "-a", profile)
 	if err != nil {
 		return fmt.Errorf("write umask profile: %w", err)
 	}
@@ -521,10 +523,7 @@ func (s *Service) ensureUmaskProfile(ctx context.Context, username string) error
 		}
 		return fmt.Errorf("write umask profile %s: %s", profile, detail)
 	}
-	if err := s.runSudoOK(ctx, "chown", username+":"+username, profile); err != nil {
-		return err
-	}
-	return s.runSudoOK(ctx, "chmod", "600", profile)
+	return s.runSudoOK(ctx, "-u", username, "--", "chmod", "600", profile)
 }
 
 // readFile returns the content of a root-owned file; ok is false when the
@@ -599,16 +598,13 @@ func (s *Service) writeAuthorizedKeysFile(ctx context.Context, username, content
 	if err := s.runSudoOK(ctx, "chmod", "700", sshDir); err != nil {
 		return fmt.Errorf("mode ssh directory: %w", err)
 	}
-	if _, err := s.exec.RunSudoWithInput(ctx, content, "tee", keyPath+".new"); err != nil {
+	if _, err := s.exec.RunSudoWithInput(ctx, content, "-u", username, "--", "tee", keyPath+".new"); err != nil {
 		return fmt.Errorf("write authorized_keys: %w", err)
 	}
-	if err := s.runSudoOK(ctx, "chown", username+":"+username, keyPath+".new"); err != nil {
-		return fmt.Errorf("own authorized_keys: %w", err)
-	}
-	if err := s.runSudoOK(ctx, "chmod", "600", keyPath+".new"); err != nil {
+	if err := s.runSudoOK(ctx, "-u", username, "--", "chmod", "600", keyPath+".new"); err != nil {
 		return fmt.Errorf("mode authorized_keys: %w", err)
 	}
-	if err := s.runSudoOK(ctx, "mv", "-f", keyPath+".new", keyPath); err != nil {
+	if err := s.runSudoOK(ctx, "-u", username, "--", "mv", "-f", keyPath+".new", keyPath); err != nil {
 		return fmt.Errorf("install authorized_keys: %w", err)
 	}
 	return nil

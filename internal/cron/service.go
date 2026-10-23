@@ -420,14 +420,13 @@ func (s *Service) cronWrapperPath(webUser, jobID string) string {
 // ensureCronStatusDir creates the per-user directory the wrappers and status
 // files live in. Cron runs as the web user, so it must own it.
 func (s *Service) ensureCronStatusDir(ctx context.Context, webUser string) error {
+	// Created as the account that owns the home: a root mkdir/chown here
+	// would follow a symlink the web user planted and hand them the target.
 	dir := s.cronStatusDir(webUser)
-	if err := s.runOK(ctx, "mkdir", "-p", dir); err != nil {
+	if err := s.runOK(ctx, "-u", webUser, "--", "mkdir", "-p", dir); err != nil {
 		return err
 	}
-	if err := s.runOK(ctx, "chown", webUser+":"+webUser, dir); err != nil {
-		return err
-	}
-	return s.runOK(ctx, "chmod", "700", dir)
+	return s.runOK(ctx, "-u", webUser, "--", "chmod", "700", dir)
 }
 
 // writeCronWrapper installs the wrapper script for one job. It runs the
@@ -446,13 +445,10 @@ func (s *Service) writeCronWrapper(ctx context.Context, webUser, jobID, command 
 	}, "\n")
 
 	wrapper := s.cronWrapperPath(webUser, jobID)
-	if _, err := s.exec.RunSudoWithInput(ctx, script, "tee", wrapper); err != nil {
+	if _, err := s.exec.RunSudoWithInput(ctx, script, "-u", webUser, "--", "tee", wrapper); err != nil {
 		return err
 	}
-	if err := s.runOK(ctx, "chown", webUser+":"+webUser, wrapper); err != nil {
-		return err
-	}
-	return s.runOK(ctx, "chmod", "700", wrapper)
+	return s.runOK(ctx, "-u", webUser, "--", "chmod", "700", wrapper)
 }
 
 // cronWrapperMissing reports whether a job's wrapper script is absent — true

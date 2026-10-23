@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
 // phpSettingsAllowlist defines the per-site PHP settings the panel manages
@@ -90,9 +92,24 @@ func (s *Service) SavePhpSettings(ctx context.Context, websiteID string, setting
 		return fmt.Errorf("unsupported PHP settings: %s", strings.Join(unknown, ", "))
 	}
 
+	if err := s.writeUserIni(ctx, w, settings); err != nil {
+		return err
+	}
+
+	if _, err := s.exec.RunSudo(ctx, "systemctl", "reload",
+		"php"+w.PHPVersion+"-fpm-"+w.Domain); err != nil {
+		return fmt.Errorf("reload php-fpm: %w", err)
+	}
+	return nil
+}
+
+// writeUserIni installs the per-site .user.ini. The file lives in the
+// website's own home and belongs to its account, so it is written as that
+// account: a root write would follow a symlink planted there and hand the
+// site owner whatever it points at.
+func (s *Service) writeUserIni(ctx context.Context, w model.Website, settings map[string]string) error {
 	iniPath := filepath.Join(w.DocumentRoot, userIniFilename)
 
-	// Write via stdin (root) and hand the file back to the web user.
 	var b strings.Builder
 	b.WriteString("; Managed by Jenderal Panel — edited values only\n")
 	keys := make([]string, 0, len(settings))
@@ -105,16 +122,8 @@ func (s *Service) SavePhpSettings(ctx context.Context, websiteID string, setting
 			fmt.Fprintf(&b, "%s = %s\n", key, value)
 		}
 	}
-	if _, err := s.exec.RunSudoWithInput(ctx, b.String(), "tee", iniPath); err != nil {
+	if _, err := s.exec.RunSudoWithInput(ctx, b.String(), "-u", w.WebUser, "--", "tee", iniPath); err != nil {
 		return fmt.Errorf("write %s: %w", userIniFilename, err)
-	}
-	if _, err := s.exec.RunSudo(ctx, "chown", w.WebUser+":"+w.WebUser, iniPath); err != nil {
-		return fmt.Errorf("set %s ownership: %w", userIniFilename, err)
-	}
-
-	if _, err := s.exec.RunSudo(ctx, "systemctl", "reload",
-		"php"+w.PHPVersion+"-fpm-"+w.Domain); err != nil {
-		return fmt.Errorf("reload php-fpm: %w", err)
 	}
 	return nil
 }
