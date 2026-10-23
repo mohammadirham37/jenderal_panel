@@ -3,6 +3,7 @@ package httputil
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -58,7 +59,11 @@ func HandleError(w http.ResponseWriter, err error) {
 		JSONError(w, status, domainErr.Code, domainErr.Message)
 		return
 	}
-	JSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+	// Non-domain errors wrap command stderr, SQL text, and file paths.
+	// They are useful in the panel log, not in a client response.
+	slog.Error("request failed", "error", err)
+	JSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		"the operation failed; check the panel log for details")
 }
 
 func domainErrorToStatus(code string) int {
@@ -84,8 +89,20 @@ func domainErrorToStatus(code string) int {
 	}
 }
 
+// MaxJSONBody caps request bodies decoded as JSON. The panel's largest
+// JSON payloads are configuration files, far below this; uploads use
+// multipart handlers with their own limits.
+const MaxJSONBody int64 = 2 << 20 // 2 MiB
+
 func DecodeJSON(r *http.Request, v any) error {
+	// An unbounded body lets one request pull the panel's memory down,
+	// including on the unauthenticated login route.
+	r.Body = http.MaxBytesReader(nil, r.Body, MaxJSONBody)
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			return model.NewValidationError("request body is too large")
+		}
 		// Include the decoder's reason (field name, type mismatch) so the
 		// caller sees which part of the body was rejected.
 		return model.NewValidationError("invalid JSON body: " + err.Error())
