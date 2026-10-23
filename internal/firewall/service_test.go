@@ -202,3 +202,30 @@ func TestDeleteRule_SSHWarning(t *testing.T) {
 		t.Fatalf("expected no error for non-SSH rule, got %v", err)
 	}
 }
+
+// SMB must not be opened to the internet from the panel: ksmbd had pre-auth
+// remote code execution flaws on 445. Denying it, or allowing a single
+// trusted source, still works.
+func TestAddRuleRefusesPublicSMB(t *testing.T) {
+	ran := false
+	svc := NewService(&executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			ran = true
+			return &executor.Result{}, nil
+		},
+	}, nil)
+	for _, port := range []int{137, 138, 139, 445} {
+		for _, action := range []string{"", "allow", "limit"} {
+			ran = false
+			if err := svc.AddRule(context.Background(), AddRuleRequest{Port: port, Action: action}); err == nil || ran {
+				t.Errorf("port %d action %q: expected refusal before ufw ran", port, action)
+			}
+		}
+	}
+	if err := svc.AddRule(context.Background(), AddRuleRequest{Port: 445, Action: "deny"}); err != nil {
+		t.Errorf("deny 445 must be allowed: %v", err)
+	}
+	if err := svc.AddRule(context.Background(), AddRuleRequest{Port: 445, Action: "allow", From: "10.0.0.5"}); err != nil {
+		t.Errorf("allow 445 from one address must be allowed: %v", err)
+	}
+}

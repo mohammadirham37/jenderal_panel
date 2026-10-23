@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import { firewallActionTone, normalizeFirewallStatus, parseFirewallPort } from '$lib/firewall.js';
+	import { firewallActionTone, normalizeFirewallStatus, parseFirewallPort, publicSMBRules } from '$lib/firewall.js';
 	import { toast } from '$lib/stores/toast';
 	import { language, translate } from '$lib/stores/language';
 
@@ -20,6 +20,7 @@
 
 	let status = $state<FirewallStatus | null>(null);
 	let rules = $state<FirewallRule[]>([]);
+	const exposedSMB = $derived(publicSMBRules(rules));
 	let loading = $state(true);
 	let error = $state('');
 	let actionInProgress = $state(false);
@@ -200,6 +201,16 @@
 				</div>
 			{/if}
 		</div>
+
+		{#if exposedSMB.length > 0}
+			<div role="alert" class="rounded-lg border border-red-700/70 bg-red-950/40 p-4">
+				<p class="font-semibold text-red-200">{translate($language, 'fw.smb.title')}</p>
+				<p class="mt-1 text-sm text-red-200/80">{translate($language, 'fw.smb.body')}</p>
+				<p class="mt-2 font-mono text-xs text-red-100">
+					{exposedSMB.map((rule) => `#${rule.number} ${rule.to}`).join(' · ')}
+				</p>
+			</div>
+		{/if}
 
 		<!-- Rules Table -->
 		<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">

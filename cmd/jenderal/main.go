@@ -33,6 +33,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/firewall"
 	"github.com/mohammadirham37/jenderal_panel/internal/frankenphp"
 	"github.com/mohammadirham37/jenderal_panel/internal/goruntime"
+	"github.com/mohammadirham37/jenderal_panel/internal/hardening"
 	"github.com/mohammadirham37/jenderal_panel/internal/logging"
 	"github.com/mohammadirham37/jenderal_panel/internal/malware"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -483,6 +484,20 @@ func cmdServe() {
 		}
 	}()
 	sshAccountSvc.Start(bgCtx)
+
+	// Keep the in-kernel SMB server (ksmbd) from loading: the panel never
+	// serves SMB and ksmbd had unpatched remote code execution flaws.
+	go func() {
+		report, err := hardening.EnsureKsmbdDisabled(bgCtx, exec)
+		switch {
+		case err != nil:
+			logger.Warn("could not disable ksmbd", "error", err)
+		case report.InUse:
+			logger.Warn("ksmbd file server is running; left enabled. Keep port 445 closed and update the kernel when a fix ships")
+		case report.Installed || report.Unloaded:
+			logger.Info("disabled the ksmbd kernel module", "unloaded", report.Unloaded)
+		}
+	}()
 
 	// Server handles its own signal catching — blocks until shutdown
 	if err := server.Run(cfg.Server, router, logger); err != nil {

@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 let firewallActionTone;
 let normalizeFirewallStatus;
 let parseFirewallPort;
+let publicSMBRules;
 try {
-	({ firewallActionTone, normalizeFirewallStatus, parseFirewallPort } = await import('../../src/lib/firewall.js'));
+	({ firewallActionTone, normalizeFirewallStatus, parseFirewallPort, publicSMBRules } = await import('../../src/lib/firewall.js'));
 } catch {
 	// The first TDD run intentionally reaches the assertions before the helper exists.
 }
@@ -30,4 +31,17 @@ test('classifies compound ufw actions', () => {
 	assert.equal(firewallActionTone('DENY IN'), 'deny');
 	assert.equal(firewallActionTone('REJECT IN'), 'deny');
 	assert.equal(firewallActionTone('LIMIT IN'), 'limit');
+});
+
+test('flags SMB ports opened to anyone, including ranges and IPv6 rows', () => {
+	const rules = [
+		{ to: '445/tcp', action: 'ALLOW IN', from: 'Anywhere' },
+		{ to: '445/tcp (v6)', action: 'ALLOW IN', from: 'Anywhere (v6)' },
+		{ to: '137:139/udp', action: 'ALLOW IN', from: 'Anywhere' },
+		{ to: '80,443/tcp', action: 'ALLOW IN', from: 'Anywhere' },
+		{ to: '445', action: 'ALLOW IN', from: '10.0.0.5' },
+		{ to: '445', action: 'DENY IN', from: 'Anywhere' },
+		{ to: '22/tcp', action: 'LIMIT IN', from: 'Anywhere' }
+	];
+	assert.deepEqual(publicSMBRules(rules).map((r) => r.to), ['445/tcp', '445/tcp (v6)', '137:139/udp']);
 });

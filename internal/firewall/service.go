@@ -72,6 +72,11 @@ func (s *Service) Disable(ctx context.Context) error {
 	return nil
 }
 
+// smbPorts are the SMB/NetBIOS file sharing ports. The panel never serves
+// SMB, and the in-kernel SMB server (ksmbd) had pre-auth remote code
+// execution flaws reachable on 445 (ZDI-CAN-33774, ZDI-CAN-33549).
+var smbPorts = map[int]bool{137: true, 138: true, 139: true, 445: true}
+
 // AddRule adds a new UFW firewall rule.
 func (s *Service) AddRule(ctx context.Context, req AddRuleRequest) error {
 	if req.Port < 1 || req.Port > 65535 {
@@ -84,6 +89,12 @@ func (s *Service) AddRule(ctx context.Context, req AddRuleRequest) error {
 	}
 	if action != "allow" && action != "deny" && action != "limit" {
 		return model.NewValidationError("action must be allow, deny, or limit")
+	}
+	// Opening SMB to the whole internet is refused; a rule limited to one
+	// trusted source address is still possible.
+	if smbPorts[req.Port] && action != "deny" && strings.TrimSpace(req.From) == "" {
+		return model.NewValidationError(fmt.Sprintf("port %d is SMB file sharing and must not be open to the internet; "+
+			"allow it only from a specific trusted address", req.Port))
 	}
 
 	protocol := strings.ToLower(req.Protocol)
