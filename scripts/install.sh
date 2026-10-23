@@ -361,6 +361,7 @@ step_tls() {
 }
 
 step_config() {
+    install -d -o root -g "$JENDERAL_USER" -m 0750 /etc/jenderal
     cat > "$JENDERAL_CONFIG" << CONFIGEOF
 server:
   host: "0.0.0.0"
@@ -402,6 +403,10 @@ services:
     - redis-server
 CONFIGEOF
     chown "$JENDERAL_USER":"$JENDERAL_USER" "$JENDERAL_CONFIG"
+    chmod 0640 "$JENDERAL_CONFIG"
+    # Existing installs: tighten state created before these modes.
+    chmod 0750 /etc/jenderal 2>/dev/null || true
+    chmod 0600 /var/lib/jenderal/jenderal.db* 2>/dev/null || true
     log "Config: written"
 }
 
@@ -437,6 +442,9 @@ After=network.target
 Type=simple
 User=jenderal
 Group=jenderal
+# Panel state (database, backups, ACME material) stays private to the
+# panel account: website shells run as other local accounts on this host.
+UMask=0077
 ExecStart=/opt/jenderal/jenderal serve --config /etc/jenderal/jenderal.yaml
 WorkingDirectory=/opt/jenderal
 Restart=on-failure
