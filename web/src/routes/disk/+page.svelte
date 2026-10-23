@@ -4,6 +4,7 @@
 	import { language, translate } from '$lib/stores/language';
 	import { hasPermission, permissions } from '$lib/stores/auth';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 
 	interface FilesystemStat {
 		source: string;
@@ -79,6 +80,7 @@
 	interface LargeFile {
 		path: string;
 		bytes: number;
+		release?: 'truncate' | 'delete';
 	}
 
 	interface Overview {
@@ -158,6 +160,42 @@
 			scanError = err instanceof Error ? err.message : translate($language, 'dku.files.failed');
 		} finally {
 			scanning = false;
+		}
+	}
+
+	// Releasing one large log file from the scan results.
+	let releaseTarget = $state<LargeFile | null>(null);
+	let releasing = $state(false);
+	let releaseError = $state('');
+	let releaseMsg = $state('');
+
+	function openRelease(file: LargeFile) {
+		releaseTarget = file;
+		releaseError = '';
+		releaseMsg = '';
+	}
+
+	async function confirmRelease() {
+		if (!releaseTarget || releasing) return;
+		releasing = true;
+		releaseError = '';
+		const target = releaseTarget;
+		try {
+			const result = await api.post<{ bytes_freed: number; rotation_capped: boolean }>(
+				'/api/v1/disk/files/release',
+				{ path: target.path }
+			);
+			releaseMsg = translate($language, 'dku.files.released')
+				.replace('{size}', formatBytes(result.bytes_freed))
+				.replace('{path}', target.path);
+			if (result.rotation_capped) releaseMsg += ' ' + translate($language, 'dku.files.rotationCapped');
+			largestFiles = (largestFiles || []).filter((f) => f.path !== target.path);
+			releaseTarget = null;
+			await load();
+		} catch (err) {
+			releaseError = err instanceof Error ? err.message : translate($language, 'dku.files.releaseFailed');
+		} finally {
+			releasing = false;
 		}
 	}
 
@@ -658,6 +696,7 @@
 				</button>
 			</div>
 			{#if scanError}<p class="mt-3 text-sm text-red-400">{scanError}</p>{/if}
+			{#if releaseMsg}<p class="mt-3 text-sm text-green-400">{releaseMsg}</p>{/if}
 			{#if largestFiles}
 				{#if largestFiles.length === 0}
 					<p class="mt-3 text-sm text-gray-400">{translate($language, 'dku.files.none')}</p>
@@ -666,7 +705,18 @@
 						{#each largestFiles as file (file.path)}
 							<div class="flex items-center justify-between gap-3 py-2">
 								<p class="truncate font-mono text-xs text-gray-300" title={file.path}>{file.path}</p>
-								<p class="shrink-0 text-sm font-semibold tabular-nums text-white">{formatBytes(file.bytes)}</p>
+								<div class="flex shrink-0 items-center gap-3">
+									<p class="text-sm font-semibold tabular-nums text-white">{formatBytes(file.bytes)}</p>
+									{#if canManage && file.release}
+										<button
+											type="button"
+											onclick={() => openRelease(file)}
+											class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-2.5 py-1 text-[11px] font-semibold text-gray-200 transition hover:border-red-500 hover:text-red-400"
+										>
+											{translate($language, file.release === 'truncate' ? 'dku.files.truncate' : 'dku.files.delete')}
+										</button>
+									{/if}
+								</div>
 							</div>
 						{/each}
 					</div>
@@ -970,6 +1020,44 @@
 		</div>
 	{/if}
 </div>
+
+{#if releaseTarget}
+	<Modal
+		title={translate($language, releaseTarget.release === 'truncate' ? 'dku.files.truncateTitle' : 'dku.files.deleteTitle')}
+		onclose={() => (releaseTarget = null)}
+		busy={releasing}
+		closeLabel={translate($language, 'dku.files.cancel')}
+	>
+		<div class="space-y-3 text-sm text-gray-300">
+			<p class="break-all font-mono text-xs text-gray-200">{releaseTarget.path} · {formatBytes(releaseTarget.bytes)}</p>
+			<p>{translate($language, releaseTarget.release === 'truncate' ? 'dku.files.truncateBody' : 'dku.files.deleteBody')}</p>
+			{#if releaseTarget.path === '/var/log/btmp' || releaseTarget.path === '/var/log/wtmp'}
+				<p class="text-xs text-gray-400">{translate($language, 'dku.files.loginRecordNote')}</p>
+			{/if}
+			{#if releaseError}<p class="text-xs text-red-400">{releaseError}</p>{/if}
+		</div>
+		{#snippet footer()}
+			<button
+				type="button"
+				onclick={() => (releaseTarget = null)}
+				disabled={releasing}
+				class="cursor-pointer rounded-lg border border-gray-600 px-4 py-2 text-sm text-gray-300 transition hover:bg-gray-700 disabled:opacity-50"
+			>
+				{translate($language, 'dku.files.cancel')}
+			</button>
+			<button
+				type="button"
+				onclick={confirmRelease}
+				disabled={releasing}
+				class="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50"
+			>
+				{releasing
+					? translate($language, 'dku.files.releasing')
+					: translate($language, releaseTarget?.release === 'truncate' ? 'dku.files.truncate' : 'dku.files.delete')}
+			</button>
+		{/snippet}
+	</Modal>
+{/if}
 
 {#if taskId && cleanupModalOpen}
 	<div

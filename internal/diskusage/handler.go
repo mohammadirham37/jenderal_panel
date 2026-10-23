@@ -96,6 +96,32 @@ func (h *Handler) LargestFiles(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, files)
 }
 
+// ReleaseFile empties or deletes one large log file under /var/log.
+func (h *Handler) ReleaseFile(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	result, err := h.svc.ReleaseFile(r.Context(), req.Path)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	user, _ := auth.UserFromContext(r.Context())
+	_ = h.audit.Log(r.Context(), audit.LogEntry{
+		UserID: user.ID,
+		Action: "release_file",
+		Module: "disk",
+		Target: req.Path,
+		Detail: result.Action + ", freed " + strconv.FormatInt(result.BytesFreed, 10) + " bytes",
+		IP:     r.RemoteAddr,
+	})
+	httputil.JSON(w, http.StatusOK, result)
+}
+
 // CompactPanelData trims and rebuilds the panel database on demand.
 func (h *Handler) CompactPanelData(w http.ResponseWriter, r *http.Request) {
 	result, err := h.svc.CompactPanelData(r.Context())

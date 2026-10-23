@@ -126,6 +126,9 @@ func (s *Service) scalar(ctx context.Context, query string, args ...any) int64 {
 type LargeFile struct {
 	Path  string `json:"path"`
 	Bytes int64  `json:"bytes"`
+	// Release is how the panel may free this file ("truncate", "delete"),
+	// or empty when it may not.
+	Release string `json:"release,omitempty"`
 }
 
 // largestFilesRoots are the directories the scan may walk. Anything else is
@@ -171,7 +174,7 @@ func (s *Service) LargestFiles(ctx context.Context, root string, limit int) ([]L
 		if convErr != nil || path == "" {
 			continue
 		}
-		files = append(files, LargeFile{Path: path, Bytes: bytes})
+		files = append(files, LargeFile{Path: path, Bytes: bytes, Release: releaseActionFor(path)})
 	}
 	sort.SliceStable(files, func(i, j int) bool { return files[i].Bytes > files[j].Bytes })
 	if len(files) > limit {
