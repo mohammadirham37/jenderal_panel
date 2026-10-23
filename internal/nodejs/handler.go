@@ -256,6 +256,15 @@ func (h *Handler) UpdateRuntime(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// PruneAllRuntimes handles POST /api/v1/nodejs/runtimes/prune.
+func (h *Handler) PruneAllRuntimes(w http.ResponseWriter, r *http.Request) {
+	taskID := h.tasks.RunFunc("Remove unused Node.js versions", func(ctx context.Context, log func(string)) error {
+		return h.svc.PruneAllRuntimes(ctx, log)
+	})
+	h.logAction(r, "prune_node_runtimes", "nodejs", "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // UpdateAllRuntimes handles POST /api/v1/nodejs/runtimes/update.
 func (h *Handler) UpdateAllRuntimes(w http.ResponseWriter, r *http.Request) {
 	taskID := h.tasks.RunFunc("Update Node.js for all websites", func(ctx context.Context, log func(string)) error {

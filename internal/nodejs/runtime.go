@@ -18,6 +18,7 @@ type runtimeManager interface {
 	Detect(context.Context, string, string) (noderuntime.Status, error)
 	Install(context.Context, string, string, func(string)) error
 	InstallPanel(context.Context, func(string)) error
+	Prune(context.Context, string, string, func(string)) (noderuntime.PruneResult, error)
 }
 
 type RuntimeInfo struct {
@@ -244,6 +245,9 @@ func (s *Service) ChangeRuntime(ctx context.Context, websiteID, version string, 
 			return fmt.Errorf("Node.js %s is active, but restarting the website app failed: %w", version, err)
 		}
 	}
+	// The previous version is no longer used; leaving it would keep ~200 MB
+	// per update. A failed cleanup never fails the activation.
+	s.pruneUnlocked(ctx, website.WebUser, website.Domain, version, log)
 	return nil
 }
 

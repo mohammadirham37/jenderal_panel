@@ -38,6 +38,7 @@ import { toast } from '$lib/stores/toast';
 	let runtimeSummary = $derived(summarizeNodeRuntimes(runtimes));
 	let canManage = $derived(hasPermission($permissions, 'nodejs.manage'));
 	let updateAllConfirm = $state(false);
+	let pruneConfirm = $state(false);
 
 	async function updateRuntime(websiteID: string) {
 		if (busy) return;
@@ -58,6 +59,17 @@ import { toast } from '$lib/stores/toast';
 			currentTaskId = result.task_id;
 			toast.success(translate($language, 'nd.update.started'));
 		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'nd.update.failed')); }
+		finally { acting = false; }
+	}
+
+	async function pruneAll() {
+		if (busy) return;
+		acting = true; pruneConfirm = false;
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/nodejs/runtimes/prune');
+			currentTaskId = result.task_id;
+			toast.success(translate($language, 'nd.prune.started'));
+		} catch (err) { toast.error(err instanceof Error ? err.message : translate($language, 'nd.prune.failed')); }
 		finally { acting = false; }
 	}
 
@@ -146,14 +158,23 @@ import { toast } from '$lib/stores/toast';
 				<p class="text-sm text-gray-400">{translate($language, 'nd.rt.hint')}</p>
 			</div>
 			{#if canManage && runtimeSummary.selected.length > 0}
-				{#if updateAllConfirm}
+				{#if pruneConfirm}
+					<div class="flex flex-wrap items-center gap-2 text-sm">
+						<span class="text-yellow-300">{translate($language, 'nd.prune.confirm').replace('{count}', String(runtimeSummary.selected.length))}</span>
+						<button onclick={pruneAll} disabled={busy} class="rounded bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">{translate($language, 'nd.prune.yes')}</button>
+						<button onclick={() => (pruneConfirm = false)} class="px-2 py-1.5 text-gray-300">{translate($language, 'nd.cancel')}</button>
+					</div>
+				{:else if updateAllConfirm}
 					<div class="flex items-center gap-2 text-sm">
 						<span class="text-yellow-300">{translate($language, 'nd.update.allConfirm').replace('{count}', String(runtimeSummary.selected.length))}</span>
 						<button onclick={updateAll} disabled={busy} class="rounded bg-blue-600 px-3 py-1.5 font-semibold text-white disabled:opacity-50">{translate($language, 'nd.update.yes')}</button>
 						<button onclick={() => (updateAllConfirm = false)} class="px-2 py-1.5 text-gray-300">{translate($language, 'nd.cancel')}</button>
 					</div>
 				{:else}
-					<button onclick={() => (updateAllConfirm = true)} disabled={busy} class="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'nd.update.all')}</button>
+					<div class="flex flex-wrap items-center gap-2">
+						<button onclick={() => (pruneConfirm = true)} disabled={busy} title={translate($language, 'nd.prune.hint')} class="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'nd.prune.button')}</button>
+						<button onclick={() => (updateAllConfirm = true)} disabled={busy} class="rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'nd.update.all')}</button>
+					</div>
 				{/if}
 			{/if}
 		</div>

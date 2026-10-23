@@ -17,6 +17,7 @@ type fakeRuntime struct {
 	detect       func(context.Context, string, string) (noderuntime.Status, error)
 	install      func(context.Context, string, string, func(string)) error
 	installPanel func(context.Context, func(string)) error
+	prune        func(context.Context, string, string, func(string)) (noderuntime.PruneResult, error)
 }
 
 func (f fakeRuntime) Detect(ctx context.Context, user, version string) (noderuntime.Status, error) {
@@ -27,6 +28,12 @@ func (f fakeRuntime) Install(ctx context.Context, user, version string, log func
 }
 func (f fakeRuntime) InstallPanel(ctx context.Context, log func(string)) error {
 	return f.installPanel(ctx, log)
+}
+func (f fakeRuntime) Prune(ctx context.Context, user, version string, log func(string)) (noderuntime.PruneResult, error) {
+	if f.prune == nil {
+		return noderuntime.PruneResult{}, nil
+	}
+	return f.prune(ctx, user, version, log)
 }
 
 func installedRuntime(version string) fakeRuntime {

@@ -2,6 +2,7 @@ package nodejs
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -133,5 +134,35 @@ func TestChangeRuntimeRefreshesWebsiteAppUnit(t *testing.T) {
 	// rewritten unit pins NODE_VERSION=22, not the old 24.
 	if strings.Join(refreshed, ",") != "site-a@22" {
 		t.Errorf("website app refresh = %v, want site-a@22", refreshed)
+	}
+}
+
+// Updating used to leave the replaced patch installed next to the new one;
+// a successful update now removes it, and a failed cleanup does not fail
+// the update.
+func TestUpdateRuntimePrunesReplacedVersions(t *testing.T) {
+	for _, pruneErr := range []error{nil, errors.New("disk busy")} {
+		db := setupTestDB(t)
+		db.SetMaxOpenConns(1)
+		insertTestWebsite(t, db, "site-a", "a.example.com", "web_a", "/home/web_a/public")
+		svc := NewService(db, newMockExec(), nil)
+		var pruned []string
+		svc.runtime = fakeRuntime{
+			detect: func(_ context.Context, _ string, v string) (noderuntime.Status, error) {
+				return noderuntime.Status{Installed: true, NodeVersion: "v" + v + ".22.1", NPMVersion: "11.0.0", NVMState: noderuntime.NVMStateReady}, nil
+			},
+			install:      func(context.Context, string, string, func(string)) error { return nil },
+			installPanel: func(context.Context, func(string)) error { return nil },
+			prune: func(_ context.Context, user, v string, _ func(string)) (noderuntime.PruneResult, error) {
+				pruned = append(pruned, user+"@"+v)
+				return noderuntime.PruneResult{Kept: "v24.22.1"}, pruneErr
+			},
+		}
+		if err := svc.UpdateRuntime(context.Background(), "site-a", func(string) {}); err != nil {
+			t.Fatalf("UpdateRuntime (prune error %v): %v", pruneErr, err)
+		}
+		if strings.Join(pruned, ",") != "web_a@24" {
+			t.Errorf("pruned = %v, want the website's selected major", pruned)
+		}
 	}
 }
