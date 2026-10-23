@@ -103,7 +103,7 @@ func TestRevokeSessionRejectsForeignSession(t *testing.T) {
 		t.Fatalf("create attacker session: %v", err)
 	}
 
-	req := sessionHandlerRequest(t, http.MethodDelete, "/api/v1/auth/sessions/"+ownerSession.ID, ownerSession.ID, attacker, attackerSession)
+	req := sessionHandlerRequest(t, http.MethodDelete, "/api/v1/auth/sessions/"+hashSessionToken(ownerSession.ID), hashSessionToken(ownerSession.ID), attacker, attackerSession)
 	rec := httptest.NewRecorder()
 	h.RevokeSession(rec, req)
 
@@ -158,7 +158,7 @@ func TestRevokeSessionAndListMarksCurrent(t *testing.T) {
 	for _, s := range resp.Data {
 		if s.Current {
 			currentMarked++
-			if s.ID != currentSession.ID {
+			if s.ID != hashSessionToken(currentSession.ID) {
 				t.Errorf("current flag on wrong session %s", s.ID)
 			}
 		}
@@ -168,7 +168,7 @@ func TestRevokeSessionAndListMarksCurrent(t *testing.T) {
 	}
 
 	// Revoke the other session.
-	req = sessionHandlerRequest(t, http.MethodDelete, "/api/v1/auth/sessions/"+otherSession.ID, otherSession.ID, user, currentSession)
+	req = sessionHandlerRequest(t, http.MethodDelete, "/api/v1/auth/sessions/"+hashSessionToken(otherSession.ID), hashSessionToken(otherSession.ID), user, currentSession)
 	rec = httptest.NewRecorder()
 	h.RevokeSession(rec, req)
 	if rec.Code != http.StatusOK {

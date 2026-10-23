@@ -167,8 +167,12 @@ func TestLoginAsCreatesImpersonationSession(t *testing.T) {
 	if impSession.UserID != target.ID {
 		t.Errorf("expected session for %s, got %s", target.ID, impSession.UserID)
 	}
-	if impSession.ImpersonatorSessionID != adminSession.ID {
-		t.Errorf("expected impersonator link %s, got %q", adminSession.ID, impSession.ImpersonatorSessionID)
+	// The link stores the admin session's hashed id, never its token.
+	if impSession.ImpersonatorSessionID == adminSession.ID || impSession.ImpersonatorSessionID == "" {
+		t.Errorf("impersonator link %q must be the stored id, not the admin token", impSession.ImpersonatorSessionID)
+	}
+	if info, err := svc.ImpersonatedBy(ctx, impSession.ImpersonatorSessionID); err != nil || info.AdminUserID != admin.ID {
+		t.Errorf("impersonator link does not resolve to the admin: %+v, %v", info, err)
 	}
 
 	// /auth/me through the impersonation session must expose the admin.
@@ -240,8 +244,28 @@ func TestStopImpersonationRestoresAdminSession(t *testing.T) {
 	if _, err := svc.GetSession(ctx, impSession.ID); err == nil {
 		t.Error("expected the impersonation session to be deleted")
 	}
-	if _, err := svc.GetSession(ctx, adminSession.ID); err != nil {
-		t.Errorf("expected the admin session to survive: %v", err)
+	// The admin's original token is not recoverable (only its hash is
+	// stored), so a fresh admin session is issued and the old one retired.
+	if _, err := svc.GetSession(ctx, adminSession.ID); err == nil {
+		t.Error("expected the original admin session to be retired")
+	}
+	sessions, err := svc.ListSessions(ctx, admin.ID)
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("expected one fresh admin session, got %v (%v)", sessions, err)
+	}
+	cookies := stopRec.Result().Cookies()
+	var sessionCookie string
+	for _, c := range cookies {
+		if c.Name == "session_id" {
+			sessionCookie = c.Value
+		}
+	}
+	if sessionCookie == "" {
+		t.Fatal("no session cookie was set")
+	}
+	restored, err := svc.GetSession(ctx, sessionCookie)
+	if err != nil || restored.UserID != admin.ID {
+		t.Fatalf("the new cookie must address a session for the admin: %+v, %v", restored, err)
 	}
 }
 

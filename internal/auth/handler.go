@@ -225,7 +225,7 @@ func (h *Handler) ListSessions(w http.ResponseWriter, r *http.Request) {
 			UserAgent: s.UserAgent,
 			CreatedAt: s.CreatedAt,
 			ExpiresAt: s.ExpiresAt,
-			Current:   s.ID == current.ID,
+			Current:   s.ID == hashSessionToken(current.ID),
 		})
 	}
 
@@ -251,7 +251,7 @@ func (h *Handler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.auth.DeleteSession(r.Context(), sessionID); err != nil {
+	if err := h.auth.DeleteSessionByStoredID(r.Context(), sessionID); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
@@ -365,7 +365,7 @@ func (h *Handler) StopImpersonation(w http.ResponseWriter, r *http.Request) {
 
 	// The admin session may have been revoked or expired while impersonating;
 	// in that case the only way back is a fresh login.
-	adminSession, err := h.auth.GetSession(r.Context(), session.ImpersonatorSessionID)
+	adminSession, err := h.auth.GetSessionByStoredID(r.Context(), session.ImpersonatorSessionID)
 	if err != nil {
 		_ = h.auth.DeleteSession(r.Context(), session.ID)
 		httputil.HandleError(w, model.NewDomainError("IMPERSONATION_UNAVAILABLE",
@@ -386,8 +386,18 @@ func (h *Handler) StopImpersonation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The admin's original token is not recoverable (only its hash is
+	// stored), so hand back a fresh session for the same admin and retire
+	// the one the impersonation was started from.
+	restored, err := h.auth.CreateSession(r.Context(), adminUser.ID, r.RemoteAddr, r.UserAgent())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	_ = h.auth.DeleteSessionByStoredID(r.Context(), session.ImpersonatorSessionID)
+
 	csrfToken := GenerateCSRFToken()
-	setSessionCookies(w, adminSession.ID, adminSession.ExpiresAt, csrfToken)
+	setSessionCookies(w, restored.ID, restored.ExpiresAt, csrfToken)
 
 	roles, _ := h.rbac.GetUserRoles(r.Context(), adminUser.ID)
 	permissions, _ := h.rbac.GetUserPermissions(r.Context(), adminUser.ID)

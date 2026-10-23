@@ -347,8 +347,8 @@ func TestListSessionsFiltersExpired(t *testing.T) {
 	if len(sessions) != 1 {
 		t.Fatalf("expected 1 live session, got %d", len(sessions))
 	}
-	if sessions[0].ID != live.ID {
-		t.Errorf("expected live session %s, got %s", live.ID, sessions[0].ID)
+	if sessions[0].ID != hashSessionToken(live.ID) {
+		t.Errorf("expected live session %s, got %s", hashSessionToken(live.ID), sessions[0].ID)
 	}
 }
 
@@ -411,11 +411,11 @@ func TestGetSessionForUserRejectsForeignSession(t *testing.T) {
 		t.Fatalf("create owner session: %v", err)
 	}
 
-	if _, err := svc.GetSessionForUser(ctx, ownerSession.ID, attacker.ID); err != model.ErrForbidden {
+	if _, err := svc.GetSessionForUser(ctx, hashSessionToken(ownerSession.ID), attacker.ID); err != model.ErrForbidden {
 		t.Errorf("expected ErrForbidden for foreign session, got %v", err)
 	}
 
-	if _, err := svc.GetSessionForUser(ctx, ownerSession.ID, owner.ID); err != nil {
+	if _, err := svc.GetSessionForUser(ctx, hashSessionToken(ownerSession.ID), owner.ID); err != nil {
 		t.Errorf("expected owner to access own session, got %v", err)
 	}
 }

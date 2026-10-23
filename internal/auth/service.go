@@ -268,8 +268,12 @@ func (s *Service) DeleteUser(ctx context.Context, id string) error {
 
 // CreateSession creates a new session for a user.
 func (s *Service) CreateSession(ctx context.Context, userID, ip, userAgent string) (model.Session, error) {
+	token, err := newSessionToken()
+	if err != nil {
+		return model.Session{}, err
+	}
 	return s.insertSession(ctx, model.Session{
-		ID:        ulid.Make().String(),
+		ID:        token,
 		UserID:    userID,
 		IPAddress: ip,
 		UserAgent: userAgent,
@@ -281,43 +285,65 @@ func (s *Service) CreateSession(ctx context.Context, userID, ip, userAgent strin
 // CreateImpersonationSession creates a login-as session for userID that
 // remembers adminSessionID so the panel can restore it later.
 func (s *Service) CreateImpersonationSession(ctx context.Context, userID, adminSessionID, ip, userAgent string) (model.Session, error) {
+	token, err := newSessionToken()
+	if err != nil {
+		return model.Session{}, err
+	}
 	now := time.Now().UTC()
 	session := model.Session{
-		ID:                    ulid.Make().String(),
+		ID:                    token,
 		UserID:                userID,
 		IPAddress:             ip,
 		UserAgent:             userAgent,
 		ExpiresAt:             now.Add(s.cfg.SessionTTL),
 		CreatedAt:             now,
-		ImpersonatorSessionID: adminSessionID,
+		ImpersonatorSessionID: hashSessionToken(adminSessionID),
 	}
-	return s.insertSession(ctx, session, adminSessionID)
+	return s.insertSession(ctx, session, session.ImpersonatorSessionID)
 }
 
 func (s *Service) insertSession(ctx context.Context, session model.Session, impersonatorSessionID string) (model.Session, error) {
+	// session.ID is the raw token handed to the client; the database only
+	// ever holds its hash.
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions (id, user_id, ip_address, user_agent, expires_at, created_at, impersonator_session_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		session.ID, session.UserID, session.IPAddress, session.UserAgent,
-		session.ExpiresAt.Format(time.RFC3339),
-		session.CreatedAt.Format(time.RFC3339),
+		hashSessionToken(session.ID), session.UserID, session.IPAddress, session.UserAgent,
+		session.ExpiresAt.Format(time.RFC3339), session.CreatedAt.Format(time.RFC3339),
 		impersonatorSessionID,
 	)
 	if err != nil {
-		return model.Session{}, fmt.Errorf("insert session: %w", err)
+		return model.Session{}, fmt.Errorf("create session: %w", err)
 	}
-
 	return session, nil
 }
 
-// GetSession returns a session by ID. Deletes and returns ErrSessionExpired if expired.
-func (s *Service) GetSession(ctx context.Context, id string) (model.Session, error) {
+func (s *Service) GetSession(ctx context.Context, token string) (model.Session, error) {
+	session, err := s.sessionByStoredID(ctx, hashSessionToken(token))
+	if err != nil {
+		return model.Session{}, err
+	}
+	// Hand the raw token back so callers keep addressing the session with
+	// the value the client holds.
+	session.ID = token
+	return session, nil
+}
+
+// GetSessionByStoredID loads a session by its stored id, as used for the
+// impersonator reference and the session list.
+func (s *Service) GetSessionByStoredID(ctx context.Context, storedID string) (model.Session, error) {
+	return s.sessionByStoredID(ctx, storedID)
+}
+
+// sessionByStoredID loads a session by its stored (hashed) id.
+func (s *Service) sessionByStoredID(ctx context.Context, storedID string) (model.Session, error) {
 	var session model.Session
 	var expiresStr, createdStr string
 
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, user_id, ip_address, user_agent, expires_at, created_at, impersonator_session_id
-		 FROM sessions WHERE id = ?`, id,
+		 FROM sessions WHERE id = ?`,
+		storedID,
 	).Scan(&session.ID, &session.UserID, &session.IPAddress, &session.UserAgent, &expiresStr, &createdStr, &session.ImpersonatorSessionID)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -330,16 +356,22 @@ func (s *Service) GetSession(ctx context.Context, id string) (model.Session, err
 	session.CreatedAt, _ = time.Parse(time.RFC3339, createdStr)
 
 	if time.Now().UTC().After(session.ExpiresAt) {
-		_ = s.DeleteSession(ctx, id)
+		_ = s.DeleteSessionByStoredID(ctx, storedID)
 		return model.Session{}, model.ErrSessionExpired
 	}
 
 	return session, nil
 }
 
-// DeleteSession deletes a session by ID.
-func (s *Service) DeleteSession(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+// DeleteSession ends the session a client token belongs to.
+func (s *Service) DeleteSession(ctx context.Context, token string) error {
+	return s.DeleteSessionByStoredID(ctx, hashSessionToken(token))
+}
+
+// DeleteSessionByStoredID ends a session addressed by its stored id, as
+// listed by ListSessions.
+func (s *Service) DeleteSessionByStoredID(ctx context.Context, storedID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, storedID)
 	if err != nil {
 		return fmt.Errorf("delete session: %w", err)
 	}
@@ -378,7 +410,7 @@ func (s *Service) ListSessions(ctx context.Context, userID string) ([]model.Sess
 // ImpersonatedBy resolves the admin user behind a login-as session, for the
 // /auth/me response and the switch-back banner.
 func (s *Service) ImpersonatedBy(ctx context.Context, adminSessionID string) (*model.ImpersonationInfo, error) {
-	adminSession, err := s.GetSession(ctx, adminSessionID)
+	adminSession, err := s.sessionByStoredID(ctx, adminSessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -391,8 +423,8 @@ func (s *Service) ImpersonatedBy(ctx context.Context, adminSessionID string) (*m
 
 // GetSessionForUser returns a session only if it belongs to userID, so
 // revocation cannot target other accounts.
-func (s *Service) GetSessionForUser(ctx context.Context, id, userID string) (model.Session, error) {
-	session, err := s.GetSession(ctx, id)
+func (s *Service) GetSessionForUser(ctx context.Context, storedID, userID string) (model.Session, error) {
+	session, err := s.sessionByStoredID(ctx, storedID)
 	if err != nil {
 		return model.Session{}, err
 	}
