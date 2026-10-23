@@ -420,7 +420,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/owner", websiteHandler.TransferOwnership)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/config", websiteHandler.GetConfig)
-			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+			// The raw vhost is loaded by the root nginx master, so editing it
+			// is reserved for admins; owners change their site through the
+			// template, proxy, and HTTPS settings below.
+			r.With(auth.RequireRole(deps.RBAC, "admin")).
 				Put("/websites/{id}/config", websiteHandler.SaveConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/nginx-profile", websiteHandler.SetNginxProfile)

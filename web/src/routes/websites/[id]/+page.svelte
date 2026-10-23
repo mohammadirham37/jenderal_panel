@@ -15,7 +15,7 @@
 	import WebsiteGoBuildSection from '$lib/components/WebsiteGoBuildSection.svelte';
 	import WebsiteDiagnosticsSection from '$lib/components/WebsiteDiagnosticsSection.svelte';
 	import WebsiteBandwidthSection from '$lib/components/WebsiteBandwidthSection.svelte';
-	import { permissions, user as authUser } from '$lib/stores/auth';
+	import { permissions, roles, user as authUser } from '$lib/stores/auth';
 	import { hasPermission } from '$lib/stores/auth';
 	import { language, translate } from '$lib/stores/language';
 	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
@@ -309,6 +309,8 @@ import { toast } from '$lib/stores/toast';
 	}
 	let canManageServices = $derived(hasPermission($permissions, 'services.manage'));
 	let canUpdateWebsite = $derived(hasPermission($permissions, 'websites.update'));
+	// Editing the raw vhost is admin-only: nginx loads it as root.
+	let isAdmin = $derived($roles.some((r) => r.name === 'admin'));
 
 	// ─── Benchmark ────────────────────────────────────────────────────
 	interface BenchmarkLatency {
@@ -2809,15 +2811,21 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 							<textarea
 								bind:value={configContent}
 								rows={20}
-								class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+								readonly={!isAdmin}
+								class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-sm font-mono resize-y focus:outline-none focus:ring-2 focus:ring-blue-500 {isAdmin ? '' : 'opacity-80'}"
 							></textarea>
+							{#if !isAdmin}
+								<p class="mt-2 text-xs text-gray-400">{translate($language, 'wd.config.admin_only')}</p>
+							{/if}
 							<div class="mt-2 flex gap-2">
-								<button
-									onclick={saveConfig}
-									class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
-								>
-									{translate($language, 'wd.config.save')}
-								</button>
+								{#if isAdmin}
+									<button
+										onclick={saveConfig}
+										class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium rounded transition-colors cursor-pointer"
+									>
+										{translate($language, 'wd.config.save')}
+									</button>
+								{/if}
 								<button
 									onclick={loadConfig}
 									class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 text-sm rounded transition-colors cursor-pointer"

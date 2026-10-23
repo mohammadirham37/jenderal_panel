@@ -92,6 +92,11 @@ func (f scopeFixture) status(t *testing.T, s model.Session, method, path string)
 	t.Helper()
 	req := httptest.NewRequest(method, path, nil)
 	req.AddCookie(&http.Cookie{Name: "session_id", Value: s.ID})
+	if method != http.MethodGet {
+		const csrf = "test-csrf-token"
+		req.AddCookie(&http.Cookie{Name: "csrf_token", Value: csrf})
+		req.Header.Set("X-CSRF-Token", csrf)
+	}
 	rec := httptest.NewRecorder()
 	func() {
 		defer func() { _ = recover() }() // handlers with nil deps may panic after the scope check passed
@@ -163,5 +168,22 @@ func TestResolveTerminalUser(t *testing.T) {
 				t.Fatalf("got %q, %v; want %q", got, err, tc.wantUser)
 			}
 		})
+	}
+}
+
+// The raw vhost editor writes nginx configuration that the root nginx master
+// then loads, so it is admin-only even though owners may change their site.
+func TestRawVhostEditorIsAdminOnly(t *testing.T) {
+	f := newScopeFixture(t)
+	path := "/api/v1/websites/" + f.siteID + "/config"
+	if code := f.status(t, f.owner, http.MethodPut, path); code != http.StatusForbidden {
+		t.Errorf("site owner PUT %s = %d, want 403", path, code)
+	}
+	if code := f.status(t, f.admin, http.MethodPut, path); code == http.StatusForbidden {
+		t.Errorf("admin PUT %s = 403, admins must keep the editor", path)
+	}
+	// Reading the generated config stays available to the owner.
+	if code := f.status(t, f.owner, http.MethodGet, path); code == http.StatusForbidden {
+		t.Errorf("site owner GET %s = 403, want the config to stay readable", path)
 	}
 }
