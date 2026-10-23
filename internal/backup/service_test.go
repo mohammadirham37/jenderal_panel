@@ -26,6 +26,10 @@ func setupTestDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatalf("open db: %v", err)
 	}
+	// An in-memory database is private to its connection: a second one
+	// would be empty, which the background backup goroutines can trigger.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	if err := database.Migrate(db); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

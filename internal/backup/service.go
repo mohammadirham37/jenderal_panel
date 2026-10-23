@@ -635,18 +635,19 @@ func (s *Service) restoreWebsite(ctx context.Context, b model.Backup) error {
 		webUser = user
 	}
 
-	result, err := s.exec.RunSudo(ctx, "tar", "-xzf", b.Path, "-C", "/home/"+webUser)
+	// Extracted as the site account: the archive is tenant data, so a root
+	// extraction could follow a directory symlink planted in the home and
+	// write outside it, and would restore setuid bits as root. Running as
+	// the account also makes the files land with the right owner, so no
+	// recursive root chown is needed afterwards.
+	result, err := s.exec.RunSudo(ctx, "-u", webUser, "--", "tar", "-xzf", b.Path,
+		"--no-same-owner", "--no-same-permissions", "--no-overwrite-dir",
+		"-C", "/home/"+webUser)
 	if err != nil {
 		return fmt.Errorf("restore website: %w", err)
 	}
 	if result.ExitCode != 0 {
 		return fmt.Errorf("restore website failed (exit %d): %s", result.ExitCode, result.Stderr)
-	}
-
-	// Extraction as root leaves root-owned files behind; give the site back
-	// to its web user.
-	if _, err := s.exec.RunSudo(ctx, "chown", "-R", webUser+":"+webUser, "/home/"+webUser); err != nil {
-		return fmt.Errorf("restore website ownership: %w", err)
 	}
 	return nil
 }
