@@ -40,7 +40,7 @@ func TestSafeRealIPPublicPeerKeepsRemoteAddr(t *testing.T) {
 
 // The panel-domain nginx vhost proxies from loopback, so its X-Forwarded-For
 // / X-Real-IP must keep being honored.
-func TestSafeRealIPLoopbackPeerHonorsForwarded(t *testing.T) {
+func TestSafeRealIPHonorsForwardedFromLoopbackOnly(t *testing.T) {
 	cases := []struct {
 		remote   string
 		headers  map[string]string
@@ -50,7 +50,9 @@ func TestSafeRealIPLoopbackPeerHonorsForwarded(t *testing.T) {
 		{"127.0.0.1:5555", map[string]string{"X-Forwarded-For": "198.51.100.7, 10.0.0.2"}, "198.51.100.7"},
 		{"127.0.0.1:5555", map[string]string{"X-Real-IP": "198.51.100.9"}, "198.51.100.9"},
 		{"127.0.0.1:5555", map[string]string{}, "127.0.0.1:5555"},
-		{"192.168.1.10:5555", map[string]string{"X-Forwarded-For": "198.51.100.11"}, "198.51.100.11"},
+		// Only a proxy on this host is trusted; a private-network peer could
+		// be another container and is not believed.
+		{"192.168.1.10:5555", map[string]string{"X-Forwarded-For": "198.51.100.11"}, "192.168.1.10:5555"},
 	}
 	for _, c := range cases {
 		rec := safeRealIPRequest(t, c.remote, c.headers)
@@ -99,3 +101,31 @@ func TestSecurityHeaders(t *testing.T) {
 }
 
 var tlsConnStateStub = tls.ConnectionState{HandshakeComplete: true}
+
+// Containers and other hosts on a private network are not the panel's
+// proxy: trusting their X-Forwarded-For would let them forge the client IP
+// the login throttle and the audit log record.
+func TestSafeRealIPTrustsLoopbackOnly(t *testing.T) {
+	cases := []struct {
+		peer, want string
+	}{
+		{"127.0.0.1:5000", "203.0.113.7"},
+		{"[::1]:5000", "203.0.113.7"},
+		{"172.17.0.5:5000", "172.17.0.5:5000"},
+		{"10.1.2.3:5000", "10.1.2.3:5000"},
+		{"198.51.100.9:5000", "198.51.100.9:5000"},
+	}
+	for _, tc := range cases {
+		var seen string
+		handler := SafeRealIP(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen = r.RemoteAddr
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.RemoteAddr = tc.peer
+		req.Header.Set("X-Forwarded-For", "203.0.113.7")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		if seen != tc.want {
+			t.Errorf("peer %s: RemoteAddr = %q, want %q", tc.peer, seen, tc.want)
+		}
+	}
+}

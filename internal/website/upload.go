@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"time"
 
@@ -40,22 +39,22 @@ func (s *Service) UploadArchive(ctx context.Context, websiteID string, file io.R
 		return "", model.NewValidationError("unsupported archive format; use .zip or .tar.gz/.tgz")
 	}
 
-	// Save uploaded file to a temp location.
-	tmpName := "jenderal-upload-" + ulid.Make().String()
-	tmpPath := "/tmp/" + tmpName
-	tmpFile, err := os.Create(tmpPath)
+	// Stage the upload inside the website's own home, written as that
+	// account: /tmp is shared with every other local account, which would
+	// let another tenant read this archive while it is unpacked.
+	tmpPath := "/home/" + w.WebUser + "/.jenderal-upload-" + ulid.Make().String()
+	var stderr strings.Builder
+	exit, err := s.exec.RunSudoWithInputStream(ctx, file, &stderr,
+		"-u", w.WebUser, "--", "/usr/bin/tee", tmpPath)
 	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
+		return "", fmt.Errorf("stage upload: %w", err)
 	}
-
-	if _, err := io.Copy(tmpFile, file); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("write temp file: %w", err)
+	if exit != 0 {
+		return "", model.NewDomainError("UPLOAD_FAILED", strings.TrimSpace(stderr.String()), nil)
 	}
-	if err := tmpFile.Close(); err != nil {
-		os.Remove(tmpPath)
-		return "", fmt.Errorf("close temp file: %w", err)
+	if _, err := s.exec.RunSudo(ctx, "-u", w.WebUser, "--", "chmod", "600", tmpPath); err != nil {
+		_, _ = s.exec.RunSudo(ctx, "-u", w.WebUser, "--", "rm", "-f", tmpPath)
+		return "", fmt.Errorf("restrict staged upload: %w", err)
 	}
 
 	// Build the extract + cleanup commands to run sequentially.
@@ -86,7 +85,7 @@ func (s *Service) UploadArchive(ctx context.Context, websiteID string, file io.R
 	}
 
 	// Cleanup temp file after extraction.
-	commands = append(commands, []string{"rm", "-f", tmpPath})
+	commands = append(commands, []string{"-u", w.WebUser, "--", "rm", "-f", tmpPath})
 
 	taskID := tr.RunMultiple(
 		"Upload archive to "+w.Domain,
@@ -112,6 +111,6 @@ func (s *Service) deployGoUpload(ctx context.Context, w model.Website, tmpPath, 
 		return fmt.Errorf("extract archive: %w", err)
 	}
 	write("archive extracted to " + root)
-	_, _ = s.exec.RunSudo(ctx, "rm", "-f", tmpPath)
+	_, _ = s.exec.RunSudo(ctx, "-u", w.WebUser, "--", "rm", "-f", tmpPath)
 	return s.RunDeployHook(ctx, w.ID, write)
 }

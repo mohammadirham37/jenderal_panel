@@ -55,12 +55,16 @@ func headerClientIP(r *http.Request) string {
 	return strings.TrimSpace(xff)
 }
 
+// isTrustedProxyIP reports whether a forwarding header from this peer may be
+// believed. Only a proxy on this host qualifies: containers and other hosts
+// on a private network would otherwise be able to forge the client address
+// used by the login throttle and recorded in the audit log.
 func isTrustedProxyIP(host string) bool {
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return false
 	}
-	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+	return ip.IsLoopback()
 }
 
 // SecurityHeaders sets conservative response headers on every panel response.
