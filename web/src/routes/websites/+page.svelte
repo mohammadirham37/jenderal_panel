@@ -26,6 +26,7 @@ import type { ServerInfo } from '$lib/types';
 		provision_stage: string;
 		provision_log: string;
 		bandwidth_bytes: number;
+		disk_bytes?: number;
 		created_at: string;
 		owner_email?: string;
 	}
@@ -98,7 +99,30 @@ import type { ServerInfo } from '$lib/types';
 		{ value: 'suspended', label: 'wl.filterSuspended', tone: 'text-gray-300', ring: 'ring-gray-400/60' }
 	] as const;
 
-	let filteredWebsites = $derived(filterWebsites(websites, { query: search, status: statusFilter, sort: sortBy }) as Website[]);
+	// Disk sizes load separately: measuring home directories is slower than
+	// listing sites, so the list renders first and the sizes fill in.
+	let diskSizes = $state<Record<string, number> | null>(null);
+	const sizedWebsites = $derived(
+		diskSizes ? websites.map((w) => ({ ...w, disk_bytes: diskSizes?.[w.id] })) : websites
+	);
+	let filteredWebsites = $derived(filterWebsites(sizedWebsites, { query: search, status: statusFilter, sort: sortBy }) as Website[]);
+
+	async function loadSizes(refresh = false) {
+		try {
+			const sizes = await api.get<{ id: string; bytes: number }[]>(
+				`/api/v1/websites/sizes${refresh ? '?refresh=1' : ''}`
+			);
+			diskSizes = Object.fromEntries((sizes || []).map((s) => [s.id, s.bytes]));
+		} catch {
+			// Sizes are informational; the list stays usable without them.
+			if (!diskSizes) diskSizes = {};
+		}
+	}
+
+	function sizeLabel(website: Website): string {
+		if (!diskSizes) return '…';
+		return website.disk_bytes === undefined ? '—' : formatBytes(website.disk_bytes);
+	}
 	const counts = $derived(countByGroup(websites));
 	const hasFilters = $derived(search.trim() !== '' || statusFilter !== 'all');
 
@@ -164,6 +188,7 @@ import type { ServerInfo } from '$lib/types';
 			websites = (await api.get<Website[]>('/api/v1/websites')) || [];
 			error = '';
 			if (shouldPoll(websites)) startPolling();
+			void loadSizes(true);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'wl.errorLoad'));
 		} finally {
@@ -425,7 +450,7 @@ import type { ServerInfo } from '$lib/types';
 		}
 	}
 
-	onMount(() => { void Promise.all([loadWebsites(), loadOptions()]); });
+	onMount(() => { void Promise.all([loadWebsites(), loadOptions()]).then(() => loadSizes()); });
 
 	onDestroy(() => {
 		stopPolling();
@@ -904,13 +929,14 @@ import type { ServerInfo } from '$lib/types';
 		</div>
 	{:else if viewMode === 'table'}
 		<div class="overflow-x-auto rounded-xl border border-gray-700 bg-gray-800">
-			<table class="w-full min-w-[720px] text-sm">
+			<table class="w-full min-w-[800px] text-sm">
 				<thead>
 					<tr class="border-b border-gray-700 text-left text-[11px] uppercase tracking-wider text-gray-400">
 						<th class="px-4 py-2.5 font-medium">{translate($language, 'wl.labelDomain')}</th>
 						<th class="px-3 py-2.5 font-medium">{translate($language, 'wl.labelStatus')}</th>
 						<th class="px-3 py-2.5 font-medium">{translate($language, 'wl.labelStack')}</th>
 						<th class="px-3 py-2.5 font-medium">PHP</th>
+						<th class="px-3 py-2.5 text-right font-medium" title={translate($language, 'wl.sizeHint')}>{translate($language, 'wl.labelSize')}</th>
 						<th class="px-3 py-2.5 text-right font-medium" title={translate($language, 'wl.bandwidthMonthHint')}>{translate($language, 'wl.labelBandwidth')}</th>
 						<th class="px-3 py-2.5 font-medium">{translate($language, 'wl.labelCreated')}</th>
 						<th class="px-4 py-2.5"><span class="sr-only">{translate($language, 'wl.labelActions')}</span></th>
@@ -933,6 +959,7 @@ import type { ServerInfo } from '$lib/types';
 							<td class="px-3 py-2.5">{@render statusBadge(website.status)}</td>
 							<td class="px-3 py-2.5 capitalize text-gray-300">{frameworkLabel(website)}</td>
 							<td class="px-3 py-2.5 text-gray-300">{usesPHP(website) ? website.php_version : '—'}</td>
+							<td class="px-3 py-2.5 text-right tabular-nums text-gray-300">{sizeLabel(website)}</td>
 							<td class="px-3 py-2.5 text-right tabular-nums text-gray-300">{formatBytes(website.bandwidth_bytes)}</td>
 							<td class="px-3 py-2.5 text-gray-400" title={website.owner_email || translate($language, 'wl.ownerLegacy')}>{new Date(website.created_at).toLocaleDateString()}</td>
 							<td class="px-4 py-2.5">{@render rowActions(website, true)}</td>
@@ -967,7 +994,11 @@ import type { ServerInfo } from '$lib/types';
 						{@render statusBadge(website.status)}
 					</div>
 
-					<dl class="mt-3 grid grid-cols-3 gap-2 rounded-lg bg-gray-900/40 px-3 py-2 text-xs">
+					<dl class="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-gray-900/40 px-3 py-2 text-xs sm:grid-cols-4">
+						<div class="min-w-0">
+							<dt class="text-gray-500" title={translate($language, 'wl.sizeHint')}>{translate($language, 'wl.labelSize')}</dt>
+							<dd class="font-medium tabular-nums text-gray-300">{sizeLabel(website)}</dd>
+						</div>
 						<div class="min-w-0">
 							<dt class="text-gray-500" title={translate($language, 'wl.bandwidthMonthHint')}>{translate($language, 'wl.labelBandwidth')}</dt>
 							<dd class="font-medium tabular-nums text-gray-300">{formatBytes(website.bandwidth_bytes)}</dd>

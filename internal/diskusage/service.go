@@ -23,6 +23,8 @@ type Service struct {
 	exec executor.CommandExecutor
 	// dbPath is the panel's SQLite file, reported as part of panel data.
 	dbPath string
+	// sizes caches website home directory sizes for the websites list.
+	sizes siteSizeCache
 }
 
 // NewService creates a new diskusage Service.
@@ -247,6 +249,7 @@ func (s *Service) collectWebsites(ctx context.Context, o *Overview) {
 		return
 	}
 	byPath := parseDuSizes(res.Stdout)
+	s.sizes.put(byPath, time.Now())
 
 	for _, st := range sites {
 		bytes, ok := byPath[st.home]

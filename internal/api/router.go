@@ -399,6 +399,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/options", websiteHandler.Options)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites", websiteHandler.List)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/sizes", diskUsageHandler.WebsiteSizes)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.create")).
 				Post("/websites", websiteHandler.Create)
 			// Fleet-wide maintenance: admin role only.

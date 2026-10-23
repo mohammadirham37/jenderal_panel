@@ -80,6 +80,19 @@ func (h *Handler) WebsiteBreakdown(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, breakdown)
 }
 
+// WebsiteSizes reports the disk footprint of the caller's websites for the
+// websites list. ?refresh=1 re-measures instead of using cached sizes.
+func (h *Handler) WebsiteSizes(w http.ResponseWriter, r *http.Request) {
+	user, _ := auth.UserFromContext(r.Context())
+	sizes, err := h.svc.WebsiteSizes(r.Context(), user.ID, auth.AdminFromContext(r.Context()),
+		r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, sizes)
+}
+
 // LargestFiles scans a directory tree for the biggest files, which answers
 // "what is actually using the space" when the folder totals are not enough.
 func (h *Handler) LargestFiles(w http.ResponseWriter, r *http.Request) {

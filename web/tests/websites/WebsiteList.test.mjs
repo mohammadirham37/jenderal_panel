@@ -26,6 +26,8 @@ test('filterWebsites keeps failed and in-progress sites on top under every sort'
 	assert.deepEqual(ids(filterWebsites(sites, { sort: 'newest' })), ['4', '2', '5', '3', '1']);
 	assert.deepEqual(ids(filterWebsites(sites, { sort: 'name' })), ['2', '4', '5', '1', '3']);
 	assert.deepEqual(ids(filterWebsites(sites, { sort: 'bandwidth' })), ['2', '4', '3', '1', '5']);
+	const sized = sites.map((w) => ({ ...w, disk_bytes: { '1': 70, '3': 900, '5': 5 }[w.id] }));
+	assert.deepEqual(ids(filterWebsites(sized, { sort: 'size' })), ['2', '4', '3', '1', '5']);
 });
 
 test('filterWebsites searches domain, stack, owner and PHP version with all terms', () => {

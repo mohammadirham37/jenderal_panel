@@ -1,7 +1,7 @@
 // Pure helpers for the websites list page: status grouping, search, and sort.
 // Kept framework-free so tests/websites/WebsiteList.test.mjs can run them.
 
-/** @typedef {{ domain: string, app_type: string, framework: string, framework_version: string, php_version: string, status: string, created_at: string, bandwidth_bytes: number, owner_email?: string }} ListWebsite */
+/** @typedef {{ domain: string, app_type: string, framework: string, framework_version: string, php_version: string, status: string, created_at: string, bandwidth_bytes: number, disk_bytes?: number, owner_email?: string }} ListWebsite */
 /** @typedef {'all' | 'active' | 'pending' | 'failed' | 'suspended'} StatusFilter */
 
 export const pendingStatuses = ['pending', 'installing', 'configuring', 'validating'];
@@ -77,7 +77,8 @@ const sorters = {
 	newest: (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
 	oldest: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''),
 	name: (a, b) => a.domain.localeCompare(b.domain),
-	bandwidth: (a, b) => (b.bandwidth_bytes || 0) - (a.bandwidth_bytes || 0)
+	bandwidth: (a, b) => (b.bandwidth_bytes || 0) - (a.bandwidth_bytes || 0),
+	size: (a, b) => (b.disk_bytes || 0) - (a.disk_bytes || 0)
 };
 
 export const sortKeys = Object.keys(sorters);
