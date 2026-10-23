@@ -544,3 +544,13 @@ func TestGrantWebsiteEnforcesStrictSshDirPermissions(t *testing.T) {
 		t.Errorf(".ssh files were not re-pinned to 600, calls=%v", fake.calls)
 	}
 }
+
+// Environment-carrying variants behave like their plain counterparts here;
+// the panel only uses them to keep secrets out of argv.
+func (f *fakeSSHExecutor) RunSudoWithEnv(ctx context.Context, env map[string]string, name string, args ...string) (*executor.Result, error) {
+	return f.RunSudo(ctx, name, args...)
+}
+
+func (f *fakeSSHExecutor) RunSudoWithInputStreamEnv(ctx context.Context, env map[string]string, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+	return f.RunSudoWithInputStream(ctx, stdin, stderrW, name, args...)
+}

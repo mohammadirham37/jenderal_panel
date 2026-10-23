@@ -212,3 +212,13 @@ func (f fakeExecutor) RunSudoStreamSplit(context.Context, io.Writer, io.Writer, 
 func (f fakeExecutor) RunSudoWithInputStream(context.Context, io.Reader, io.Writer, string, ...string) (int, error) {
 	return 0, errors.New("unexpected RunSudoWithInputStream")
 }
+
+// Environment-carrying variants behave like their plain counterparts here;
+// the panel only uses them to keep secrets out of argv.
+func (f fakeExecutor) RunSudoWithEnv(ctx context.Context, env map[string]string, name string, args ...string) (*executor.Result, error) {
+	return f.RunSudo(ctx, name, args...)
+}
+
+func (f fakeExecutor) RunSudoWithInputStreamEnv(ctx context.Context, env map[string]string, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+	return f.RunSudoWithInputStream(ctx, stdin, stderrW, name, args...)
+}

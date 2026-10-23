@@ -154,11 +154,11 @@ func (r *collationCompatReader) Read(p []byte) (int, error) {
 // supportedCollations returns the collation names the target MySQL server
 // knows, queried with the given extra auth arguments. On failure the set is
 // empty and the compat rewriter leaves the dump untouched.
-func (s *Service) supportedCollations(ctx context.Context, authArgs ...string) map[string]bool {
+func (s *Service) supportedCollations(ctx context.Context, env map[string]string, authArgs ...string) map[string]bool {
 	args := append([]string{}, authArgs...)
 	args = append(args, "--batch", "--skip-column-names", "-e",
 		"SELECT collation_name FROM information_schema.COLLATIONS")
-	result, err := s.exec.RunSudo(ctx, "mysql", args...)
+	result, err := s.exec.RunSudoWithEnv(ctx, env, "mysql", args...)
 	if err != nil || result.ExitCode != 0 {
 		return map[string]bool{}
 	}

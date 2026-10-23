@@ -239,3 +239,13 @@ func TestSiteProtectionCreatesMissingZone(t *testing.T) {
 func newFakeService(fake *fakeExec) *Service {
 	return &Service{exec: fake}
 }
+
+// Environment-carrying variants behave like their plain counterparts here;
+// the panel only uses them to keep secrets out of argv.
+func (f *fakeExec) RunSudoWithEnv(ctx context.Context, env map[string]string, name string, args ...string) (*executor.Result, error) {
+	return f.RunSudo(ctx, name, args...)
+}
+
+func (f *fakeExec) RunSudoWithInputStreamEnv(ctx context.Context, env map[string]string, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+	return f.RunSudoWithInputStream(ctx, stdin, stderrW, name, args...)
+}

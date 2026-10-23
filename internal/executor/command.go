@@ -25,6 +25,9 @@ type CommandExecutor interface {
 	RunSudoStream(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
 	RunSudoStreamSplit(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error)
 	RunSudoWithInputStream(ctx context.Context, stdin io.Reader, stderr io.Writer, name string, args ...string) (int, error)
+	// Env variants keep secrets out of argv; see env.go.
+	RunSudoWithEnv(ctx context.Context, env map[string]string, name string, args ...string) (*Result, error)
+	RunSudoWithInputStreamEnv(ctx context.Context, env map[string]string, stdin io.Reader, stderr io.Writer, name string, args ...string) (int, error)
 }
 
 // Executor implements CommandExecutor with a configurable default timeout.
@@ -45,6 +48,11 @@ func (e *Executor) Run(ctx context.Context, name string, args ...string) (*Resul
 }
 
 func (e *Executor) run(ctx context.Context, input *string, name string, args ...string) (*Result, error) {
+	return e.runWithEnv(ctx, nil, input, name, args...)
+}
+
+// runWithEnv is run with an explicit child environment (nil inherits).
+func (e *Executor) runWithEnv(ctx context.Context, env []string, input *string, name string, args ...string) (*Result, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.DefaultTimeout)
@@ -54,6 +62,7 @@ func (e *Executor) run(ctx context.Context, input *string, name string, args ...
 	start := time.Now()
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	configureGracefulCancellation(cmd)
 	if input != nil {
 		cmd.Stdin = bytes.NewBufferString(*input)
@@ -143,6 +152,11 @@ func (e *Executor) RunSudoWithInputStream(ctx context.Context, stdin io.Reader, 
 // entered, which would starve stdin-streaming commands of their input. The
 // command is still killed when ctx is canceled (CommandContext default).
 func (e *Executor) stream(ctx context.Context, out io.Writer, stderrW io.Writer, in io.Reader, name string, args ...string) (int, error) {
+	return e.streamWithEnv(ctx, nil, out, stderrW, in, name, args...)
+}
+
+// streamWithEnv is stream with an explicit child environment (nil inherits).
+func (e *Executor) streamWithEnv(ctx context.Context, env []string, out io.Writer, stderrW io.Writer, in io.Reader, name string, args ...string) (int, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.DefaultTimeout)
@@ -150,6 +164,7 @@ func (e *Executor) stream(ctx context.Context, out io.Writer, stderrW io.Writer,
 	}
 
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	if out != nil {
 		cmd.Stdout = out
 	}
@@ -178,12 +193,14 @@ func (e *Executor) stream(ctx context.Context, out io.Writer, stderrW io.Writer,
 
 // MockExecutor is a test double for CommandExecutor.
 type MockExecutor struct {
-	RunFunc                    func(ctx context.Context, name string, args ...string) (*Result, error)
-	RunSudoFunc                func(ctx context.Context, name string, args ...string) (*Result, error)
-	RunSudoWithInputFunc       func(ctx context.Context, input, name string, args ...string) (*Result, error)
-	RunSudoStreamFunc          func(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
-	RunSudoStreamSplitFunc     func(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error)
-	RunSudoWithInputStreamFunc func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error)
+	RunFunc                       func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoFunc                   func(ctx context.Context, name string, args ...string) (*Result, error)
+	RunSudoWithInputFunc          func(ctx context.Context, input, name string, args ...string) (*Result, error)
+	RunSudoStreamFunc             func(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
+	RunSudoStreamSplitFunc        func(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error)
+	RunSudoWithInputStreamFunc    func(ctx context.Context, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error)
+	RunSudoWithEnvFunc            func(ctx context.Context, env map[string]string, name string, args ...string) (*Result, error)
+	RunSudoWithInputStreamEnvFunc func(ctx context.Context, env map[string]string, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error)
 }
 
 // Run delegates to RunFunc.
@@ -199,6 +216,24 @@ func (m *MockExecutor) RunSudo(ctx context.Context, name string, args ...string)
 // RunSudoWithInput delegates to RunSudoWithInputFunc.
 func (m *MockExecutor) RunSudoWithInput(ctx context.Context, input, name string, args ...string) (*Result, error) {
 	return m.RunSudoWithInputFunc(ctx, input, name, args...)
+}
+
+// RunSudoWithEnv delegates to RunSudoWithEnvFunc, or to RunSudoFunc so the
+// environment variant behaves like a plain sudo call in tests.
+func (m *MockExecutor) RunSudoWithEnv(ctx context.Context, env map[string]string, name string, args ...string) (*Result, error) {
+	if m.RunSudoWithEnvFunc != nil {
+		return m.RunSudoWithEnvFunc(ctx, env, name, args...)
+	}
+	return m.RunSudo(ctx, name, args...)
+}
+
+// RunSudoWithInputStreamEnv delegates to RunSudoWithInputStreamEnvFunc, or to
+// RunSudoWithInputStream.
+func (m *MockExecutor) RunSudoWithInputStreamEnv(ctx context.Context, env map[string]string, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
+	if m.RunSudoWithInputStreamEnvFunc != nil {
+		return m.RunSudoWithInputStreamEnvFunc(ctx, env, stdin, stderrW, name, args...)
+	}
+	return m.RunSudoWithInputStream(ctx, stdin, stderrW, name, args...)
 }
 
 // RunSudoWithInputStream delegates to RunSudoWithInputStreamFunc.

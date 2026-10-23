@@ -172,14 +172,14 @@ func (s *Service) UnlockManage(ctx context.Context, userID, password, panelUserI
 
 	switch storedEngine {
 	case "mysql":
-		result, execErr := s.exec.RunSudo(ctx, "mysql",
-			"--user="+username, "--password="+password, "--execute", "SELECT 1")
+		result, execErr := s.exec.RunSudoWithEnv(ctx, mysqlPasswordEnv(password), "mysql",
+			"--user="+username, "--execute", "SELECT 1")
 		if execErr != nil || result.ExitCode != 0 {
 			return "", "", "", model.NewValidationError("invalid password for " + username)
 		}
 	case "postgresql":
-		result, execErr := s.exec.RunSudo(ctx, "psql", pgConnInfo(username, password, "postgres"),
-			"--tuples-only", "--no-align", "--command", "SELECT 1")
+		result, execErr := s.exec.RunSudoWithEnv(ctx, postgresPasswordEnv(password), "psql",
+			append(pgConnArgs(username, "postgres"), "--tuples-only", "--no-align", "--command", "SELECT 1")...)
 		if execErr != nil || result.ExitCode != 0 {
 			return "", "", "", model.NewValidationError("invalid password for " + username)
 		}
@@ -943,12 +943,14 @@ func (s *Service) ManageEmptyTable(ctx context.Context, token, database, table s
 // ─── Execution + quoting helpers ──────────────────────────────────
 
 func (s *Service) runMySQL(ctx context.Context, session *manageSession, database, statement string) (*executor.Result, error) {
-	args := []string{"--user=" + session.Username, "--password=" + session.Password, "--batch"}
+	// The password travels in MYSQL_PWD, never in argv: process arguments
+	// are readable by every local account.
+	args := []string{"--user=" + session.Username, "--batch"}
 	if database != "" {
 		args = append(args, "--database="+database)
 	}
 	args = append(args, "--execute", statement)
-	result, err := s.exec.RunSudo(ctx, "mysql", args...)
+	result, err := s.exec.RunSudoWithEnv(ctx, mysqlPasswordEnv(session.Password), "mysql", args...)
 	if err != nil {
 		return nil, fmt.Errorf("mysql query: %w", err)
 	}
@@ -962,8 +964,8 @@ func (s *Service) runPostgres(ctx context.Context, session *manageSession, datab
 	if database == "" {
 		database = "postgres"
 	}
-	args := []string{pgConnInfo(session.Username, session.Password, database), "--csv", "--command", statement}
-	result, err := s.exec.RunSudo(ctx, "psql", args...)
+	args := append(pgConnArgs(session.Username, database), "--csv", "--command", statement)
+	result, err := s.exec.RunSudoWithEnv(ctx, postgresPasswordEnv(session.Password), "psql", args...)
 	if err != nil {
 		return nil, fmt.Errorf("postgresql query: %w", err)
 	}
@@ -971,6 +973,21 @@ func (s *Service) runPostgres(ctx context.Context, session *manageSession, datab
 		return nil, model.NewDomainError("DB_QUERY_FAILED", strings.TrimSpace(result.Stderr), nil)
 	}
 	return result, nil
+}
+
+// mysqlPasswordEnv carries a MySQL password to the client out of argv.
+func mysqlPasswordEnv(password string) map[string]string {
+	return map[string]string{"MYSQL_PWD": password}
+}
+
+// postgresPasswordEnv carries a PostgreSQL password to the client out of argv.
+func postgresPasswordEnv(password string) map[string]string {
+	return map[string]string{"PGPASSWORD": password}
+}
+
+// pgConnArgs names the connection without embedding the password.
+func pgConnArgs(username, database string) []string {
+	return []string{"--username=" + username, "--dbname=" + database, "--host=127.0.0.1", "--no-password"}
 }
 
 // pgConnInfo builds a libpq connection string with safely escaped values.

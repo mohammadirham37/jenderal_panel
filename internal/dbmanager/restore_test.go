@@ -98,7 +98,7 @@ func containsArg(list []string, want string) bool {
 
 func TestManageRestoreStreamsIntoSessionEngine(t *testing.T) {
 	token := manageSessions.put(&manageSession{
-		Engine: "postgresql", Username: "web_vapedist", Password: "secret",
+		Engine: "postgresql", Username: "web_vapedist", Password: "pg-s3cret",
 	})
 	defer manageSessions.drop(token)
 
@@ -123,8 +123,11 @@ func TestManageRestoreStreamsIntoSessionEngine(t *testing.T) {
 	}
 
 	joined := strings.Join(streamArgs, " ")
-	if !strings.Contains(joined, "dbname='vapedist'") || !strings.Contains(joined, "user='web_vapedist'") {
+	if !strings.Contains(joined, "--dbname=vapedist") || !strings.Contains(joined, "--username=web_vapedist") {
 		t.Errorf("restore must connect as the session user to the target database, got %q", joined)
+	}
+	if strings.Contains(joined, "s3cret") {
+		t.Errorf("the password must not appear in the client arguments: %q", joined)
 	}
 	if fedInput != dump {
 		t.Errorf("dump must be streamed untouched, got %q", fedInput)

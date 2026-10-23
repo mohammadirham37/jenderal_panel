@@ -73,7 +73,7 @@ func (s *Service) RestoreDatabase(ctx context.Context, id string, dump io.Reader
 	// targets reject mid-file (ERROR 1273); rewrite them to the closest
 	// collation the target actually supports.
 	if engineName == "mysql" {
-		in = newCollationCompatReader(in, s.supportedCollations(ctx))
+		in = newCollationCompatReader(in, s.supportedCollations(ctx, nil))
 	}
 
 	// Refuse dumps that carry client commands: the clients below run them
@@ -146,7 +146,7 @@ func (s *Service) ManageRestore(ctx context.Context, token, database string, dum
 	// collation the target actually supports.
 	if session.Engine == "mysql" {
 		in = newCollationCompatReader(in, s.supportedCollations(ctx,
-			"--user="+session.Username, "--password="+session.Password))
+			mysqlPasswordEnv(session.Password), "--user="+session.Username))
 	}
 
 	staged, cleanup, err := stageCheckedDump(session.Engine, in)
@@ -158,17 +158,20 @@ func (s *Service) ManageRestore(ctx context.Context, token, database string, dum
 
 	var bin string
 	var args []string
+	var env map[string]string
 	switch session.Engine {
 	case "mysql":
 		bin = "mysql"
-		args = []string{"--user=" + session.Username, "--password=" + session.Password, "--database=" + database}
+		args = []string{"--user=" + session.Username, "--database=" + database}
+		env = mysqlPasswordEnv(session.Password)
 	case "postgresql":
 		bin = "psql"
-		args = []string{pgConnInfo(session.Username, session.Password, database)}
+		args = pgConnArgs(session.Username, database)
+		env = postgresPasswordEnv(session.Password)
 	}
 
 	var stderrBuf bytes.Buffer
-	exit, err := s.exec.RunSudoWithInputStream(ctx, in, &stderrBuf, bin, args...)
+	exit, err := s.exec.RunSudoWithInputStreamEnv(ctx, env, in, &stderrBuf, bin, args...)
 	if err != nil {
 		return fmt.Errorf("database restore: %w", err)
 	}
