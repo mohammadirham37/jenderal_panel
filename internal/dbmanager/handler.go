@@ -416,7 +416,9 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.canManageDatabase(r, req.DatabaseID) {
+	// Both sides of a grant must belong to the caller: the database and the
+	// account that gains access to it.
+	if !h.canManageDatabase(r, req.DatabaseID) || !h.canManageDBUser(r, req.UserID) {
 		httputil.HandleError(w, model.ErrForbidden)
 		return
 	}
@@ -455,7 +457,7 @@ func (h *Handler) RevokePrivileges(w http.ResponseWriter, r *http.Request) {
 		req.UserID = chi.URLParam(r, "id")
 	}
 
-	if !h.canManageDatabase(r, req.DatabaseID) {
+	if !h.canManageDatabase(r, req.DatabaseID) || !h.canManageDBUser(r, req.UserID) {
 		httputil.HandleError(w, model.ErrForbidden)
 		return
 	}

@@ -206,3 +206,25 @@ func TestServerLogsAndTaskListAreRestricted(t *testing.T) {
 		t.Error("reading a task by id must stay available")
 	}
 }
+
+// The database engines are shared by every tenant, so their lifecycle is
+// not part of the user role's own-database permissions.
+func TestDatabaseEngineControlIsAdminOnly(t *testing.T) {
+	f := newScopeFixture(t)
+	for _, path := range []string{
+		"/api/v1/databases/engines/mysql/stop",
+		"/api/v1/databases/engines/mysql/restart",
+		"/api/v1/databases/engines/postgresql/install",
+	} {
+		if code := f.status(t, f.other, http.MethodPost, path); code != http.StatusForbidden {
+			t.Errorf("user-role POST %s = %d, want 403", path, code)
+		}
+		if code := f.status(t, f.admin, http.MethodPost, path); code == http.StatusForbidden {
+			t.Errorf("admin POST %s = 403, admins must keep engine control", path)
+		}
+	}
+	// Owners keep managing their own databases.
+	if code := f.status(t, f.owner, http.MethodPost, "/api/v1/databases/"+f.dbID+"/restore"); code == http.StatusForbidden {
+		t.Error("the database owner must still be allowed to restore it")
+	}
+}

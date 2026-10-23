@@ -724,13 +724,13 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Database Management
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/engines", dbHandler.ListEngines)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/install", dbHandler.InstallEngine)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/start", dbHandler.StartEngine)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/stop", dbHandler.StopEngine)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
+			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/restart", dbHandler.RestartEngine)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/engines/postgresql/pgvector", dbHandler.PgvectorStatus)
@@ -746,7 +746,7 @@ func NewRouter(deps Dependencies) http.Handler {
 				Delete("/databases/{id}", dbHandler.DropDatabase)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/{id}/export", dbHandler.ExportDatabase)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
+			r.With(auth.RequirePermission(deps.RBAC, "databases.create")).
 				Post("/databases/{id}/restore", dbHandler.RestoreDatabase)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/users", dbHandler.ListDBUsers)
