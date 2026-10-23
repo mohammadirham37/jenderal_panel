@@ -438,6 +438,10 @@ func (p *PostgreSQLEngine) EnableVector(ctx context.Context, database string) er
 	return nil
 }
 
+// pgdgKeyFingerprint is the published fingerprint of the PostgreSQL apt
+// repository signing key (ACCC4CF8).
+const pgdgKeyFingerprint = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
+
 // pgvectorInstallScript renders the root script that installs the pgvector
 // apt package for a PostgreSQL major version. Ubuntu 22.04 does not ship
 // pgvector at all and 24.04/26.04 only carry it for their stock version, so
@@ -448,7 +452,19 @@ func pgvectorInstallScript(majorVersion string) string {
 	return "set -eu\n" +
 		"codename=$(/usr/bin/lsb_release -cs)\n" +
 		"install -d -m 0755 /usr/share/postgresql-common/pgdg\n" +
-		"/usr/bin/curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/postgresql-common/pgdg/apt.asc\n" +
+		"tmp_key=$(mktemp)\n" +
+		"trap 'rm -f \"$tmp_key\"' EXIT\n" +
+		"/usr/bin/curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 " +
+		"--connect-timeout 10 --max-time 60 https://www.postgresql.org/media/keys/ACCC4CF8.asc -o \"$tmp_key\"\n" +
+		// The key decides what apt will install as root, so it is only
+		// trusted when it carries exactly the published fingerprint.
+		"actual=$(gpg --batch --show-keys --with-colons \"$tmp_key\" 2>/dev/null | awk -F: '$1 == \"fpr\" { print $10; exit }')\n" +
+		"keys=$(gpg --batch --show-keys --with-colons \"$tmp_key\" 2>/dev/null | awk -F: '$1 == \"pub\" { count++ } END { print count + 0 }')\n" +
+		"if [ \"$actual\" != \"" + pgdgKeyFingerprint + "\" ] || [ \"$keys\" != \"1\" ]; then\n" +
+		"  echo \"Unexpected PostgreSQL signing key: fingerprint=$actual, primary_keys=$keys\" >&2\n" +
+		"  exit 1\n" +
+		"fi\n" +
+		"install -o root -g root -m 0644 \"$tmp_key\" /usr/share/postgresql-common/pgdg/apt.asc\n" +
 		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n" +
 		"apt-get update -qq\n" +
 		"apt-get install -y -o DPkg::Lock::Timeout=120 postgresql-" + majorVersion + "-pgvector\n" +

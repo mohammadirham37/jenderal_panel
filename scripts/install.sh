@@ -250,8 +250,20 @@ step_install_go() {
     fi
 
     log "Installing Go 1.23.4..."
-    curl -fsSL "https://go.dev/dl/go1.23.4.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz \
+    # Published checksums (https://go.dev/dl/): the tarball is unpacked as
+    # root, so it is only trusted when it matches byte for byte.
+    local go_sha256
+    case "$ARCH" in
+        amd64) go_sha256=6924efde5de86fe277676e929dc9917d466efa02fb934197bc2eba35d5680971 ;;
+        arm64) go_sha256=16e5017863a7f6071363782b1b8042eb12c6ca4f4cd71528b2123f0a1275b13e ;;
+        *) fail "Unsupported architecture for the Go toolchain: $ARCH" ;;
+    esac
+    curl -fsSL --proto '=https' --tlsv1.2 "https://go.dev/dl/go1.23.4.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz \
         || fail "Failed to download Go"
+    if ! echo "${go_sha256}  /tmp/go.tar.gz" | sha256sum -c - >/dev/null 2>&1; then
+        rm -f /tmp/go.tar.gz
+        fail "Go download failed checksum verification"
+    fi
     rm -rf /usr/local/go
     tar -C /usr/local -xzf /tmp/go.tar.gz
     rm -f /tmp/go.tar.gz
