@@ -169,6 +169,13 @@ func (s *Service) SetAppAutoBuild(ctx context.Context, websiteID string, enabled
 // the site's runtime. dir is the unit's working directory: the document root
 // for node/python, the repository root for go/go-binary.
 func buildAppUnit(w model.Website, dir string) (string, error) {
+	// Values written into unit directives must stay on their own line.
+	if err := validateCommandLine("start command", strings.TrimSpace(w.AppStartCommand)); err != nil {
+		return "", err
+	}
+	if err := validateCommandLine("build command", strings.TrimSpace(w.AppBuildCommand)); err != nil {
+		return "", err
+	}
 	switch w.AppRuntime {
 	case "", "node":
 		return buildNodeAppUnit(w, dir)

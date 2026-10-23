@@ -569,3 +569,33 @@ func TestRefreshNodeAppUnitRewritesUnitWithCurrentVersion(t *testing.T) {
 		t.Errorf("unconfigured node site must be a no-op: err=%v unit=%q restarted=%v", err, unit, restarted)
 	}
 }
+
+func TestAppCommandsRejectUnitAndShellBreakers(t *testing.T) {
+	bad := []string{
+		"./app\nUser=root",
+		"./app\r\nExecStartPost=/bin/sh -c id",
+		"./app\x00",
+	}
+	for _, start := range bad {
+		if _, err := buildAppStartArgv("go", "u", "/home/u/app", start); err == nil {
+			t.Errorf("start command %q was accepted", start)
+		}
+		if _, err := buildAppUnit(model.Website{
+			AppRuntime: "go", AppPort: 8200, AppStartCommand: start, WebUser: "u", Domain: "x.test",
+		}, "/home/u/app"); err == nil {
+			t.Errorf("unit built from start command %q", start)
+		}
+	}
+	for _, build := range []string{"go build -o app .\nUser=root", "go build .\x00"} {
+		if _, err := buildAppBuildArgv("go", "u", "/home/u/app", build); err == nil {
+			t.Errorf("build command %q was accepted", build)
+		}
+	}
+	// Ordinary commands keep working.
+	if _, err := buildAppStartArgv("go", "u", "/home/u/app", "./server --port 8200"); err != nil {
+		t.Errorf("valid start command rejected: %v", err)
+	}
+	if _, err := buildAppBuildArgv("go", "u", "/home/u/app", "go build -o server ./cmd/web"); err != nil {
+		t.Errorf("valid build command rejected: %v", err)
+	}
+}

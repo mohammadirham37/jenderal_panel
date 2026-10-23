@@ -7,6 +7,20 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
+// validateCommandLine refuses values that would break out of the single
+// line they are written into: a systemd unit directive (ExecStart=) or a
+// shell script line. Everything else stays allowed, so ordinary commands
+// with flags and quotes keep working.
+func validateCommandLine(kind, value string) error {
+	if strings.ContainsAny(value, "\n\r\x00") {
+		return model.NewValidationError(kind + " must be a single line without control characters")
+	}
+	if len(value) > 1024 {
+		return model.NewValidationError(kind + " is too long (max 1024 characters)")
+	}
+	return nil
+}
+
 // shQuote single-quote-escapes a value for safe use inside a shell string.
 func shQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
@@ -18,6 +32,9 @@ func buildAppStartArgv(runtime, webUser, docroot, startCommand string) ([]string
 	startCommand = strings.TrimSpace(startCommand)
 	if startCommand == "" {
 		return nil, model.NewValidationError("start command is required")
+	}
+	if err := validateCommandLine("start command", startCommand); err != nil {
+		return nil, err
 	}
 	switch runtime {
 	case "go", "go-binary":
@@ -40,6 +57,9 @@ func buildAppBuildArgv(runtime, webUser, dir, buildCommand string) ([]string, er
 	// The dependency install (venv + requirements.txt) runs even without a
 	// user build command.
 	buildCommand = strings.TrimSpace(buildCommand)
+	if err := validateCommandLine("build command", buildCommand); err != nil {
+		return nil, err
+	}
 	switch runtime {
 	case "go", "go-binary":
 		script := "cd " + dir + " && PATH=/usr/local/go/bin:$PATH " + buildCommand

@@ -55,9 +55,10 @@ func (s *Service) Create(ctx context.Context, req QueueWorkerRequest) (model.Que
 	if req.WebsiteID == "" {
 		return model.QueueWorker{}, model.NewValidationError("website_id is required")
 	}
-	if req.Command == "" {
-		return model.QueueWorker{}, model.NewValidationError("command is required")
+	if err := validateWorkerCommand(req.Command); err != nil {
+		return model.QueueWorker{}, err
 	}
+	req.Command = strings.TrimSpace(req.Command)
 	if req.NumWorkers < 1 {
 		req.NumWorkers = 1
 	}
@@ -203,6 +204,9 @@ func (s *Service) writeUnitFile(ctx context.Context, w model.QueueWorker) error 
 		return fmt.Errorf("query website: %w", err)
 	}
 
+	if err := validateWorkerCommand(w.Command); err != nil {
+		return err
+	}
 	unitContent := fmt.Sprintf(systemdUnitTemplate, w.ID, webUser, workerWorkingDir(appType, documentRoot), w.Command)
 	if _, err := s.exec.RunSudo(ctx, "bash", "-c",
 		fmt.Sprintf("cat > %s << 'UNITEOF'\n%sUNITEOF", unitFilePath(w.ID), unitContent)); err != nil {
