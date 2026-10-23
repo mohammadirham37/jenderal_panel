@@ -95,18 +95,26 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	// Brute-force protection: too many failures from one source for one
 	// account triggers a cooldown.
-	key := r.RemoteAddr + "|" + req.Username
-	if blocked, remaining := h.throttle.blocked(key, time.Now()); blocked {
-		w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
-		httputil.JSONError(w, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS",
-			"too many failed login attempts; try again later")
-		return
+	key := throttleKey(r.RemoteAddr, req.Username)
+	account := accountKey(req.Username)
+	for _, k := range []string{key, account} {
+		if blocked, remaining := h.throttle.blocked(k, time.Now()); blocked {
+			w.Header().Set("Retry-After", strconv.Itoa(int(remaining.Seconds())+1))
+			httputil.JSONError(w, http.StatusTooManyRequests, "TOO_MANY_ATTEMPTS",
+				"too many failed login attempts; try again later")
+			return
+		}
+	}
+	recordFailure := func() {
+		now := time.Now()
+		h.throttle.recordFailure(key, now)
+		h.throttle.recordFailure(account, now)
 	}
 
 	user, err := h.auth.Authenticate(r.Context(), req.Username, req.Password)
 	if err != nil {
 		if errors.Is(err, model.ErrInvalidCredentials) {
-			h.throttle.recordFailure(key, time.Now())
+			recordFailure()
 			_ = h.audit.Log(r.Context(), audit.LogEntry{
 				Action: "login_failed",
 				Module: "auth",
@@ -137,13 +145,14 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 		valid, err := h.auth.TOTPVerify(r.Context(), user.ID, req.TOTPCode)
 		if err != nil || !valid {
-			h.throttle.recordFailure(key, time.Now())
+			recordFailure()
 			httputil.HandleError(w, model.NewValidationError("invalid TOTP code"))
 			return
 		}
 	}
 
 	h.throttle.reset(key)
+	h.throttle.reset(account)
 
 	session, err := h.auth.CreateSession(r.Context(), user.ID, r.RemoteAddr, r.UserAgent())
 	if err != nil {

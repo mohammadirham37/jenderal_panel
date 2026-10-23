@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,7 +16,29 @@ const (
 	loginMaxFailures   = 5
 	loginFailureWindow = 15 * time.Minute
 	loginLockout       = 15 * time.Minute
+
+	// Per-account limits apply across every source address, so rotating
+	// IPs does not grant unlimited guesses. The threshold is high and the
+	// lockout short so a third party cannot cheaply lock a real account
+	// out of the panel.
+	accountMaxFailures = 50
+	accountLockout     = 5 * time.Minute
 )
+
+// throttleKey identifies one client/account pair. The source port changes
+// per TCP connection, so only the host is used.
+func throttleKey(remoteAddr, username string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	return "ip|" + host + "|" + username
+}
+
+// accountKey identifies an account across all source addresses.
+func accountKey(username string) string {
+	return "account|" + username
+}
 
 // loginThrottle tracks failed login attempts per key.
 type loginThrottle struct {
@@ -31,12 +55,13 @@ func (t *loginThrottle) blocked(key string, now time.Time) (bool, time.Duration)
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.pruneLocked(key, now.Add(-loginLockout))
+	maxFailures, lockout := limitsFor(key)
+	t.pruneLocked(key, now.Add(-lockout))
 	fails := t.failures[key]
-	if len(fails) < loginMaxFailures {
+	if len(fails) < maxFailures {
 		return false, 0
 	}
-	remaining := loginLockout - now.Sub(fails[len(fails)-1])
+	remaining := lockout - now.Sub(fails[len(fails)-1])
 	if remaining <= 0 {
 		return false, 0
 	}
@@ -48,7 +73,8 @@ func (t *loginThrottle) recordFailure(key string, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	t.pruneLocked(key, now.Add(-(loginFailureWindow + loginLockout)))
+	_, lockout := limitsFor(key)
+	t.pruneLocked(key, now.Add(-(loginFailureWindow + lockout)))
 	t.failures[key] = append(t.failures[key], now)
 }
 
@@ -57,6 +83,14 @@ func (t *loginThrottle) reset(key string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.failures, key)
+}
+
+// limitsFor returns the threshold and lockout that apply to a key.
+func limitsFor(key string) (int, time.Duration) {
+	if strings.HasPrefix(key, "account|") {
+		return accountMaxFailures, accountLockout
+	}
+	return loginMaxFailures, loginLockout
 }
 
 // pruneLocked drops timestamps that can no longer influence the decision.
