@@ -104,6 +104,18 @@ html[data-theme='light'] :is(
 	[class*='bg-green-'],
 	[class*='bg-yellow-'],
 	[class*='bg-indigo-'],
+	[class*='bg-purple-'],
+	[class*='bg-violet-'],
+	[class*='bg-fuchsia-'],
+	[class*='bg-pink-'],
+	[class*='bg-rose-'],
+	[class*='bg-orange-'],
+	[class*='bg-amber-'],
+	[class*='bg-lime-'],
+	[class*='bg-emerald-'],
+	[class*='bg-teal-'],
+	[class*='bg-cyan-'],
+	[class*='bg-sky-'],
 	[class*='bg-gray-600']
 ).text-white {
 	color: #ffffff;
@@ -118,7 +130,18 @@ html[data-theme='light'] .hover\:text-white:hover:not(
 	[class*='hover:bg-green-'],
 	[class*='hover:bg-yellow-'],
 	[class*='hover:bg-indigo-'],
+	[class*='hover:bg-purple-'],
+	[class*='hover:bg-violet-'],
+	[class*='hover:bg-fuchsia-'],
+	[class*='hover:bg-pink-'],
+	[class*='hover:bg-rose-'],
+	[class*='hover:bg-orange-'],
+	[class*='hover:bg-amber-'],
+	[class*='hover:bg-lime-'],
+	[class*='hover:bg-emerald-'],
 	[class*='hover:bg-teal-'],
+	[class*='hover:bg-cyan-'],
+	[class*='hover:bg-sky-'],
 	[class*='hover:bg-gray-600']
 ) {
 	color: #0f172a;
