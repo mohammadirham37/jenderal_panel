@@ -21,11 +21,26 @@ type CommandPreset struct {
 	Danger   bool   `json:"danger"`
 }
 
-// InitialSetupCommand is the one-click first-install chain for Laravel
-// projects: composer install, .env bootstrap, key generation, then the
-// frontend build. It is only offered while composer dependencies have not
-// been installed yet.
-const InitialSetupCommand = "initial setup"
+// The one-click first-install chain for Laravel projects: composer install,
+// .env bootstrap, key generation, then the frontend build. It comes in a
+// production flavour (no dev packages, optimized autoloader) and a
+// development flavour (dev packages included), and is only offered while
+// composer dependencies have not been installed yet.
+const (
+	InitialSetupCommand    = "initial setup (production)"
+	InitialSetupDevCommand = "initial setup (development)"
+	// legacyInitialSetupCommand is the name used before the two flavours
+	// existed; it still runs the production setup.
+	legacyInitialSetupCommand = "initial setup"
+)
+
+// initialSetupCommands maps each setup command to whether it installs
+// composer dev packages.
+var initialSetupCommands = map[string]bool{
+	InitialSetupCommand:       false,
+	InitialSetupDevCommand:    true,
+	legacyInitialSetupCommand: false,
+}
 
 // composerProductionInstall is the composer install a production server
 // should run; the initial setup uses it too.
@@ -131,7 +146,7 @@ func (s *Service) GetCommandPresets(ctx context.Context, websiteID string) ([]Co
 	if w.Framework == "laravel" && s.composerInstalled(ctx, w) {
 		filtered := presets[:0]
 		for _, p := range presets {
-			if p.Label != InitialSetupCommand {
+			if _, setup := initialSetupCommands[p.Command]; !setup {
 				filtered = append(filtered, p)
 			}
 		}
@@ -176,6 +191,7 @@ func commandPresetsFor(w model.Website) []CommandPreset {
 	if framework == "laravel" {
 		presets = append(presets,
 			CommandPreset{Label: InitialSetupCommand, Command: InitialSetupCommand, Category: "laravel", Danger: false},
+			CommandPreset{Label: InitialSetupDevCommand, Command: InitialSetupDevCommand, Category: "laravel", Danger: false},
 			CommandPreset{Label: "php artisan key:generate", Command: "php artisan key:generate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate", Command: "php artisan migrate", Category: "artisan", Danger: false},
 			CommandPreset{Label: "php artisan migrate:fresh", Command: "php artisan migrate:fresh", Category: "artisan", Danger: true},
@@ -351,8 +367,8 @@ func (s *Service) hasProjectFile(ctx context.Context, workDir, name string) bool
 // background. The command must be present in the allowedCommands map. Returns
 // the background task ID.
 func (s *Service) RunCommand(ctx context.Context, websiteID string, command string) (string, error) {
-	if command == InitialSetupCommand {
-		return s.runInitialSetup(ctx, websiteID)
+	if withDev, ok := initialSetupCommands[command]; ok {
+		return s.runInitialSetup(ctx, websiteID, withDev)
 	}
 	if goSiteCommands[command] {
 		return s.runGoSiteCommand(ctx, websiteID, command)
@@ -403,7 +419,7 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 // runInitialSetup runs the first-install chain as a single background task:
 // composer install (production: no dev packages, optimized autoloader), .env
 // bootstrap, key:generate, npm install, npm run build.
-func (s *Service) runInitialSetup(ctx context.Context, websiteID string) (string, error) {
+func (s *Service) runInitialSetup(ctx context.Context, websiteID string, withDev bool) (string, error) {
 	w, err := s.Get(ctx, websiteID)
 	if err != nil {
 		return "", err
@@ -413,13 +429,17 @@ func (s *Service) runInitialSetup(ctx context.Context, websiteID string) (string
 		return "", fmt.Errorf("task runner not available")
 	}
 
-	shellCmd, err := s.buildInitialSetupScript(ctx, w)
+	shellCmd, err := s.buildInitialSetupScript(ctx, w, withDev)
 	if err != nil {
 		return "", err
 	}
 
+	name := InitialSetupCommand
+	if withDev {
+		name = InitialSetupDevCommand
+	}
 	taskID := tr.Run(
-		InitialSetupCommand+" ("+w.Domain+")",
+		name+" ("+w.Domain+")",
 		"sudo", "-u", w.WebUser, "bash", "-c", shellCmd,
 	)
 	return taskID, nil
@@ -429,7 +449,7 @@ func (s *Service) runInitialSetup(ctx context.Context, websiteID string) (string
 // Each step runs only when its input file exists (and .env is only created
 // when missing), the npm steps go through the website's NVM runtime, and the
 // chain stops at the first failing step just like the && chain it replaces.
-func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website) (string, error) {
+func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website, withDev bool) (string, error) {
 	workDir := w.DocumentRoot
 	if dir := s.findDirWithFile(ctx, w, "composer.json"); dir != "" {
 		workDir = dir
@@ -437,7 +457,11 @@ func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website) 
 
 	var steps []string
 	if s.hasProjectFile(ctx, workDir, "composer.json") {
-		steps = append(steps, "echo '==> "+composerProductionInstall+"' && "+composerProductionInstall+" --no-interaction")
+		if withDev {
+			steps = append(steps, "echo '==> composer install' && composer install --no-interaction")
+		} else {
+			steps = append(steps, "echo '==> "+composerProductionInstall+"' && "+composerProductionInstall+" --no-interaction")
+		}
 	}
 	if s.hasProjectFile(ctx, workDir, ".env.example") && !s.hasProjectFile(ctx, workDir, ".env") {
 		steps = append(steps, "echo '==> cp .env.example .env' && cp .env.example .env")

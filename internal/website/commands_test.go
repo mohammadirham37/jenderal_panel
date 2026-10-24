@@ -134,7 +134,7 @@ func TestBuildInitialSetupScriptComposesConditionalChain(t *testing.T) {
 	svc := NewService(nil, setupProbeExecutor(existing), nil)
 	w := model.Website{WebUser: "web_example", DocumentRoot: "/home/web_example/app/public"}
 
-	script, err := svc.buildInitialSetupScript(context.Background(), w)
+	script, err := svc.buildInitialSetupScript(context.Background(), w, false)
 	if err != nil {
 		t.Fatalf("buildInitialSetupScript() error = %v", err)
 	}
@@ -166,7 +166,7 @@ func TestBuildInitialSetupScriptIncludesEnvCopyWhenMissing(t *testing.T) {
 	svc := NewService(nil, setupProbeExecutor(existing), nil)
 	w := model.Website{WebUser: "web_example", DocumentRoot: "/home/web_example/app/public"}
 
-	script, err := svc.buildInitialSetupScript(context.Background(), w)
+	script, err := svc.buildInitialSetupScript(context.Background(), w, false)
 	if err != nil {
 		t.Fatalf("buildInitialSetupScript() error = %v", err)
 	}
@@ -198,13 +198,16 @@ func TestInitialSetupPresetOnlyWhileComposerNotInstalled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetCommandPresets() error = %v", err)
 	}
-	found := false
+	found, foundDev := false, false
 	for _, p := range presets {
 		if p.Label == InitialSetupCommand {
 			found = true
 		}
+		if p.Label == InitialSetupDevCommand {
+			foundDev = true
+		}
 	}
-	if !found {
+	if !found || !foundDev {
 		t.Errorf("initial setup preset must be offered before composer install, got %+v", presets)
 	}
 
@@ -216,7 +219,7 @@ func TestInitialSetupPresetOnlyWhileComposerNotInstalled(t *testing.T) {
 		t.Fatalf("GetCommandPresets() after install error = %v", err)
 	}
 	for _, p := range presets {
-		if p.Label == InitialSetupCommand {
+		if p.Label == InitialSetupCommand || p.Label == InitialSetupDevCommand {
 			t.Errorf("initial setup preset must disappear once composer install ran, got %+v", presets)
 		}
 	}
@@ -291,5 +294,34 @@ func TestComposerProductionInstallPreset(t *testing.T) {
 	}
 	if strings.Join(args, " ") != "composer install --no-dev --optimize-autoloader --no-interaction" {
 		t.Errorf("argv = %v", args)
+	}
+}
+
+// The development flavour keeps composer dev packages; both flavours are
+// offered before the first install and hidden after it.
+func TestInitialSetupDevelopmentFlavour(t *testing.T) {
+	existing := map[string]bool{
+		"/home/web_example/app/composer.json": true,
+		"/home/web_example/app/artisan":       true,
+	}
+	svc := NewService(nil, setupProbeExecutor(existing), nil)
+	w := model.Website{WebUser: "web_example", DocumentRoot: "/home/web_example/app/public"}
+
+	dev, err := svc.buildInitialSetupScript(context.Background(), w, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dev, "composer install --no-interaction") || strings.Contains(dev, "--no-dev") {
+		t.Errorf("development setup must install dev packages:\n%s", dev)
+	}
+	prod, err := svc.buildInitialSetupScript(context.Background(), w, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prod, "--no-dev --optimize-autoloader") {
+		t.Errorf("production setup must skip dev packages:\n%s", prod)
+	}
+	if initialSetupCommands[legacyInitialSetupCommand] {
+		t.Error("the legacy setup name must keep running the production flavour")
 	}
 }
