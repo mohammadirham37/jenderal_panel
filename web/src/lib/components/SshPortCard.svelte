@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { language, translate } from '$lib/stores/language';
-	import { permissions, hasPermission } from '$lib/stores/auth';
+	import { api } from '#lib/api.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { permissions, hasPermission } from '#lib/stores/auth.js';
 
 	// SSH port management card (admin, two-phase): phase one opens the new
 	// port while keeping the old one; after the operator verifies the new

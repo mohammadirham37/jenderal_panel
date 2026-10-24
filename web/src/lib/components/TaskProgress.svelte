@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { clearMissingTask, createTaskPoller } from '$lib/task-poller.js';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { clearMissingTask, createTaskPoller } from '#lib/task-poller.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	let { taskId = $bindable(''), storageKey = '', onComplete = () => {}, onMissing = () => {} }: { taskId: string; storageKey?: string; onComplete?: (task: any) => void; onMissing?: () => void } = $props();
 

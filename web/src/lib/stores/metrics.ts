@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import type { ServerMetrics } from '$lib/types';
+import type { ServerMetrics } from '#lib/types.js';
 
 export const currentMetrics = writable<ServerMetrics | null>(null);
 export const metricsHistory = writable<ServerMetrics[]>([]);

@@ -1,28 +1,28 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/state';
-	import { replaceState } from '$app/navigation';
-	import { api, getCSRFToken } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import WebsiteSslSection from '$lib/components/WebsiteSslSection.svelte';
-	import WebsiteFilesSection from '$lib/components/WebsiteFilesSection.svelte';
-	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
-	import WebsiteQueueSection from '$lib/components/WebsiteQueueSection.svelte';
-	import WebsiteCronSection from '$lib/components/WebsiteCronSection.svelte';
-	import WebsiteWpToolkitSection from '$lib/components/WebsiteWpToolkitSection.svelte';
-	import WebsitePhpSettingsSection from '$lib/components/WebsitePhpSettingsSection.svelte';
-	import WebsiteAppSection from '$lib/components/WebsiteAppSection.svelte';
-	import WebsiteGoBuildSection from '$lib/components/WebsiteGoBuildSection.svelte';
-	import WebsiteDiagnosticsSection from '$lib/components/WebsiteDiagnosticsSection.svelte';
-	import WebsiteBandwidthSection from '$lib/components/WebsiteBandwidthSection.svelte';
-	import { permissions, roles, user as authUser } from '$lib/stores/auth';
-	import { hasPermission } from '$lib/stores/auth';
-	import { language, translate } from '$lib/stores/language';
-	import { applyEnvValues, parseEnvFile } from '$lib/env-file.js';
-	import { appTypeUsesPHP } from '$lib/website-list.js';
-	import { nodeRuntimeState } from '$lib/node-runtimes.js';
-	import Modal from '$lib/components/Modal.svelte';
-import { toast } from '$lib/stores/toast';
+	import { goto } from '$app/navigation';
+	import { api, getCSRFToken } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import WebsiteSslSection from '#lib/components/WebsiteSslSection.svelte';
+	import WebsiteFilesSection from '#lib/components/WebsiteFilesSection.svelte';
+	import TerminalConsole from '#lib/components/TerminalConsole.svelte';
+	import WebsiteQueueSection from '#lib/components/WebsiteQueueSection.svelte';
+	import WebsiteCronSection from '#lib/components/WebsiteCronSection.svelte';
+	import WebsiteWpToolkitSection from '#lib/components/WebsiteWpToolkitSection.svelte';
+	import WebsitePhpSettingsSection from '#lib/components/WebsitePhpSettingsSection.svelte';
+	import WebsiteAppSection from '#lib/components/WebsiteAppSection.svelte';
+	import WebsiteGoBuildSection from '#lib/components/WebsiteGoBuildSection.svelte';
+	import WebsiteDiagnosticsSection from '#lib/components/WebsiteDiagnosticsSection.svelte';
+	import WebsiteBandwidthSection from '#lib/components/WebsiteBandwidthSection.svelte';
+	import { permissions, roles, user as authUser } from '#lib/stores/auth.js';
+	import { hasPermission } from '#lib/stores/auth.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { applyEnvValues, parseEnvFile } from '#lib/env-file.js';
+	import { appTypeUsesPHP } from '#lib/website-list.js';
+	import { nodeRuntimeState } from '#lib/node-runtimes.js';
+	import Modal from '#lib/components/Modal.svelte';
+import { toast } from '#lib/stores/toast.js';
 
 	// ─── Interfaces ───────────────────────────────────────────────────
 
@@ -161,9 +161,9 @@ import { toast } from '$lib/stores/toast';
 	function setActiveTab(tab: Tab) {
 		activeTab = tab;
 		// Keep the tab in the URL so a refresh reopens the same tab.
-		const url = new URL(page.url);
+		const url = new URL(page.url.href);
 		url.searchParams.set('tab', tab);
-		replaceState(url, page.state);
+		void goto(url, { shallow: true, replace: true, state: page.state });
 	}
 
 	// ─── Core State ───────────────────────────────────────────────────

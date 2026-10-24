@@ -1,6 +1,6 @@
 <script lang="ts">
-	import TerminalConsole from '$lib/components/TerminalConsole.svelte';
-	import { language, translate } from '$lib/stores/language';
+	import TerminalConsole from '#lib/components/TerminalConsole.svelte';
+	import { language, translate } from '#lib/stores/language.js';
 
 	const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 	const endpoint = `${protocol}//${window.location.host}/ws/terminal`;

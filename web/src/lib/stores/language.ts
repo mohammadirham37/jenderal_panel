@@ -1,5 +1,5 @@
 import { writable } from 'svelte/store';
-import { translations } from '$lib/i18n';
+import { translations } from '#lib/i18n/index.js';
 
 export type Language = 'en' | 'id';
 
@@ -12,8 +12,8 @@ language.subscribe(val => {
     }
 });
 
-// Translation dictionaries live in $lib/i18n/domains/* and are merged in
-// $lib/i18n/index.ts. Keys are grouped by module prefix (e.g. 'bk.create').
+// Translation dictionaries live in #lib/i18n/domains/* and are merged in
+// #lib/i18n/index.ts. Keys are grouped by module prefix (e.g. 'bk.create').
 // translate() falls back to English, then to the raw key.
 
 export function t(key: string): string {

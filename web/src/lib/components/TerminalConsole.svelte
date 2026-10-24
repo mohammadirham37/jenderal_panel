@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onDestroy, tick } from 'svelte';
-	import { decodeTerminalEvent } from '$lib/terminal-message.js';
-	import { language, translate } from '$lib/stores/language';
+	import { decodeTerminalEvent } from '#lib/terminal-message.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	interface Props {
 		/** Full WebSocket URL of the /ws/terminal endpoint (with query params). */

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, apiRaw } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
-	import { hasPermission, permissions } from '$lib/stores/auth';
-	import { nodeRuntimeState, summarizeNodeRuntimes } from '$lib/node-runtimes.js';
+	import { api, apiRaw } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { hasPermission, permissions } from '#lib/stores/auth.js';
+	import { nodeRuntimeState, summarizeNodeRuntimes } from '#lib/node-runtimes.js';
 
 	interface Runtime {
 		error_message?: string;

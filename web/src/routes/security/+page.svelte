@@ -1,34 +1,34 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto, replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import FirewallPanel from '$lib/components/FirewallPanel.svelte';
-	import { hasPermission, permissions } from '$lib/stores/auth';
+	import { api } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import FirewallPanel from '#lib/components/FirewallPanel.svelte';
+	import { hasPermission, permissions } from '#lib/stores/auth.js';
 	import {
 		buildSafeFail2banSettings,
 		conditionTone,
 		formatBanExpiry,
 		normalizeOverview,
 		validateBan
-	} from '$lib/security.js';
+	} from '#lib/security.js';
 	import {
 		buildOnAccessRequest,
 		buildSafeSchedule,
 		formatSignatureAge,
 		normalizeMalwareStatus
-	} from '$lib/malware.js';
+	} from '#lib/malware.js';
 	import {
 		buildTrafficProfile,
 		enforcementWarning,
 		observationProgress,
 		summarizeTraffic
-	} from '$lib/traffic-guard.js';
-	import { buildSafeSetupRequest, normalizeSetupReview } from '$lib/security-setup.js';
-	import { blockedSummary, buildActionPlan, buildProtectionChecklist } from '$lib/security-plan.js';
-import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	} from '#lib/traffic-guard.js';
+	import { buildSafeSetupRequest, normalizeSetupReview } from '#lib/security-setup.js';
+	import { blockedSummary, buildActionPlan, buildProtectionChecklist } from '#lib/security-plan.js';
+import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'firewall' | 'waf' | 'events';
 	interface ComponentStatus {
@@ -139,10 +139,10 @@ import { toast } from '$lib/stores/toast';
 	function setActiveTab(tab: Tab) {
 		activeTab = tab;
 		// Keep the tab in the URL so a refresh reopens the same tab.
-		const url = new URL(page.url);
+		const url = new URL(page.url.href);
 		if (tab === 'overview') url.searchParams.delete('tab');
 		else url.searchParams.set('tab', tab);
-		replaceState(url, page.state);
+		void goto(url, { shallow: true, replace: true, state: page.state });
 	}
 	let editMode = $state<'simple' | 'advanced'>('simple');
 	let loading = $state(true);

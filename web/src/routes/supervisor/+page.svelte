@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { language, translate } from '$lib/stores/language';
-	import { toast } from '$lib/stores/toast';
+	import { api } from '#lib/api.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { toast } from '#lib/stores/toast.js';
 
 	interface Process {
 		id: string;

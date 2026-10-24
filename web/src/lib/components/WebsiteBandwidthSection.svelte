@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import { websiteOperationAPI } from '$lib/website-operations.js';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { websiteOperationAPI } from '#lib/website-operations.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	interface BandwidthMonth {
 		month: string; // 'YYYY-MM' (UTC)

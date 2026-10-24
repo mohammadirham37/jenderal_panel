@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from '$lib/theme.js';
-	import { language, translate } from '$lib/stores/language';
+	import { applyTheme, resolveTheme, THEME_STORAGE_KEY } from '#lib/theme.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	let theme: 'dark' | 'light' = $state(
 		typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light'

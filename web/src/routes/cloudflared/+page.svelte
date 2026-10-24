@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { language, translate } from '$lib/stores/language';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import { api } from '#lib/api.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
 
 	interface TunnelStatus {
 		installed: boolean;

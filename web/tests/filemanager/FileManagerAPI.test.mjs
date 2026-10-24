@@ -50,7 +50,7 @@ test('file uploads send the CSRF token required by the API middleware', async ()
 	const section = await readFile(new URL('../../src/lib/components/WebsiteFilesSection.svelte', import.meta.url), 'utf8');
 	const apiClient = await readFile(new URL('../../src/lib/api.ts', import.meta.url), 'utf8');
 	// File-tab uploads go through apiUpload, which sets the header itself.
-	assert.match(section, /import \{ api, apiUpload \} from '\$lib\/api'/);
+	assert.match(section, /import \{ api, apiUpload \} from '#lib\/api\.js'/);
 	assert.match(apiClient, /xhr\.setRequestHeader\('X-CSRF-Token', token\)/);
 	// The deployment upload card on the page still posts multipart forms too.
 	assert.match(page, /'X-CSRF-Token': getCSRFToken\(\)/);

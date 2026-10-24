@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { toasts, dismissToast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	import { toasts, dismissToast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 	import { fly } from 'svelte/transition';
 
 	interface ToastStyle {

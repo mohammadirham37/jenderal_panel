@@ -1,4 +1,4 @@
-import type { Language } from '$lib/stores/language';
+import type { Language } from '#lib/stores/language.js';
 
 // Long-form guide content is kept in its own module (selected by the $language
 // store) instead of the flat translation dictionary, so documentation paragraphs

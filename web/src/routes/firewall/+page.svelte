@@ -1,6 +1,6 @@
 <script lang="ts">
-	import FirewallPanel from '$lib/components/FirewallPanel.svelte';
-	import { language, translate } from '$lib/stores/language';
+	import FirewallPanel from '#lib/components/FirewallPanel.svelte';
+	import { language, translate } from '#lib/stores/language.js';
 </script>
 
 

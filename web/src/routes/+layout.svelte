@@ -2,16 +2,16 @@
 	import { onMount, tick } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import LogoMark from '$lib/components/LogoMark.svelte';
-	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
-	import Toaster from '$lib/components/Toaster.svelte';
-	import { isAuthenticated, user, roles, permissions, impersonation, logout, checkAuth, stopImpersonation } from '$lib/stores/auth';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
-	import { serverHostname } from '$lib/stores/server';
-	import { formatPageTitle, pageTitleKey } from '$lib/page-title.js';
-	import { api } from '$lib/api';
-	import type { ServerInfo } from '$lib/types';
+	import LogoMark from '#lib/components/LogoMark.svelte';
+	import ThemeToggle from '#lib/components/ThemeToggle.svelte';
+	import Toaster from '#lib/components/Toaster.svelte';
+	import { isAuthenticated, user, roles, permissions, impersonation, logout, checkAuth, stopImpersonation } from '#lib/stores/auth.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { serverHostname } from '#lib/stores/server-host.js';
+	import { formatPageTitle, pageTitleKey } from '#lib/page-title.js';
+	import { api } from '#lib/api.js';
+	import type { ServerInfo } from '#lib/types.js';
 	import '../app.css';
 
 	let { children } = $props();

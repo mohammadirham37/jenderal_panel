@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
-	import type { User, SSHKey } from '$lib/types';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
-	import { user, permissions, loginAs, hasPermission } from '$lib/stores/auth';
+	import { api } from '#lib/api.js';
+	import type { User, SSHKey } from '#lib/types.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { user, permissions, loginAs, hasPermission } from '#lib/stores/auth.js';
 
 	let users = $state<User[]>([]);
 	let loading = $state(true);

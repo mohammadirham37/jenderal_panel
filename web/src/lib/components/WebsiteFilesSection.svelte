@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api, apiUpload } from '$lib/api';
-	import { createFileManagerAPI } from '$lib/file-manager.js';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
+	import { api, apiUpload } from '#lib/api.js';
+	import { createFileManagerAPI } from '#lib/file-manager.js';
+import { toast } from '#lib/stores/toast.js';
+import { language, translate } from '#lib/stores/language.js';
 
 	interface FileEntry {
 		name: string;

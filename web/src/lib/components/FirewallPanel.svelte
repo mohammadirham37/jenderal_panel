@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { firewallActionTone, normalizeFirewallStatus, parseFirewallPort, publicSMBRules } from '$lib/firewall.js';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { firewallActionTone, normalizeFirewallStatus, parseFirewallPort, publicSMBRules } from '#lib/firewall.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	interface FirewallStatus {
 		active: boolean;

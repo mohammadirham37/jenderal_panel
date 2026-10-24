@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { api } from '$lib/api';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import { api } from '#lib/api.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
 
 	interface AppStatus {
 		runtime: string;

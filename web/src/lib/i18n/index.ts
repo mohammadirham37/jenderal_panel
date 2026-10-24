@@ -1,5 +1,5 @@
 // Global translation registry. Every user-facing string is looked up here via
-// $lib/stores/language (translate / t). Each domain file owns a key prefix —
+// #lib/stores/language (translate / t). Each domain file owns a key prefix —
 // see the comment at the top of each file. English is the fallback when a key
 // is missing from the selected language.
 import { dict as core } from './domains/core';

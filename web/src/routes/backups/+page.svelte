@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api, getCSRFToken } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-import BackupStoragePanel from '$lib/components/BackupStoragePanel.svelte';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
-import { roles } from '$lib/stores/auth';
+	import { api, getCSRFToken } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+import BackupStoragePanel from '#lib/components/BackupStoragePanel.svelte';
+import { toast } from '#lib/stores/toast.js';
+import { language, translate } from '#lib/stores/language.js';
+import { roles } from '#lib/stores/auth.js';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface Backup {

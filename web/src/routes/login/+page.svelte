@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import LogoMark from '$lib/components/LogoMark.svelte';
-	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
-	import { login, isAuthenticated, authError, TotpRequiredError } from '$lib/stores/auth';
-	import { language, translate } from '$lib/stores/language';
+	import LogoMark from '#lib/components/LogoMark.svelte';
+	import ThemeToggle from '#lib/components/ThemeToggle.svelte';
+	import { login, isAuthenticated, authError, TotpRequiredError } from '#lib/stores/auth.js';
+	import { language, translate } from '#lib/stores/language.js';
 	import { onMount } from 'svelte';
 
 	let username = $state('');

@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import LogViewer from '$lib/components/LogViewer.svelte';
-	import { parseSimpleNginxConfig, switchNginxConfigMode, updateSimpleNginxConfig } from '$lib/nginx-config.js';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import LogViewer from '#lib/components/LogViewer.svelte';
+	import { parseSimpleNginxConfig, switchNginxConfigMode, updateSimpleNginxConfig } from '#lib/nginx-config.js';
+import { toast } from '#lib/stores/toast.js';
+import { language, translate } from '#lib/stores/language.js';
 
 	interface NginxStatus {
 		installed: boolean;

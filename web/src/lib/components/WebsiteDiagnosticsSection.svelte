@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	let {
 		websiteId,

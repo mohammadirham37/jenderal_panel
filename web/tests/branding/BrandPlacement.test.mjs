@@ -10,7 +10,7 @@ const accountDict = readFileSync(new URL('../../src/lib/i18n/domains/account.ts'
 const dashDict = readFileSync(new URL('../../src/lib/i18n/domains/dash.ts', import.meta.url), 'utf8');
 
 test('places the logo on the login page', () => {
-	assert.match(login, /import LogoMark from '\$lib\/components\/LogoMark\.svelte'/);
+	assert.match(login, /import LogoMark from '#lib\/components\/LogoMark\.svelte'/);
 	assert.match(login, /<LogoMark size="lg"/);
 	assert.match(login, /class="login-shell/);
 	assert.match(login, /<h1[^>]*>\{translate\(\$language, 'lg\.welcomeBack'\)\}<\/h1>/);
@@ -19,7 +19,7 @@ test('places the logo on the login page', () => {
 });
 
 test('keeps the logo visible in both sidebar states', () => {
-	assert.match(layout, /import LogoMark from '\$lib\/components\/LogoMark\.svelte'/);
+	assert.match(layout, /import LogoMark from '#lib\/components\/LogoMark\.svelte'/);
 	assert.match(layout, /<LogoMark size=\{sidebarExpanded \? 'md' : 'sm'\}/);
 	assert.match(layout, /class="app-shell/);
 	assert.match(layout, /class="sidebar-surface/);

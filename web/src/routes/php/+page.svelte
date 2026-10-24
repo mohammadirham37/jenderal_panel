@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { api } from '$lib/api';
+	import { api } from '#lib/api.js';
 	import {
 		parseSimplePHPConfig,
 		phpConfigIsDirty,
@@ -8,13 +8,13 @@
 		phpConfigWarnings,
 		switchPHPConfigMode,
 		updateSimplePHPConfig
-	} from '$lib/php-config.js';
-	import { countExtensions, groupPHPVersions, listExtensions, listsAgeHours, summarizePatches, websitesByPHPVersion } from '$lib/php-versions.js';
-	import Modal from '$lib/components/Modal.svelte';
-	import { hasPermission, permissions } from '$lib/stores/auth';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	} from '#lib/php-config.js';
+	import { countExtensions, groupPHPVersions, listExtensions, listsAgeHours, summarizePatches, websitesByPHPVersion } from '#lib/php-versions.js';
+	import Modal from '#lib/components/Modal.svelte';
+	import { hasPermission, permissions } from '#lib/stores/auth.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	interface PhpVersion {
 		version: string;

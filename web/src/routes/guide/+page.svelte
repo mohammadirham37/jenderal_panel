@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { language, translate } from '$lib/stores/language';
-	import { guideContent, sectionAnchor, subAnchor, type GuideBlock } from '$lib/content/guide';
+	import { language, translate } from '#lib/stores/language.js';
+	import { guideContent, sectionAnchor, subAnchor, type GuideBlock } from '#lib/content/guide.js';
 
 	let scrollY = $state(0);
 	let mobileTocOpen = $state(false);

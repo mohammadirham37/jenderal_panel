@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import type { ServerInfo } from '$lib/types';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
-	import { hasPermission, permissions } from '$lib/stores/auth';
-	import { connectMetrics, currentMetrics, disconnectMetrics } from '$lib/stores/metrics';
-	import SshPortCard from '$lib/components/SshPortCard.svelte';
-	import Modal from '$lib/components/Modal.svelte';
+	import { api } from '#lib/api.js';
+	import type { ServerInfo } from '#lib/types.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { hasPermission, permissions } from '#lib/stores/auth.js';
+	import { connectMetrics, currentMetrics, disconnectMetrics } from '#lib/stores/metrics.js';
+	import SshPortCard from '#lib/components/SshPortCard.svelte';
+	import Modal from '#lib/components/Modal.svelte';
 	import {
 		formatBytes,
 		formatServerTime,
@@ -19,7 +19,7 @@
 		parsePercent,
 		usageTone,
 		utcOffsetLabel
-	} from '$lib/server-info.js';
+	} from '#lib/server-info.js';
 
 	let info = $state<ServerInfo | null>(null);
 	let loading = $state(true);

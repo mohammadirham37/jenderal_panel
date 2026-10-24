@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import { roles } from '$lib/stores/auth';
-	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination, templateUsesPHP } from '$lib/website-form.js';
-	import { countByGroup, filterWebsites, formatBytes, frameworkLabel, sortKeys, statusGroup, usesPHP } from '$lib/website-list.js';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
-import type { ServerInfo } from '$lib/types';
+	import { api } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import { roles } from '#lib/stores/auth.js';
+	import { availablePHPVersions, normalizeWebsiteSelection, selectedCombination, templateUsesPHP } from '#lib/website-form.js';
+	import { countByGroup, filterWebsites, formatBytes, frameworkLabel, sortKeys, statusGroup, usesPHP } from '#lib/website-list.js';
+import { toast } from '#lib/stores/toast.js';
+import { language, translate } from '#lib/stores/language.js';
+import type { ServerInfo } from '#lib/types.js';
 
 	interface Website {
 		id: string;

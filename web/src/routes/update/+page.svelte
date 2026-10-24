@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import { cacheBustedURL, classifyUpdateRecovery, waitForUpdatedPanel } from '$lib/update-readiness.js';
-	import { language, translate } from '$lib/stores/language';
-	import { permissions, hasPermission } from '$lib/stores/auth';
-	import { toast } from '$lib/stores/toast';
+	import { api } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import { cacheBustedURL, classifyUpdateRecovery, waitForUpdatedPanel } from '#lib/update-readiness.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { permissions, hasPermission } from '#lib/stores/auth.js';
+	import { toast } from '#lib/stores/toast.js';
 
 	interface UpdateInfo {
 		current_version: string;

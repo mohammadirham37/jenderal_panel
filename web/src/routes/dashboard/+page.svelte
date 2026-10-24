@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api } from '$lib/api';
-	import { connectMetrics, disconnectMetrics, currentMetrics } from '$lib/stores/metrics';
-	import { language, translate } from '$lib/stores/language';
-	import { permissions, hasPermission } from '$lib/stores/auth';
-	import type { DashboardData, ServerInfo, ServerMetrics, ServiceStatus } from '$lib/types';
+	import { api } from '#lib/api.js';
+	import { connectMetrics, disconnectMetrics, currentMetrics } from '#lib/stores/metrics.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { permissions, hasPermission } from '#lib/stores/auth.js';
+	import type { DashboardData, ServerInfo, ServerMetrics, ServiceStatus } from '#lib/types.js';
 
 	interface SSLCertLite {
 		id: string;

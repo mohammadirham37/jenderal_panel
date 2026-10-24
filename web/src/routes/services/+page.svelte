@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import { composerActionPath } from '$lib/developer-dependencies.js';
-	import type { ServiceStatus } from '$lib/types';
-import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import { composerActionPath } from '#lib/developer-dependencies.js';
+	import type { ServiceStatus } from '#lib/types.js';
+import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	interface DependencyStatus {
 		name: string;

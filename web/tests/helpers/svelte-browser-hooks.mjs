@@ -8,6 +8,15 @@ const appStateURL = new URL('./route-state.svelte.js', import.meta.url).href;
 
 export function resolve(specifier, context, nextResolve) {
 	if (specifier === '$app/state') return { url: appStateURL, shortCircuit: true };
+	// #lib/ is the package.json subpath import (SvelteKit 3); TypeScript
+	// modules are imported with a .js extension and resolved to the .ts file.
+	if (specifier.startsWith('#lib/')) {
+		let path = specifier.slice(5);
+		if (path.endsWith('.js') && !existsSync(new URL(`../../src/lib/${path}`, import.meta.url))) {
+			path = path.replace(/\.js$/, '.ts');
+		}
+		return { url: new URL(`../../src/lib/${path}`, import.meta.url).href, shortCircuit: true };
+	}
 	if (specifier.startsWith('$lib/')) {
 		let path = specifier.slice(5);
 		if (!/\.(js|ts|svelte)$/.test(path)) {

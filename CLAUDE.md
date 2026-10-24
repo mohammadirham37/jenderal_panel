@@ -78,7 +78,7 @@ All API responses use `internal/httputil/`:
 
 ### Frontend
 
-SvelteKit 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwind CSS v4, adapter-static. Dark theme default. API client at `web/src/lib/api.ts`. Language store supports English and Bahasa Indonesia. `TaskProgress` component polls task status and shows live terminal output.
+SvelteKit 3 with Svelte 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwind CSS v4, adapter-static. Kit config lives in `web/vite.config.ts` (no `svelte.config.js`); import shared code via the `#lib/...` subpath import with a `.js` extension for TS modules (`$lib` no longer exists). Do not name files `server.ts` or put them in a `server/` folder under `src/lib` — SvelteKit 3 treats those as server-only and the static build fails. Dark theme default. API client at `web/src/lib/api.ts`. Language store supports English and Bahasa Indonesia. `TaskProgress` component polls task status and shows live terminal output.
 
 ### Self-Update
 

@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import type { Setting, SSHKey } from '$lib/types';
-	import { user as authUser } from '$lib/stores/auth';
-	import { language, translate } from '$lib/stores/language';
-import { toast } from '$lib/stores/toast';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-	import SshPortCard from '$lib/components/SshPortCard.svelte';
+	import { api } from '#lib/api.js';
+	import type { Setting, SSHKey } from '#lib/types.js';
+	import { user as authUser } from '#lib/stores/auth.js';
+	import { language, translate } from '#lib/stores/language.js';
+import { toast } from '#lib/stores/toast.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import SshPortCard from '#lib/components/SshPortCard.svelte';
 	import QRCode from 'qrcode';
 
 	let settings = $state<Setting[]>([]);

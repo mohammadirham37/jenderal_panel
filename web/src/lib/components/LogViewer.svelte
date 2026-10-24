@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api } from '$lib/api';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	let { path, title }: { path: string; title: string } = $props();
 

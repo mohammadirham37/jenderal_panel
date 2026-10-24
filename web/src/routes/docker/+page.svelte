@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
-import { toast } from '$lib/stores/toast';
-import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
+import { toast } from '#lib/stores/toast.js';
+import { language, translate } from '#lib/stores/language.js';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface DockerStatus {

@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { api } from '$lib/api';
-	import { dbConfigFields, dbConfigOptions, parseDbConfig, buildConfigFromForm } from '$lib/db-config.js';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { dbConfigFields, dbConfigOptions, parseDbConfig, buildConfigFromForm } from '#lib/db-config.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 
 	interface EngineConfig {
 		engine: string;

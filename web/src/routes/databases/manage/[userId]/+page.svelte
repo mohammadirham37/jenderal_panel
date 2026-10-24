@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import { api, getCSRFToken } from '$lib/api';
-	import { language, translate } from '$lib/stores/language';
-	import { buildErDiagram } from '$lib/erdiagram.js';
+	import { api, getCSRFToken } from '#lib/api.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import { buildErDiagram } from '#lib/erdiagram.js';
 
 	// ─── Types ────────────────────────────────────────────────────────
 

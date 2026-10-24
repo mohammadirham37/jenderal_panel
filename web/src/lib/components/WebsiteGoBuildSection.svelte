@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { api } from '$lib/api';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
-	import TaskProgress from '$lib/components/TaskProgress.svelte';
+	import { api } from '#lib/api.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
+	import TaskProgress from '#lib/components/TaskProgress.svelte';
 
 	// Build & restart controls for Go sites on the Deployment tab: the
 	// auto-build-on-deploy switch, the build/start commands, and a manual

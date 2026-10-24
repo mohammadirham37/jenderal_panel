@@ -1,6 +1,6 @@
 import { writable, get } from 'svelte/store';
-import { api, APIRequestError, setCSRFToken } from '$lib/api';
-import type { User, Role, Permission, LoginResponse, UserWithRoles, ImpersonationInfo } from '$lib/types';
+import { api, APIRequestError, setCSRFToken } from '#lib/api.js';
+import type { User, Role, Permission, LoginResponse, UserWithRoles, ImpersonationInfo } from '#lib/types.js';
 
 export const user = writable<User | null>(null);
 export const roles = writable<Role[]>([]);

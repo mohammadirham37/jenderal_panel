@@ -1,14 +1,14 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { api } from '$lib/api';
-	import { websiteOperationAPI } from '$lib/website-operations.js';
-	import { toast } from '$lib/stores/toast';
-	import { language, translate } from '$lib/stores/language';
+	import { api } from '#lib/api.js';
+	import { websiteOperationAPI } from '#lib/website-operations.js';
+	import { toast } from '#lib/stores/toast.js';
+	import { language, translate } from '#lib/stores/language.js';
 	import {
 		buildWebsiteSSLInstallRequest,
 		certificateInstallError,
 		domainsForWebsite
-	} from '$lib/ssl-form.js';
+	} from '#lib/ssl-form.js';
 
 	interface SSLCertificate {
 		id: string;
