@@ -268,7 +268,7 @@
 									{formatDate(entry.created_at)}
 								</td>
 								<td class="px-4 py-3 text-xs text-gray-300 truncate max-w-40" title={entry.username || entry.user_id}>
-									{entry.username || entry.user_id || '—'}
+									{entry.username || entry.user_id || translate($language, 'aud.system')}
 								</td>
 								<td class="px-4 py-3">
 									<span class="inline-flex px-2 py-0.5 rounded text-[11px] font-medium {actionBadgeClass(entry.action)}">

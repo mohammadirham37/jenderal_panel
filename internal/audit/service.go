@@ -145,7 +145,7 @@ func (s *Service) List(ctx context.Context, params ListParams) ([]model.AuditEnt
 
 	// Build count query
 	countQuery := `SELECT COUNT(*) FROM audit_logs l LEFT JOIN users u ON u.id = l.user_id` + where
-	listQuery := `SELECT l.id, l.user_id, COALESCE(u.email, '') AS username, l.action, l.module, l.target, l.detail, l.ip_address, l.created_at
+	listQuery := `SELECT l.id, COALESCE(l.user_id, '') AS user_id, COALESCE(u.email, '') AS username, l.action, l.module, l.target, l.detail, l.ip_address, l.created_at
 		FROM audit_logs l LEFT JOIN users u ON u.id = l.user_id` + where
 
 	var total int

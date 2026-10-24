@@ -49,6 +49,7 @@ const en = {
 
 	// Audit logs page
 	'aud.title': 'Audit Logs',
+	'aud.system': 'System',
 	'aud.refresh': 'Refresh',
 	'aud.loadFailed': 'Failed to load audit logs',
 	'aud.range': 'Range:',
@@ -125,6 +126,7 @@ const id: Record<keyof typeof en, string> = {
 
 	// Audit logs page
 	'aud.title': 'Log Audit',
+	'aud.system': 'Sistem',
 	'aud.refresh': 'Muat ulang',
 	'aud.loadFailed': 'Gagal memuat log audit',
 	'aud.range': 'Rentang:',
