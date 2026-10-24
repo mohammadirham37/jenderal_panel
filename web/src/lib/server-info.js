@@ -45,19 +45,40 @@ export function formatBytes(bytes) {
 }
 
 /**
- * Compact uptime such as "12d 4h 3m"; null for missing values.
+ * Compact uptime such as "12d 4h 3m" ("12 hari 4 jam 3 mnt" in Indonesian);
+ * null for missing values.
  * @param {number} seconds
+ * @param {string} [lang]
  */
-export function formatUptime(seconds) {
+export function formatUptime(seconds, lang = 'en') {
 	if (!Number.isFinite(seconds) || seconds <= 0) return null;
 	const days = Math.floor(seconds / 86400);
 	const hours = Math.floor((seconds % 86400) / 3600);
 	const minutes = Math.floor((seconds % 3600) / 60);
+	const units = lang === 'id' ? [' hari', ' jam', ' mnt'] : ['d', 'h', 'm'];
 	const parts = [];
-	if (days) parts.push(`${days}d`);
-	if (hours || days) parts.push(`${hours}h`);
-	parts.push(`${minutes}m`);
+	if (days) parts.push(`${days}${units[0]}`);
+	if (hours || days) parts.push(`${hours}${units[1]}`);
+	parts.push(`${minutes}${units[2]}`);
 	return parts.join(' ');
+}
+
+/**
+ * Seconds of uptime from a metrics sample. The backend serializes a Go
+ * time.Duration, which is nanoseconds.
+ * @param {number} nanoseconds
+ */
+export function uptimeSeconds(nanoseconds) {
+	if (!Number.isFinite(nanoseconds) || nanoseconds <= 0) return 0;
+	return Math.floor(nanoseconds / 1e9);
+}
+
+/**
+ * `uptime -p` output without its "up " prefix, as a fallback label.
+ * @param {string} text
+ */
+export function cleanUptimeText(text) {
+	return (text || '').replace(/^up\s+/i, '').trim();
 }
 
 /**

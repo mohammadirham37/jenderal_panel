@@ -12,6 +12,8 @@
 		formatBytes,
 		formatServerTime,
 		formatUptime,
+		uptimeSeconds,
+		cleanUptimeText,
 		isValidHostname,
 		loadPercent,
 		parsePercent,
@@ -78,7 +80,21 @@
 	let swapPct = $derived(m && m.swap_total > 0 ? Math.round((m.swap_used / m.swap_total) * 100) : null);
 	let diskPct = $derived(m && m.disk_total > 0 ? Math.round((m.disk_used / m.disk_total) * 100) : null);
 	let loadPct = $derived(m ? loadPercent(m.load_1, cores) : null);
-	let liveUptime = $derived(m ? formatUptime(m.uptime) : null);
+	// Metrics carry nanoseconds; the boot time follows from the uptime.
+	let uptimeSecs = $derived(m ? uptimeSeconds(m.uptime) : 0);
+	let liveUptime = $derived(formatUptime(uptimeSecs, $language) ?? (info ? cleanUptimeText(info.uptime) : null));
+	let bootedAt = $derived.by(() => {
+		if (uptimeSecs <= 0) return '';
+		const boot = new Date(Date.now() - uptimeSecs * 1000);
+		const locale = $language === 'id' ? 'id-ID' : 'en-GB';
+		const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium', timeStyle: 'short' };
+		try {
+			// Shown in the server's timezone, like the server clock.
+			return boot.toLocaleString(locale, { ...options, timeZone: info?.timezone || undefined });
+		} catch {
+			return boot.toLocaleString(locale, options);
+		}
+	});
 	let serverTime = $derived(info ? formatServerTime(now, info.timezone, $language === 'id' ? 'id-ID' : 'en-GB') : null);
 	let serverOffset = $derived(info ? utcOffsetLabel(now, info.timezone) : '');
 	let previewOffset = $derived(newTimezone ? utcOffsetLabel(now, newTimezone) : '');
@@ -291,7 +307,7 @@
 						</span>
 						<span>{info.os}</span>
 						<span class="inline-flex items-center gap-1 font-mono">{info.ip}{@render copyButton(info.ip, 'header-ip')}</span>
-						<span>{translate($language, 'srv.uptime')}: {liveUptime ?? info.uptime}</span>
+						{#if liveUptime}<span title={bootedAt ? `${translate($language, 'srv.bootedAt')}: ${bootedAt}` : undefined}>{translate($language, 'srv.uptime')}: {liveUptime}</span>{/if}
 					</div>
 				{/if}
 			</div>
@@ -385,7 +401,8 @@
 						{ key: 'srv.memory', value: info.ram },
 						{ key: 'srv.disk', value: info.disk },
 						{ key: 'srv.ipAddress', value: info.ip, mono: true, copy: true },
-						{ key: 'srv.uptime', value: liveUptime ?? info.uptime }
+						{ key: 'srv.uptime', value: liveUptime ?? '' },
+						{ key: 'srv.bootedAt', value: bootedAt }
 					].filter((row) => row.value) as row}
 						<div class="flex items-center justify-between gap-4 px-5 py-2.5">
 							<dt class="shrink-0 text-xs text-gray-400">{translate($language, row.key)}</dt>

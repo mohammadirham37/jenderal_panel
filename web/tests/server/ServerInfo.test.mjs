@@ -4,6 +4,8 @@ import {
 	formatBytes,
 	formatServerTime,
 	formatUptime,
+	uptimeSeconds,
+	cleanUptimeText,
 	isValidHostname,
 	loadPercent,
 	parsePercent,
@@ -33,6 +35,11 @@ test('formatBytes, formatUptime, loadPercent', () => {
 	assert.equal(formatUptime(59), '0m');
 	assert.equal(formatUptime(3 * 86400 + 3600 + 120), '3d 1h 2m');
 	assert.equal(formatUptime(7200), '2h 0m');
+	assert.equal(formatUptime(3 * 86400 + 3600 + 120, 'id'), '3 hari 1 jam 2 mnt');
+	// Metrics carry a Go time.Duration (nanoseconds), not seconds.
+	assert.equal(uptimeSeconds(3 * 86400 * 1e9), 3 * 86400);
+	assert.equal(uptimeSeconds(0), 0);
+	assert.equal(cleanUptimeText('up 2 weeks, 3 days'), '2 weeks, 3 days');
 	assert.equal(loadPercent(2, 4), 50);
 	assert.equal(loadPercent(1, 0), null);
 });
