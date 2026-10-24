@@ -94,6 +94,21 @@ func (h *Handler) ChangeWebsiteRuntime(w http.ResponseWriter, r *http.Request) {
 	h.changeRuntime(w, r, chi.URLParam(r, "id"))
 }
 
+// RemoveWebsiteRuntime handles DELETE /api/v1/websites/{id}/nodejs-runtime.
+func (h *Handler) RemoveWebsiteRuntime(w http.ResponseWriter, r *http.Request) {
+	websiteID := chi.URLParam(r, "id")
+	website, err := h.svc.loadWebsiteRuntime(r.Context(), websiteID)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	taskID := h.tasks.RunFunc("Remove Node.js — "+website.Domain, func(ctx context.Context, log func(string)) error {
+		return h.svc.RemoveRuntime(ctx, websiteID, log)
+	})
+	h.logAction(r, "remove_website_node_runtime", websiteID, "task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 // ChangeRuntime handles POST /api/v1/nodejs/runtimes/{websiteID}.
 func (h *Handler) ChangeRuntime(w http.ResponseWriter, r *http.Request) {
 	h.changeRuntime(w, r, chi.URLParam(r, "websiteID"))

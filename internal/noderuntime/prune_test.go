@@ -133,3 +133,53 @@ func TestPruneRunsAsTheWebsiteUser(t *testing.T) {
 		t.Error("a non-website user must be refused")
 	}
 }
+
+func TestRemoveScriptDeletesNVMAndNpmCacheButNotSymlinkTargets(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	_ = os.WriteFile(filepath.Join(outside, "keep"), []byte("x"), 0o644)
+	_ = os.MkdirAll(filepath.Join(home, ".nvm", "versions", "node", "v24.1.0"), 0o755)
+	_ = os.WriteFile(filepath.Join(home, ".nvm", "versions", "node", "v24.1.0", "node"), make([]byte, 4096), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, ".npm", "_cacache"), 0o755)
+	_ = os.Symlink(outside, filepath.Join(home, ".nvm-stage.abc"))
+	_ = os.MkdirAll(filepath.Join(home, "app"), 0o755)
+
+	cmd := exec.Command("bash", "-c", removeScript, "--", home)
+	cmd.Env = []string{"HOME=" + home, "NVM_DIR=" + filepath.Join(home, ".nvm"), "PATH=" + scriptPath(t)}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("remove script: %v\n%s", err, out)
+	}
+	for _, gone := range []string{".nvm", ".npm", ".nvm-stage.abc"} {
+		if _, err := os.Lstat(filepath.Join(home, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s still present", gone)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(outside, "keep")); err != nil {
+		t.Error("a symlink target outside the home was deleted")
+	}
+	if _, err := os.Stat(filepath.Join(home, "app")); err != nil {
+		t.Error("project files were removed")
+	}
+	if !strings.Contains(string(out), "freed=") {
+		t.Errorf("no freed report: %s", out)
+	}
+}
+
+func TestRemoveRunsAsTheWebsiteUser(t *testing.T) {
+	var got []string
+	svc := New(fakeExecutor{runSudo: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+		got = append([]string{name}, args...)
+		return &executor.Result{Stdout: "freed=314572800\n"}, nil
+	}})
+	freed, err := svc.Remove(context.Background(), "web_shop")
+	if err != nil || freed != 314572800 {
+		t.Fatalf("Remove = %d, %v", freed, err)
+	}
+	if got[0] != "-u" || got[1] != "web_shop" {
+		t.Errorf("must run as the website user: %v", got)
+	}
+	if _, err := svc.Remove(context.Background(), "root"); err == nil {
+		t.Error("a non-website user must be refused")
+	}
+}

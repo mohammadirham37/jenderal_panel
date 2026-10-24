@@ -19,6 +19,7 @@ type runtimeManager interface {
 	Install(context.Context, string, string, func(string)) error
 	InstallPanel(context.Context, func(string)) error
 	Prune(context.Context, string, string, func(string)) (noderuntime.PruneResult, error)
+	Remove(context.Context, string) (int64, error)
 }
 
 type RuntimeInfo struct {

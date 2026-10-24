@@ -184,6 +184,9 @@ import { toast } from '#lib/stores/toast.js';
 	let nodeRuntimeTaskId = $state('');
 	let nodeRuntimeInitialized = $state(false);
 	let nodeSwitchConfirm = $state(false);
+	let nodeRemoveConfirm = $state(false);
+	// Node websites run their app on this runtime, so it cannot be removed.
+	let canRemoveNode = $derived(!!nodeRuntime?.selected_version && website?.app_type !== 'node' && website?.app_type !== 'nodejs');
 	// Node 20 is end of life: only offered while a site still uses it.
 	let nodeVersionOptions = $derived(nodeRuntime?.selected_version === '20' ? ['24', '22', '20'] : ['24', '22']);
 	let nodeState = $derived(nodeRuntime ? nodeRuntimeState({ ...nodeRuntime, domain: nodeRuntime.domain ?? '' }) : 'none');
@@ -871,6 +874,17 @@ import { toast } from '#lib/stores/toast.js';
 			nodeRuntimeError = err instanceof Error ? err.message : translate($language, 'wd.node.load_failed');
 		} finally {
 			nodeRuntimeLoading = false;
+		}
+	}
+
+	async function removeNodeRuntime() {
+		if (!website || nodeRuntimeTaskId) return;
+		nodeRemoveConfirm = false;
+		try {
+			const result = await api.del<{ task_id: string }>(`/api/v1/websites/${website.id}/nodejs-runtime`);
+			nodeRuntimeTaskId = result?.task_id || '';
+		} catch (err) {
+			nodeRuntimeError = err instanceof Error ? err.message : translate($language, 'wd.node.remove_failed');
 		}
 	}
 
@@ -1773,6 +1787,15 @@ import { toast } from '#lib/stores/toast.js';
 														? translate($language, 'wd.node.switch_to').replace('{version}', nodeRuntimeChoice)
 														: translate($language, 'wd.node.install_version').replace('{version}', nodeRuntimeChoice)}
 											</button>
+											{#if canRemoveNode}
+												<button
+													onclick={() => (nodeRemoveConfirm = true)}
+													disabled={!!nodeRuntimeTaskId}
+													class="cursor-pointer rounded border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:border-red-500 hover:text-red-400 disabled:opacity-50"
+												>
+													{translate($language, 'wd.node.remove')}
+												</button>
+											{/if}
 										</div>
 									{/if}
 								</div>
@@ -3009,6 +3032,26 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if nodeRemoveConfirm && nodeRuntime}
+	<Modal title={translate($language, 'wd.node.remove_title')} onclose={() => (nodeRemoveConfirm = false)} closeLabel={translate($language, 'wd.cancel')}>
+		<div class="space-y-3 text-sm text-gray-300">
+			<p>{translate($language, 'wd.node.remove_body')}</p>
+			<ul class="list-disc space-y-1.5 pl-5 text-xs text-gray-400">
+				<li>{translate($language, 'wd.node.remove_builds')}</li>
+				<li>{translate($language, 'wd.node.remove_reinstall')}</li>
+			</ul>
+		</div>
+		{#snippet footer()}
+			<button type="button" onclick={() => (nodeRemoveConfirm = false)} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+				{translate($language, 'wd.cancel')}
+			</button>
+			<button type="button" onclick={removeNodeRuntime} class="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700">
+				{translate($language, 'wd.node.remove')}
+			</button>
+		{/snippet}
+	</Modal>
 {/if}
 
 {#if nodeSwitchConfirm && nodeRuntime}

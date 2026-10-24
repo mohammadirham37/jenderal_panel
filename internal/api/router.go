@@ -534,6 +534,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/nodejs-runtime", nodeHandler.WebsiteRuntime)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/nodejs-runtime", nodeHandler.ChangeWebsiteRuntime)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Delete("/websites/{id}/nodejs-runtime", nodeHandler.RemoveWebsiteRuntime)
 
 			// WordPress toolkit (website-scoped; ownership handled by the
 			// scope middleware)
