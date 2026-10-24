@@ -506,7 +506,7 @@ import { toast } from '$lib/stores/toast';
 
 	let deploying = $state(false);
 
-	let uploadDeployFile: HTMLInputElement;
+	let uploadDeployFile = $state<HTMLInputElement>();
 	let uploadDeployTaskId = $state('');
 	let uploadingDeploy = $state(false);
 	let repairingLayout = $state(false);
@@ -2134,7 +2134,7 @@ import { toast } from '$lib/stores/toast';
 								class="hidden"
 							/>
 							<button
-								onclick={() => uploadDeployFile.click()}
+								onclick={() => uploadDeployFile?.click()}
 								disabled={uploadingDeploy}
 								class="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 							>
