@@ -544,6 +544,7 @@ func (s *Service) runGoBuild(ctx context.Context, w model.Website, root string, 
 		}
 		return fmt.Errorf("build failed: %s", detail)
 	}
+	s.trimGoBuildCache(ctx, w, write)
 	return nil
 }
 

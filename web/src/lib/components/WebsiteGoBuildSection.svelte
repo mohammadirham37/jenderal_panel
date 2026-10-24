@@ -35,6 +35,8 @@
 	let toggling = $state(false);
 	let building = $state(false);
 	let taskId = $state('');
+	let clearingCache = $state(false);
+	let cacheConfirm = $state(false);
 
 	let isBinary = $derived(status?.runtime === 'go-binary');
 	let dirty = $derived(!!status && (buildCommand.trim() !== status.build_command || startCommand.trim() !== status.start_command));
@@ -116,6 +118,21 @@
 			toast.error(err instanceof Error ? err.message : translate($language, 'wd.gobuild.startFailed'));
 		} finally {
 			building = false;
+		}
+	}
+
+	async function clearGoCache() {
+		if (clearingCache) return;
+		clearingCache = true;
+		cacheConfirm = false;
+		try {
+			const res = await api.post<{ bytes_freed: number }>(appAPI('go-cache/clear'), {});
+			const mb = Math.round((res.bytes_freed || 0) / 1048576);
+			toast.success(translate($language, 'wd.gobuild.cacheCleared').replace('{size}', `${mb} MB`));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.gobuild.cacheFailed'));
+		} finally {
+			clearingCache = false;
 		}
 	}
 
@@ -219,6 +236,25 @@
 								<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
 							</svg>
 							{taskId ? translate($language, 'wd.gobuild.building') : translate($language, isBinary ? 'wd.gobuild.restartBinary' : 'wd.gobuild.buildRestart')}
+						</button>
+					{/if}
+				</div>
+			{/if}
+
+			{#if canUpdate && !isBinary}
+				<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
+					<div class="min-w-0">
+						<p class="text-sm font-medium text-white">{translate($language, 'wd.gobuild.cacheTitle')}</p>
+						<p class="mt-0.5 text-xs text-gray-400">{translate($language, 'wd.gobuild.cacheHint')}</p>
+					</div>
+					{#if cacheConfirm}
+						<div class="flex items-center gap-2 text-sm">
+							<button type="button" onclick={clearGoCache} disabled={clearingCache || busy} class="cursor-pointer rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'wd.gobuild.cacheYes')}</button>
+							<button type="button" onclick={() => (cacheConfirm = false)} class="cursor-pointer px-2 py-1.5 text-gray-300">{translate($language, 'wd.gobuild.cancel')}</button>
+						</div>
+					{:else}
+						<button type="button" onclick={() => (cacheConfirm = true)} disabled={clearingCache || busy} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">
+							{clearingCache ? translate($language, 'wd.gobuild.cacheClearing') : translate($language, 'wd.gobuild.cacheButton')}
 						</button>
 					{/if}
 				</div>

@@ -305,7 +305,7 @@ func buildCommandScript(w model.Website, workDir string, args []string, nodeVers
 	joined := strings.Join(args, " ")
 	home := "/home/" + w.WebUser
 	if args[0] == "go" {
-		return "cd " + workDir + " && export " + goToolchainPath +
+		return "cd " + workDir + " && export " + goBuildEnv(w.WebUser) +
 			" && if ! command -v go >/dev/null; then echo \"Go toolchain is not installed — run 'go build & restart' once to install it\"; exit 127; fi && " + joined
 	}
 	if !usesNvmRuntime(args[0]) {

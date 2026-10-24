@@ -239,7 +239,7 @@ func TestBuildAppBuildArgvGo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildAppBuildArgv error = %v", err)
 	}
-	want := []string{"-u", "u", "--", "/bin/bash", "-c", "cd /home/u/app && PATH=/usr/local/go/bin:$PATH go build -o app ."}
+	want := []string{"-u", "u", "--", "/bin/bash", "-c", "cd /home/u/app && export PATH=/usr/local/go/bin:$PATH HOME=/home/u GOFLAGS=\"${GOFLAGS:+$GOFLAGS }-modcacherw\" && go build -o app ."}
 	if len(argv) != len(want) {
 		t.Fatalf("argv = %#v, want %#v", argv, want)
 	}

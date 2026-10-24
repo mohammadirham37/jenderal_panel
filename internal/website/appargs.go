@@ -62,7 +62,7 @@ func buildAppBuildArgv(runtime, webUser, dir, buildCommand string) ([]string, er
 	}
 	switch runtime {
 	case "go", "go-binary":
-		script := "cd " + dir + " && PATH=/usr/local/go/bin:$PATH " + buildCommand
+		script := "cd " + dir + " && export " + goBuildEnv(webUser) + " && " + buildCommand
 		return []string{"-u", webUser, "--", "/bin/bash", "-c", script}, nil
 	case "python":
 		home := "/home/" + webUser

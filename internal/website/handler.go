@@ -335,6 +335,18 @@ func (h *Handler) SetAppAutoBuild(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]bool{"auto_build": *req.AutoBuild})
 }
 
+// ClearGoCache handles POST /api/v1/websites/{id}/app/go-cache/clear.
+func (h *Handler) ClearGoCache(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	freed, err := h.svc.ClearGoCache(r.Context(), id)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "clear_go_cache", id, "freed "+strconv.FormatInt(freed, 10)+" bytes")
+	httputil.JSON(w, http.StatusOK, map[string]int64{"bytes_freed": freed})
+}
+
 // AppAction handles POST /api/websites/{id}/app/{action} for
 // start/stop/restart.
 func (h *Handler) AppAction(w http.ResponseWriter, r *http.Request) {
