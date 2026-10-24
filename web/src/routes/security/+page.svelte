@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
+	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import TaskProgress from '$lib/components/TaskProgress.svelte';
 	import FirewallPanel from '$lib/components/FirewallPanel.svelte';
@@ -128,7 +129,21 @@ import { toast } from '$lib/stores/toast';
 	interface SetupState { id: string; status: string; safe_error: string; task_id: string; completed_steps: string[] }
 	interface SetupAssessment { website_ids: string[]; latest?: SetupState }
 
-	let activeTab = $state<Tab>('overview');
+	const allTabs: readonly Tab[] = ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'firewall', 'waf', 'events'];
+	function tabFromURL(): Tab {
+		const tab = new URLSearchParams(page.url.search).get('tab');
+		return (allTabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'overview';
+	}
+	let activeTab = $state<Tab>(tabFromURL());
+
+	function setActiveTab(tab: Tab) {
+		activeTab = tab;
+		// Keep the tab in the URL so a refresh reopens the same tab.
+		const url = new URL(page.url);
+		if (tab === 'overview') url.searchParams.delete('tab');
+		else url.searchParams.set('tab', tab);
+		replaceState(url, page.state);
+	}
 	let editMode = $state<'simple' | 'advanced'>('simple');
 	let loading = $state(true);
 	let error = $state('');
@@ -199,6 +214,11 @@ import { toast } from '$lib/stores/toast';
 		if (hasPermission($permissions, 'firewall.view')) tabs.push('firewall');
 		tabs.push('waf', 'events');
 		return tabs;
+	});
+	// A tab restored from the URL may not be available to this user. Wait
+	// for permissions to load so a restored tab is not dropped too early.
+	$effect(() => {
+		if ($permissions.length > 0 && !securityTabs.includes(activeTab)) activeTab = 'overview';
 	});
 	let trafficSummary = $derived(summarizeTraffic(trafficBuckets));
 	let trafficPeak = $derived(Math.max(1, ...trafficBuckets.map((bucket) => bucket.requests)));
@@ -578,7 +598,7 @@ import { toast } from '$lib/stores/toast';
 
 	async function openTarget(target: { tab?: string; href?: string }) {
 		if (target.tab) {
-			activeTab = target.tab as Tab;
+			setActiveTab(target.tab as Tab);
 			window.scrollTo({ top: 0, behavior: 'smooth' });
 		} else if (target.href) {
 			await goto(target.href);
@@ -701,7 +721,7 @@ import { toast } from '$lib/stores/toast';
 
 	<div class="flex gap-1 overflow-x-auto rounded-xl border border-gray-700 bg-gray-900 p-1">
 		{#each securityTabs as tab}
-			<button onclick={() => (activeTab = tab as Tab)} class="min-w-28 rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white'}">{translate($language, `sec.tab.${tab}`)}</button>
+			<button onclick={() => setActiveTab(tab as Tab)} aria-pressed={activeTab === tab} class="min-w-28 cursor-pointer rounded-lg px-4 py-2 text-sm font-medium capitalize transition {activeTab === tab ? 'bg-blue-600 text-white shadow-sm' : 'text-gray-400 hover:bg-gray-800 hover:text-gray-100'}">{translate($language, `sec.tab.${tab}`)}</button>
 		{/each}
 	</div>
 

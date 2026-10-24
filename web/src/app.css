@@ -109,6 +109,21 @@ html[data-theme='light'] :is(
 	color: #ffffff;
 }
 
+/* hover:text-white is meant for dark surfaces; in light mode the hover
+   background is light too, so keep the text dark unless the hover paints a
+   colored background. */
+html[data-theme='light'] .hover\:text-white:hover:not(
+	[class*='hover:bg-blue-'],
+	[class*='hover:bg-red-'],
+	[class*='hover:bg-green-'],
+	[class*='hover:bg-yellow-'],
+	[class*='hover:bg-indigo-'],
+	[class*='hover:bg-teal-'],
+	[class*='hover:bg-gray-600']
+) {
+	color: #0f172a;
+}
+
 button,
 input,
 select,
