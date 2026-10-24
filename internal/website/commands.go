@@ -27,6 +27,10 @@ type CommandPreset struct {
 // been installed yet.
 const InitialSetupCommand = "initial setup"
 
+// composerProductionInstall is the composer install a production server
+// should run; the initial setup uses it too.
+const composerProductionInstall = "composer install --no-dev --optimize-autoloader"
+
 // Go site commands handled by the panel itself rather than a shell line:
 // the full build pipeline and the systemd app unit controls.
 const (
@@ -57,8 +61,11 @@ var allowedCommands = map[string][]string{
 	// tracked files like package-lock.json, which makes a plain pull abort
 	// with "local changes would be overwritten". Untracked files (.env,
 	// uploads) are never touched by reset --hard.
-	"git pull":                                           {"git", "fetch", "&&", "git", "reset", "--hard", "@{upstream}"},
-	"composer install":                                   {"composer", "install", "--no-interaction"},
+	"git pull":         {"git", "fetch", "&&", "git", "reset", "--hard", "@{upstream}"},
+	"composer install": {"composer", "install", "--no-interaction"},
+	// Production install: no require-dev packages (debug and test tooling
+	// stay off the server) and a classmap-optimized autoloader.
+	composerProductionInstall:                            {"composer", "install", "--no-dev", "--optimize-autoloader", "--no-interaction"},
 	"composer update":                                    {"composer", "update", "--no-interaction"},
 	"composer dump-autoload":                             {"composer", "dump-autoload"},
 	"php artisan key:generate":                           {"php", "artisan", "key:generate"},
@@ -157,6 +164,7 @@ func commandPresetsFor(w model.Website) []CommandPreset {
 	// PHP frameworks get composer commands.
 	if framework == "laravel" || framework == "codeigniter" || framework == "codeigniter4" || framework == "php" || w.AppType == "php" {
 		presets = append(presets,
+			CommandPreset{Label: composerProductionInstall, Command: composerProductionInstall, Category: "composer", Danger: false},
 			CommandPreset{Label: "composer install", Command: "composer install", Category: "composer", Danger: false},
 			CommandPreset{Label: "composer update", Command: "composer update", Category: "composer", Danger: false},
 			CommandPreset{Label: "composer dump-autoload", Command: "composer dump-autoload", Category: "composer", Danger: false},
@@ -393,7 +401,8 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 }
 
 // runInitialSetup runs the first-install chain as a single background task:
-// composer install, .env bootstrap, key:generate, npm install, npm run build.
+// composer install (production: no dev packages, optimized autoloader), .env
+// bootstrap, key:generate, npm install, npm run build.
 func (s *Service) runInitialSetup(ctx context.Context, websiteID string) (string, error) {
 	w, err := s.Get(ctx, websiteID)
 	if err != nil {
@@ -428,7 +437,7 @@ func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website) 
 
 	var steps []string
 	if s.hasProjectFile(ctx, workDir, "composer.json") {
-		steps = append(steps, "echo '==> composer install' && composer install --no-interaction")
+		steps = append(steps, "echo '==> "+composerProductionInstall+"' && "+composerProductionInstall+" --no-interaction")
 	}
 	if s.hasProjectFile(ctx, workDir, ".env.example") && !s.hasProjectFile(ctx, workDir, ".env") {
 		steps = append(steps, "echo '==> cp .env.example .env' && cp .env.example .env")

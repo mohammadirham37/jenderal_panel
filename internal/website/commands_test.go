@@ -142,7 +142,7 @@ func TestBuildInitialSetupScriptComposesConditionalChain(t *testing.T) {
 		t.Errorf("chain must run in the composer project root, got %q", script)
 	}
 	for _, want := range []string{
-		"composer install --no-interaction",
+		"composer install --no-dev --optimize-autoloader --no-interaction",
 		"php artisan key:generate --force",
 		"nvm-exec npm install",
 		"nvm-exec npm run build",
@@ -279,5 +279,17 @@ func TestRunCommandRejectsGoCommandsOnNonGoSites(t *testing.T) {
 		if _, err := svc.RunCommand(context.Background(), "w-node.example.com", command); err == nil || !strings.Contains(err.Error(), "Go websites") {
 			t.Errorf("RunCommand(%q) on node site: err = %v, want Go-only error", command, err)
 		}
+	}
+}
+
+// The composer presets offer a production install, and it resolves to the
+// exact argv the panel runs.
+func TestComposerProductionInstallPreset(t *testing.T) {
+	args, ok := allowedCommands[composerProductionInstall]
+	if !ok {
+		t.Fatal("production composer install is not an allowed command")
+	}
+	if strings.Join(args, " ") != "composer install --no-dev --optimize-autoloader --no-interaction" {
+		t.Errorf("argv = %v", args)
 	}
 }
