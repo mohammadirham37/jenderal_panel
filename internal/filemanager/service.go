@@ -597,6 +597,53 @@ with zipfile.ZipFile(archive_path) as archive:
                 pass
 `
 
+// untarScript extracts a tar archive (plain, gzip, bzip2, or xz) into a
+// destination directory. Python's "data" extraction filter rejects absolute
+// paths, ".." escapes, links pointing outside the destination, and device
+// files, and drops setuid bits; rejected members are skipped and reported
+// while the rest of the archive is extracted. On an interpreter without the
+// filter the same rules are applied by hand, and links are skipped entirely.
+const untarScript = `import os, sys, tarfile
+archive_path, dest = sys.argv[1], sys.argv[2]
+with tarfile.open(archive_path, "r:*") as archive:
+    if hasattr(tarfile, "data_filter"):
+        def keep(member, path):
+            try:
+                return tarfile.data_filter(member, path)
+            except tarfile.FilterError as err:
+                print("skipped unsafe entry %s: %s" % (member.name, err), file=sys.stderr)
+                return None
+        archive.extractall(dest, filter=keep)
+    else:
+        safe = []
+        for member in archive.getmembers():
+            name = member.name
+            if name.startswith("/") or ".." in name.split("/"):
+                continue
+            if not (member.isfile() or member.isdir()):
+                continue
+            member.mode &= 0o777
+            safe.append(member)
+        archive.extractall(dest, members=safe)
+`
+
+// archiveKind reports which extractor handles a file name: "zip", "tar", or
+// "" when the format is not supported.
+func archiveKind(name string) string {
+	lower := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(lower, ".zip"):
+		return "zip"
+	case strings.HasSuffix(lower, ".tar"),
+		strings.HasSuffix(lower, ".tar.gz"), strings.HasSuffix(lower, ".tgz"),
+		strings.HasSuffix(lower, ".tar.bz2"), strings.HasSuffix(lower, ".tbz2"),
+		strings.HasSuffix(lower, ".tar.xz"), strings.HasSuffix(lower, ".txz"):
+		return "tar"
+	default:
+		return ""
+	}
+}
+
 // Zip archives a file or directory within the website home into a .zip
 // archive. An empty targetPath defaults to a sibling archive named after the
 // source (<basename>.zip). Runs as the website user.
@@ -641,9 +688,10 @@ func (s *Service) Zip(ctx context.Context, basePath, sourcePath, targetPath stri
 	return target, nil
 }
 
-// Unzip extracts a .zip archive within the website home into destPath (the
-// archive's own directory when empty). Existing files are overwritten. Runs
-// as the website user.
+// Unzip extracts a .zip or tar archive (.tar, .tar.gz/.tgz, .tar.bz2,
+// .tar.xz) within the website home into destPath (the archive's own
+// directory when empty). Existing files are overwritten. Runs as the
+// website user.
 func (s *Service) Unzip(ctx context.Context, basePath, archivePath, destPath string) (string, error) {
 	if err := rejectWebsiteRoot(basePath, archivePath); err != nil {
 		return "", err
@@ -652,8 +700,9 @@ func (s *Service) Unzip(ctx context.Context, basePath, archivePath, destPath str
 	if err != nil {
 		return "", err
 	}
-	if !strings.HasSuffix(strings.ToLower(archive), ".zip") {
-		return "", model.NewValidationError("only .zip archives can be extracted")
+	kind := archiveKind(archive)
+	if kind == "" {
+		return "", model.NewValidationError("only .zip, .tar, .tar.gz, .tgz, .tar.bz2, and .tar.xz archives can be extracted")
 	}
 
 	if destPath == "" {
@@ -670,12 +719,16 @@ func (s *Service) Unzip(ctx context.Context, basePath, archivePath, destPath str
 		return "", err
 	}
 
-	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", unzipScript, archive, dest)
+	script := unzipScript
+	if kind == "tar" {
+		script = untarScript
+	}
+	result, err := s.runAsWebsiteUser(ctx, basePath, "python3", "-c", script, archive, dest)
 	if err != nil {
-		return "", fmt.Errorf("unzip: %w", err)
+		return "", fmt.Errorf("extract: %w", err)
 	}
 	if result.ExitCode != 0 {
-		return "", model.NewDomainError("FILE_ERROR", "failed to extract zip archive: "+strings.TrimSpace(result.Stderr), nil)
+		return "", model.NewDomainError("FILE_ERROR", "failed to extract the archive: "+strings.TrimSpace(result.Stderr), nil)
 	}
 	return dest, nil
 }

@@ -43,3 +43,15 @@ export function createFileManagerAPI(api, websiteID) {
 		}
 	};
 }
+
+const extractableSuffixes = ['.zip', '.tar', '.tar.gz', '.tgz', '.tar.bz2', '.tbz2', '.tar.xz', '.txz'];
+
+/**
+ * Whether the file manager can extract this file: zip and tar archives
+ * (plain, gzip, bzip2, xz). Mirrors archiveKind in the Go service.
+ * @param {string} name
+ */
+export function isExtractableArchive(name) {
+	const lower = name.toLowerCase();
+	return extractableSuffixes.some((suffix) => lower.endsWith(suffix));
+}

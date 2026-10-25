@@ -617,11 +617,29 @@ func TestUnzipBuildsPythonInvocation(t *testing.T) {
 	}
 }
 
-func TestUnzipRejectsNonZipArchives(t *testing.T) {
-	svc := &Service{exec: &recordingExec{}}
+func TestUnzipPicksTheExtractorByFormat(t *testing.T) {
+	for _, name := range []string{"backup.tar.gz", "backup.TGZ", "backup.tar", "backup.tar.bz2", "backup.tar.xz"} {
+		exec := &recordingExec{}
+		svc := &Service{exec: exec}
+		if _, err := svc.Unzip(context.Background(), "/home/web_site", "uploads/"+name, ""); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var script string
+		for _, cmd := range exec.commands {
+			if len(cmd) > 5 && cmd[3] == "python3" {
+				script = cmd[5]
+			}
+		}
+		if script != untarScript {
+			t.Errorf("%s must be extracted with the tar script", name)
+		}
+	}
 
-	if _, err := svc.Unzip(context.Background(), "/home/web_site", "uploads/backup.tar.gz", ""); err == nil {
-		t.Fatal("a non-.zip archive must be rejected")
+	svc := &Service{exec: &recordingExec{}}
+	for _, name := range []string{"backup.rar", "backup.7z", "notes.gz"} {
+		if _, err := svc.Unzip(context.Background(), "/home/web_site", "uploads/"+name, ""); err == nil {
+			t.Errorf("%s must be rejected", name)
+		}
 	}
 }
 

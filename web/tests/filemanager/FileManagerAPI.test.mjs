@@ -64,3 +64,13 @@ test('the Files tab opens at the website root', async () => {
 	assert.match(section, /let currentPath = \$state\('\/'\)/);
 	assert.match(section, /onMount\(\(\) => loadFiles\(\)\)/);
 });
+
+test('extract is offered for zip and tar archives only', async () => {
+	const { isExtractableArchive } = await import('../../src/lib/file-manager.js');
+	for (const name of ['site.zip', 'backup.tar', 'backup.tar.gz', 'BACKUP.TGZ', 'a.tar.bz2', 'a.tbz2', 'a.tar.xz', 'a.txz']) {
+		assert.equal(isExtractableArchive(name), true, name);
+	}
+	for (const name of ['notes.gz', 'a.rar', 'a.7z', 'tar.php', 'archive.zip.bak']) {
+		assert.equal(isExtractableArchive(name), false, name);
+	}
+});
