@@ -3,7 +3,7 @@
 	import { api } from '#lib/api.js';
 	import { connectMetrics, disconnectMetrics, currentMetrics } from '#lib/stores/metrics.js';
 	import { language, translate } from '#lib/stores/language.js';
-	import { permissions, hasPermission } from '#lib/stores/auth.js';
+	import { permissions, hasPermission, roles } from '#lib/stores/auth.js';
 	import type { DashboardData, ServerInfo, ServerMetrics, ServiceStatus } from '#lib/types.js';
 
 	interface SSLCertLite {
@@ -180,6 +180,9 @@
 	// regular user's dashboard shows only what it owns, and server-wide
 	// cards (certificates, alerts, all services) stay hidden.
 	const canViewServices = $derived(hasPermission($permissions, 'services.view'));
+	// Server-wide disk usage is an admin concern; regular users see CPU and
+	// memory only.
+	const showDisk = $derived($roles.some((r) => r.name === 'admin'));
 	const canViewSSL = $derived(hasPermission($permissions, 'ssl.view'));
 	const canViewAlerts = $derived(hasPermission($permissions, 'alerts.view'));
 	const showRightColumn = $derived(canViewSSL || canViewAlerts);
@@ -510,7 +513,7 @@
 		</div>
 	{:else}
 		<!-- Resource gauge cards -->
-		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+		<div class="grid grid-cols-1 gap-4 sm:grid-cols-2 {showDisk ? 'xl:grid-cols-4' : 'xl:grid-cols-3'}">
 			{@render gaugeCard(
 				translate($language, 'dash.cpu'),
 				cpuValue,
@@ -550,19 +553,21 @@
 				]
 			)}
 
-			{@render gaugeCard(
-				translate($language, 'dash.disk'),
-				diskValue,
-				diskSeries,
-				70,
-				90,
-				[
-					{
-						label: translate($language, 'dash.used'),
-						value: m ? `${formatBytes(m.disk_used)} / ${formatBytes(m.disk_total)}` : '–'
-					}
-				]
-			)}
+			{#if showDisk}
+				{@render gaugeCard(
+					translate($language, 'dash.disk'),
+					diskValue,
+					diskSeries,
+					70,
+					90,
+					[
+						{
+							label: translate($language, 'dash.used'),
+							value: m ? `${formatBytes(m.disk_used)} / ${formatBytes(m.disk_total)}` : '–'
+						}
+					]
+				)}
+			{/if}
 
 			<!-- Network card -->
 			<div
@@ -659,10 +664,12 @@
 							<span class="h-1.5 w-4 rounded-full bg-purple-400"></span>
 							{translate($language, 'dash.memory')}
 						</span>
-						<span class="flex items-center gap-1.5">
-							<span class="h-1.5 w-4 rounded-full bg-green-400"></span>
-							{translate($language, 'dash.disk')}
-						</span>
+						{#if showDisk}
+							<span class="flex items-center gap-1.5">
+								<span class="h-1.5 w-4 rounded-full bg-green-400"></span>
+								{translate($language, 'dash.disk')}
+							</span>
+						{/if}
 					</div>
 				</div>
 				{#if cpuSeries.length < 2}
@@ -692,7 +699,7 @@
 									></line>
 								{/each}
 								<path d={chartArea(ramSeries, 600, 176, 100)} class="fill-purple-400/10"></path>
-								<path d={chartArea(diskSeries, 600, 176, 100)} class="fill-green-400/10"></path>
+								{#if showDisk}<path d={chartArea(diskSeries, 600, 176, 100)} class="fill-green-400/10"></path>{/if}
 								<path d={chartArea(cpuSeries, 600, 176, 100)} class="fill-sky-400/10"></path>
 								<path
 									d={chartLine(ramSeries, 600, 176, 100)}
@@ -701,13 +708,15 @@
 									vector-effect="non-scaling-stroke"
 									stroke-linejoin="round"
 								></path>
-								<path
-									d={chartLine(diskSeries, 600, 176, 100)}
-									class="fill-none stroke-green-400"
-									stroke-width="1.5"
-									vector-effect="non-scaling-stroke"
-									stroke-linejoin="round"
-								></path>
+								{#if showDisk}
+									<path
+										d={chartLine(diskSeries, 600, 176, 100)}
+										class="fill-none stroke-green-400"
+										stroke-width="1.5"
+										vector-effect="non-scaling-stroke"
+										stroke-linejoin="round"
+									></path>
+								{/if}
 								<path
 									d={chartLine(cpuSeries, 600, 176, 100)}
 									class="fill-none stroke-sky-400"
@@ -774,7 +783,7 @@
 							<dd class="truncate font-medium text-gray-200">{serverInfo.timezone}</dd>
 						</div>
 					</dl>
-					{#if serverInfo.disk_partitions?.length}
+					{#if showDisk && serverInfo.disk_partitions?.length}
 						<div class="mt-4 border-t border-white/5 pt-3">
 							<p class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
 								{translate($language, 'dash.partitions')}
