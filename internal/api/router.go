@@ -167,6 +167,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Public
 		r.Post("/auth/login", authHandler.Login)
+		r.Get("/auth/captcha", authHandler.Captcha)
 
 		// Authenticated
 		r.Group(func(r chi.Router) {

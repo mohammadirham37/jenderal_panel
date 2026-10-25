@@ -5,10 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
+	"github.com/mohammadirham37/jenderal_panel/internal/captcha"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
@@ -26,12 +28,13 @@ type Handler struct {
 	rbac     *RBAC
 	audit    *audit.Service
 	throttle *loginThrottle
+	captchas *captcha.Store
 	notifier Notifier
 }
 
 // NewHandler creates a new auth Handler.
 func NewHandler(authSvc *Service, rbac *RBAC, auditSvc *audit.Service) *Handler {
-	return &Handler{throttle: newLoginThrottle(),
+	return &Handler{throttle: newLoginThrottle(), captchas: captcha.NewStore(),
 		auth:  authSvc,
 		rbac:  rbac,
 		audit: auditSvc,
@@ -75,13 +78,42 @@ func SetSessionCookies(w http.ResponseWriter, sessionID string, expiresAt time.T
 	setSessionCookies(w, sessionID, expiresAt, csrfToken)
 }
 
+// captchaRequired reports whether a login from remoteAddr for username must
+// solve a captcha: after repeated failures from that address, or against
+// that account from anywhere.
+func (h *Handler) captchaRequired(remoteAddr, username string, now time.Time) bool {
+	if h.throttle.count(captchaHostKey(remoteAddr), now) >= captchaAfterFailures {
+		return true
+	}
+	return username != "" && h.throttle.count(captchaAccountKey(username), now) >= captchaAfterFailures
+}
+
+// Captcha handles GET /api/v1/auth/captcha?username=. It tells the login
+// page whether a captcha is needed and, if so, issues one.
+func (h *Handler) Captcha(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	username := strings.TrimSpace(r.URL.Query().Get("username"))
+	if !h.captchaRequired(r.RemoteAddr, username, time.Now()) {
+		httputil.JSON(w, http.StatusOK, map[string]any{"required": false})
+		return
+	}
+	challenge, err := h.captchas.New()
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]any{"required": true, "captcha": challenge})
+}
+
 // Login authenticates a user and creates a session.
 // If TOTP is enabled and no totp_code is provided, returns {requires_totp: true}.
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Username string `json:"username"`
-		Password string `json:"password"`
-		TOTPCode string `json:"totp_code"`
+		Username      string `json:"username"`
+		Password      string `json:"password"`
+		TOTPCode      string `json:"totp_code"`
+		CaptchaID     string `json:"captcha_id"`
+		CaptchaAnswer string `json:"captcha_answer"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
@@ -105,10 +137,33 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+
+	// After repeated failures the form must carry a solved captcha. A
+	// correct answer stays valid through the TOTP step and is consumed once
+	// this attempt ends any other way.
+	if h.captchaRequired(r.RemoteAddr, req.Username, time.Now()) {
+		if req.CaptchaID == "" {
+			httputil.JSONError(w, http.StatusBadRequest, "CAPTCHA_REQUIRED", "solve the captcha to continue")
+			return
+		}
+		if !h.captchas.Check(req.CaptchaID, req.CaptchaAnswer) {
+			httputil.JSONError(w, http.StatusBadRequest, "CAPTCHA_INVALID", "the captcha answer is wrong or expired; try a new one")
+			return
+		}
+	}
+	keepCaptcha := false
+	defer func() {
+		if req.CaptchaID != "" && !keepCaptcha {
+			h.captchas.Consume(req.CaptchaID)
+		}
+	}()
+
 	recordFailure := func() {
 		now := time.Now()
 		h.throttle.recordFailure(key, now)
 		h.throttle.recordFailure(account, now)
+		h.throttle.recordFailure(captchaHostKey(r.RemoteAddr), now)
+		h.throttle.recordFailure(captchaAccountKey(req.Username), now)
 	}
 
 	user, err := h.auth.Authenticate(r.Context(), req.Username, req.Password)
@@ -136,7 +191,9 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	if totpEnabled {
 		if req.TOTPCode == "" {
-			// Prompt the client to supply a TOTP code.
+			// Prompt the client to supply a TOTP code; the solved captcha
+			// carries over to that second request.
+			keepCaptcha = true
 			httputil.JSON(w, http.StatusOK, map[string]any{
 				"requires_totp": true,
 			})
@@ -153,6 +210,8 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 
 	h.throttle.reset(key)
 	h.throttle.reset(account)
+	h.throttle.reset(captchaHostKey(r.RemoteAddr))
+	h.throttle.reset(captchaAccountKey(req.Username))
 
 	session, err := h.auth.CreateSession(r.Context(), user.ID, r.RemoteAddr, r.UserAgent())
 	if err != nil {

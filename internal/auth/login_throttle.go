@@ -23,7 +23,27 @@ const (
 	// out of the panel.
 	accountMaxFailures = 50
 	accountLockout     = 5 * time.Minute
+
+	// After this many failures from one address, or against one account,
+	// the login form requires a captcha. Counters use their own keys so
+	// they never lock anyone out by themselves.
+	captchaAfterFailures = 2
+	captchaWindow        = 15 * time.Minute
 )
+
+// captchaHostKey counts failures from one address across all usernames.
+func captchaHostKey(remoteAddr string) string {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	return "captcha|ip|" + host
+}
+
+// captchaAccountKey counts failures against one account from anywhere.
+func captchaAccountKey(username string) string {
+	return "captcha|account|" + username
+}
 
 // throttleKey identifies one client/account pair. The source port changes
 // per TCP connection, so only the host is used.
@@ -85,8 +105,19 @@ func (t *loginThrottle) reset(key string) {
 	delete(t.failures, key)
 }
 
+// count returns how many failures key has within the captcha window.
+func (t *loginThrottle) count(key string, now time.Time) int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.pruneLocked(key, now.Add(-captchaWindow))
+	return len(t.failures[key])
+}
+
 // limitsFor returns the threshold and lockout that apply to a key.
 func limitsFor(key string) (int, time.Duration) {
+	if strings.HasPrefix(key, "captcha|") {
+		return captchaAfterFailures, captchaWindow
+	}
 	if strings.HasPrefix(key, "account|") {
 		return accountMaxFailures, accountLockout
 	}

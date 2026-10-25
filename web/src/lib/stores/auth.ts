@@ -19,9 +19,40 @@ export class TotpRequiredError extends Error {
 	}
 }
 
-export async function login(username: string, password: string, totpCode = ''): Promise<void> {
+export interface CaptchaChallenge {
+	id: string;
+	image: string;
+}
+
+/**
+ * Asks whether the login needs a captcha (after repeated failures from this
+ * address or against this account) and returns a fresh challenge if so.
+ */
+export async function fetchLoginCaptcha(username = ''): Promise<CaptchaChallenge | null> {
+	const data = await api.get<{ required: boolean; captcha?: CaptchaChallenge }>(
+		`/api/v1/auth/captcha?username=${encodeURIComponent(username)}`,
+		authRequestOptions
+	);
+	return data?.required && data.captcha ? data.captcha : null;
+}
+
+export async function login(
+	username: string,
+	password: string,
+	totpCode = '',
+	captcha: { id: string; answer: string } | null = null
+): Promise<void> {
 	authError.set('');
-	const data = await api.post<LoginResponse>('/api/v1/auth/login', { username, password, totp_code: totpCode }, authRequestOptions);
+	const data = await api.post<LoginResponse>('/api/v1/auth/login',
+		{
+			username,
+			password,
+			totp_code: totpCode,
+			captcha_id: captcha?.id ?? '',
+			captcha_answer: captcha?.answer ?? ''
+		},
+		authRequestOptions
+	);
 	if (data.requires_totp) {
 		// The server created no session; the caller must collect the code.
 		throw new TotpRequiredError();

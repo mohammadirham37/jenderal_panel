@@ -2,7 +2,8 @@
 	import { goto } from '$app/navigation';
 	import LogoMark from '#lib/components/LogoMark.svelte';
 	import ThemeToggle from '#lib/components/ThemeToggle.svelte';
-	import { login, isAuthenticated, authError, TotpRequiredError } from '#lib/stores/auth.js';
+	import { login, fetchLoginCaptcha, isAuthenticated, authError, TotpRequiredError, type CaptchaChallenge } from '#lib/stores/auth.js';
+	import { APIRequestError } from '#lib/api.js';
 	import { language, translate } from '#lib/stores/language.js';
 	import { onMount } from 'svelte';
 
@@ -15,6 +16,24 @@
 	let submitting = $state(false);
 	let visibleError = $derived(error || $authError);
 
+	// Captcha: required by the server after repeated failed logins from this
+	// address or against this account.
+	let captcha = $state<CaptchaChallenge | null>(null);
+	let captchaAnswer = $state('');
+	let captchaLoading = $state(false);
+
+	async function refreshCaptcha() {
+		captchaLoading = true;
+		try {
+			captcha = await fetchLoginCaptcha(username.trim());
+		} catch {
+			// Leave the form usable; the server still enforces the captcha.
+		} finally {
+			captchaAnswer = '';
+			captchaLoading = false;
+		}
+	}
+
 	$effect(() => {
 		if (totpRequired) totpInput?.focus();
 	});
@@ -22,7 +41,9 @@
 	onMount(() => {
 		if ($isAuthenticated) {
 			goto('/dashboard');
+			return;
 		}
+		void refreshCaptcha();
 	});
 
 	async function handleSubmit(e: Event) {
@@ -31,16 +52,41 @@
 		submitting = true;
 
 		try {
-			await login(username, password, totpRequired ? totpCode.trim() : '');
+			await login(
+				username,
+				password,
+				totpRequired ? totpCode.trim() : '',
+				captcha ? { id: captcha.id, answer: captchaAnswer.trim() } : null
+			);
 			totpRequired = false;
 			goto('/dashboard');
 		} catch (err) {
 			if (err instanceof TotpRequiredError) {
 				// Credentials accepted; the server waits for the 6-digit code.
+				// The solved captcha stays valid for that second request.
 				totpRequired = true;
 				error = '';
 			} else {
-				error = err instanceof Error ? err.message : translate($language, 'lg.loginFailed');
+				const code = err instanceof APIRequestError ? err.code : '';
+				error =
+					code === 'CAPTCHA_REQUIRED'
+						? translate($language, 'lg.captchaRequired')
+						: code === 'CAPTCHA_INVALID'
+							? translate($language, 'lg.captchaInvalid')
+							: err instanceof Error
+								? err.message
+								: translate($language, 'lg.loginFailed');
+				// Every failed attempt uses up the challenge; fetch the next
+				// one (or learn that none is needed).
+				if (totpRequired && code.startsWith('CAPTCHA_')) {
+					// The code step has no captcha field: start over at the
+					// credentials with a fresh challenge.
+					totpRequired = false;
+					totpCode = '';
+					await refreshCaptcha();
+				} else if (!totpRequired) {
+					await refreshCaptcha();
+				}
 			}
 		} finally {
 			submitting = false;
@@ -207,6 +253,48 @@
 							placeholder={translate($language, 'lg.passwordPlaceholder')}
 						/>
 					</div>
+
+					{#if captcha}
+						<div>
+							<label for="captcha-answer" class="mb-2 block text-sm font-medium text-gray-300">
+								{translate($language, 'lg.captcha')}
+							</label>
+							<div class="flex items-center gap-2">
+								<img
+									src={captcha.image}
+									alt={translate($language, 'lg.captchaAlt')}
+									width="168"
+									height="56"
+									class="h-14 w-[168px] shrink-0 rounded-lg border border-gray-700 bg-white"
+								/>
+								<button
+									type="button"
+									onclick={refreshCaptcha}
+									disabled={captchaLoading}
+									title={translate($language, 'lg.captchaRefresh')}
+									aria-label={translate($language, 'lg.captchaRefresh')}
+									class="cursor-pointer rounded-lg border border-gray-700 p-2.5 text-gray-400 transition hover:border-gray-500 hover:text-gray-200 disabled:opacity-50"
+								>
+									<svg class="h-4 w-4 {captchaLoading ? 'animate-spin' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+										<path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+									</svg>
+								</button>
+							</div>
+							<input
+								id="captcha-answer"
+								type="text"
+								bind:value={captchaAnswer}
+								required
+								maxlength={5}
+								autocomplete="off"
+								autocapitalize="characters"
+								spellcheck="false"
+								class="mt-2 w-full rounded-xl border border-gray-700 bg-gray-950/70 px-4 py-3 font-mono uppercase tracking-[0.3em] text-white outline-none transition placeholder:normal-case placeholder:tracking-normal placeholder:text-gray-400 hover:border-gray-600 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10"
+								placeholder={translate($language, 'lg.captchaPlaceholder')}
+							/>
+							<p class="mt-1.5 text-xs text-gray-500">{translate($language, 'lg.captchaHint')}</p>
+						</div>
+					{/if}
 
 					<button
 						type="submit"
