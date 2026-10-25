@@ -43,3 +43,12 @@ func PanelNPMCommand(args ...string) string {
 	command = append(command, args...)
 	return quotedCommand(append([]string{"/usr/bin/sudo", "-u"}, command...))
 }
+
+// PanelPruneCommand removes Node versions and nvm download cache the panel
+// build runtime no longer uses (every update can install a newer Node 24
+// patch next to the old one). It runs as the panel account.
+func PanelPruneCommand() string {
+	command := append(panelEnvironment(), "/usr/bin/timeout", "--signal=TERM", "--kill-after=5s", pruneCommandTimeout,
+		"/bin/bash", "-c", pruneScript, "--", "jenderal", "24", PanelHome)
+	return quotedCommand(append([]string{"/usr/bin/sudo", "-u"}, command...))
+}

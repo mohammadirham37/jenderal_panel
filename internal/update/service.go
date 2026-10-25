@@ -336,6 +336,56 @@ func (w *taskLogWriter) flush() {
 	w.pending = nil
 }
 
+// cleanupFunctions removes what a finished update no longer needs. Build
+// outputs are regenerated on every update; the npm and nvm download caches
+// are only needed to install something new; the Go caches are kept for
+// faster rebuilds (the sqlite cgo build is slow on small VPSes) but cleared
+// once they pass a size cap. Caches that earlier updates left in root's
+// home are removed once. Nothing here can fail the update.
+func cleanupFunctions() string {
+	// The returned text becomes part of a fmt format string, so literal
+	// percent signs are doubled.
+	return `
+dir_mb() { du -sm "$1" 2>/dev/null | cut -f1; }
+
+clean_build_leftovers() (
+    set +e
+    source_dir=$1
+    before=$(df -BM --output=avail / | tail -n 1 | tr -dc 0-9)
+
+    rm -rf "$source_dir/cmd/jenderal/web_build" "$source_dir/web/build" "$source_dir/web/.svelte-kit/output"
+
+    ` + escapePercent(noderuntime.PanelNPMCommand("cache", "clean", "--force")) + ` >/dev/null 2>&1
+    ` + escapePercent(noderuntime.PanelPruneCommand()) + ` 2>&1 | sed 's/^/    /'
+
+    for entry in "$GOCACHE:2048:-cache" "$GOMODCACHE:1024:-modcache"; do
+        dir=${entry%%%%:*}; rest=${entry#*:}; limit=${rest%%%%:*}; flag=${rest#*:}
+        size=$(dir_mb "$dir")
+        if [ "${size:-0}" -gt "$limit" ]; then
+            echo "    Go cache $dir is ${size}MB (cap ${limit}MB); clearing"
+            go clean "$flag"
+        fi
+    done
+
+    marker="$BUILD_CACHE_DIR/.legacy-root-go-cache-removed"
+    if [ ! -e "$marker" ]; then
+        for home in /root /var/lib/jenderal; do
+            [ -d "$home/.cache/go-build" ] && GOCACHE="$home/.cache/go-build" go clean -cache
+            [ -d "$home/go/pkg/mod" ] && GOMODCACHE="$home/go/pkg/mod" go clean -modcache
+        done
+        touch "$marker"
+    fi
+
+    after=$(df -BM --output=avail / | tail -n 1 | tr -dc 0-9)
+    if [ -n "$before" ] && [ -n "$after" ] && [ "$after" -gt "$before" ]; then
+        echo "    Freed $((after - before))MB"
+    fi
+)
+`
+}
+
+func escapePercent(s string) string { return strings.ReplaceAll(s, "%", "%%") }
+
 // UpdateScript renders the one-shot self-update — pull source, rebuild the
 // frontend, embed and compile the binary, replace it atomically, and schedule
 // a verified service restart with rollback. It is shared by the web update
@@ -352,6 +402,13 @@ func UpdateScript(execPath string) string {
 	set -e
 export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 
+# Go caches live in one known place instead of root's home, where earlier
+# updates left them out of sight. -modcacherw keeps the module cache
+# deletable (Go writes it read-only by default).
+BUILD_CACHE_DIR=/var/cache/jenderal
+mkdir -p "$BUILD_CACHE_DIR"
+export GOCACHE="$BUILD_CACHE_DIR/go-build" GOMODCACHE="$BUILD_CACHE_DIR/go-mod" GOFLAGS="-modcacherw"
+`+cleanupFunctions()+`
 # Small VPS (1GB RAM / 1 vCPU) cannot compile the panel without extra
 # swap; add a temporary swapfile when RAM+swap is below ~2.5GB and
 # remove it once the build is done (or failed).
@@ -442,7 +499,10 @@ echo ">>> Step 9: Replacing binary atomically..."
 mv -f %s %s
 trap - EXIT
 
-echo ">>> Step 10: Scheduling verified service restart..."
+echo ">>> Step 10: Cleaning up build leftovers..."
+clean_build_leftovers %s || echo "WARNING: cleanup did not finish; the update itself succeeded"
+
+echo ">>> Step 11: Scheduling verified service restart..."
 cat > %s <<'JENDERAL_RESTART_SCRIPT'
 #!/bin/bash
 set -e
@@ -493,6 +553,7 @@ echo ">>> Update complete! Service restart scheduled."
 		replacementPath, replacementPath,
 		execPath, backupPath,
 		replacementPath, execPath,
+		sourceDir,
 		restartScriptPath,
 		restartScriptPath, execPath, backupPath, rollbackPath,
 		restartScriptPath, restartScriptPath,

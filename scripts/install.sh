@@ -333,6 +333,10 @@ step_build() {
     # Go build
     log "  Compiling binary..."
     export PATH="/usr/local/go/bin:$PATH"
+    # Same cache location the self-update uses, so the first update reuses
+    # this build's cache and later updates can keep it bounded.
+    mkdir -p /var/cache/jenderal
+    export GOCACHE=/var/cache/jenderal/go-build GOMODCACHE=/var/cache/jenderal/go-mod GOFLAGS=-modcacherw
     CGO_ENABLED=1 go build -ldflags "-X main.version=${JENDERAL_VERSION}" \
         -o "$JENDERAL_BIN" ./cmd/jenderal 2>&1
     [[ -f "$JENDERAL_BIN" ]] || fail "Go build failed"
