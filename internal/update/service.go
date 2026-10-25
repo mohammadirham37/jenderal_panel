@@ -474,6 +474,10 @@ rm -rf cmd/jenderal/web_build
 cp -r web/build cmd/jenderal/web_build
 
 echo ">>> Step 5: Compiling Go binary..."
+if [ ! -d "$GOCACHE" ] || [ -z "$(ls -A "$GOCACHE" 2>/dev/null)" ]; then
+    echo "    The Go build cache is empty, so everything (including the SQLite C library) is compiled from scratch."
+    echo "    This can take 5-15 minutes on a small VPS with no further output; later updates are much faster."
+fi
 rm -f %s
 trap 'cleanup_build_swap; rm -f %s' EXIT
 revision="$(git rev-parse --verify HEAD^{commit})"
