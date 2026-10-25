@@ -1503,7 +1503,6 @@ import { toast } from '#lib/stores/toast.js';
 					<span>{translate($language, 'wd.php_version')} <span class="text-gray-200">{website.php_version}</span></span>
 				{/if}
 				<span>{translate($language, 'wd.ssl_label')} <span class={website.ssl_enabled ? 'text-green-400' : 'text-gray-300'}>{website.ssl_enabled ? translate($language, 'wd.enabled') : translate($language, 'wd.ssl_not_configured')}</span></span>
-				<a href="/ssl" class="text-blue-400 hover:text-blue-300 transition-colors">{translate($language, 'wd.manage_ssl')}</a>
 			</div>
 		</div>
 

@@ -58,7 +58,6 @@ const en = {
 	'wd.php_version': 'PHP Version:',
 	'wd.ssl_label': 'SSL:',
 	'wd.ssl_not_configured': 'Not configured',
-	'wd.manage_ssl': 'Manage SSL Certificates',
 
 	// Staging clone
 	'wd.staging.title': 'Staging',
@@ -552,7 +551,6 @@ const id: Record<keyof typeof en, string> = {
 	'wd.php_version': 'Versi PHP:',
 	'wd.ssl_label': 'SSL:',
 	'wd.ssl_not_configured': 'Belum dikonfigurasi',
-	'wd.manage_ssl': 'Kelola Sertifikat SSL',
 
 	// Staging clone
 	'wd.staging.title': 'Staging',
