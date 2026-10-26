@@ -239,8 +239,11 @@ func (s *Service) SetSiteProtection(ctx context.Context, siteID string, protect 
 			return fmt.Errorf("enable site protection: %w", err)
 		}
 	} else {
-		// Both off: remove the include entirely.
-		if _, err := s.exec.RunSudo(ctx, "rm", "-f", hookPath); err != nil {
+		// Both off: keep the file but leave it without directives. The
+		// site's vhost always includes it, so deleting it would make
+		// `nginx -t` fail and the change would be rolled back.
+		content = "# Managed by Jenderal Panel - per-site protection off\n"
+		if err := s.writeFile(ctx, hookPath, content); err != nil {
 			return fmt.Errorf("disable site protection: %w", err)
 		}
 	}

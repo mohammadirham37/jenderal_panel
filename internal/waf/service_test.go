@@ -17,6 +17,9 @@ type fakeExec struct {
 	dpkgOK  map[string]bool
 	calls   [][]string
 	nginxOK bool
+	// included, when set, is a file the vhost includes: nginx -t fails
+	// while it is missing.
+	included string
 }
 
 func newFakeExec() *fakeExec {
@@ -58,6 +61,9 @@ func (f *fakeExec) RunSudo(ctx context.Context, name string, args ...string) (*e
 		delete(f.files, args[len(args)-1])
 		return &executor.Result{ExitCode: 0}, nil
 	case "/usr/sbin/nginx":
+		if _, ok := f.files[f.included]; f.included != "" && !ok {
+			return &executor.Result{ExitCode: 1, Stderr: "open() \"" + f.included + "\" failed (2: No such file or directory)"}, nil
+		}
 		if f.nginxOK {
 			return &executor.Result{ExitCode: 0}, nil
 		}
@@ -155,12 +161,12 @@ func TestEnableWritesNginxIncludeAndRulesFile(t *testing.T) {
 		t.Error("enable must validate with nginx -t and reload nginx")
 	}
 
-	// Both off removes the include entirely.
+	// Both off leaves the (always included) file without directives.
 	if err := svc.SetSiteProtection(context.Background(), siteID, SiteProtection{}, 120, 20); err != nil {
 		t.Fatalf("SetSiteProtection(off): %v", err)
 	}
-	if _, still := fake.files[fmt.Sprintf(siteHookFormat, siteID)]; still {
-		t.Error("hook file must be removed when protection is disabled")
+	if state := siteProtectionFromHook(fake.files[fmt.Sprintf(siteHookFormat, siteID)]); state.WAF || state.DoS {
+		t.Error("protection must be off after disabling both")
 	}
 }
 
@@ -248,4 +254,31 @@ func (f *fakeExec) RunSudoWithEnv(ctx context.Context, env map[string]string, na
 
 func (f *fakeExec) RunSudoWithInputStreamEnv(ctx context.Context, env map[string]string, stdin io.Reader, stderrW io.Writer, name string, args ...string) (int, error) {
 	return f.RunSudoWithInputStream(ctx, stdin, stderrW, name, args...)
+}
+
+// The vhost always includes the per-site security file. Turning the last
+// protection off used to delete it, nginx -t then failed, and the change
+// was rolled back with a generic error.
+func TestSiteProtectionCanBeTurnedOffAgain(t *testing.T) {
+	const site = "01M247E0A6H332PZNCS9AQGXFQ"
+	hook := fmt.Sprintf(siteHookFormat, site)
+	fake := newFakeExec()
+	fake.included = hook
+	fake.files[hook] = "# Jenderal Traffic Guard: observe configuration not enabled yet\n"
+	svc := &Service{exec: fake}
+	ctx := context.Background()
+
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{DoS: true}, 120, 20); err != nil {
+		t.Fatalf("enable DoS: %v", err)
+	}
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{}, 120, 20); err != nil {
+		t.Fatalf("disable DoS: %v", err)
+	}
+	content, ok := fake.files[hook]
+	if !ok {
+		t.Fatal("the included file must stay in place")
+	}
+	if state := siteProtectionFromHook(content); state.DoS || state.WAF {
+		t.Errorf("protection still on after disabling: %q", content)
+	}
 }
