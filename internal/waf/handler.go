@@ -2,10 +2,11 @@ package waf
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"fmt"
+	"github.com/go-chi/chi/v5"
 	"strconv"
 	"time"
 
@@ -23,6 +24,35 @@ type Handler struct {
 	svc   *Service
 	audit *audit.Service
 	tasks *taskrunner.Runner
+	// siteErrorLog resolves a website id to its nginx error log.
+	siteErrorLog func(ctx context.Context, websiteID string) (string, error)
+}
+
+// SetSiteErrorLogResolver wires the lookup of a website's nginx error log,
+// which the protection report reads.
+func (h *Handler) SetSiteErrorLogResolver(fn func(ctx context.Context, websiteID string) (string, error)) {
+	h.siteErrorLog = fn
+}
+
+// SiteReport handles GET /websites/{id}/protection-report?hours=: WAF and
+// DoS activity for one website, read from its nginx error log.
+func (h *Handler) SiteReport(w http.ResponseWriter, r *http.Request) {
+	if h.siteErrorLog == nil {
+		httputil.HandleError(w, errors.New("protection report is not available"))
+		return
+	}
+	logPath, err := h.siteErrorLog(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	hours, _ := strconv.Atoi(r.URL.Query().Get("hours"))
+	report, err := h.svc.SiteReport(r.Context(), logPath, hours, time.Now())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, report)
 }
 
 // NewHandler creates a new waf Handler.

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"net/http"
@@ -157,6 +158,15 @@ func NewRouter(deps Dependencies) http.Handler {
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 	securityHandler.SetSetupService(deps.SecuritySetup, deps.Tasks)
 	wafHandler := waf.NewHandler(deps.WAFSvc, deps.AuditSvc, deps.Tasks)
+	if deps.WebsiteSvc != nil {
+		wafHandler.SetSiteErrorLogResolver(func(ctx context.Context, websiteID string) (string, error) {
+			site, err := deps.WebsiteSvc.Get(ctx, websiteID)
+			if err != nil {
+				return "", err
+			}
+			return "/home/" + site.WebUser + "/logs/error.log", nil
+		})
+	}
 	fail2banHandler := fail2ban.NewHandler(deps.Fail2banSvc, deps.Tasks, deps.AuditSvc, deps.SecurityEvents)
 	malwareHandler := malware.NewHandler(deps.MalwareSvc, deps.MalwareRepo, deps.Tasks, deps.AuditSvc)
 	trafficHandler := trafficguard.NewHandler(deps.TrafficGuardSvc, deps.Tasks, deps.AuditSvc)
@@ -1079,6 +1089,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/security/waf/sites/{id}", wafHandler.SiteProtection)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/security/waf/sites/{id}", wafHandler.SetSiteProtection)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/protection-report", wafHandler.SiteReport)
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/malware/status", malwareHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).

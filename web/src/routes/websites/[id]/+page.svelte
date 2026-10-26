@@ -235,6 +235,31 @@ import { toast } from '#lib/stores/toast.js';
 		try {
 			siteProtection = await api.get<{ waf: boolean; dos: boolean }>(`/api/v1/security/waf/sites/${website.id}`);
 		} catch { siteProtection = null; }
+		if (siteProtection?.waf || siteProtection?.dos) void loadProtectionReport();
+	}
+
+	// Activity report for the enabled protections, read from the site's
+	// nginx error log (last 24 hours).
+	interface ProtectionEvent { time: string; kind: 'waf_blocked' | 'waf_detected' | 'dos_limited'; ip: string; request: string; rule_id?: string; message?: string }
+	interface ProtectionReport {
+		hours: number; log_available: boolean; waf_blocked: number; waf_detected: number; dos_limited: number;
+		top_rules: { key: string; label?: string; count: number }[]; top_ips: { key: string; count: number }[];
+		recent: ProtectionEvent[];
+	}
+	let protectionReport = $state<ProtectionReport | null>(null);
+	let protectionReportLoading = $state(false);
+	let protectionReportOpen = $state(false);
+
+	async function loadProtectionReport() {
+		if (!website || protectionReportLoading) return;
+		protectionReportLoading = true;
+		try {
+			protectionReport = await api.get<ProtectionReport>(`/api/v1/websites/${website.id}/protection-report?hours=24`);
+		} catch {
+			protectionReport = null;
+		} finally {
+			protectionReportLoading = false;
+		}
 	}
 
 	async function toggleSiteProtection(kind: 'waf' | 'dos') {
@@ -245,6 +270,7 @@ import { toast } from '#lib/stores/toast.js';
 				[kind]: !siteProtection[kind]
 			});
 			toast.success(translate($language, kind === 'waf' ? 'wd.prot.wafToggled' : 'wd.prot.dosToggled').replace('{state}', translate($language, siteProtection[kind] ? 'wd.on' : 'wd.off')));
+			if (siteProtection.waf || siteProtection.dos) void loadProtectionReport();
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'wd.prot.failed'));
 		} finally {
@@ -1971,6 +1997,46 @@ import { toast } from '#lib/stores/toast.js';
 								<p class="mt-1 text-xs leading-relaxed text-gray-400">{translate($language, 'wd.prot.dos_desc')}</p>
 							</div>
 						</div>
+						{#if siteProtection?.waf || siteProtection?.dos}
+							<div class="mt-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+								<div class="flex flex-wrap items-center justify-between gap-2">
+									<p class="text-xs font-semibold text-gray-200">{translate($language, 'wd.prot.report_title')}</p>
+									<div class="flex items-center gap-2">
+										<button type="button" onclick={loadProtectionReport} disabled={protectionReportLoading} class="cursor-pointer rounded-md px-2 py-1 text-xs text-gray-400 transition hover:text-gray-200 disabled:opacity-50">
+											{protectionReportLoading ? translate($language, 'wd.prot.report_loading') : translate($language, 'wd.prot.report_refresh')}
+										</button>
+										<button type="button" onclick={() => (protectionReportOpen = true)} disabled={!protectionReport} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">
+											{translate($language, 'wd.prot.report_open')}
+										</button>
+									</div>
+								</div>
+								{#if protectionReport}
+									<div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+										{#if siteProtection?.waf}
+											<div class="rounded-md bg-gray-800 px-3 py-2">
+												<p class="text-lg font-semibold tabular-nums {protectionReport.waf_blocked > 0 ? 'text-red-400' : 'text-gray-100'}">{protectionReport.waf_blocked}</p>
+												<p class="text-[11px] text-gray-400">{translate($language, 'wd.prot.report_waf_blocked')}</p>
+											</div>
+										{/if}
+										{#if siteProtection?.dos}
+											<div class="rounded-md bg-gray-800 px-3 py-2">
+												<p class="text-lg font-semibold tabular-nums {protectionReport.dos_limited > 0 ? 'text-yellow-400' : 'text-gray-100'}">{protectionReport.dos_limited}</p>
+												<p class="text-[11px] text-gray-400">{translate($language, 'wd.prot.report_dos_limited')}</p>
+											</div>
+										{/if}
+										<div class="rounded-md bg-gray-800 px-3 py-2">
+											<p class="truncate text-sm font-semibold font-mono text-gray-100" title={protectionReport.top_ips[0]?.key}>{protectionReport.top_ips[0]?.key ?? '—'}</p>
+											<p class="text-[11px] text-gray-400">{translate($language, 'wd.prot.report_top_ip')}</p>
+										</div>
+									</div>
+									{#if !protectionReport.log_available}
+										<p class="mt-2 text-[11px] text-gray-500">{translate($language, 'wd.prot.report_no_log')}</p>
+									{/if}
+								{:else if !protectionReportLoading}
+									<p class="mt-2 text-[11px] text-gray-500">{translate($language, 'wd.prot.report_failed')}</p>
+								{/if}
+							</div>
+						{/if}
 						<p class="mt-3 text-xs text-gray-500">{translate($language, 'wd.prot.desc')}</p>
 					</div>
 
@@ -3031,6 +3097,55 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if protectionReportOpen && protectionReport}
+	<Modal title={translate($language, 'wd.prot.report_modal_title').replace('{hours}', String(protectionReport.hours))} onclose={() => (protectionReportOpen = false)} size="lg" closeLabel={translate($language, 'wd.cancel')}>
+		<div class="space-y-4 text-sm">
+			<div class="grid grid-cols-3 gap-2">
+				<div class="rounded-lg bg-gray-900/60 px-3 py-2"><p class="text-lg font-semibold tabular-nums text-red-400">{protectionReport.waf_blocked}</p><p class="text-[11px] text-gray-400">{translate($language, 'wd.prot.report_waf_blocked')}</p></div>
+				<div class="rounded-lg bg-gray-900/60 px-3 py-2"><p class="text-lg font-semibold tabular-nums text-yellow-400">{protectionReport.dos_limited}</p><p class="text-[11px] text-gray-400">{translate($language, 'wd.prot.report_dos_limited')}</p></div>
+				<div class="rounded-lg bg-gray-900/60 px-3 py-2"><p class="text-lg font-semibold tabular-nums text-gray-100">{protectionReport.waf_detected}</p><p class="text-[11px] text-gray-400">{translate($language, 'wd.prot.report_waf_detected')}</p></div>
+			</div>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
+					<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wd.prot.report_top_ips')}</p>
+					{#if protectionReport.top_ips.length === 0}<p class="text-xs text-gray-500">—</p>{/if}
+					{#each protectionReport.top_ips as ip (ip.key)}
+						<div class="flex justify-between gap-2 py-0.5 text-xs"><span class="truncate font-mono text-gray-200">{ip.key}</span><span class="tabular-nums text-gray-400">{ip.count}</span></div>
+					{/each}
+				</div>
+				<div>
+					<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wd.prot.report_top_rules')}</p>
+					{#if protectionReport.top_rules.length === 0}<p class="text-xs text-gray-500">—</p>{/if}
+					{#each protectionReport.top_rules as rule (rule.key)}
+						<div class="flex justify-between gap-2 py-0.5 text-xs"><span class="truncate text-gray-200" title={rule.label}><span class="font-mono text-gray-400">{rule.key}</span> {rule.label ?? ''}</span><span class="tabular-nums text-gray-400">{rule.count}</span></div>
+					{/each}
+				</div>
+			</div>
+			<div>
+				<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wd.prot.report_recent')}</p>
+				{#if protectionReport.recent.length === 0}
+					<p class="text-xs text-gray-500">{translate($language, 'wd.prot.report_empty')}</p>
+				{:else}
+					<div class="max-h-72 divide-y divide-gray-700/60 overflow-y-auto rounded-lg border border-gray-700">
+						{#each protectionReport.recent as event, i (i)}
+							<div class="px-3 py-2 text-xs">
+								<div class="flex flex-wrap items-center gap-2">
+									<span class="rounded px-1.5 py-0.5 text-[10px] font-semibold {event.kind === 'waf_blocked' ? 'bg-red-900/60 text-red-200' : event.kind === 'dos_limited' ? 'bg-yellow-900/50 text-yellow-200' : 'bg-gray-700 text-gray-200'}">{translate($language, `wd.prot.kind.${event.kind}`)}</span>
+									<span class="font-mono text-gray-300">{event.ip}</span>
+									<span class="ml-auto text-gray-500">{new Date(event.time).toLocaleString()}</span>
+								</div>
+								<p class="mt-1 truncate font-mono text-gray-400" title={event.request}>{event.request}</p>
+								{#if event.message}<p class="mt-0.5 truncate text-gray-500" title={event.message}>{event.rule_id} · {event.message}</p>{/if}
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+			<p class="text-[11px] text-gray-500">{translate($language, 'wd.prot.report_source')}</p>
+		</div>
+	</Modal>
 {/if}
 
 {#if nodeRemoveConfirm && nodeRuntime}
