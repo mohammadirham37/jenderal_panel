@@ -182,7 +182,7 @@ func TestEnableRollsBackWhenNginxConfigBroken(t *testing.T) {
 	if err := svc.SetSiteProtection(context.Background(), siteID, SiteProtection{WAF: true, DoS: true}, 120, 20); err == nil {
 		t.Fatal("expected error when nginx -t fails")
 	}
-	if _, still := fake.files[fmt.Sprintf(siteHookFormat, siteID)]; still {
+	if state := siteProtectionFromHook(fake.files[fmt.Sprintf(siteHookFormat, siteID)]); state.WAF || state.DoS {
 		t.Error("broken config must be rolled back")
 	}
 }
@@ -280,5 +280,39 @@ func TestSiteProtectionCanBeTurnedOffAgain(t *testing.T) {
 	}
 	if state := siteProtectionFromHook(content); state.DoS || state.WAF {
 		t.Errorf("protection still on after disabling: %q", content)
+	}
+}
+
+// Traffic Guard and the WAF page share the website's include file; turning
+// DoS on or off must keep the Traffic Guard limits, and both together must
+// stay valid nginx (one limit_req_status).
+func TestSiteProtectionKeepsTrafficGuardLimits(t *testing.T) {
+	const site = "01M247E0A6H332PZNCS9AQGXFQ"
+	hook := fmt.Sprintf(siteHookFormat, site)
+	fake := newFakeExec()
+	fake.included = hook
+	fake.files[hook] = "# Managed by Jenderal Panel - HTTP-layer protection only\nlimit_req zone=jenderal_balanced burst=20 nodelay;\nlimit_conn jenderal_connections 20;\nlimit_req_status 429;\nlimit_conn_status 429;\n"
+	svc := &Service{exec: fake}
+	ctx := context.Background()
+
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{DoS: true}, 120, 20); err != nil {
+		t.Fatal(err)
+	}
+	combined := fake.files[hook]
+	for _, want := range []string{"zone=jenderal_balanced", "zone=jenderal_dos", "limit_conn jenderal_connections"} {
+		if !strings.Contains(combined, want) {
+			t.Errorf("combined include lost %q:\n%s", want, combined)
+		}
+	}
+	if n := strings.Count(combined, "limit_req_status"); n != 1 {
+		t.Errorf("limit_req_status appears %d times:\n%s", n, combined)
+	}
+
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{}, 120, 20); err != nil {
+		t.Fatal(err)
+	}
+	combined = fake.files[hook]
+	if strings.Contains(combined, "jenderal_dos") || !strings.Contains(combined, "zone=jenderal_balanced") {
+		t.Errorf("turning DoS off must keep Traffic Guard and drop DoS:\n%s", combined)
 	}
 }

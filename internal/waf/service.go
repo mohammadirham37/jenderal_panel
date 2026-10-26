@@ -15,6 +15,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/sitesecurity"
 )
 
 const (
@@ -198,8 +199,7 @@ func (s *Service) GetSiteProtection(ctx context.Context, siteID string) (SitePro
 // site's vhost) and reloading nginx. The panel domain has no such include
 // and is therefore never filtered.
 func (s *Service) SetSiteProtection(ctx context.Context, siteID string, protect SiteProtection, dosRate, dosBurst int) error {
-	hookPath, err := siteHookPath(siteID)
-	if err != nil {
+	if _, err := siteHookPath(siteID); err != nil {
 		return err
 	}
 
@@ -227,43 +227,48 @@ func (s *Service) SetSiteProtection(ctx context.Context, siteID string, protect 
 		parts = append(parts, "limit_req_status 403;\nlimit_req zone=jenderal_dos burst="+strconv.Itoa(dosBurst)+" nodelay;\n")
 	}
 
-	previous := ""
-	if content, ok := s.readFile(ctx, hookPath); ok {
-		previous = content
-	}
-
-	var content string
+	fragment := ""
 	if len(parts) > 0 {
-		content = "# Managed by Jenderal Panel - per-site protection\n" + strings.Join(parts, "")
-		if err := s.writeFile(ctx, hookPath, content); err != nil {
-			return fmt.Errorf("enable site protection: %w", err)
-		}
-	} else {
-		// Both off: keep the file but leave it without directives. The
-		// site's vhost always includes it, so deleting it would make
-		// `nginx -t` fail and the change would be rolled back.
-		content = "# Managed by Jenderal Panel - per-site protection off\n"
-		if err := s.writeFile(ctx, hookPath, content); err != nil {
-			return fmt.Errorf("disable site protection: %w", err)
-		}
+		fragment = "# Managed by Jenderal Panel - per-site protection\n" + strings.Join(parts, "")
 	}
-
+	// The include is shared with Traffic Guard; only the WAF fragment is
+	// replaced and the include is recomposed from both.
+	undo, err := sitesecurity.Update(ctx, wafFiles{s}, siteID, sitesecurity.PartWAF, fragment)
+	if err != nil {
+		return fmt.Errorf("update site protection: %w", err)
+	}
 	if err := s.reloadNginx(ctx); err != nil {
-		s.rollbackFile(ctx, hookPath)
-		if previous != "" {
-			if writeErr := s.writeFile(ctx, hookPath, previous); writeErr != nil {
-				return fmt.Errorf("rollback hook: %w (original error: %v)", writeErr, err)
-			}
-			if reloadErr := s.reloadNginx(ctx); reloadErr != nil {
-				return fmt.Errorf("rollback reload: %w (original error: %v)", reloadErr, err)
-			}
+		if undoErr := undo(ctx); undoErr != nil {
+			return fmt.Errorf("rollback site protection: %w (original error: %v)", undoErr, err)
 		}
-		if err != nil {
-			return err
+		if reloadErr := s.reloadNginx(ctx); reloadErr != nil {
+			return fmt.Errorf("rollback reload: %w (original error: %v)", reloadErr, err)
 		}
-		return fmt.Errorf("reload nginx: site protection change rolled back")
+		return err
 	}
 	return nil
+}
+
+// wafFiles adapts the service's sudo file helpers to sitesecurity.Files.
+type wafFiles struct{ s *Service }
+
+func (f wafFiles) Read(ctx context.Context, path string) (string, bool, error) {
+	if !f.s.fileExists(ctx, path) {
+		return "", false, nil
+	}
+	content, ok := f.s.readFile(ctx, path)
+	if !ok {
+		return "", false, fmt.Errorf("read %s failed", path)
+	}
+	return content, true, nil
+}
+
+func (f wafFiles) Write(ctx context.Context, path, content string) error {
+	return f.s.writeFile(ctx, path, content)
+}
+
+func (f wafFiles) Remove(ctx context.Context, path string) error {
+	return f.s.runSudoOK(ctx, "rm", "-f", path)
 }
 
 // SetMode switches between blocking and detection-only operation.

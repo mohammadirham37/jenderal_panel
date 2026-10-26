@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/sitesecurity"
 	"github.com/oklog/ulid/v2"
 	"net/netip"
 	"path/filepath"
@@ -131,8 +132,7 @@ func (m *NginxManager) ApplyWebsite(ctx context.Context, w model.Website, p Webs
 		}
 	}
 	snippet := renderTrafficSnippet(p, realIP)
-	path := "/etc/nginx/jenderal/security/sites/" + w.ID + ".conf"
-	if err = m.applyFile(ctx, path, snippet); err != nil {
+	if err = m.applySiteFragment(ctx, w.ID, snippet); err != nil {
 		if zonePath != "" {
 			if rollbackErr := m.restoreFile(context.Background(), zonePath, previousZone, zoneExisted); rollbackErr != nil {
 				return fmt.Errorf("%v; custom rate zone rollback failed: %w", err, rollbackErr)
@@ -217,6 +217,22 @@ func (m *NginxManager) applyFile(ctx context.Context, path, content string) erro
 	} else {
 		_ = m.files.Remove(context.Background(), path)
 	}
+	_, _ = m.exec.RunSudo(context.Background(), "systemctl", "reload", "nginx")
+	return err
+}
+
+// applySiteFragment stores the Traffic Guard part of the website's security
+// include (the WAF page owns the other part) and validates nginx, undoing
+// both on failure.
+func (m *NginxManager) applySiteFragment(ctx context.Context, websiteID, snippet string) error {
+	undo, err := sitesecurity.Update(ctx, m.files, websiteID, sitesecurity.PartTraffic, snippet)
+	if err != nil {
+		return err
+	}
+	if err = m.validate(ctx); err == nil {
+		return nil
+	}
+	_ = undo(context.Background())
 	_, _ = m.exec.RunSudo(context.Background(), "systemctl", "reload", "nginx")
 	return err
 }

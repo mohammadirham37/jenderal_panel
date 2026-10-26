@@ -67,3 +67,29 @@ func TestCustomProfileUsesBoundedDedicatedRateZone(t *testing.T) {
 		}
 	}
 }
+
+// Applying a Traffic Guard profile must not erase the WAF/DoS directives
+// the website's include already carries.
+func TestApplyWebsiteKeepsWAFProtection(t *testing.T) {
+	include := "/etc/nginx/jenderal/security/sites/01SITE.conf"
+	files := &memoryManagedFiles{values: map[string]string{
+		include: "# Managed by Jenderal Panel - per-site protection\nmodsecurity on;\nlimit_req_status 403;\nlimit_req zone=jenderal_dos burst=20 nodelay;\n",
+	}}
+	exec := &executor.MockExecutor{
+		RunSudoFunc: func(context.Context, string, ...string) (*executor.Result, error) {
+			return &executor.Result{}, nil
+		},
+	}
+	m := NewNginxManager(exec, files, nil)
+	m.now = func() time.Time { return time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC) }
+	snippet := renderTrafficSnippet(DefaultProfile("01SITE", m.now()), "")
+	if err := m.applySiteFragment(context.Background(), "01SITE", snippet); err != nil {
+		t.Fatal(err)
+	}
+	got := files.values[include]
+	for _, want := range []string{"modsecurity on;", "zone=jenderal_dos"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Traffic Guard erased %q:\n%s", want, got)
+		}
+	}
+}
