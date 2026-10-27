@@ -22,7 +22,7 @@ const sampleErrorLog = `2026/10/26 09:00:00 [error] 811#811: *1 limiting request
 
 func TestParseSiteReport(t *testing.T) {
 	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
-	report := parseSiteReport(sampleErrorLog, 1, now, time.UTC, SiteReport{Hours: 1})
+	report := parseSiteReport(sampleErrorLog, 1, now, time.UTC, SiteReport{Hours: 1}, nil)
 
 	// The 09:00 entry is outside the hour, the dry run and the Traffic Guard
 	// zone are not DoS blocks.
@@ -62,5 +62,28 @@ func TestSiteReportReadsOnlyAWebsiteLog(t *testing.T) {
 	report, err := svc.SiteReport(context.Background(), "/home/web_shop/logs/error.log", 24, time.Now())
 	if err != nil || report.LogAvailable {
 		t.Errorf("a missing log is an empty report: %+v %v", report, err)
+	}
+}
+
+// In blocking mode the site error log only has the 949110 denial; the rule
+// that matched comes from the audit log via the shared unique_id.
+func TestReportNamesTheMatchedRuleFromTheAuditLog(t *testing.T) {
+	errorLog := `2026/10/27 09:01:13 [error] 811#811: *9 [client 182.2.84.54] ModSecurity: Access denied with code 403 (phase 2). Matched "Operator ` + "`Ge'" + ` with parameter ` + "`5'" + `" [id "949110"] [msg "Inbound Anomaly Score Exceeded (Total Score: 5)"] [uri "/auth/google/callback"] [unique_id "1793000000.123"], client: 182.2.84.54, server: seifuku.test, request: "GET /auth/google/callback?iss=https%3A%2F%2Faccounts.google.com HTTP/1.1", host: "seifuku.test"
+`
+	audit := `---Abc123---H--
+ModSecurity: Warning. Matched "Operator ` + "`BeginsWith'" + `" [file "/usr/share/modsecurity-crs/rules/REQUEST-931-APPLICATION-ATTACK-RFI.conf"] [line "99"] [id "931130"] [msg "Possible Remote File Inclusion (RFI) Attack: Off-Domain Reference/Link"] [severity "2"] [hostname "seifuku.test"] [uri "/auth/google/callback"] [unique_id "1793000000.123"]
+ModSecurity: Access denied with code 403 (phase 2). [id "949110"] [msg "Inbound Anomaly Score Exceeded (Total Score: 5)"] [unique_id "1793000000.123"]
+ModSecurity: Warning. [id "980130"] [msg "Inbound Anomaly Score Exceeded"] [unique_id "1793000000.123"]
+`
+	now := time.Date(2026, 10, 27, 10, 0, 0, 0, time.UTC)
+	report := parseSiteReport(errorLog, 24, now, time.UTC, SiteReport{Hours: 24}, parseAuditCauses(audit))
+	if report.WAFBlocked != 1 || len(report.Recent) != 1 {
+		t.Fatalf("unexpected report %+v", report)
+	}
+	if report.Recent[0].RuleID != "931130" || !strings.Contains(report.Recent[0].Message, "Remote File Inclusion") {
+		t.Errorf("event names %s %q, want 931130", report.Recent[0].RuleID, report.Recent[0].Message)
+	}
+	if len(report.TopRules) != 1 || report.TopRules[0].Key != "931130" {
+		t.Errorf("top rules = %+v", report.TopRules)
 	}
 }

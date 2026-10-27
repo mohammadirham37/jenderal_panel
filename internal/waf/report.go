@@ -83,10 +83,60 @@ func (s *Service) SiteReport(ctx context.Context, errorLog string, hours int, no
 		return report, nil // no log yet: an empty report
 	}
 	report.LogAvailable = true
-	return parseSiteReport(res.Stdout, hours, now, time.Local, report), nil
+	// In blocking mode the site error log only keeps the final denial (the
+	// CRS anomaly-score rule); the rules that actually matched are logged
+	// at "warn" and reach only the ModSecurity audit log.
+	causes := map[string][]ruleCause{}
+	if audit, err := s.exec.RunSudo(ctx, "tail", "-n", fmt.Sprint(auditLogLines), "--", auditLog); err == nil && audit != nil && audit.ExitCode == 0 {
+		causes = parseAuditCauses(audit.Stdout)
+	}
+	return parseSiteReport(res.Stdout, hours, now, time.Local, report, causes), nil
 }
 
-func parseSiteReport(log string, hours int, now time.Time, loc *time.Location, report SiteReport) SiteReport {
+const auditLogLines = 50000
+
+// ruleCause is one rule that matched a request.
+type ruleCause struct{ id, msg string }
+
+// isScoringRule reports CRS rules that only add up or report anomaly
+// scores (949xxx/959xxx blocking evaluation, 980xxx correlation): they are
+// never the reason a request was suspicious, and excluding them would turn
+// blocking off for the whole website.
+func isScoringRule(id string) bool {
+	return anomalyRules[id] || strings.HasPrefix(id, "949") || strings.HasPrefix(id, "959") || strings.HasPrefix(id, "980")
+}
+
+// parseAuditCauses maps each request (unique_id) to the attack rules that
+// matched it, from ModSecurity audit log messages.
+func parseAuditCauses(audit string) map[string][]ruleCause {
+	causes := map[string][]ruleCause{}
+	for _, line := range strings.Split(audit, "\n") {
+		if !strings.Contains(line, "[unique_id \"") || !strings.Contains(line, "[id \"") {
+			continue
+		}
+		uid := uniqueIDPattern.FindStringSubmatch(line)
+		id := ruleIDPattern.FindStringSubmatch(line)
+		if uid == nil || id == nil || isScoringRule(id[1]) {
+			continue
+		}
+		msg := ""
+		if m := ruleMsgPattern.FindStringSubmatch(line); m != nil {
+			msg = truncate(m[1], 160)
+		}
+		dup := false
+		for _, c := range causes[uid[1]] {
+			if c.id == id[1] {
+				dup = true
+			}
+		}
+		if !dup {
+			causes[uid[1]] = append(causes[uid[1]], ruleCause{id: id[1], msg: msg})
+		}
+	}
+	return causes
+}
+
+func parseSiteReport(log string, hours int, now time.Time, loc *time.Location, report SiteReport, causes map[string][]ruleCause) SiteReport {
 	since := now.Add(-time.Duration(hours) * time.Hour)
 	rules := map[string]*CountEntry{}
 	ips := map[string]int{}
@@ -95,6 +145,7 @@ func parseSiteReport(log string, hours int, now time.Time, loc *time.Location, r
 	// ModSecurity logs one line per matching rule plus the final denial;
 	// lines sharing a unique_id are one request.
 	var parsed []ReportEvent
+	var parsedUID []string
 	byRequest := map[string]int{}
 	for _, line := range strings.Split(log, "\n") {
 		event, ok := parseReportLine(line, loc)
@@ -119,9 +170,24 @@ func parseSiteReport(log string, hours int, now time.Time, loc *time.Location, r
 			byRequest[uid] = len(parsed)
 		}
 		parsed = append(parsed, event)
+		parsedUID = append(parsedUID, uid)
 	}
 
-	for _, event := range parsed {
+	for i, event := range parsed {
+		// Report the attack rules from the audit log instead of the
+		// anomaly-score rule that issued the denial.
+		if found := causes[parsedUID[i]]; len(found) > 0 && (event.RuleID == "" || isScoringRule(event.RuleID)) {
+			event.RuleID, event.Message = found[0].id, found[0].msg
+			parsed[i] = event
+			for _, extra := range found[1:] {
+				entry := rules[extra.id]
+				if entry == nil {
+					entry = &CountEntry{Key: extra.id, Label: extra.msg}
+					rules[extra.id] = entry
+				}
+				entry.Count++
+			}
+		}
 		switch event.Kind {
 		case "waf_blocked":
 			report.WAFBlocked++

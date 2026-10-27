@@ -344,7 +344,7 @@ func TestSiteProtectionExcludesRulesPerSite(t *testing.T) {
 		t.Errorf("excluded rules = %v", state.ExcludedRules)
 	}
 
-	for _, bad := range []string{"931130;", "1 2", "SecRuleEngine Off", "12345678"} {
+	for _, bad := range []string{"931130;", "1 2", "SecRuleEngine Off", "12345678", "949110", "980130"} {
 		if err := svc.SetSiteProtection(ctx, site, SiteProtection{WAF: true, ExcludedRules: []string{bad}}, 120, 20); err == nil {
 			t.Errorf("rule id %q must be rejected", bad)
 		}

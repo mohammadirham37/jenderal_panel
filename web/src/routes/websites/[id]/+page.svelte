@@ -299,6 +299,12 @@ import { toast } from '#lib/stores/toast.js';
 		}
 	}
 
+	// CRS anomaly-score rules (949xxx/959xxx/980xxx) never name the cause;
+	// excluding one would switch WAF blocking off (the backend refuses it).
+	function isScoringRule(id: string): boolean {
+		return /^(949|959|980)/.test(id);
+	}
+
 	function excludeRule(id: string) {
 		const current = siteProtection?.excluded_rules ?? [];
 		const clean = id.trim();
@@ -3236,6 +3242,8 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 								{#if canManageProtection && siteProtection?.waf}
 									{#if (siteProtection.excluded_rules ?? []).includes(rule.key)}
 										<span class="text-[10px] text-green-400">{translate($language, 'wd.prot.rules_excluded')}</span>
+									{:else if isScoringRule(rule.key)}
+										<span class="text-[10px] text-gray-500" title={translate($language, 'wd.prot.rules_scoring_hint')}>{translate($language, 'wd.prot.rules_scoring')}</span>
 									{:else}
 										<button type="button" onclick={() => excludeRule(rule.key)} disabled={rulesBusy} title={translate($language, 'wd.prot.rules_exclude_hint')} class="cursor-pointer rounded border border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-300 hover:border-yellow-500 hover:text-yellow-300 disabled:opacity-50">{translate($language, 'wd.prot.rules_exclude')}</button>
 									{/if}

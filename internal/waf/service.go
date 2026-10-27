@@ -184,6 +184,9 @@ func normalizeExcludedRules(ids []string) ([]string, error) {
 		if !ruleIDFormat.MatchString(id) {
 			return nil, model.NewValidationError("rule ids must be numbers, e.g. 931130")
 		}
+		if isScoringRule(id) {
+			return nil, model.NewValidationError("rule " + id + " only adds up the anomaly score; excluding it would turn WAF blocking off for the whole website. Exclude the rule that matched instead (shown in the protection report)")
+		}
 		seen[id] = true
 		out = append(out, id)
 	}
