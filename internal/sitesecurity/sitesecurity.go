@@ -36,6 +36,9 @@ type Files interface {
 // IncludePath is the file the website's vhost includes.
 func IncludePath(websiteID string) string { return Dir + "/" + websiteID + ".conf" }
 
+// FragmentPath is where a feature's own part of the include is stored.
+func FragmentPath(websiteID, part string) string { return fragmentPath(websiteID, part) }
+
 func fragmentPath(websiteID, part string) string {
 	return Dir + "/" + websiteID + "." + part + ".part"
 }

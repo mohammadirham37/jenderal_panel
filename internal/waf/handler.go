@@ -147,10 +147,11 @@ func (h *Handler) SiteProtection(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) SetSiteProtection(w http.ResponseWriter, r *http.Request) {
 	siteID := chi.URLParam(r, "id")
 	var req struct {
-		WAF               *bool `json:"waf"`
-		DoS               *bool `json:"dos"`
-		RequestsPerMinute *int  `json:"requests_per_minute"`
-		Burst             *int  `json:"burst"`
+		WAF               *bool     `json:"waf"`
+		DoS               *bool     `json:"dos"`
+		ExcludedRules     *[]string `json:"excluded_rules"`
+		RequestsPerMinute *int      `json:"requests_per_minute"`
+		Burst             *int      `json:"burst"`
 	}
 	if err := httputil.DecodeJSON(r, &req); err != nil {
 		httputil.HandleError(w, err)
@@ -163,7 +164,10 @@ func (h *Handler) SetSiteProtection(w http.ResponseWriter, r *http.Request) {
 		httputil.HandleError(w, err)
 		return
 	}
-	protect := SiteProtection{WAF: state.WAF, DoS: state.DoS}
+	protect := SiteProtection{WAF: state.WAF, DoS: state.DoS, ExcludedRules: state.ExcludedRules}
+	if req.ExcludedRules != nil {
+		protect.ExcludedRules = *req.ExcludedRules
+	}
 	if req.WAF != nil {
 		protect.WAF = *req.WAF
 	}
@@ -191,6 +195,10 @@ func (h *Handler) SetSiteProtection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.logAction(r, "site_protection", siteID,
-		fmt.Sprintf("waf=%v dos=%v", protect.WAF, protect.DoS))
+		fmt.Sprintf("waf=%v dos=%v excluded_rules=%v", protect.WAF, protect.DoS, protect.ExcludedRules))
+	// Report the state as written (normalized rule list).
+	if state, err := h.svc.GetSiteProtection(r.Context(), siteID); err == nil {
+		protect = state
+	}
 	httputil.JSON(w, http.StatusOK, protect)
 }

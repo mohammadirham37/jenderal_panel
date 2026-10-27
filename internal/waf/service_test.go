@@ -316,3 +316,68 @@ func TestSiteProtectionKeepsTrafficGuardLimits(t *testing.T) {
 		t.Errorf("turning DoS off must keep Traffic Guard and drop DoS:\n%s", combined)
 	}
 }
+
+// OAuth callbacks (iss=https://accounts.google.com) trip CRS 931130; a site
+// can switch individual rules off without disabling the WAF.
+func TestSiteProtectionExcludesRulesPerSite(t *testing.T) {
+	const site = "01M247E0A6H332PZNCS9AQGXFQ"
+	hook := fmt.Sprintf(siteHookFormat, site)
+	fake := newFakeExec()
+	fake.dpkgOK[connectorPackage] = true
+	fake.dpkgOK[crsPackage] = true
+	fake.files[crsRulesDir] = "dir"
+	svc := &Service{exec: fake}
+	ctx := context.Background()
+
+	err := svc.SetSiteProtection(ctx, site, SiteProtection{WAF: true, ExcludedRules: []string{"931130", " 942100", "931130"}}, 120, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := fake.files[hook]
+	rulesAt := strings.Index(content, "modsecurity_rules_file")
+	removeAt := strings.Index(content, "modsecurity_rules 'SecRuleRemoveById 931130 942100';")
+	if removeAt < 0 || removeAt < rulesAt {
+		t.Fatalf("exclusion missing or before the rules it removes:\n%s", content)
+	}
+	state, _ := svc.GetSiteProtection(ctx, site)
+	if strings.Join(state.ExcludedRules, ",") != "931130,942100" {
+		t.Errorf("excluded rules = %v", state.ExcludedRules)
+	}
+
+	for _, bad := range []string{"931130;", "1 2", "SecRuleEngine Off", "12345678"} {
+		if err := svc.SetSiteProtection(ctx, site, SiteProtection{WAF: true, ExcludedRules: []string{bad}}, 120, 20); err == nil {
+			t.Errorf("rule id %q must be rejected", bad)
+		}
+	}
+}
+
+func TestExcludedRulesSurviveTurningTheWAFOffAndOn(t *testing.T) {
+	const site = "01M247E0A6H332PZNCS9AQGXFQ"
+	fake := newFakeExec()
+	fake.dpkgOK[connectorPackage] = true
+	fake.dpkgOK[crsPackage] = true
+	fake.files[crsRulesDir] = "dir"
+	svc := &Service{exec: fake}
+	ctx := context.Background()
+
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{WAF: true, ExcludedRules: []string{"931130"}}, 120, 20); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := svc.GetSiteProtection(ctx, site)
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{WAF: false, ExcludedRules: state.ExcludedRules}, 120, 20); err != nil {
+		t.Fatal(err)
+	}
+	off, _ := svc.GetSiteProtection(ctx, site)
+	if off.WAF || strings.Join(off.ExcludedRules, ",") != "931130" {
+		t.Fatalf("exclusions lost while the WAF is off: %+v", off)
+	}
+	if strings.Contains(fake.files[fmt.Sprintf(siteHookFormat, site)], "SecRuleRemoveById") {
+		t.Error("no modsecurity directives may remain while the WAF is off")
+	}
+	if err := svc.SetSiteProtection(ctx, site, SiteProtection{WAF: true, ExcludedRules: off.ExcludedRules}, 120, 20); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fake.files[fmt.Sprintf(siteHookFormat, site)], "SecRuleRemoveById 931130") {
+		t.Error("exclusions not restored when the WAF is switched back on")
+	}
+}

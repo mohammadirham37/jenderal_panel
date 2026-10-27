@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -88,7 +89,6 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	status.ModSecurity.Installed = installed == 2
 
-
 	if content, ok := s.readFile(ctx, rulesFile); ok {
 		status.ModSecurity.RulesReady = true
 		switch {
@@ -156,6 +156,42 @@ func (s *Service) Install(ctx context.Context, log func(string)) error {
 type SiteProtection struct {
 	WAF bool `json:"waf"`
 	DoS bool `json:"dos"`
+	// ExcludedRules are CRS rule ids switched off for this website only,
+	// for false positives such as OAuth callbacks tripping 931130.
+	ExcludedRules []string `json:"excluded_rules"`
+}
+
+// maxExcludedRules bounds the per-site exclusion list.
+const maxExcludedRules = 50
+
+var (
+	ruleIDFormat    = regexp.MustCompile(`^[0-9]{1,7}$`)
+	ruleRemovalLine = regexp.MustCompile(`SecRuleRemoveById ([0-9 ]+)`)
+	// keptRulesLine remembers the exclusions while the WAF is off, so
+	// switching it back on restores them.
+	keptRulesLine = regexp.MustCompile(`# excluded-rules: ([0-9 ]+)`)
+)
+
+// normalizeExcludedRules validates, de-duplicates, and sorts rule ids.
+func normalizeExcludedRules(ids []string) ([]string, error) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		if !ruleIDFormat.MatchString(id) {
+			return nil, model.NewValidationError("rule ids must be numbers, e.g. 931130")
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	if len(out) > maxExcludedRules {
+		return nil, model.NewValidationError(fmt.Sprintf("at most %d rules can be excluded per website", maxExcludedRules))
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 const siteHookFormat = "/etc/nginx/jenderal/security/sites/%s.conf"
@@ -175,10 +211,15 @@ func siteHookPath(siteID string) (string, error) {
 
 // siteProtectionFromHook parses the include file into the per-site state.
 func siteProtectionFromHook(content string) SiteProtection {
-	return SiteProtection{
-		WAF: strings.Contains(content, "modsecurity on;"),
-		DoS: strings.Contains(content, "limit_req zone=jenderal_dos"),
+	state := SiteProtection{
+		WAF:           strings.Contains(content, "modsecurity on;"),
+		DoS:           strings.Contains(content, "limit_req zone=jenderal_dos"),
+		ExcludedRules: []string{},
 	}
+	if m := ruleRemovalLine.FindStringSubmatch(content); m != nil {
+		state.ExcludedRules = strings.Fields(m[1])
+	}
+	return state
 }
 
 // GetSiteProtection reports the per-site WAF/DoS enforcement state.
@@ -189,9 +230,19 @@ func (s *Service) GetSiteProtection(ctx context.Context, siteID string) (SitePro
 	}
 	content, ok := s.readFile(ctx, hookPath)
 	if !ok {
-		return SiteProtection{WAF: false, DoS: false}, nil
+		return SiteProtection{ExcludedRules: []string{}}, nil
 	}
-	return siteProtectionFromHook(content), nil
+	state := siteProtectionFromHook(content)
+	// The composed include drops comments; the WAF fragment keeps the
+	// exclusions remembered while the WAF is off.
+	if len(state.ExcludedRules) == 0 {
+		if fragment, ok := s.readFile(ctx, sitesecurity.FragmentPath(siteID, sitesecurity.PartWAF)); ok {
+			if m := keptRulesLine.FindStringSubmatch(fragment); m != nil {
+				state.ExcludedRules = strings.Fields(m[1])
+			}
+		}
+	}
+	return state, nil
 }
 
 // SetSiteProtection turns WAF and/or DoS enforcement on or off for ONE
@@ -219,6 +270,20 @@ func (s *Service) SetSiteProtection(ctx context.Context, siteID string, protect 
 			return err
 		}
 		parts = append(parts, "modsecurity on;\nmodsecurity_rules_file "+rulesFile+";\n")
+		// Removals must follow the rules they remove, so they come after
+		// the rules file in the same context.
+		excluded, err := normalizeExcludedRules(protect.ExcludedRules)
+		if err != nil {
+			return err
+		}
+		if len(excluded) > 0 {
+			parts = append(parts, "modsecurity_rules 'SecRuleRemoveById "+strings.Join(excluded, " ")+"';\n")
+		}
+	}
+	if !protect.WAF {
+		if excluded, err := normalizeExcludedRules(protect.ExcludedRules); err == nil && len(excluded) > 0 {
+			parts = append(parts, "# excluded-rules: "+strings.Join(excluded, " ")+"\n")
+		}
 	}
 	if protect.DoS {
 		if err := s.ensureDoSZone(ctx, dosRate); err != nil {

@@ -222,7 +222,7 @@ import { toast } from '#lib/stores/toast.js';
 	let octaneInitialized = $state(false);
 
 	// Document root editing
-	let siteProtection = $state<{ waf: boolean; dos: boolean } | null>(null);
+	let siteProtection = $state<{ waf: boolean; dos: boolean; excluded_rules?: string[] } | null>(null);
 	let protectionLoaded = $state(false);
 	let protectionBusy = $state('');
 
@@ -233,7 +233,7 @@ import { toast } from '#lib/stores/toast.js';
 	async function loadSiteProtection() {
 		if (!website || !canManageProtection) return;
 		try {
-			siteProtection = await api.get<{ waf: boolean; dos: boolean }>(`/api/v1/security/waf/sites/${website.id}`);
+			siteProtection = await api.get<{ waf: boolean; dos: boolean; excluded_rules?: string[] }>(`/api/v1/security/waf/sites/${website.id}`);
 		} catch { siteProtection = null; }
 		if (siteProtection?.waf || siteProtection?.dos) void loadProtectionReport();
 	}
@@ -266,7 +266,7 @@ import { toast } from '#lib/stores/toast.js';
 		if (!website || !siteProtection || protectionBusy) return;
 		protectionBusy = kind;
 		try {
-			siteProtection = await api.put<{ waf: boolean; dos: boolean }>(`/api/v1/security/waf/sites/${website.id}`, {
+			siteProtection = await api.put<{ waf: boolean; dos: boolean; excluded_rules?: string[] }>(`/api/v1/security/waf/sites/${website.id}`, {
 				[kind]: !siteProtection[kind]
 			});
 			toast.success(translate($language, kind === 'waf' ? 'wd.prot.wafToggled' : 'wd.prot.dosToggled').replace('{state}', translate($language, siteProtection[kind] ? 'wd.on' : 'wd.off')));
@@ -276,6 +276,38 @@ import { toast } from '#lib/stores/toast.js';
 		} finally {
 			protectionBusy = '';
 		}
+	}
+
+	// Per-site WAF rule exclusions for false positives (e.g. OAuth callbacks
+	// tripping CRS 931130).
+	let ruleToExclude = $state('');
+	let rulesBusy = $state(false);
+
+	async function setExcludedRules(rules: string[]) {
+		if (!website || rulesBusy) return;
+		rulesBusy = true;
+		try {
+			siteProtection = await api.put<{ waf: boolean; dos: boolean; excluded_rules?: string[] }>(`/api/v1/security/waf/sites/${website.id}`, {
+				excluded_rules: rules
+			});
+			ruleToExclude = '';
+			toast.success(translate($language, 'wd.prot.rules_saved'));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.prot.failed'));
+		} finally {
+			rulesBusy = false;
+		}
+	}
+
+	function excludeRule(id: string) {
+		const current = siteProtection?.excluded_rules ?? [];
+		const clean = id.trim();
+		if (!clean || current.includes(clean)) return;
+		void setExcludedRules([...current, clean]);
+	}
+
+	function includeRule(id: string) {
+		void setExcludedRules((siteProtection?.excluded_rules ?? []).filter((r) => r !== id));
 	}
 
 	let docRootEditing = $state(false);
@@ -2031,6 +2063,26 @@ import { toast } from '#lib/stores/toast.js';
 								<p class="mt-1 text-xs leading-relaxed text-gray-400">{translate($language, 'wd.prot.dos_desc')}</p>
 							</div>
 						</div>
+						{#if siteProtection?.waf}
+							<div class="mt-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
+								<p class="text-xs font-semibold text-gray-200">{translate($language, 'wd.prot.rules_title')}</p>
+								<p class="mt-0.5 text-[11px] text-gray-500">{translate($language, 'wd.prot.rules_hint')}</p>
+								{#if (siteProtection.excluded_rules ?? []).length > 0}
+									<div class="mt-2 flex flex-wrap gap-1.5">
+										{#each siteProtection.excluded_rules ?? [] as rule (rule)}
+											<span class="inline-flex items-center gap-1 rounded-full bg-gray-700 px-2.5 py-0.5 font-mono text-xs text-gray-200">
+												{rule}
+												<button type="button" onclick={() => includeRule(rule)} disabled={rulesBusy} aria-label={translate($language, 'wd.prot.rules_remove').replace('{id}', rule)} class="cursor-pointer text-gray-400 hover:text-red-400 disabled:opacity-50">✕</button>
+											</span>
+										{/each}
+									</div>
+								{/if}
+								<form class="mt-2 flex gap-2" onsubmit={(e) => { e.preventDefault(); excludeRule(ruleToExclude); }}>
+									<input bind:value={ruleToExclude} inputmode="numeric" maxlength={7} placeholder="931130" aria-label={translate($language, 'wd.prot.rules_input')} class="w-32 rounded-md border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
+									<button type="submit" disabled={rulesBusy || !/^[0-9]{1,7}$/.test(ruleToExclude.trim())} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'wd.prot.rules_add')}</button>
+								</form>
+							</div>
+						{/if}
 						{#if siteProtection?.waf || siteProtection?.dos}
 							<div class="mt-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
 								<div class="flex flex-wrap items-center justify-between gap-2">
@@ -3177,7 +3229,19 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 					<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wd.prot.report_top_rules')}</p>
 					{#if protectionReport.top_rules.length === 0}<p class="text-xs text-gray-500">—</p>{/if}
 					{#each protectionReport.top_rules as rule (rule.key)}
-						<div class="flex justify-between gap-2 py-0.5 text-xs"><span class="truncate text-gray-200" title={rule.label}><span class="font-mono text-gray-400">{rule.key}</span> {rule.label ?? ''}</span><span class="tabular-nums text-gray-400">{rule.count}</span></div>
+						<div class="flex items-center justify-between gap-2 py-0.5 text-xs">
+							<span class="truncate text-gray-200" title={rule.label}><span class="font-mono text-gray-400">{rule.key}</span> {rule.label ?? ''}</span>
+							<span class="flex shrink-0 items-center gap-2">
+								<span class="tabular-nums text-gray-400">{rule.count}</span>
+								{#if canManageProtection && siteProtection?.waf}
+									{#if (siteProtection.excluded_rules ?? []).includes(rule.key)}
+										<span class="text-[10px] text-green-400">{translate($language, 'wd.prot.rules_excluded')}</span>
+									{:else}
+										<button type="button" onclick={() => excludeRule(rule.key)} disabled={rulesBusy} title={translate($language, 'wd.prot.rules_exclude_hint')} class="cursor-pointer rounded border border-gray-600 px-1.5 py-0.5 text-[10px] text-gray-300 hover:border-yellow-500 hover:text-yellow-300 disabled:opacity-50">{translate($language, 'wd.prot.rules_exclude')}</button>
+									{/if}
+								{/if}
+							</span>
+						</div>
 					{/each}
 				</div>
 			</div>
