@@ -143,9 +143,9 @@ func TestSecurityHeadersSetContentSecurityPolicy(t *testing.T) {
 		"base-uri 'self'",
 		"object-src 'none'",
 		"form-action 'self'",
-		// The panel's own bootstrap scripts and component styles are inline,
-		// and QR codes and charts render from data:/blob: URLs.
-		"script-src 'self' 'unsafe-inline'",
+		// Component styles are inline, and QR codes and charts render from
+		// data:/blob: URLs. Inline scripts are allowed by hash only.
+		"script-src 'self'",
 		"style-src 'self' 'unsafe-inline'",
 		"img-src 'self' data: blob:",
 		// Live metrics, logs, and the terminal use WebSockets.
@@ -173,5 +173,20 @@ func TestSecurityHeadersSendHSTSBehindATLSProxy(t *testing.T) {
 		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Header().Get("Strict-Transport-Security") != "" {
 		t.Error("HSTS must not be sent on a plain HTTP request")
+	}
+}
+
+func TestSecurityHeadersIsolateTheBrowsingContext(t *testing.T) {
+	rec := httptest.NewRecorder()
+	SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got := rec.Header().Get("Permissions-Policy"); !strings.Contains(got, "camera=()") || !strings.Contains(got, "geolocation=()") {
+		t.Errorf("Permissions-Policy = %q", got)
+	}
+	if got := rec.Header().Get("Cross-Origin-Opener-Policy"); got != "same-origin" {
+		t.Errorf("Cross-Origin-Opener-Policy = %q", got)
+	}
+	if strings.Contains(rec.Header().Get("Content-Security-Policy"), "'unsafe-inline'; style-src") {
+		t.Error("script-src must not allow every inline script")
 	}
 }

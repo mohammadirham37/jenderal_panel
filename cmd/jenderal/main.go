@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"runtime/debug"
@@ -386,6 +387,15 @@ func cmdServe() {
 		os.Exit(1)
 	}
 
+	// Allow exactly the inline scripts the embedded UI ships (by hash)
+	// instead of 'unsafe-inline' in the Content-Security-Policy.
+	if sub, err := fs.Sub(webFS, "web_build"); err == nil {
+		if hashes, err := api.InlineScriptHashes(sub); err == nil {
+			api.SetInlineScriptHashes(hashes)
+		} else {
+			logger.Warn("could not hash inline scripts for the CSP", "error", err)
+		}
+	}
 	router := api.NewRouter(api.Dependencies{
 		Logger:          logger,
 		AuthSvc:         authSvc,
@@ -490,6 +500,15 @@ func cmdServe() {
 	go func() {
 		if err := wafSvc.RefreshRules(bgCtx); err != nil {
 			logger.Warn("could not refresh WAF rules", "error", err)
+		}
+	}()
+
+	// Hide the nginx version from the Server header and error pages.
+	go func() {
+		if changed, err := hardening.EnsureNginxServerTokensOff(bgCtx, exec); err != nil {
+			logger.Warn("could not turn off nginx server tokens", "error", err)
+		} else if changed {
+			logger.Info("turned off nginx server tokens")
 		}
 	}()
 

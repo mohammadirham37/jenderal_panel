@@ -67,21 +67,6 @@ func isTrustedProxyIP(host string) bool {
 	return ip.IsLoopback()
 }
 
-// panelCSP keeps the page to its own origin: no third-party scripts, no
-// framing, no plugin content. Inline script and style are allowed because
-// the app's bootstrap (theme, title) and component styles are inline, and
-// WebSockets carry live metrics, logs, and the terminal.
-const panelCSP = "default-src 'self'; " +
-	"script-src 'self' 'unsafe-inline'; " +
-	"style-src 'self' 'unsafe-inline'; " +
-	"img-src 'self' data: blob:; " +
-	"font-src 'self' data:; " +
-	"connect-src 'self' ws: wss:; " +
-	"frame-ancestors 'none'; " +
-	"base-uri 'self'; " +
-	"form-action 'self'; " +
-	"object-src 'none'"
-
 // SecurityHeaders sets conservative response headers on every panel response.
 // They cannot affect the SPA or API behaviour but blunt common browser-side
 // attacks: MIME sniffing, framing/clickjacking, and referrer leakage. HSTS is
@@ -92,7 +77,11 @@ func SecurityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		h.Set("Content-Security-Policy", panelCSP)
+		h.Set("Content-Security-Policy", cspHeader.Load().(string))
+		// The panel uses no camera, microphone, location, payment, or USB.
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+		// Keep pages opened from the panel out of its browsing context.
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		// Behind a TLS-terminating proxy the panel itself sees plain HTTP,
 		// but the browser spoke HTTPS and should keep doing so.
 		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
