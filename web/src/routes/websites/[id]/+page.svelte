@@ -999,8 +999,42 @@ import { toast } from '#lib/stores/toast.js';
 		} catch { /* clipboard not available */ }
 	}
 
+	// Deploy confirmation: the modal lists what the deployment worker will
+	// do for this site (see internal/deployment/service.go).
+	let deployConfirmOpen = $state(false);
+	interface DeployStep { key: string; params?: Record<string, string>; warn?: boolean }
+	let deploySteps = $derived.by((): DeployStep[] => {
+		if (!website) return [];
+		const home = `/home/${website.web_user}`;
+		const isLaravel = (website.framework || '').toLowerCase().includes('laravel');
+		const inApp = isLaravel || website.app_type === 'go' || website.document_root === `${home}/app/public`;
+		const dir = inApp ? `${home}/app` : website.document_root;
+		const deployedBefore = deployments.some((d) => d.status === 'success');
+		const steps: DeployStep[] = [];
+		if (deployKey) steps.push({ key: 'wd.deploy.step.key' });
+		if (isLaravel || !deployedBefore) {
+			steps.push({ key: 'wd.deploy.step.wipe', params: { dir }, warn: true });
+			steps.push({ key: 'wd.deploy.step.clone', params: { dir, branch: repoBranch || 'main' } });
+			steps.push({ key: 'wd.deploy.step.restore' });
+		} else {
+			steps.push({ key: 'wd.deploy.step.pull', params: { dir, branch: repoBranch || 'main' } });
+		}
+		steps.push({ key: 'wd.deploy.step.perms' });
+		if (website.app_type === 'go') {
+			steps.push({ key: goAutoBuild === false ? 'wd.deploy.step.go_manual' : 'wd.deploy.step.go_build' });
+		}
+		return steps;
+	});
+
+	function stepText(step: DeployStep): string {
+		let text = translate($language, step.key);
+		for (const [k, v] of Object.entries(step.params ?? {})) text = text.replaceAll(`{${k}}`, v);
+		return text;
+	}
+
 	async function deployNow() {
 		if (!website || !repoUrl.trim()) return;
+		deployConfirmOpen = false;
 		deploying = true;
 		
 		try {
@@ -2069,6 +2103,7 @@ import { toast } from '#lib/stores/toast.js';
 					{#if website.app_type === 'go'}
 						<WebsiteGoBuildSection websiteID={website.id} canUpdate={canUpdateWebsite} bind:autoBuild={goAutoBuild} />
 					{/if}
+					<div class="grid gap-6 lg:grid-cols-2 items-start">
 					<!-- Git Repository -->
 						<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 							<div class="mb-4 flex flex-wrap items-center gap-2">
@@ -2183,7 +2218,7 @@ import { toast } from '#lib/stores/toast.js';
 							<!-- Deploy Now -->
 							<div class="flex items-center gap-3 pt-2">
 								<button
-									onclick={deployNow}
+									onclick={() => (deployConfirmOpen = true)}
 									disabled={deploying || !repoUrl.trim()}
 									class="px-4 py-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium rounded transition-colors cursor-pointer"
 								>
@@ -2207,6 +2242,85 @@ import { toast } from '#lib/stores/toast.js';
 								<p class="text-xs text-gray-500 mt-2">{translate($language, 'wd.deploy.fix_hint')}</p>
 							</div>
 						{/if}
+					</div>
+
+					<!-- Deployment History -->
+					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+						<div class="flex items-center justify-between mb-4">
+							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.deploy.history')}</h3>
+							<button
+								onclick={loadDeployments}
+								disabled={deploymentsLoading}
+								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
+							>
+								{deploymentsLoading ? translate($language, 'wd.loading_generic') : translate($language, 'wd.refresh')}
+							</button>
+						</div>
+
+						{#if deploymentsLoading && deployments.length === 0}
+							<div class="text-gray-400 text-sm">{translate($language, 'wd.deploy.loading')}</div>
+						{:else if deploymentsError}
+							<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{deploymentsError}</div>
+						{:else if deployments.length === 0}
+							<div class="text-gray-400 text-sm">{translate($language, 'wd.deploy.empty')}</div>
+						{:else}
+							<div class="max-h-[640px] divide-y divide-gray-700/70 overflow-y-auto">
+								{#each deployments as dep (dep.id)}
+									<div class="py-3 first:pt-0">
+										<div class="flex flex-wrap items-start justify-between gap-2">
+											<button
+												type="button"
+												onclick={() => { expandedDeploymentId = expandedDeploymentId === dep.id ? null : dep.id; }}
+												aria-expanded={expandedDeploymentId === dep.id}
+												class="min-w-0 flex-1 cursor-pointer text-left"
+											>
+												<div class="flex flex-wrap items-center gap-2">
+													<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {deployStatusBadgeClass(dep.status)}">{dep.status}</span>
+													<span class="font-mono text-sm text-gray-200">{dep.commit_hash ? dep.commit_hash.slice(0, 8) : '—'}</span>
+													<span class="text-xs text-gray-400">{dep.branch || '-'}</span>
+													{#if dep.status === 'failed'}
+														<span class="text-xs text-red-400">{translate($language, 'wd.deploy.view_error')}</span>
+													{/if}
+												</div>
+												<p class="mt-1 text-xs text-gray-500">
+													{formatDate(dep.created_at)}{dep.duration_ms ? ` · ${formatDuration(dep.duration_ms)}` : ''}
+												</p>
+											</button>
+											<div class="flex shrink-0 items-center gap-1">
+												{#if dep.status === 'running'}
+													<button
+														onclick={() => stopDeployment(dep)}
+														class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'wd.deploy.stop')}
+													</button>
+												{/if}
+												{#if dep.status === 'pending'}
+													<button
+														onclick={() => cancelDeployment(dep)}
+														class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'wd.deploy.cancel')}
+													</button>
+												{/if}
+												{#if dep.status !== 'running'}
+													<button
+														onclick={() => deleteDeployment(dep)}
+														class="px-2.5 py-1 text-red-400 hover:bg-red-500/10 text-xs rounded transition-colors cursor-pointer"
+													>
+														{translate($language, 'wd.deploy.delete')}
+													</button>
+												{/if}
+											</div>
+										</div>
+										{#if expandedDeploymentId === dep.id}
+											<pre class="mt-2 text-xs bg-gray-950 rounded p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? translate($language, 'wd.deploy.failed_no_output') : translate($language, 'wd.deploy.no_output'))}</pre>
+										{/if}
+									</div>
+								{/each}
+							</div>
+						{/if}
+					</div>
 					</div>
 
 					<!-- Upload Files -->
@@ -2263,95 +2377,6 @@ import { toast } from '#lib/stores/toast.js';
 								{translate($language, 'wd.open_terminal')}
 							</button>
 						</div>
-					</div>
-
-					<!-- Deployment History -->
-					<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
-						<div class="flex items-center justify-between mb-4">
-							<h3 class="text-lg font-semibold text-white">{translate($language, 'wd.deploy.history')}</h3>
-							<button
-								onclick={loadDeployments}
-								disabled={deploymentsLoading}
-								class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
-							>
-								{deploymentsLoading ? translate($language, 'wd.loading_generic') : translate($language, 'wd.refresh')}
-							</button>
-						</div>
-
-						{#if deploymentsLoading && deployments.length === 0}
-							<div class="text-gray-400 text-sm">{translate($language, 'wd.deploy.loading')}</div>
-						{:else if deploymentsError}
-							<div class="p-3 bg-red-900/50 border border-red-700 rounded-lg text-red-300 text-sm">{deploymentsError}</div>
-						{:else if deployments.length === 0}
-							<div class="text-gray-400 text-sm">{translate($language, 'wd.deploy.empty')}</div>
-						{:else}
-							<div class="overflow-x-auto">
-								<table class="w-full">
-									<thead>
-										<tr class="border-b border-gray-700">
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.commit')}</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.branch')}</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.status')}</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.duration')}</th>
-											<th class="text-left px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.date')}</th>
-											<th class="text-right px-4 py-2 text-xs text-gray-400 uppercase tracking-wider font-medium">{translate($language, 'wd.th.actions')}</th>
-										</tr>
-									</thead>
-									<tbody class="divide-y divide-gray-700">
-										{#each deployments as dep}
-											<tr
-												class="hover:bg-gray-750 cursor-pointer"
-												onclick={() => { expandedDeploymentId = expandedDeploymentId === dep.id ? null : dep.id; }}
-											>
-												<td class="px-4 py-2 text-sm text-gray-200 font-mono">{dep.commit_hash ? dep.commit_hash.slice(0, 8) : '-'}</td>
-												<td class="px-4 py-2 text-sm text-gray-200">{dep.branch || '-'}</td>
-												<td class="px-4 py-2">
-													<span class="inline-block px-2 py-0.5 rounded text-xs font-medium {deployStatusBadgeClass(dep.status)}">{dep.status}</span>
-													{#if dep.status === 'failed'}
-														<span class="ml-2 text-xs text-red-400">{translate($language, 'wd.deploy.view_error')}</span>
-													{/if}
-												</td>
-												<td class="px-4 py-2 text-sm text-gray-400">{dep.duration_ms ? formatDuration(dep.duration_ms) : '-'}</td>
-												<td class="px-4 py-2 text-sm text-gray-400">{formatDate(dep.created_at)}</td>
-											<td class="px-4 py-2 text-right whitespace-nowrap">
-												{#if dep.status === 'running'}
-													<button
-														onclick={(e) => { e.stopPropagation(); stopDeployment(dep); }}
-														class="px-2.5 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														{translate($language, 'wd.deploy.stop')}
-													</button>
-												{/if}
-												{#if dep.status === 'pending'}
-													<button
-														onclick={(e) => { e.stopPropagation(); cancelDeployment(dep); }}
-														class="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded transition-colors cursor-pointer"
-													>
-														{translate($language, 'wd.deploy.cancel')}
-													</button>
-												{/if}
-												{#if dep.status !== 'running'}
-													<button
-														onclick={(e) => { e.stopPropagation(); deleteDeployment(dep); }}
-														class="ml-1 px-2.5 py-1 text-red-400 hover:bg-red-500/10 text-xs rounded transition-colors cursor-pointer"
-													>
-														{translate($language, 'wd.deploy.delete')}
-													</button>
-												{/if}
-											</td>
-											</tr>
-											{#if expandedDeploymentId === dep.id}
-												<tr>
-													<td colspan="6" class="px-4 py-2">
-														<pre class="text-xs bg-gray-950 rounded p-3 max-h-96 overflow-y-auto whitespace-pre-wrap font-mono {dep.status === 'failed' ? 'text-red-400' : 'text-gray-400'}">{dep.log || (dep.status === 'failed' ? translate($language, 'wd.deploy.failed_no_output') : translate($language, 'wd.deploy.no_output'))}</pre>
-													</td>
-												</tr>
-											{/if}
-										{/each}
-									</tbody>
-								</table>
-							</div>
-						{/if}
 					</div>
 				</div>
 
@@ -3097,6 +3122,39 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			</div>
 		</div>
 	</div>
+{/if}
+
+{#if deployConfirmOpen && website}
+	<Modal title={translate($language, 'wd.deploy.confirm_title')} onclose={() => (deployConfirmOpen = false)} size="lg" closeLabel={translate($language, 'wd.cancel')}>
+		<div class="space-y-4 text-sm text-gray-300">
+			<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-gray-900/60 px-3 py-2 text-xs">
+				<dt class="text-gray-500">{translate($language, 'wd.deploy.repo_url')}</dt>
+				<dd class="truncate font-mono text-gray-200" title={repoUrl}>{repoUrl}</dd>
+				<dt class="text-gray-500">{translate($language, 'wd.branch')}</dt>
+				<dd class="font-mono text-gray-200">{repoBranch || 'main'}</dd>
+			</dl>
+			<div>
+				<p class="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wd.deploy.confirm_steps')}</p>
+				<ol class="space-y-1.5">
+					{#each deploySteps as step, i (step.key)}
+						<li class="flex gap-2.5">
+							<span class="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold {step.warn ? 'bg-yellow-900/60 text-yellow-200' : 'bg-gray-700 text-gray-200'}">{i + 1}</span>
+							<span class={step.warn ? 'text-yellow-200' : ''}>{stepText(step)}</span>
+						</li>
+					{/each}
+				</ol>
+			</div>
+			<p class="rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2 text-xs text-gray-400">{translate($language, 'wd.deploy.confirm_not_included')}</p>
+		</div>
+		{#snippet footer()}
+			<button type="button" onclick={() => (deployConfirmOpen = false)} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600">
+				{translate($language, 'wd.cancel')}
+			</button>
+			<button type="button" onclick={deployNow} disabled={deploying} class="cursor-pointer rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50">
+				{translate($language, 'wd.deploy.now')}
+			</button>
+		{/snippet}
+	</Modal>
 {/if}
 
 {#if protectionReportOpen && protectionReport}
