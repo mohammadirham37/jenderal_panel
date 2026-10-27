@@ -485,6 +485,14 @@ func cmdServe() {
 	}()
 	sshAccountSvc.Start(bgCtx)
 
+	// Bring the shared WAF rules file up to date (audit logging for the
+	// per-site protection report) without waiting for a WAF toggle.
+	go func() {
+		if err := wafSvc.RefreshRules(bgCtx); err != nil {
+			logger.Warn("could not refresh WAF rules", "error", err)
+		}
+	}()
+
 	// Keep the in-kernel SMB server (ksmbd) from loading: the panel never
 	// serves SMB and ksmbd had unpatched remote code execution flaws.
 	go func() {

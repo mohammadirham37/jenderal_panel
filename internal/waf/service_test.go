@@ -381,3 +381,29 @@ func TestExcludedRulesSurviveTurningTheWAFOffAndOn(t *testing.T) {
 		t.Error("exclusions not restored when the WAF is switched back on")
 	}
 }
+
+func TestRefreshRulesAddsAuditLoggingOnce(t *testing.T) {
+	fake := newFakeExec()
+	fake.files[rulesFile] = "# old\nSecRuleEngine On\nSecAuditLog " + auditLog + "\n"
+	svc := &Service{exec: fake}
+	if err := svc.RefreshRules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"SecAuditEngine RelevantOnly", "SecAuditLogParts ABHZ", "SecRuleEngine On"} {
+		if !strings.Contains(fake.files[rulesFile], want) {
+			t.Errorf("rules file missing %q:\n%s", want, fake.files[rulesFile])
+		}
+	}
+	fake.calls = nil
+	if err := svc.RefreshRules(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.called("/usr/sbin/nginx") {
+		t.Error("an unchanged rules file must not reload nginx")
+	}
+
+	empty := &Service{exec: newFakeExec()}
+	if err := empty.RefreshRules(context.Background()); err != nil {
+		t.Errorf("a server without the WAF must be left alone: %v", err)
+	}
+}

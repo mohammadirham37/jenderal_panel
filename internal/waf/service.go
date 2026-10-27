@@ -339,6 +339,36 @@ func (f wafFiles) Remove(ctx context.Context, path string) error {
 	return f.s.runSudoOK(ctx, "rm", "-f", path)
 }
 
+// RefreshRules rewrites the shared WAF rules file when ModSecurity is in use
+// so settings added in a panel update (e.g. audit logging for the
+// protection report) reach servers without toggling the WAF. nginx is
+// reloaded only when the file changed.
+func (s *Service) RefreshRules(ctx context.Context) error {
+	current, ok := s.readFile(ctx, rulesFile)
+	if !ok {
+		return nil // WAF never enabled on this server
+	}
+	mode := ModeBlocking
+	if strings.Contains(current, "SecRuleEngine DetectionOnly") {
+		mode = ModeDetectionOnly
+	}
+	if err := s.writeRulesFile(ctx, mode); err != nil {
+		return err
+	}
+	if updated, ok := s.readFile(ctx, rulesFile); ok && updated == current {
+		return nil
+	}
+	if err := s.prepareAuditLog(ctx); err != nil {
+		return err
+	}
+	if err := s.reloadNginx(ctx); err != nil {
+		_ = s.writeFile(ctx, rulesFile, current)
+		_ = s.reloadNginx(ctx)
+		return err
+	}
+	return nil
+}
+
 // SetMode switches between blocking and detection-only operation.
 func (s *Service) SetMode(ctx context.Context, mode string) error {
 	if mode != ModeBlocking && mode != ModeDetectionOnly {
@@ -382,6 +412,14 @@ func (s *Service) writeRulesFile(ctx context.Context, mode string) error {
 	// Re-anchor the logs and temp dirs after the includes so ours win.
 	b.WriteString("# Keep ModSecurity state where the nginx worker can write.\n")
 	b.WriteString("SecAuditLog " + auditLog + "\n")
+	// Record blocked and failed requests with their rule messages (part H):
+	// the per-site protection report reads the rule that matched from
+	// here, since the site error log only keeps the anomaly-score denial.
+	// The stock config may be missing or have auditing off.
+	b.WriteString("SecAuditEngine RelevantOnly\n")
+	b.WriteString("SecAuditLogRelevantStatus \"^(?:5|4(?!04))\"\n")
+	b.WriteString("SecAuditLogParts ABHZ\n")
+	b.WriteString("SecAuditLogType Serial\n")
 	b.WriteString("SecTmpDir /tmp\n")
 	b.WriteString("SecDataDir /tmp\n")
 	if err := s.writeFile(ctx, rulesFile, b.String()); err != nil {
