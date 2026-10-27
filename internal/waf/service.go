@@ -157,7 +157,8 @@ type SiteProtection struct {
 	WAF bool `json:"waf"`
 	DoS bool `json:"dos"`
 	// ExcludedRules are CRS rule ids switched off for this website only,
-	// for false positives such as OAuth callbacks tripping 931130.
+	// for false positives such as Google login callbacks tripping 930120
+	// (the scope .../userinfo.profile matches the OS file name list).
 	ExcludedRules []string `json:"excluded_rules"`
 }
 

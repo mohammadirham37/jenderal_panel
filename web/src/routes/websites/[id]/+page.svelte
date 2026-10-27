@@ -2084,7 +2084,7 @@ import { toast } from '#lib/stores/toast.js';
 									</div>
 								{/if}
 								<form class="mt-2 flex gap-2" onsubmit={(e) => { e.preventDefault(); excludeRule(ruleToExclude); }}>
-									<input bind:value={ruleToExclude} inputmode="numeric" maxlength={7} placeholder="931130" aria-label={translate($language, 'wd.prot.rules_input')} class="w-32 rounded-md border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
+									<input bind:value={ruleToExclude} inputmode="numeric" maxlength={7} placeholder="930120" aria-label={translate($language, 'wd.prot.rules_input')} class="w-32 rounded-md border border-gray-600 bg-gray-900 px-2.5 py-1.5 font-mono text-xs text-gray-200 focus:border-blue-500 focus:outline-none" />
 									<button type="submit" disabled={rulesBusy || !/^[0-9]{1,7}$/.test(ruleToExclude.trim())} class="cursor-pointer rounded-md border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">{translate($language, 'wd.prot.rules_add')}</button>
 								</form>
 							</div>
