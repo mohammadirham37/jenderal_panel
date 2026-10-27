@@ -76,13 +76,15 @@ func (h *Handler) Stop(w http.ResponseWriter, r *http.Request) {
 }
 
 // Restart restarts the Nginx service.
+// The restart runs just after the response is sent, so a panel served
+// through nginx is not cut off mid-request; the client polls the status.
 func (h *Handler) Restart(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Restart(r.Context()); err != nil {
+	if err := h.svc.RestartDetached(r.Context(), nil); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 	h.logAction(r, "restart_nginx", "nginx", "restarted nginx")
-	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"status": "restarting"})
 }
 
 // Reload reloads the Nginx configuration.

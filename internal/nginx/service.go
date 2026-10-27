@@ -117,6 +117,34 @@ func (s *Service) Restart(ctx context.Context) error {
 	return s.systemctlAction(ctx, "restart")
 }
 
+// restartDelay lets the HTTP response leave before nginx goes down.
+var restartDelay = 750 * time.Millisecond
+
+// RestartDetached checks the configuration, then restarts nginx shortly
+// after returning. When the panel is reached through its domain, nginx is
+// the proxy carrying this very request: restarting it synchronously cut
+// the connection and the browser reported "Failed to fetch". A broken
+// configuration is still reported, because nginx would not come back.
+func (s *Service) RestartDetached(ctx context.Context, done func(error)) error {
+	ok, output, err := s.TestConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("nginx configuration test failed; not restarting: %s", strings.TrimSpace(output))
+	}
+	go func() {
+		time.Sleep(restartDelay)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := s.systemctlAction(ctx, "restart")
+		if done != nil {
+			done(err)
+		}
+	}()
+	return nil
+}
+
 // Reload reloads the Nginx service configuration.
 func (s *Service) Reload(ctx context.Context) error {
 	return s.systemctlAction(ctx, "reload")

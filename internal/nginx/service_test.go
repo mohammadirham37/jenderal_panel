@@ -491,3 +491,46 @@ func TestSplitLines(t *testing.T) {
 		t.Errorf("unexpected lines: %v", lines)
 	}
 }
+
+// Restarting nginx synchronously cut off the request when the panel is
+// served through nginx; the restart now runs after the response, and a
+// broken configuration is refused up front.
+func TestRestartDetachedChecksConfigAndRestartsAfterReturning(t *testing.T) {
+	saved := restartDelay
+	restartDelay = 0
+	t.Cleanup(func() { restartDelay = saved })
+
+	configOK := false
+	restarted := make(chan struct{}, 1)
+	svc := NewService(&executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			switch {
+			case name == "nginx":
+				if configOK {
+					return &executor.Result{}, nil
+				}
+				return &executor.Result{ExitCode: 1, Stderr: "nginx: [emerg] unknown directive"}, nil
+			case name == "systemctl" && len(args) > 0 && args[0] == "restart":
+				restarted <- struct{}{}
+			}
+			return &executor.Result{}, nil
+		},
+	}, nil)
+
+	if err := svc.RestartDetached(context.Background(), nil); err == nil {
+		t.Fatal("a broken configuration must be refused")
+	}
+	configOK = true
+	done := make(chan error, 1)
+	if err := svc.RestartDetached(context.Background(), func(err error) { done <- err }); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-restarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("nginx was not restarted")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

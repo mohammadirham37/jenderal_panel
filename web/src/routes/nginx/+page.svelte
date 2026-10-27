@@ -158,8 +158,43 @@ import { language, translate } from '#lib/stores/language.js';
 		reload: 'ngx.reloadFailed'
 	};
 
+	// The server restarts nginx just after answering. When the panel is
+	// reached through nginx, requests fail for a moment while it comes
+	// back, so poll the status and treat those failures as "not yet".
+	async function waitForNginx(): Promise<boolean> {
+		for (let attempt = 0; attempt < 20; attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+			try {
+				const s = await api.get<NginxStatus>('/api/v1/nginx/status');
+				if (s?.running) {
+					status = s;
+					return true;
+				}
+			} catch {
+				// nginx (and so the panel domain) is still coming back
+			}
+		}
+		return false;
+	}
+
 	async function nginxAction(action: string) {
 		actionInProgress = action;
+		if (action === 'restart') {
+			try {
+				await api.post('/api/v1/nginx/restart');
+				if (await waitForNginx()) {
+					toast.success(translate($language, NGINX_DONE.restart));
+				} else {
+					toast.error(translate($language, 'ngx.restartSlow'));
+					await loadStatus();
+				}
+			} catch (err) {
+				toast.error(err instanceof Error ? err.message : translate($language, NGINX_FAILED.restart));
+			} finally {
+				actionInProgress = null;
+			}
+			return;
+		}
 		try {
 			await api.post(`/api/v1/nginx/${action}`);
 			toast.success(translate($language, NGINX_DONE[action]));
