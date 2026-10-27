@@ -2073,6 +2073,30 @@ import { toast } from '#lib/stores/toast.js';
 							<div class="mt-3 rounded-lg border border-gray-700 bg-gray-900/40 p-3">
 								<p class="text-xs font-semibold text-gray-200">{translate($language, 'wd.prot.rules_title')}</p>
 								<p class="mt-0.5 text-[11px] text-gray-500">{translate($language, 'wd.prot.rules_hint')}</p>
+								<details class="mt-2 rounded-md border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-xs text-gray-300">
+									<summary class="cursor-pointer font-medium text-blue-300">{translate($language, 'wd.prot.oauth_title')}</summary>
+									<p class="mt-2 text-gray-400">{translate($language, 'wd.prot.oauth_why')}</p>
+									<ol class="mt-2 list-decimal space-y-1 pl-4 text-gray-400">
+										<li>{translate($language, 'wd.prot.oauth_step1')}</li>
+										<li>{translate($language, 'wd.prot.oauth_step2')}</li>
+										<li>{translate($language, 'wd.prot.oauth_step3')}</li>
+									</ol>
+									<p class="mt-2 font-medium text-gray-300">{translate($language, 'wd.prot.oauth_common')}</p>
+									<div class="mt-1 space-y-1.5">
+										{#each [{ id: '930120', key: 'wd.prot.oauth_rule_930120' }, { id: '931130', key: 'wd.prot.oauth_rule_931130' }] as known (known.id)}
+											<div class="flex flex-wrap items-center gap-2">
+												<code class="rounded bg-gray-800 px-1.5 py-0.5 font-mono text-gray-200">{known.id}</code>
+												<span class="min-w-0 flex-1 text-gray-400">{translate($language, known.key)}</span>
+												{#if (siteProtection?.excluded_rules ?? []).includes(known.id)}
+													<span class="text-[10px] text-green-400">{translate($language, 'wd.prot.rules_excluded')}</span>
+												{:else}
+													<button type="button" onclick={() => excludeRule(known.id)} disabled={rulesBusy} class="cursor-pointer rounded border border-gray-600 px-2 py-0.5 text-[11px] text-gray-200 hover:border-yellow-500 hover:text-yellow-300 disabled:opacity-50">{translate($language, 'wd.prot.rules_exclude')}</button>
+												{/if}
+											</div>
+										{/each}
+									</div>
+									<p class="mt-2 text-gray-500">{translate($language, 'wd.prot.oauth_safety')}</p>
+								</details>
 								{#if (siteProtection.excluded_rules ?? []).length > 0}
 									<div class="mt-2 flex flex-wrap gap-1.5">
 										{#each siteProtection.excluded_rules ?? [] as rule (rule)}
