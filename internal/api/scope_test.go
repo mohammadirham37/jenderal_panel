@@ -207,13 +207,16 @@ func TestServerLogsAndTaskListAreRestricted(t *testing.T) {
 	}
 }
 
-// The database engines are shared by every tenant, so their lifecycle is
-// not part of the user role's own-database permissions.
+// The database engines are shared by every tenant: installing, starting,
+// and stopping them is admin-only. A site owner may only restart one.
 func TestDatabaseEngineControlIsAdminOnly(t *testing.T) {
 	f := newScopeFixture(t)
+	if code := f.status(t, f.other, http.MethodPost, "/api/v1/databases/engines/mysql/restart"); code == http.StatusForbidden {
+		t.Error("a user-role account must be allowed to restart a database engine")
+	}
 	for _, path := range []string{
 		"/api/v1/databases/engines/mysql/stop",
-		"/api/v1/databases/engines/mysql/restart",
+		"/api/v1/databases/engines/mysql/start",
 		"/api/v1/databases/engines/postgresql/install",
 	} {
 		if code := f.status(t, f.other, http.MethodPost, path); code != http.StatusForbidden {

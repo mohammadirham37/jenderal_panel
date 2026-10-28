@@ -749,13 +749,16 @@ func NewRouter(deps Dependencies) http.Handler {
 			// Database Management
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/engines", dbHandler.ListEngines)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+			// Installing, starting, and stopping an engine affects every
+			// website's databases: admins only, whatever permissions a role
+			// is given. Site owners may restart a stuck engine.
+			r.With(auth.RequireRole(deps.RBAC, "admin"), auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/install", dbHandler.InstallEngine)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+			r.With(auth.RequireRole(deps.RBAC, "admin"), auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/start", dbHandler.StartEngine)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+			r.With(auth.RequireRole(deps.RBAC, "admin"), auth.RequirePermission(deps.RBAC, "databases.config")).
 				Post("/databases/engines/{engine}/stop", dbHandler.StopEngine)
-			r.With(auth.RequirePermission(deps.RBAC, "databases.config")).
+			r.With(auth.RequirePermission(deps.RBAC, "databases.restart")).
 				Post("/databases/engines/{engine}/restart", dbHandler.RestartEngine)
 			r.With(auth.RequirePermission(deps.RBAC, "databases.view")).
 				Get("/databases/engines/postgresql/pgvector", dbHandler.PgvectorStatus)

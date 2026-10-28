@@ -109,6 +109,10 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"databases.delete", "databases"},
 		{"databases.users", "databases"},
 		{"databases.config", "databases"},
+		// Restarting the database engines (not stopping or starting them):
+		// site owners may recover a stuck engine without being able to
+		// take every site's database down.
+		{"databases.restart", "databases"},
 		{"docker.view", "docker"},
 		{"docker.manage", "docker"},
 		{"backups.view", "backups"},
@@ -178,7 +182,7 @@ var userRolePermissions = []string{
 	"dashboard.view",
 	"websites.view", "websites.create", "websites.update", "websites.delete", "websites.suspend",
 	"deployments.view", "deployments.deploy",
-	"databases.view", "databases.create", "databases.delete", "databases.users",
+	"databases.view", "databases.create", "databases.delete", "databases.users", "databases.restart",
 	"backups.view", "backups.create", "backups.restore", "backups.delete",
 	"files.view", "files.manage",
 	"terminal.access",

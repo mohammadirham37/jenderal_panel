@@ -6,7 +6,7 @@
 	import Modal from '#lib/components/Modal.svelte';
 import { toast } from '#lib/stores/toast.js';
 	import { language, translate } from '#lib/stores/language.js';
-	import { hasPermission, permissions } from '#lib/stores/auth.js';
+	import { hasPermission, permissions, roles } from '#lib/stores/auth.js';
 
 	// ── Types ──────────────────────────────────────────────────────
 	interface EngineStatus {
@@ -492,6 +492,11 @@ import { toast } from '#lib/stores/toast.js';
 		}
 	}
 
+	// Engines are shared by every website: only admins install, start, or
+	// stop them; site owners may restart a stuck engine.
+	const canControlEngines = $derived($roles.some((r) => r.name === 'admin'));
+	const canRestartEngines = $derived(hasPermission($permissions, 'databases.restart'));
+
 	async function engineAction(engineName: string, action: 'start' | 'stop' | 'restart') {
 		actionInProgress = `${action}-${engineName}`;
 		try {
@@ -740,7 +745,7 @@ import { toast } from '#lib/stores/toast.js';
 							</div>
 						</div>
 						<div class="mt-4 flex items-center gap-2">
-							{#if !eng.installed}
+							{#if !eng.installed && canControlEngines}
 								<button
 									type="button"
 									onclick={() => installEngine(eng.name)}
@@ -749,8 +754,10 @@ import { toast } from '#lib/stores/toast.js';
 								>
 									{actionInProgress === `install-${eng.name}` ? translate($language, 'db.installing') : translate($language, 'db.install')}
 								</button>
-							{:else}
-								{#if !eng.running}
+							{:else if eng.installed}
+								{#if !canControlEngines}
+									<!-- start/stop are admin-only -->
+								{:else if !eng.running}
 									<button
 										type="button"
 										onclick={() => engineAction(eng.name, 'start')}
@@ -769,6 +776,7 @@ import { toast } from '#lib/stores/toast.js';
 										{actionInProgress === `stop-${eng.name}` ? translate($language, 'db.stopping') : translate($language, 'db.stop')}
 									</button>
 								{/if}
+								{#if canRestartEngines}
 								<button
 									type="button"
 									onclick={() => engineAction(eng.name, 'restart')}
@@ -777,6 +785,7 @@ import { toast } from '#lib/stores/toast.js';
 								>
 									{actionInProgress === `restart-${eng.name}` ? translate($language, 'db.restarting') : translate($language, 'db.restart')}
 								</button>
+								{/if}
 							{/if}
 						</div>
 							{#if eng.name === 'postgresql' && eng.installed}
