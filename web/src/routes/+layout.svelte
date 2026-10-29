@@ -10,6 +10,7 @@
 	import { language, translate } from '#lib/stores/language.js';
 	import { serverHostname } from '#lib/stores/server-host.js';
 	import { formatPageTitle, pageTitleKey } from '#lib/page-title.js';
+	import { filterNavGroups } from '#lib/nav-search.js';
 	import { api } from '#lib/api.js';
 	import type { ServerInfo } from '#lib/types.js';
 	import '../app.css';
@@ -33,6 +34,8 @@
 		icon: string;
 		permission?: string;
 		adminOnly?: boolean;
+		/** Extra words the sidebar search matches (both languages). */
+		keywords?: string[];
 	}
 
 	const navGroups: { key: string; items: NavItem[] }[] = [
@@ -46,48 +49,48 @@
 		{
 			key: 'nav.group.web',
 			items: [
-				{ href: '/websites', permission: 'websites.view', labelKey: 'nav.websites', icon: 'globe-alt' },
-				{ href: '/php', permission: 'php.view', labelKey: 'nav.php', icon: 'code' },
-				{ href: '/nodejs', permission: 'nodejs.view', labelKey: 'nav.nodejs', icon: 'terminal' },
+				{ href: '/websites', permission: 'websites.view', labelKey: 'nav.websites', icon: 'globe-alt', keywords: ['ssl', 'domain', 'deploy', 'situs', 'laravel', 'wordpress'] },
+				{ href: '/php', permission: 'php.view', labelKey: 'nav.php', icon: 'code', keywords: ['fpm', 'composer', 'versi'] },
+				{ href: '/nodejs', permission: 'nodejs.view', labelKey: 'nav.nodejs', icon: 'terminal', keywords: ['node', 'npm', 'nvm'] },
 			]
 		},
 		{
 			key: 'nav.group.infrastructure',
 			items: [
-				{ href: '/server', permission: 'server.view', labelKey: 'nav.server', icon: 'server' },
-				{ href: '/disk', permission: 'disk.view', labelKey: 'nav.disk', icon: 'disk' },
-				{ href: '/services', permission: 'services.view', labelKey: 'nav.services', icon: 'layers' },
-				{ href: '/cloudflared', permission: 'tunnel.view', labelKey: 'nav.cloudflared', icon: 'cloud' },
-				{ href: '/nginx', permission: 'nginx.view', labelKey: 'nav.nginx', icon: 'globe' },
-				{ href: '/databases', permission: 'databases.view', labelKey: 'nav.databases', icon: 'database' },
-				{ href: '/db-config', permission: 'databases.config', labelKey: 'nav.db_config', icon: 'database' },
-				{ href: '/docker', permission: 'docker.view', labelKey: 'nav.docker', icon: 'cube' },
+				{ href: '/server', permission: 'server.view', labelKey: 'nav.server', icon: 'server', keywords: ['cpu', 'ram', 'memory', 'hostname', 'timezone', 'zona waktu', 'uptime'] },
+				{ href: '/disk', permission: 'disk.view', labelKey: 'nav.disk', icon: 'disk', keywords: ['storage', 'penyimpanan', 'cleanup', 'bersihkan'] },
+				{ href: '/services', permission: 'services.view', labelKey: 'nav.services', icon: 'layers', keywords: ['systemd', 'restart', 'layanan'] },
+				{ href: '/cloudflared', permission: 'tunnel.view', labelKey: 'nav.cloudflared', icon: 'cloud', keywords: ['cloudflare', 'tunnel'] },
+				{ href: '/nginx', permission: 'nginx.view', labelKey: 'nav.nginx', icon: 'globe', keywords: ['vhost', 'web server', 'config'] },
+				{ href: '/databases', permission: 'databases.view', labelKey: 'nav.databases', icon: 'database', keywords: ['mysql', 'mariadb', 'postgresql', 'postgres', 'pgvector'] },
+				{ href: '/db-config', permission: 'databases.config', labelKey: 'nav.db_config', icon: 'database', keywords: ['my.cnf', 'postgresql.conf', 'tuning'] },
+				{ href: '/docker', permission: 'docker.view', labelKey: 'nav.docker', icon: 'cube', keywords: ['container', 'kontainer', 'compose'] },
 			]
 		},
 		{
 			key: 'nav.group.security',
 			items: [
-				{ href: '/security', permission: 'security.view', labelKey: 'nav.security_center', icon: 'shield' },
-				{ href: '/users', permission: 'users.view', labelKey: 'nav.users', icon: 'users' },
-				{ href: '/alerts', permission: 'alerts.view', labelKey: 'nav.alerts', icon: 'bell' },
-				{ href: '/notifications', permission: 'notifications.view', labelKey: 'nav.notifications', icon: 'megaphone' },
+				{ href: '/security', permission: 'security.view', labelKey: 'nav.security_center', icon: 'shield', keywords: ['waf', 'firewall', 'fail2ban', 'malware', 'ddos', 'dos', 'keamanan', 'ufw'] },
+				{ href: '/users', permission: 'users.view', labelKey: 'nav.users', icon: 'users', keywords: ['akun', 'account', 'role', 'pengguna'] },
+				{ href: '/alerts', permission: 'alerts.view', labelKey: 'nav.alerts', icon: 'bell', keywords: ['monitoring', 'peringatan'] },
+				{ href: '/notifications', permission: 'notifications.view', labelKey: 'nav.notifications', icon: 'megaphone', keywords: ['email', 'telegram', 'webhook', 'notifikasi'] },
 			]
 		},
 		{
 			key: 'nav.group.operations',
 			items: [
-				{ href: '/backups', permission: 'backups.view', labelKey: 'nav.backups', icon: 'archive' },
-				{ href: '/processes', permission: 'processes.view', labelKey: 'nav.processes', icon: 'activity' },
-				{ href: '/terminal', labelKey: 'nav.terminal', icon: 'command-line', adminOnly: true },
-				{ href: '/supervisor', permission: 'supervisor.view', labelKey: 'nav.supervisor', icon: 'cpu' },
+				{ href: '/backups', permission: 'backups.view', labelKey: 'nav.backups', icon: 'archive', keywords: ['restore', 'cadangan', 's3'] },
+				{ href: '/processes', permission: 'processes.view', labelKey: 'nav.processes', icon: 'activity', keywords: ['kill', 'proses', 'top'] },
+				{ href: '/terminal', labelKey: 'nav.terminal', icon: 'command-line', adminOnly: true, keywords: ['shell', 'ssh', 'console', 'konsol'] },
+				{ href: '/supervisor', permission: 'supervisor.view', labelKey: 'nav.supervisor', icon: 'cpu', keywords: ['queue', 'worker', 'antrian'] },
 			]
 		},
 		{
 			key: 'nav.group.system',
 			items: [
-				{ href: '/update', permission: 'update.view', labelKey: 'nav.update', icon: 'arrow-path' },
-				{ href: '/audit-logs', permission: 'audit.view', labelKey: 'nav.audit', icon: 'file-text' },
-				{ href: '/settings', permission: 'settings.view', labelKey: 'nav.settings', icon: 'settings' },
+				{ href: '/update', permission: 'update.view', labelKey: 'nav.update', icon: 'arrow-path', keywords: ['upgrade', 'versi', 'pembaruan'] },
+				{ href: '/audit-logs', permission: 'audit.view', labelKey: 'nav.audit', icon: 'file-text', keywords: ['log', 'riwayat', 'history', 'aktivitas'] },
+				{ href: '/settings', permission: 'settings.view', labelKey: 'nav.settings', icon: 'settings', keywords: ['2fa', 'totp', 'password', 'kata sandi', 'pengaturan', 'domain panel'] },
 			]
 		}
 	];
@@ -115,6 +118,50 @@
 			.map((group) => ({ ...group, items: group.items.filter(navItemVisible) }))
 			.filter((group) => group.items.length > 0)
 	);
+
+	// Sidebar menu search (Ctrl/Cmd+K focuses it, Enter opens the first
+	// match, Escape clears).
+	let navQuery = $state('');
+	let navSearchInput: HTMLInputElement | undefined = $state();
+	const shownNavGroups = $derived(
+		filterNavGroups(visibleNavGroups, navQuery, (key: string) => translate($language, key))
+	);
+
+	async function focusNavSearch() {
+		if (isMobile) mobileSidebarOpen = true;
+		else sidebarOpen = true;
+		await tick();
+		navSearchInput?.focus();
+		navSearchInput?.select();
+	}
+
+	function onNavSearchKey(e: KeyboardEvent) {
+		if (e.key === 'Escape') {
+			navQuery = '';
+			navSearchInput?.blur();
+		} else if (e.key === 'Enter') {
+			const first = shownNavGroups[0]?.items[0];
+			if (first) {
+				e.preventDefault();
+				navQuery = '';
+				mobileSidebarOpen = false;
+				void goto(first.href);
+			}
+		}
+	}
+
+	const navSearchShortcut = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K';
+
+	function onGlobalKey(e: KeyboardEvent) {
+		if (!$isAuthenticated || page.url.pathname === '/login') return;
+		if (!(e.key === 'k' || e.key === 'K') || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+		// Leave the shortcut to editors and the terminal (Ctrl+K kills the
+		// line in a shell).
+		const target = e.target as HTMLElement | null;
+		if (target && target !== navSearchInput && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+		e.preventDefault();
+		void focusNavSearch();
+	}
 
 	function isActive(href: string): boolean {
 		return page.url.pathname === href || page.url.pathname.startsWith(href + '/');
@@ -158,6 +205,7 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		onGlobalKey(event);
 		if (event.key === 'Escape') {
 			if (showLogoutConfirm) {
 				showLogoutConfirm = false;
@@ -293,7 +341,45 @@
 			</div>
 
 			<nav class="flex-1 overflow-y-auto px-2 py-2">
-				{#each visibleNavGroups as group}
+				{#if sidebarExpanded}
+					<div class="px-1 pb-1 pt-1">
+						<div class="relative">
+							<svg class="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true">
+								<path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" />
+							</svg>
+							<input
+								type="search"
+								bind:this={navSearchInput}
+								bind:value={navQuery}
+								onkeydown={onNavSearchKey}
+								placeholder={translate($language, 'nav.search_placeholder')}
+								aria-label={translate($language, 'nav.search_label')}
+								autocomplete="off"
+								spellcheck="false"
+								class="w-full rounded-lg border border-white/10 bg-white/5 py-1.5 pl-8 pr-12 text-sm text-gray-200 placeholder-gray-500 outline-none transition focus:border-blue-500/60 focus:bg-white/10"
+							/>
+							{#if !navQuery}
+								<kbd class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-white/10 px-1 font-sans text-[10px] text-gray-500">{navSearchShortcut}</kbd>
+							{/if}
+						</div>
+					</div>
+				{:else}
+					<button
+						type="button"
+						onclick={focusNavSearch}
+						title={translate($language, 'nav.search_label')}
+						aria-label={translate($language, 'nav.search_label')}
+						class="mx-auto mb-1 flex cursor-pointer items-center justify-center rounded-xl px-3 py-2 text-gray-400 transition hover:bg-white/5 hover:text-gray-100"
+					>
+						<svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" aria-hidden="true">
+							<path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.35-4.35M17 10.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0Z" />
+						</svg>
+					</button>
+				{/if}
+				{#if navQuery && shownNavGroups.length === 0}
+					<p class="px-3 py-4 text-xs text-gray-500">{translate($language, 'nav.search_empty')}</p>
+				{/if}
+				{#each shownNavGroups as group}
 					{#if sidebarExpanded}
 						<div class="px-3 pt-4 pb-1">
 							<span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -306,7 +392,7 @@
 					{#each group.items as item}
 						<a
 							href={item.href}
-							onclick={() => (mobileSidebarOpen = false)}
+							onclick={() => { mobileSidebarOpen = false; navQuery = ''; }}
 							class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all
 							{isActive(item.href)
 								? 'bg-blue-500/15 text-blue-100 shadow-[inset_0_0_0_1px_rgba(45,212,191,0.16)]'
