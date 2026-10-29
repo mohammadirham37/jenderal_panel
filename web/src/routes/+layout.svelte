@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from 'svelte';
-	import { goto } from '$app/navigation';
+	import { afterNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import LogoMark from '#lib/components/LogoMark.svelte';
 	import ThemeToggle from '#lib/components/ThemeToggle.svelte';
@@ -126,6 +126,13 @@
 	const shownNavGroups = $derived(
 		filterNavGroups(visibleNavGroups, navQuery, (key: string) => translate($language, key))
 	);
+
+	// Clear the search once the clicked page has opened. Clearing it in the
+	// click handler re-rendered the menu before the router read the link,
+	// so the click landed on whichever item took that spot.
+	afterNavigate(() => {
+		navQuery = '';
+	});
 
 	async function focusNavSearch() {
 		if (isMobile) mobileSidebarOpen = true;
@@ -379,7 +386,7 @@
 				{#if navQuery && shownNavGroups.length === 0}
 					<p class="px-3 py-4 text-xs text-gray-500">{translate($language, 'nav.search_empty')}</p>
 				{/if}
-				{#each shownNavGroups as group}
+				{#each shownNavGroups as group (group.key)}
 					{#if sidebarExpanded}
 						<div class="px-3 pt-4 pb-1">
 							<span class="text-[10px] font-semibold uppercase tracking-[0.16em] text-gray-400">
@@ -389,10 +396,10 @@
 					{:else}
 						<div class="mx-2 border-t border-white/5 pb-1 pt-3"></div>
 					{/if}
-					{#each group.items as item}
+					{#each group.items as item (item.href)}
 						<a
 							href={item.href}
-							onclick={() => { mobileSidebarOpen = false; navQuery = ''; }}
+							onclick={() => (mobileSidebarOpen = false)}
 							class="flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition-all
 							{isActive(item.href)
 								? 'bg-blue-500/15 text-blue-100 shadow-[inset_0_0_0_1px_rgba(45,212,191,0.16)]'
