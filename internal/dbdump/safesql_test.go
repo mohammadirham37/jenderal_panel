@@ -82,3 +82,32 @@ func TestSafeSQLReaderKeepsColumnNamesInsideStatements(t *testing.T) {
 		t.Fatalf("identifier at line start rejected: %v", err)
 	}
 }
+
+// pg_dump from the August 2025 security releases wraps the dump in
+// \restrict / \unrestrict; those lines are dropped, everything else passes.
+func TestSafeSQLReaderDropsPgDumpRestrictLines(t *testing.T) {
+	dump := "--\n-- PostgreSQL database dump\n--\n\n\\restrict 4hT7mWqP9cBz2LkV8xYnR3sD\n\n" +
+		"SET statement_timeout = 0;\nCREATE TABLE public.t (id integer);\n" +
+		"COPY public.t (id) FROM stdin;\n1\n\\.\n\n\\unrestrict 4hT7mWqP9cBz2LkV8xYnR3sD\n"
+	out, err := readAll(t, "postgresql", dump)
+	if err != nil {
+		t.Fatalf("pg_dump output with \\restrict rejected: %v", err)
+	}
+	if strings.Contains(out, "restrict") {
+		t.Errorf("restrict lines must be dropped:\n%s", out)
+	}
+	if !strings.Contains(out, "CREATE TABLE public.t") || !strings.Contains(out, "COPY public.t") {
+		t.Errorf("SQL lost:\n%s", out)
+	}
+
+	// Other client commands stay refused, including look-alikes.
+	for _, bad := range []string{"\\restrict key; \\! id\n", "\\restrict\n", "\\! id\n", "\\copy t to '/tmp/x'\n"} {
+		if _, err := readAll(t, "postgresql", bad); err == nil {
+			t.Errorf("%q must be rejected", bad)
+		}
+	}
+	// MySQL dumps get no such exception.
+	if _, err := readAll(t, "mysql", "\\restrict abc\n"); err == nil {
+		t.Error("mysql must not accept \\restrict")
+	}
+}

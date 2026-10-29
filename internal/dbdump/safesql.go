@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
@@ -24,6 +25,13 @@ var mysqlClientCommands = map[string]bool{
 	"system": true, "source": true, "tee": true, "pager": true,
 	"edit": true, "shell": true,
 }
+
+// pgRestrictLine matches the "\restrict <key>" / "\unrestrict <key>" lines
+// pg_dump writes since the August 2025 security releases (CVE-2025-8714).
+// They switch psql into a mode that refuses every other client command,
+// which this reader already enforces, so they are dropped from the stream
+// instead of rejected; an older psql would not understand them anyway.
+var pgRestrictLine = regexp.MustCompile(`^\\(?:un)?restrict [A-Za-z0-9]+$`)
 
 // NewSafeSQLReader returns a reader over dump that fails with a validation
 // error when the dump contains a client command for the engine's CLI.
@@ -59,6 +67,9 @@ func (r *safeSQLReader) Read(p []byte) (int, error) {
 		r.line++
 		if err != nil && err != io.EOF {
 			r.err = err
+		}
+		if r.engine == "postgresql" && r.statementStart && pgRestrictLine.MatchString(strings.TrimSpace(string(line))) {
+			line = []byte("\n")
 		}
 		if blocked := r.check(string(line)); blocked != "" {
 			r.err = model.NewValidationError(fmt.Sprintf(
