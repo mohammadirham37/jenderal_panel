@@ -128,3 +128,21 @@ export function utcOffsetLabel(date, timezone) {
 		return '';
 	}
 }
+
+/**
+ * Disk use as df reports it: used / (used + available). ext4 keeps a root
+ * reserve (usually 5%) that normal processes cannot write, so dividing by
+ * the raw size understated how full the disk is. Without the available
+ * figure (stored history) it falls back to used / total.
+ * @param {number} used
+ * @param {number} total
+ * @param {number} [avail]
+ */
+export function diskPercent(used, total, avail) {
+	if (!Number.isFinite(used) || used < 0) return null;
+	if (Number.isFinite(avail) && /** @type {number} */ (avail) > 0) {
+		return Math.min(100, Math.ceil((used * 100) / (used + /** @type {number} */ (avail))));
+	}
+	if (!Number.isFinite(total) || total <= 0) return null;
+	return Math.min(100, Math.round((used / total) * 100));
+}

@@ -4,6 +4,7 @@ import {
 	formatBytes,
 	formatServerTime,
 	formatUptime,
+	diskPercent,
 	uptimeSeconds,
 	cleanUptimeText,
 	isValidHostname,
@@ -51,4 +52,13 @@ test('server time helpers tolerate unknown zones', () => {
 	assert.equal(utcOffsetLabel(date, 'Not/AZone'), '');
 	assert.equal(formatServerTime(date, 'Not/AZone'), null);
 	assert.match(formatServerTime(date, 'Asia/Jakarta', 'en-GB') || '', /07:00:00/);
+});
+
+test('diskPercent matches df (root reserve excluded)', () => {
+	// 100 GB disk, 60 GB used, 35 GB available to users (5 GB reserved).
+	const GB = 1e9;
+	assert.equal(diskPercent(60 * GB, 100 * GB, 35 * GB), 64); // df: 60/95 = 63.2% -> 64%
+	assert.equal(diskPercent(60 * GB, 100 * GB), 60); // history without avail
+	assert.equal(diskPercent(95 * GB, 100 * GB, 0.0001), 100);
+	assert.equal(diskPercent(NaN, 100), null);
 });

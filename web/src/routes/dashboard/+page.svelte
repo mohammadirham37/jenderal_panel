@@ -5,6 +5,7 @@
 	import { language, translate } from '#lib/stores/language.js';
 	import { permissions, hasPermission, roles } from '#lib/stores/auth.js';
 	import type { DashboardData, ServerInfo, ServerMetrics, ServiceStatus } from '#lib/types.js';
+	import { diskPercent } from '#lib/server-info.js';
 
 	interface SSLCertLite {
 		id: string;
@@ -255,7 +256,8 @@
 
 	let cpuValue = $derived(m && finite(m.cpu) !== null ? Math.min(Math.max(Math.round(m.cpu), 0), 100) : null);
 	let ramValue = $derived(m && finite(m.ram_total) ? pct(m.ram_used, m.ram_total) : null);
-	let diskValue = $derived(m && finite(m.disk_total) ? pct(m.disk_used, m.disk_total) : null);
+	// Same basis as df and the Disk page: used / (used + available).
+	let diskValue = $derived(m && finite(m.disk_total) ? diskPercent(m.disk_used, m.disk_total, m.disk_avail) : null);
 
 	let cpuSeries = $derived(history.map((h) => (finite(h.cpu) === null ? 0 : Math.min(Math.round(h.cpu), 100))));
 	let ramSeries = $derived(history.map((h) => pct(h.ram_used, h.ram_total)));

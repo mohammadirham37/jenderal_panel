@@ -78,13 +78,16 @@ type Setting struct {
 }
 
 type ServerMetrics struct {
-	CPU       float64       `json:"cpu"`
-	RAMUsed   uint64        `json:"ram_used"`
-	RAMTotal  uint64        `json:"ram_total"`
-	SwapUsed  uint64        `json:"swap_used"`
-	SwapTotal uint64        `json:"swap_total"`
-	DiskUsed  uint64        `json:"disk_used"`
-	DiskTotal uint64        `json:"disk_total"`
+	CPU       float64 `json:"cpu"`
+	RAMUsed   uint64  `json:"ram_used"`
+	RAMTotal  uint64  `json:"ram_total"`
+	SwapUsed  uint64  `json:"swap_used"`
+	SwapTotal uint64  `json:"swap_total"`
+	DiskUsed  uint64  `json:"disk_used"`
+	DiskTotal uint64  `json:"disk_total"`
+	// DiskAvail is the space non-root processes can still use (df "Avail").
+	// It is live only; stored history rows leave it 0.
+	DiskAvail uint64        `json:"disk_avail,omitempty"`
 	Load1     float64       `json:"load_1"`
 	Load5     float64       `json:"load_5"`
 	Load15    float64       `json:"load_15"`
@@ -170,41 +173,41 @@ type NetworkInterface struct {
 }
 
 type Website struct {
-	ID                 string    `json:"id"`
-	Domain             string    `json:"domain"`
-	AppType            string    `json:"app_type"`
-	PHPVersion         string    `json:"php_version"`
-	NodeVersion        string    `json:"node_version"`
-	DocumentRoot       string    `json:"document_root"`
-	WebUser            string    `json:"web_user"`
-	Status             string    `json:"status"`
-	ErrorMessage       string    `json:"error_message"`
-	SSLEnabled         bool      `json:"ssl_enabled"`
-	ForceHTTPS         bool      `json:"force_https"`
-	Framework          string    `json:"framework"`
-	FrameworkVersion   string    `json:"framework_version"`
-	FrontendStack      string    `json:"frontend_stack"`
-	InertiaAdapter     string    `json:"inertia_adapter"`
-	ProjectVariant     string    `json:"project_variant"`
-	SetupMode          string    `json:"setup_mode"`
-	ProvisionStage     string    `json:"provision_stage"`
-	ProvisionLog       string    `json:"provision_log"`
-	NginxProfile       string    `json:"nginx_profile"`
-	OctaneEnabled      bool      `json:"octane_enabled"`
-	OctanePort         int       `json:"octane_port"`
-	OctaneWorkers      int       `json:"octane_workers"`
-	GitRepo            string    `json:"git_repo"`
-	GitBranch          string    `json:"git_branch"`
-	AppRuntime         string    `json:"app_runtime"`
-	AppPort            int       `json:"app_port"`
-	AppStartCommand    string    `json:"app_start_command"`
-	AppBuildCommand    string    `json:"app_build_command"`
-	ProxyScheme        string    `json:"proxy_scheme"`
-	ProxyHost          string    `json:"proxy_host"`
-	ProxyPort          int       `json:"proxy_port"`
-	DeployWebhookToken string    `json:"deploy_webhook_token,omitempty"`
-	CreatedBy          string    `json:"created_by"`
-	OwnerEmail         string    `json:"owner_email,omitempty"`
+	ID                 string `json:"id"`
+	Domain             string `json:"domain"`
+	AppType            string `json:"app_type"`
+	PHPVersion         string `json:"php_version"`
+	NodeVersion        string `json:"node_version"`
+	DocumentRoot       string `json:"document_root"`
+	WebUser            string `json:"web_user"`
+	Status             string `json:"status"`
+	ErrorMessage       string `json:"error_message"`
+	SSLEnabled         bool   `json:"ssl_enabled"`
+	ForceHTTPS         bool   `json:"force_https"`
+	Framework          string `json:"framework"`
+	FrameworkVersion   string `json:"framework_version"`
+	FrontendStack      string `json:"frontend_stack"`
+	InertiaAdapter     string `json:"inertia_adapter"`
+	ProjectVariant     string `json:"project_variant"`
+	SetupMode          string `json:"setup_mode"`
+	ProvisionStage     string `json:"provision_stage"`
+	ProvisionLog       string `json:"provision_log"`
+	NginxProfile       string `json:"nginx_profile"`
+	OctaneEnabled      bool   `json:"octane_enabled"`
+	OctanePort         int    `json:"octane_port"`
+	OctaneWorkers      int    `json:"octane_workers"`
+	GitRepo            string `json:"git_repo"`
+	GitBranch          string `json:"git_branch"`
+	AppRuntime         string `json:"app_runtime"`
+	AppPort            int    `json:"app_port"`
+	AppStartCommand    string `json:"app_start_command"`
+	AppBuildCommand    string `json:"app_build_command"`
+	ProxyScheme        string `json:"proxy_scheme"`
+	ProxyHost          string `json:"proxy_host"`
+	ProxyPort          int    `json:"proxy_port"`
+	DeployWebhookToken string `json:"deploy_webhook_token,omitempty"`
+	CreatedBy          string `json:"created_by"`
+	OwnerEmail         string `json:"owner_email,omitempty"`
 	// BandwidthBytes is the traffic served this month (UTC), accumulated
 	// from access logs by the traffic collector. Populated on list queries.
 	BandwidthBytes int64     `json:"bandwidth_bytes"`
@@ -470,10 +473,10 @@ type CommitInfo struct {
 	Message string `json:"message"`
 	// Body is the commit message after the subject line; empty for
 	// subject-only commits.
-	Body    string `json:"body,omitempty"`
-	Author  string `json:"author"`
-	Date    string `json:"date"`
-	URL     string `json:"url"`
+	Body   string `json:"body,omitempty"`
+	Author string `json:"author"`
+	Date   string `json:"date"`
+	URL    string `json:"url"`
 }
 
 type ServerInfo struct {

@@ -134,7 +134,7 @@ func (mc *MetricsCollector) cleanup(ctx context.Context) {
 func (mc *MetricsCollector) collect() model.ServerMetrics {
 	ramUsed, ramTotal := readMemory()
 	swapUsed, swapTotal := readSwap()
-	diskUsed, diskTotal := readDisk()
+	diskUsed, diskTotal, diskAvail := readDisk()
 	load1, load5, load15 := readLoadAvg()
 	netRx, netTx := readNetwork()
 
@@ -146,6 +146,7 @@ func (mc *MetricsCollector) collect() model.ServerMetrics {
 		SwapTotal: swapTotal,
 		DiskUsed:  diskUsed,
 		DiskTotal: diskTotal,
+		DiskAvail: diskAvail,
 		Load1:     load1,
 		Load5:     load5,
 		Load15:    load15,

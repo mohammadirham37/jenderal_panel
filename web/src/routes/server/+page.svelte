@@ -12,6 +12,7 @@
 		formatBytes,
 		formatServerTime,
 		formatUptime,
+		diskPercent,
 		uptimeSeconds,
 		cleanUptimeText,
 		isValidHostname,
@@ -78,7 +79,7 @@
 	let cpuPct = $derived(m ? Math.min(Math.max(Math.round(m.cpu), 0), 100) : null);
 	let ramPct = $derived(m && m.ram_total > 0 ? Math.round((m.ram_used / m.ram_total) * 100) : null);
 	let swapPct = $derived(m && m.swap_total > 0 ? Math.round((m.swap_used / m.swap_total) * 100) : null);
-	let diskPct = $derived(m && m.disk_total > 0 ? Math.round((m.disk_used / m.disk_total) * 100) : null);
+	let diskPct = $derived(m && m.disk_total > 0 ? diskPercent(m.disk_used, m.disk_total, m.disk_avail) : null);
 	let loadPct = $derived(m ? loadPercent(m.load_1, cores) : null);
 	// Metrics carry nanoseconds; the boot time follows from the uptime.
 	let uptimeSecs = $derived(m ? uptimeSeconds(m.uptime) : 0);

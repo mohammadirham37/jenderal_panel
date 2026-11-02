@@ -146,15 +146,19 @@ func parseMeminfo(content string) map[string]uint64 {
 	return result
 }
 
-func readDisk() (used, total uint64) {
+// readDisk reports the root filesystem like df: used is everything not
+// free, avail is what non-root processes can still write (root keeps a
+// reserve, usually 5%, on ext4).
+func readDisk() (used, total, avail uint64) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs("/", &stat); err != nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	total = stat.Blocks * uint64(stat.Bsize)
 	free := stat.Bfree * uint64(stat.Bsize)
 	used = total - free
-	return used, total
+	avail = stat.Bavail * uint64(stat.Bsize)
+	return used, total, avail
 }
 
 func readLoadAvg() (load1, load5, load15 float64) {

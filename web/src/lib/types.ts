@@ -96,6 +96,7 @@ export interface ServerMetrics {
 	swap_total: number;
 	disk_used: number;
 	disk_total: number;
+	disk_avail?: number;
 	load_1: number;
 	load_5: number;
 	load_15: number;
