@@ -13,6 +13,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/phpcli"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -337,10 +338,10 @@ func (s *Service) recordTestResult(ctx context.Context, id, status string) {
 // panel), and installs the website's crontab via crontab(1).
 func (s *Service) rebuildCrontab(ctx context.Context, websiteID string) error {
 	// Resolve web_user for this website.
-	var webUser string
+	var webUser, phpVersion string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT web_user FROM websites WHERE id = ?`, websiteID,
-	).Scan(&webUser)
+		`SELECT web_user, COALESCE(php_version, '') FROM websites WHERE id = ?`, websiteID,
+	).Scan(&webUser, &phpVersion)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return model.NewDomainError("NOT_FOUND", "website not found", nil)
@@ -390,6 +391,13 @@ func (s *Service) rebuildCrontab(ctx context.Context, websiteID string) error {
 	content := strings.Join(lines, "\n")
 	if content != "" {
 		content += "\n"
+		// Jobs of a PHP site run "php" with the site's version, not the
+		// server-wide default (cron's own PATH is /usr/bin:/bin).
+		if phpVersion != "" {
+			if err := phpcli.EnsureSiteShim(ctx, s.exec, webUser, phpVersion); err == nil {
+				content = "PATH=" + phpcli.PathPrefix(webUser) + "/usr/local/bin:/usr/bin:/bin\n" + content
+			}
+		}
 	}
 
 	// Stream the crontab through stdin: piping it through echo with a quoted

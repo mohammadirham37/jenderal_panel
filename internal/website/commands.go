@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/phpcli"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -319,6 +320,39 @@ func usesNvmRuntime(binary string) bool {
 	}
 }
 
+// sitePHPPath puts the website's PHP version first on PATH for PHP sites,
+// so php, composer, and artisan run with the version the site uses rather
+// than the server-wide default (see internal/phpcli).
+func sitePHPPath(w model.Website) string {
+	if w.PHPVersion == "" || !appTypeUsesPHP(w.AppType) {
+		return ""
+	}
+	return "export PATH=" + phpcli.PathPrefix(w.WebUser) + "$PATH && "
+}
+
+// ensureSitePHPCLI refreshes the website's php symlink. Failures are not
+// fatal: the command then runs with the server default as before.
+func (s *Service) ensureSitePHPCLI(ctx context.Context, w model.Website) {
+	if w.PHPVersion == "" || !appTypeUsesPHP(w.AppType) {
+		return
+	}
+	_ = phpcli.EnsureSiteShim(ctx, s.exec, w.WebUser, w.PHPVersion)
+}
+
+// EnsureAllSitePHPCLI gives every PHP website its command-line PHP shim,
+// for sites created before shims existed. Run once at panel start.
+func (s *Service) EnsureAllSitePHPCLI(ctx context.Context) {
+	sites, err := s.List(ctx)
+	if err != nil {
+		return
+	}
+	for _, w := range sites {
+		if w.Status == "active" {
+			s.ensureSitePHPCLI(ctx, w)
+		}
+	}
+}
+
 // buildCommandScript assembles the shell command the task runner executes as
 // the website user. Node.js package managers live inside the website's NVM
 // runtime (~/.nvm), which a non-interactive shell does not load, so they run
@@ -333,7 +367,7 @@ func buildCommandScript(w model.Website, workDir string, args []string, nodeVers
 			" && if ! command -v go >/dev/null; then echo \"Go toolchain is not installed — run 'go build & restart' once to install it\"; exit 127; fi && " + joined
 	}
 	if !usesNvmRuntime(args[0]) {
-		return "cd " + workDir + " && " + joined
+		return "cd " + workDir + " && " + sitePHPPath(w) + joined
 	}
 	nvmDir := home + "/.nvm"
 	var env string
@@ -406,6 +440,7 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 		nodeVersion = s.nvmDefaultVersion(ctx, w)
 	}
 
+	s.ensureSitePHPCLI(ctx, w)
 	shellCmd := buildCommandScript(w, workDir, args, nodeVersion)
 
 	taskID := tr.Run(
@@ -429,6 +464,7 @@ func (s *Service) runInitialSetup(ctx context.Context, websiteID string, withDev
 		return "", fmt.Errorf("task runner not available")
 	}
 
+	s.ensureSitePHPCLI(ctx, w)
 	shellCmd, err := s.buildInitialSetupScript(ctx, w, withDev)
 	if err != nil {
 		return "", err
@@ -478,7 +514,7 @@ func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website, 
 	if len(steps) == 0 {
 		return "", model.NewValidationError("nothing to set up: no composer.json, artisan, or package.json found in the project")
 	}
-	return "cd " + workDir + " && " + strings.Join(steps, " && "), nil
+	return "cd " + workDir + " && " + sitePHPPath(w) + strings.Join(steps, " && "), nil
 }
 
 // nvmWrappedCommand returns a shell fragment running command through the

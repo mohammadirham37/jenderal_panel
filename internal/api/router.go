@@ -581,6 +581,10 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "php.manage")).
 				Post("/php/{version}/upgrade", phpHandler.Upgrade)
 			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
+				Get("/php/cli-default", phpHandler.CLIDefault)
+			r.With(auth.RequireRole(deps.RBAC, "admin"), auth.RequirePermission(deps.RBAC, "php.manage")).
+				Put("/php/cli-default", phpHandler.SetCLIDefault)
+			r.With(auth.RequirePermission(deps.RBAC, "php.view")).
 				Get("/php/{version}/config", phpHandler.GetConfig)
 			r.With(auth.RequirePermission(deps.RBAC, "php.config")).
 				Put("/php/{version}/config", phpHandler.SaveConfig)

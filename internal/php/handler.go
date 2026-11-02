@@ -115,6 +115,33 @@ func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
 }
 
+// CLIDefault handles GET /php/cli-default.
+func (h *Handler) CLIDefault(w http.ResponseWriter, r *http.Request) {
+	version, err := h.svc.CLIDefault(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, map[string]string{"version": version})
+}
+
+// SetCLIDefault handles PUT /php/cli-default (admin only).
+func (h *Handler) SetCLIDefault(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Version string `json:"version"`
+	}
+	if err := httputil.DecodeJSON(r, &body); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	if err := h.svc.SetCLIDefault(r.Context(), body.Version); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "set_php_cli_default", "php"+body.Version, "server default PHP CLI set to "+body.Version)
+	httputil.JSON(w, http.StatusOK, map[string]string{"version": body.Version})
+}
+
 // allowSAPI keeps the CLI php.ini to admins: it governs composer, artisan,
 // and cron for every website on the server.
 func (h *Handler) allowSAPI(w http.ResponseWriter, r *http.Request, sapi string) bool {

@@ -381,8 +381,35 @@
 		if (configDirty) e.preventDefault();
 	}
 
+	// Server-wide default for the plain "php" command (update-alternatives).
+	// Websites use their own PHP version on the command line regardless.
+	let cliDefault = $state('');
+	let cliDefaultBusy = $state('');
+
+	async function loadCLIDefault() {
+		try {
+			cliDefault = (await api.get<{ version: string }>('/api/v1/php/cli-default'))?.version ?? '';
+		} catch {
+			cliDefault = '';
+		}
+	}
+
+	async function setCLIDefault(version: string) {
+		if (cliDefaultBusy) return;
+		cliDefaultBusy = version;
+		try {
+			await api.put('/api/v1/php/cli-default', { version });
+			cliDefault = version;
+			toast.success(translate($language, 'phpv.cli.defaultSet').replace('{version}', version));
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'phpv.cli.defaultFailed'));
+		} finally {
+			cliDefaultBusy = '';
+		}
+	}
+
 	onMount(() => {
-		void Promise.all([loadPhp(), loadUsage(), loadPatches()]);
+		void Promise.all([loadPhp(), loadUsage(), loadPatches(), loadCLIDefault()]);
 	});
 
 	const inputClass =
@@ -602,6 +629,9 @@
 										{#if php.version === groups.newest}
 											<span class="rounded-full bg-blue-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-blue-300">{translate($language, 'phpv.newest')}</span>
 										{/if}
+										{#if php.version === cliDefault}
+											<span class="rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-purple-300" title={translate($language, 'phpv.cli.defaultHint')}>{translate($language, 'phpv.cli.default')}</span>
+										{/if}
 									</div>
 									{@render usageLine(php.version)}
 									{@render patchLine(php.version)}
@@ -638,6 +668,16 @@
 										class="cursor-pointer rounded-md px-3 py-1.5 text-sm font-semibold text-white transition disabled:opacity-50 {patchFor(php.version)?.vulnerable ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'}"
 									>
 										{actionInProgress === `upgrade-${php.version}` ? translate($language, 'phpv.patch.updating') : translate($language, 'phpv.patch.update')}
+									</button>
+								{/if}
+								{#if canEditCLI && cliDefault && php.version !== cliDefault}
+									<button
+										onclick={() => setCLIDefault(php.version)}
+										disabled={!!cliDefaultBusy}
+										title={translate($language, 'phpv.cli.defaultHint')}
+										class="cursor-pointer rounded-md border border-gray-600 px-2.5 py-1.5 text-xs font-medium text-gray-300 transition hover:border-purple-500 hover:text-purple-300 disabled:opacity-50"
+									>
+										{cliDefaultBusy === php.version ? translate($language, 'phpv.cli.setting') : translate($language, 'phpv.cli.makeDefault')}
 									</button>
 								{/if}
 								<span class="ml-auto flex items-center gap-1">

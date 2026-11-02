@@ -503,6 +503,10 @@ func cmdServe() {
 		}
 	}()
 
+	// Websites created before per-site PHP CLI shims existed get theirs, so
+	// their SSH and terminal sessions use the site's PHP version too.
+	go websiteSvc.EnsureAllSitePHPCLI(bgCtx)
+
 	// Hide the nginx version from the Server header and error pages.
 	go func() {
 		if changed, err := hardening.EnsureNginxServerTokensOff(bgCtx, exec); err != nil {

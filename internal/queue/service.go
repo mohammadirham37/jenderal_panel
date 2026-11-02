@@ -13,6 +13,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/phpcli"
 )
 
 // systemdUnitTemplate is the Go template for a queue worker systemd unit file.
@@ -196,10 +197,10 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 // again so units written before a fix (or before a document_root change) are
 // rewritten to the correct working directory.
 func (s *Service) writeUnitFile(ctx context.Context, w model.QueueWorker) error {
-	var appType, webUser, documentRoot string
+	var appType, webUser, documentRoot, phpVersion string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT app_type, web_user, document_root FROM websites WHERE id = ?`, w.WebsiteID,
-	).Scan(&appType, &webUser, &documentRoot)
+		`SELECT app_type, web_user, document_root, COALESCE(php_version, '') FROM websites WHERE id = ?`, w.WebsiteID,
+	).Scan(&appType, &webUser, &documentRoot, &phpVersion)
 	if err != nil {
 		return fmt.Errorf("query website: %w", err)
 	}
@@ -207,7 +208,9 @@ func (s *Service) writeUnitFile(ctx context.Context, w model.QueueWorker) error 
 	if err := validateWorkerCommand(w.Command); err != nil {
 		return err
 	}
-	unitContent := fmt.Sprintf(systemdUnitTemplate, w.ID, webUser, workerWorkingDir(appType, documentRoot), w.Command)
+	// systemd does not search PATH for ExecStart, so a bare "php" is
+	// pinned to the website's PHP version here.
+	unitContent := fmt.Sprintf(systemdUnitTemplate, w.ID, webUser, workerWorkingDir(appType, documentRoot), phpcli.QualifyCommand(w.Command, phpVersion))
 	if _, err := s.exec.RunSudo(ctx, "bash", "-c",
 		fmt.Sprintf("cat > %s << 'UNITEOF'\n%sUNITEOF", unitFilePath(w.ID), unitContent)); err != nil {
 		return fmt.Errorf("write unit file: %w", err)

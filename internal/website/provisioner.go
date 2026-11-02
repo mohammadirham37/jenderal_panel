@@ -14,6 +14,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/landing"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
+	"github.com/mohammadirham37/jenderal_panel/internal/phpcli"
 	nginxconfig "github.com/mohammadirham37/jenderal_panel/internal/nginx"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
 	"github.com/mohammadirham37/jenderal_panel/internal/siteops"
@@ -212,6 +213,11 @@ func (p *Provisioner) provision(ctx context.Context, websiteID string) {
 	if err := p.ensureWebUser(ctx, websiteID, w.WebUser, homeDir); err != nil {
 		p.fail(ctx, websiteID, err.Error())
 		return
+	}
+
+	// Command-line PHP (composer, artisan, cron) follows the site's version.
+	if w.PHPVersion != "" && appTypeUsesPHP(w.AppType) {
+		_ = phpcli.EnsureSiteShim(ctx, p.exec, w.WebUser, w.PHPVersion)
 	}
 
 	automaticSetup := w.SetupMode == SetupAutomatic || w.SetupMode == "automatic"

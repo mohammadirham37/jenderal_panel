@@ -824,6 +824,11 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateRequest) erro
 		}
 	}
 
+	// The site's command-line PHP follows its new version.
+	if phpChanged {
+		s.ensureSitePHPCLI(ctx, w)
+	}
+
 	// Retire the previous version's pool only after the vhost stopped
 	// referencing its socket.
 	if phpChanged && oldPHPVersion != "" && oldPHPVersion != w.PHPVersion {

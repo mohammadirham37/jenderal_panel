@@ -325,3 +325,18 @@ func TestInitialSetupDevelopmentFlavour(t *testing.T) {
 		t.Error("the legacy setup name must keep running the production flavour")
 	}
 }
+
+// PHP sites run php/composer/artisan with their own PHP version first on
+// PATH, not the server-wide default.
+func TestBuildCommandScriptUsesTheSitePHPVersion(t *testing.T) {
+	w := model.Website{WebUser: "web_shop", AppType: "laravel", PHPVersion: "8.2", DocumentRoot: "/home/web_shop/app/public"}
+	got := buildCommandScript(w, "/home/web_shop/app", []string{"php", "artisan", "migrate", "--force"}, "")
+	want := "cd /home/web_shop/app && export PATH=/home/web_shop/.jenderal/bin:$PATH && php artisan migrate --force"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	static := model.Website{WebUser: "web_site", AppType: "static", DocumentRoot: "/home/web_site/public"}
+	if got := buildCommandScript(static, "/home/web_site/public", []string{"git", "pull"}, ""); strings.Contains(got, ".jenderal/bin") {
+		t.Errorf("non-PHP sites must not get the PHP path: %q", got)
+	}
+}
