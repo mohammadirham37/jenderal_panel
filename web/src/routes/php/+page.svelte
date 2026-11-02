@@ -11,7 +11,7 @@
 	} from '#lib/php-config.js';
 	import { countExtensions, groupPHPVersions, listExtensions, listsAgeHours, summarizePatches, websitesByPHPVersion } from '#lib/php-versions.js';
 	import Modal from '#lib/components/Modal.svelte';
-	import { hasPermission, permissions } from '#lib/stores/auth.js';
+	import { hasPermission, permissions, roles } from '#lib/stores/auth.js';
 	import TaskProgress from '#lib/components/TaskProgress.svelte';
 	import { toast } from '#lib/stores/toast.js';
 	import { language, translate } from '#lib/stores/language.js';
@@ -243,6 +243,18 @@
 
 	// ─── Manage panel ───────────────────────────────────────────────
 
+	// Which php.ini the editor shows: FPM (websites) or CLI (composer,
+	// artisan, cron, queue workers). The CLI file is admin-only.
+	let configSapi = $state<'fpm' | 'cli'>('fpm');
+	const canEditCLI = $derived($roles.some((r) => r.name === 'admin'));
+
+	function selectSapi(sapi: 'fpm' | 'cli') {
+		if (sapi === configSapi || configSaving || !selectedVersion) return;
+		if (!confirmDiscard()) return;
+		configSapi = sapi;
+		void loadConfig(selectedVersion);
+	}
+
 	function confirmDiscard(): boolean {
 		return !configDirty || window.confirm(translate($language, 'phpv.config.discardConfirm'));
 	}
@@ -282,7 +294,7 @@
 		configLoading = true;
 		configError = '';
 		try {
-			const data = await api.get<{ content: string }>(`/api/v1/php/${version}/config`);
+			const data = await api.get<{ content: string }>(`/api/v1/php/${version}/config?sapi=${configSapi}`);
 			configContent = data.content || '';
 			savedContent = configContent;
 			simpleConfig = parseSimplePHPConfig(configContent);
@@ -298,11 +310,11 @@
 		configError = '';
 		configSaving = true;
 		try {
-			await api.put(`/api/v1/php/${selectedVersion}/config`, { content });
+			await api.put(`/api/v1/php/${selectedVersion}/config?sapi=${configSapi}`, { content });
 			configContent = content;
 			savedContent = content;
 			simpleConfig = parseSimplePHPConfig(content);
-			toast.success(translate($language, 'phpv.config.saved'));
+			toast.success(translate($language, configSapi === 'cli' ? 'phpv.config.savedCli' : 'phpv.config.saved'));
 		} catch (err) {
 			configError = err instanceof Error ? err.message : translate($language, 'phpv.config.saveFailed');
 		} finally {
@@ -709,6 +721,27 @@
 					{#if activeTab === 'config'}
 						{#if configError}
 							<div class="mb-3 rounded-lg border border-red-700 bg-red-900/30 px-3 py-2 text-sm text-red-300">{configError}</div>
+						{/if}
+						{#if canEditCLI}
+							<div class="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-gray-700 bg-gray-900/40 px-3 py-2">
+								<div class="inline-flex rounded-lg border border-gray-600 p-0.5" role="group" aria-label={translate($language, 'phpv.config.sapiAria')}>
+									{#each ['fpm', 'cli'] as const as sapi}
+										<button
+											type="button"
+											onclick={() => selectSapi(sapi)}
+											disabled={configSaving || configLoading}
+											aria-pressed={configSapi === sapi}
+											class="cursor-pointer rounded-md px-3 py-1 text-sm font-medium transition disabled:opacity-50 {configSapi === sapi ? 'bg-blue-600 text-white' : 'text-gray-300 hover:bg-gray-700'}"
+										>
+											{translate($language, `phpv.config.sapi.${sapi}`)}
+										</button>
+									{/each}
+								</div>
+								<p class="min-w-0 flex-1 text-xs text-gray-400">
+									<span class="font-mono text-gray-300">/etc/php/{selectedVersion}/{configSapi}/php.ini</span>
+									· {translate($language, `phpv.config.sapiHint.${configSapi}`)}
+								</p>
+							</div>
 						{/if}
 						{#if configLoading}
 							<div class="text-sm text-gray-400">{translate($language, 'phpv.config.loading')}</div>

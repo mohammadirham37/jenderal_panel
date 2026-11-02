@@ -473,44 +473,106 @@ func (s *Service) Restart(ctx context.Context, version string) error {
 	return s.systemctlAction(ctx, "restart", version)
 }
 
-// GetPHPINI returns the contents of the FPM php.ini for the given version.
-func (s *Service) GetPHPINI(ctx context.Context, version string) (string, error) {
+// PHP SAPIs whose php.ini the panel edits: FPM serves the websites, CLI
+// runs composer, artisan, cron jobs, and queue workers.
+const (
+	SAPIFPM = "fpm"
+	SAPICLI = "cli"
+)
+
+// iniPath returns the php.ini path of a version and SAPI.
+func iniPath(version, sapi string) (string, error) {
+	switch sapi {
+	case "", SAPIFPM:
+		return fmt.Sprintf("/etc/php/%s/fpm/php.ini", version), nil
+	case SAPICLI:
+		return fmt.Sprintf("/etc/php/%s/cli/php.ini", version), nil
+	default:
+		return "", model.NewValidationError("sapi must be fpm or cli")
+	}
+}
+
+// GetPHPINI returns the contents of the php.ini of the given version and
+// SAPI (fpm or cli).
+func (s *Service) GetPHPINI(ctx context.Context, version, sapi string) (string, error) {
 	if err := s.validateVersion(ctx, version); err != nil {
 		return "", err
 	}
-
-	path := fmt.Sprintf("/etc/php/%s/fpm/php.ini", version)
+	path, err := iniPath(version, sapi)
+	if err != nil {
+		return "", err
+	}
 	result, err := s.exec.RunSudo(ctx, "cat", path)
 	if err != nil {
-		return "", fmt.Errorf("read php.ini for %s: %w", version, err)
+		return "", fmt.Errorf("read %s: %w", path, err)
 	}
 	if result.ExitCode != 0 {
-		return "", fmt.Errorf("read php.ini for %s: %s", version, strings.TrimSpace(result.Stderr))
+		return "", fmt.Errorf("read %s: %s", path, strings.TrimSpace(result.Stderr))
 	}
 	return result.Stdout, nil
 }
 
-// SavePHPINI writes the given content to the FPM php.ini and restarts FPM.
-func (s *Service) SavePHPINI(ctx context.Context, version, content string) error {
+// SavePHPINI checks the content with the PHP binary, writes it to the
+// php.ini of the given SAPI, and restarts FPM when the FPM file changed.
+// A php.ini PHP cannot parse is refused: a broken CLI config breaks
+// composer, artisan, and every cron job; a broken FPM config every site.
+func (s *Service) SavePHPINI(ctx context.Context, version, sapi, content string) error {
 	if err := s.validateVersion(ctx, version); err != nil {
 		return err
 	}
-
-	tmpPath := "/tmp/jenderal_php_ini.tmp"
-	if err := os.WriteFile(tmpPath, []byte(content), 0644); err != nil {
-		return fmt.Errorf("write temp php.ini: %w", err)
+	destPath, err := iniPath(version, sapi)
+	if err != nil {
+		return err
 	}
 
-	destPath := fmt.Sprintf("/etc/php/%s/fpm/php.ini", version)
+	tmp, err := os.CreateTemp("", "jenderal-php-ini-*.ini")
+	if err != nil {
+		return fmt.Errorf("stage php.ini: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("stage php.ini: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("stage php.ini: %w", err)
+	}
+	if err := os.Chmod(tmpPath, 0o644); err != nil {
+		return fmt.Errorf("stage php.ini: %w", err)
+	}
+
+	if check, err := s.exec.Run(ctx, "/usr/bin/php"+version, "-c", tmpPath, "-r", "echo 'ok';"); err == nil && check != nil {
+		output := check.Stdout + "\n" + check.Stderr
+		if strings.Contains(output, "syntax error") || strings.Contains(output, "Parse error") {
+			return model.NewValidationError("php.ini has a syntax error and was not saved: " + firstLine(check.Stderr+check.Stdout))
+		}
+	}
+
 	result, err := s.exec.RunSudo(ctx, "cp", tmpPath, destPath)
 	if err != nil {
-		return fmt.Errorf("write php.ini for %s: %w", version, err)
+		return fmt.Errorf("write %s: %w", destPath, err)
 	}
 	if result.ExitCode != 0 {
-		return fmt.Errorf("write php.ini for %s: %s", version, strings.TrimSpace(result.Stderr))
+		return fmt.Errorf("write %s: %s", destPath, strings.TrimSpace(result.Stderr))
 	}
-
+	if _, err := s.exec.RunSudo(ctx, "chmod", "0644", destPath); err != nil {
+		return fmt.Errorf("chmod %s: %w", destPath, err)
+	}
+	if sapi == SAPICLI {
+		return nil // the CLI reads php.ini on every run
+	}
 	return s.systemctlAction(ctx, "restart", version)
+}
+
+// firstLine returns the first non-empty line of s.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // validateVersion checks that the version string is manageable on this OS.

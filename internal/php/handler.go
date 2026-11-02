@@ -9,6 +9,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/audit"
 	"github.com/mohammadirham37/jenderal_panel/internal/auth"
 	"github.com/mohammadirham37/jenderal_panel/internal/httputil"
+	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -102,12 +103,26 @@ func (h *Handler) Restart(w http.ResponseWriter, r *http.Request) {
 // GetConfig returns the FPM php.ini content for the specified PHP version.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
 	version := chi.URLParam(r, "version")
-	content, err := h.svc.GetPHPINI(r.Context(), version)
+	sapi := r.URL.Query().Get("sapi")
+	if !h.allowSAPI(w, r, sapi) {
+		return
+	}
+	content, err := h.svc.GetPHPINI(r.Context(), version, sapi)
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
 	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
+}
+
+// allowSAPI keeps the CLI php.ini to admins: it governs composer, artisan,
+// and cron for every website on the server.
+func (h *Handler) allowSAPI(w http.ResponseWriter, r *http.Request, sapi string) bool {
+	if sapi == SAPICLI && !auth.AdminFromContext(r.Context()) {
+		httputil.HandleError(w, model.ErrForbidden)
+		return false
+	}
+	return true
 }
 
 // Extensions handles GET /php/{version}/extensions.
@@ -169,11 +184,19 @@ func (h *Handler) SaveConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.SavePHPINI(r.Context(), version, body.Content); err != nil {
+	sapi := r.URL.Query().Get("sapi")
+	if !h.allowSAPI(w, r, sapi) {
+		return
+	}
+	if err := h.svc.SavePHPINI(r.Context(), version, sapi, body.Content); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
-	h.logAction(r, "save_php_config", "php"+version+"/php.ini", "saved PHP "+version+" FPM config")
+	label := "FPM"
+	if sapi == SAPICLI {
+		label = "CLI"
+	}
+	h.logAction(r, "save_php_config", "php"+version+"/"+strings.ToLower(label)+"/php.ini", "saved PHP "+version+" "+label+" config")
 	httputil.JSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
