@@ -21,7 +21,6 @@ import (
 	"github.com/go-acme/lego/v4/challenge"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/providers/dns/cloudflare"
-	"github.com/go-acme/lego/v4/providers/http/webroot"
 	"github.com/go-acme/lego/v4/registration"
 )
 
@@ -69,7 +68,14 @@ func normalizeACMEContactEmail(value string) string {
 }
 
 func newHTTP01Provider(root string) (challenge.Provider, error) {
-	return webroot.NewHTTPProvider(root)
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP-01 webroot %s: %w", root, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("HTTP-01 webroot %s is not a directory", root)
+	}
+	return newWebrootProvider(root), nil
 }
 
 func acmeDirectoryURL() string {
