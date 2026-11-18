@@ -40,6 +40,12 @@ export function createFileManagerAPI(api, websiteID) {
 		},
 		unzip(/** @type {string} */ path, /** @type {string} */ dest) {
 			return api.post(`${base}/unzip`, { path, target: dest });
+		},
+		info(/** @type {string} */ path) {
+			return api.get(`${base}/info?path=${encodeURIComponent(path)}`);
+		},
+		dirSizes(/** @type {string} */ path) {
+			return api.get(`${base}/sizes?path=${encodeURIComponent(path)}`);
 		}
 	};
 }

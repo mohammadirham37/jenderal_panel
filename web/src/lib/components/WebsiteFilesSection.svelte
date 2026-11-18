@@ -4,6 +4,7 @@
 	import { createFileManagerAPI, isExtractableArchive } from '#lib/file-manager.js';
 import { toast } from '#lib/stores/toast.js';
 import { language, translate } from '#lib/stores/language.js';
+	import Modal from '#lib/components/Modal.svelte';
 
 	interface FileEntry {
 		name: string;
@@ -13,6 +14,25 @@ import { language, translate } from '#lib/stores/language.js';
 		permissions: string;
 		owner: string;
 		mod_time: string;
+	}
+
+	interface FileInfo {
+		name: string;
+		path: string;
+		type: 'file' | 'directory' | 'other';
+		size: number;
+		disk_usage: number;
+		files: number;
+		dirs: number;
+		others: number;
+		mode: string;
+		permissions: string;
+		owner: string;
+		group: string;
+		modified: string;
+		accessed: string;
+		changed: string;
+		partial?: boolean;
 	}
 
 	interface WebsiteLite {
@@ -86,6 +106,14 @@ import { language, translate } from '#lib/stores/language.js';
 	let transferDest = $state('/');
 	let transferBusy = $state(false);
 
+	// Folder sizes and file info
+	let dirSizes = $state<Record<string, number>>({});
+	let dirSizesLoading = $state(false);
+	let infoTarget = $state<{ name: string; path: string } | null>(null);
+	let infoData = $state<FileInfo | null>(null);
+	let infoLoading = $state(false);
+	let infoError = $state('');
+
 	// Bulk selection
 	let selectedNames = $state<string[]>([]);
 	let pendingBulkDelete = $state(false);
@@ -102,7 +130,7 @@ import { language, translate } from '#lib/stores/language.js';
 			if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
 			let cmp = 0;
 			if (sortKey === 'name') cmp = a.name.localeCompare(b.name);
-			else if (sortKey === 'size') cmp = a.size - b.size;
+			else if (sortKey === 'size') cmp = entrySize(a) - entrySize(b);
 			else cmp = new Date(a.mod_time).getTime() - new Date(b.mod_time).getTime();
 			return sortAsc ? cmp : -cmp;
 		});
@@ -141,6 +169,50 @@ import { language, translate } from '#lib/stores/language.js';
 		if (entry.is_dir) return { cls: 'text-blue-400', label: 'DIR' };
 		const ext = fileExt(entry.name);
 		return { cls: extensionColors[ext] || 'text-gray-400', label: ext ? ext.slice(0, 4).toUpperCase() : 'FILE' };
+	}
+
+	// A folder's size is only known once "Folder sizes" has measured it.
+	function entrySize(entry: FileEntry): number {
+		return entry.is_dir ? (dirSizes[entry.name] ?? -1) : entry.size;
+	}
+
+	function formatBytesFull(bytes: number): string {
+		return bytes > 0 ? `${formatSize(bytes)} (${bytes.toLocaleString()} B)` : '0 B';
+	}
+
+	function formatDateTime(ts: string): string {
+		if (!ts) return '—';
+		const d = new Date(ts);
+		return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+	}
+
+	async function measureFolders() {
+		if (dirSizesLoading) return;
+		const path = currentPath;
+		dirSizesLoading = true;
+		try {
+			const sizes = (await fm.dirSizes(path)) as Record<string, number>;
+			if (path === currentPath) dirSizes = sizes || {};
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wsf.sizesFailed'));
+		} finally {
+			dirSizesLoading = false;
+		}
+	}
+
+	async function openInfo(name: string, path: string) {
+		infoTarget = { name, path };
+		infoData = null;
+		infoError = '';
+		infoLoading = true;
+		try {
+			const data = (await fm.info(path)) as FileInfo;
+			if (infoTarget?.path === path) infoData = data;
+		} catch (err) {
+			if (infoTarget?.path === path) infoError = err instanceof Error ? err.message : translate($language, 'wsf.infoFailed');
+		} finally {
+			if (infoTarget?.path === path) infoLoading = false;
+		}
 	}
 
 	function formatSize(bytes: number): string {
@@ -213,6 +285,7 @@ import { language, translate } from '#lib/stores/language.js';
 		try {
 			const data = await fm.browse(requested) as FileEntry[];
 			files = data || [];
+			if (requested !== currentPath) dirSizes = {};
 			currentPath = requested;
 			search = '';
 			selectedNames = [];
@@ -650,6 +723,12 @@ import { language, translate } from '#lib/stores/language.js';
 					onclick={() => startCreate('dir')}
 					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600"
 				>{translate($language, 'wsf.addFolder')}</button>
+				<button
+					onclick={measureFolders}
+					disabled={dirSizesLoading || filesLoading}
+					title={translate($language, 'wsf.folderSizesHint')}
+					class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-xs font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50"
+				>{dirSizesLoading ? translate($language, 'wsf.measuring') : translate($language, 'wsf.folderSizes')}</button>
 			</div>
 
 			{#if uploadTotal > 0}
@@ -740,7 +819,7 @@ import { language, translate } from '#lib/stores/language.js';
 					<button onclick={() => toggleSort('time')} class="hidden w-32 cursor-pointer items-center gap-1 text-right hover:text-gray-300 md:flex">
 						{translate($language, 'wsf.modified')} {#if sortKey === 'time'}<span>{sortAsc ? '↑' : '↓'}</span>{/if}
 					</button>
-					<span class="w-64 text-right">{translate($language, 'wsf.actions')}</span>
+					<span class="w-72 text-right">{translate($language, 'wsf.actions')}</span>
 				</div>
 
 				<div
@@ -795,10 +874,19 @@ import { language, translate } from '#lib/stores/language.js';
 								</button>
 							{/if}
 
-							<span class="hidden w-20 shrink-0 text-right text-xs tabular-nums text-gray-400 sm:block">{entry.is_dir ? '—' : formatSize(entry.size)}</span>
+							<span class="hidden w-20 shrink-0 text-right text-xs tabular-nums sm:block {entry.is_dir && dirSizes[entry.name] !== undefined ? 'font-medium text-blue-300' : 'text-gray-400'}">
+								{#if entry.is_dir}
+									{#if dirSizes[entry.name] !== undefined}{formatSize(dirSizes[entry.name]) === '—' ? '0 B' : formatSize(dirSizes[entry.name])}{:else if dirSizesLoading}…{:else}—{/if}
+								{:else}
+									{formatSize(entry.size)}
+								{/if}
+							</span>
 							<span class="hidden w-32 shrink-0 text-right text-xs text-gray-500 md:block">{formatTime(entry.mod_time)}</span>
 
-							<div class="flex w-64 shrink-0 items-center justify-end gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+							<div class="flex w-72 shrink-0 items-center justify-end gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+								<button onclick={() => openInfo(entry.name, joinPath(entry.name))} title={translate($language, 'wsf.info')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
+									<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" /></svg>
+								</button>
 								{#if !entry.is_dir && isTextFile(entry.name)}
 									<button onclick={() => openFileEdit(entry)} title={translate($language, 'wsf.edit')} class="cursor-pointer rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-600 hover:text-white">
 										<svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487z" /></svg>
@@ -850,7 +938,10 @@ import { language, translate } from '#lib/stores/language.js';
 				</div>
 
 				<div class="flex items-center justify-between border-t border-gray-700 bg-gray-900/40 px-4 py-2 text-[11px] text-gray-500">
-					<span>{translate($language, 'wsf.counts').replace('{dirs}', String(fileCount.dirs)).replace('{files}', String(fileCount.files))}</span>
+					<span class="flex items-center gap-2">
+						{translate($language, 'wsf.counts').replace('{dirs}', String(fileCount.dirs)).replace('{files}', String(fileCount.files))}
+						<button onclick={() => openInfo(currentPath === '/' ? website.web_user : currentPath.split('/').pop() || '', currentPath)} class="cursor-pointer text-blue-400 hover:underline">{translate($language, 'wsf.folderInfo')}</button>
+					</span>
 					<span class="hidden sm:inline">{translate($language, 'wsf.dragHint')}</span>
 				</div>
 			{/if}
@@ -864,6 +955,50 @@ import { language, translate } from '#lib/stores/language.js';
 				</div>
 			</div>
 		{/if}
+	{/if}
+
+	{#if infoTarget}
+		<Modal title={translate($language, 'wsf.infoTitle').replace('{name}', infoTarget.name)} onclose={() => (infoTarget = null)} closeLabel={translate($language, 'wsf.close')}>
+			{#if infoLoading}
+				<div class="space-y-2">
+					<p class="text-xs text-gray-400">{translate($language, 'wsf.infoMeasuring')}</p>
+					{#each Array(5) as _}<div class="h-4 animate-pulse rounded bg-gray-700/50"></div>{/each}
+				</div>
+			{:else if infoError}
+				<p class="text-sm text-red-400">{infoError}</p>
+			{:else if infoData}
+				<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+					<dt class="text-gray-400">{translate($language, 'wsf.infoPath')}</dt>
+					<dd class="break-all font-mono text-gray-200">{infoData.path}</dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.infoType')}</dt>
+					<dd class="text-gray-200">{translate($language, infoData.type === 'directory' ? 'wsf.typeFolder' : infoData.type === 'file' ? 'wsf.typeFile' : 'wsf.typeOther')}</dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.size')}</dt>
+					<dd class="font-mono text-gray-200">{formatBytesFull(infoData.size)}</dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.infoDiskUsage')}</dt>
+					<dd class="font-mono text-gray-200">{formatBytesFull(infoData.disk_usage)}</dd>
+					{#if infoData.type === 'directory'}
+						<dt class="text-gray-400">{translate($language, 'wsf.infoContents')}</dt>
+						<dd class="text-gray-200">
+							{translate($language, 'wsf.infoContentsValue').replace('{files}', infoData.files.toLocaleString()).replace('{dirs}', infoData.dirs.toLocaleString())}
+							{#if infoData.others > 0}<span class="text-gray-400"> · {translate($language, 'wsf.infoOthers').replace('{count}', infoData.others.toLocaleString())}</span>{/if}
+						</dd>
+					{/if}
+					<dt class="text-gray-400">{translate($language, 'wsf.permissions')}</dt>
+					<dd class="font-mono text-gray-200">{infoData.mode} <span class="text-gray-400">({infoData.permissions})</span></dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.infoOwner')}</dt>
+					<dd class="font-mono text-gray-200">{infoData.owner}:{infoData.group}</dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.modified')}</dt>
+					<dd class="text-gray-200">{formatDateTime(infoData.modified)}</dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.infoAccessed')}</dt>
+					<dd class="text-gray-200">{formatDateTime(infoData.accessed)}</dd>
+					<dt class="text-gray-400">{translate($language, 'wsf.infoChanged')}</dt>
+					<dd class="text-gray-200">{formatDateTime(infoData.changed)}</dd>
+				</dl>
+				{#if infoData.partial}
+					<p class="mt-3 rounded-lg border border-yellow-700 bg-yellow-900/30 px-3 py-2 text-xs text-yellow-300">{translate($language, 'wsf.infoPartial')}</p>
+				{/if}
+			{/if}
+		</Modal>
 	{/if}
 
 	<!-- Delete confirmation -->

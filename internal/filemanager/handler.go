@@ -89,6 +89,36 @@ func (h *Handler) Browse(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, entries)
 }
 
+// Info handles GET /api/v1/websites/{id}/files/info?path=...
+func (h *Handler) Info(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	info, err := h.svc.Info(r.Context(), basePath, r.URL.Query().Get("path"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, info)
+}
+
+// DirSizes handles GET /api/v1/websites/{id}/files/sizes?path=...
+func (h *Handler) DirSizes(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	sizes, err := h.svc.DirSizes(r.Context(), basePath, r.URL.Query().Get("path"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, sizes)
+}
+
 // ReadFile handles GET /api/websites/{websiteID}/files/read?path=...
 func (h *Handler) ReadFile(w http.ResponseWriter, r *http.Request) {
 	basePath, err := h.getWebsite(r)

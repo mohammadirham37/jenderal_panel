@@ -1012,6 +1012,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/files", fileHandler.Browse)
 			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
 				Get("/websites/{id}/files/read", fileHandler.ReadFile)
+			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
+				Get("/websites/{id}/files/info", fileHandler.Info)
+			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
+				Get("/websites/{id}/files/sizes", fileHandler.DirSizes)
 			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
 				Post("/websites/{id}/files/write", fileHandler.WriteFile)
 			r.With(auth.RequirePermission(deps.RBAC, "files.manage")).
