@@ -456,6 +456,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/websites/{id}/logs/access", websiteHandler.AccessLog)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
 				Get("/websites/{id}/logs/error", websiteHandler.ErrorLog)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/logs/files", websiteHandler.LogFiles)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
+				Post("/websites/{id}/logs/clear", websiteHandler.ClearLogs)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/domains", websiteHandler.AddDomain)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).

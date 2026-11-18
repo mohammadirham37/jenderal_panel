@@ -19,7 +19,7 @@
 	import { hasPermission } from '#lib/stores/auth.js';
 	import { language, translate } from '#lib/stores/language.js';
 	import { applyEnvValues, parseEnvFile } from '#lib/env-file.js';
-	import { appTypeUsesPHP } from '#lib/website-list.js';
+	import { appTypeUsesPHP, formatBytes } from '#lib/website-list.js';
 	import { nodeRuntimeState } from '#lib/node-runtimes.js';
 	import Modal from '#lib/components/Modal.svelte';
 import { toast } from '#lib/stores/toast.js';
@@ -780,6 +780,13 @@ import { toast } from '#lib/stores/toast.js';
 	let logsLoading = $state(false);
 	let logsError = $state('');
 	let logsInitialized = $state(false);
+	let logFiles = $state<{ name: string; size: number }[]>([]);
+	let logClearTarget = $state<'' | 'access' | 'error' | 'all'>('');
+	let logClearing = $state(false);
+	let logsTotalSize = $derived(logFiles.reduce((sum, f) => sum + f.size, 0));
+	function logSize(type: string): number {
+		return logFiles.filter((f) => f.name === `${type}.log` || f.name.startsWith(`${type}.log.`) || f.name.startsWith(`${type}.log-`)).reduce((sum, f) => sum + f.size, 0);
+	}
 
 	// ─── Config ───────────────────────────────────────────────────────
 
@@ -1382,6 +1389,36 @@ import { toast } from '#lib/stores/toast.js';
 		}
 	}
 
+	async function loadLogFiles() {
+		if (!website) return;
+		try {
+			logFiles = await api.get<{ name: string; size: number }[]>(`/api/v1/websites/${website.id}/logs/files`);
+		} catch {
+			logFiles = [];
+		}
+	}
+
+	async function clearLogs() {
+		if (!website || !logClearTarget || logClearing) return;
+		const target = logClearTarget;
+		logClearing = true;
+		try {
+			const res = await api.post<{ bytes_freed: number }>(`/api/v1/websites/${website.id}/logs/clear`, { target });
+			toast.success(translate($language, 'wd.logs.cleared').replace('{size}', formatBytes(res.bytes_freed || 0)));
+			logClearTarget = '';
+			if (target === 'all') {
+				accessLogs = '';
+				errorLogs = '';
+			} else if (target === 'access') accessLogs = '';
+			else errorLogs = '';
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : translate($language, 'wd.logs.clear_failed'));
+		} finally {
+			logClearing = false;
+			void loadLogFiles();
+		}
+	}
+
 	// Config
 
 	async function saveProxyUpstream() {
@@ -1539,6 +1576,7 @@ import { toast } from '#lib/stores/toast.js';
 		if (activeTab === 'Logs' && !logsInitialized && website) {
 			logsInitialized = true;
 			loadLogs(logTab);
+			void loadLogFiles();
 		}
 	});
 
@@ -2866,14 +2904,41 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 						<div class="mb-2 text-red-400 text-sm">{logsError}</div>
 					{/if}
 
-					<div class="flex items-center justify-end mb-2">
-						<button
-							onclick={() => loadLogs(logTab)}
-							disabled={logsLoading}
-							class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
-						>
-							{logsLoading ? translate($language, 'wd.loading_generic') : translate($language, 'wd.refresh')}
+					<div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+						<p class="text-xs text-gray-400">
+							{#if logTab !== 'octane'}
+								{translate($language, 'wd.logs.size')}: <span class="font-mono text-gray-200">{formatBytes(logSize(logTab))}</span>
+								<span class="mx-1 text-gray-600">·</span>
+							{/if}
+							{translate($language, 'wd.logs.total_size')}: <span class="font-mono text-gray-200">{formatBytes(logsTotalSize)}</span>
+						</p>
+						<div class="flex flex-wrap items-center gap-2">
+							<button
+								onclick={() => { loadLogs(logTab); void loadLogFiles(); }}
+								disabled={logsLoading}
+								class="px-2.5 py-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs rounded transition-colors cursor-pointer"
+							>
+								{logsLoading ? translate($language, 'wd.loading_generic') : translate($language, 'wd.refresh')}
 							</button>
+							{#if canUpdateWebsite}
+								{#if logTab !== 'octane'}
+									<button
+										onclick={() => (logClearTarget = logTab === 'access' ? 'access' : 'error')}
+										disabled={logClearing}
+										class="px-2.5 py-1 rounded border border-red-700 bg-red-900/30 text-red-300 hover:bg-red-900/50 disabled:opacity-50 text-xs transition-colors cursor-pointer"
+									>
+										{translate($language, logTab === 'access' ? 'wd.logs.clear_access' : 'wd.logs.clear_error')}
+									</button>
+								{/if}
+								<button
+									onclick={() => (logClearTarget = 'all')}
+									disabled={logClearing}
+									class="px-2.5 py-1 rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 text-xs font-semibold transition-colors cursor-pointer"
+								>
+									{translate($language, 'wd.logs.clear_all')}
+								</button>
+							{/if}
+						</div>
 					</div>
 
 					<textarea
@@ -2881,6 +2946,20 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 						value={logTab === 'access' ? accessLogs : logTab === 'octane' ? octaneLogs : errorLogs}
 						class="w-full h-64 bg-gray-950 border border-gray-700 rounded p-3 text-gray-300 text-xs font-mono resize-y focus:outline-none"
 					></textarea>
+
+					{#if logFiles.length > 0}
+						<div class="mt-4">
+							<p class="mb-1.5 text-xs font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'wd.logs.files')}</p>
+							<div class="divide-y divide-gray-700/60 rounded-lg border border-gray-700">
+								{#each logFiles as file (file.name)}
+									<div class="flex items-center justify-between gap-3 px-3 py-1.5 text-xs">
+										<span class="truncate font-mono text-gray-300">{file.name}</span>
+										<span class="shrink-0 font-mono tabular-nums text-gray-400">{formatBytes(file.size)}</span>
+									</div>
+								{/each}
+							</div>
+						</div>
+					{/if}
 				</div>
 
 			<!-- ============================================================ -->
@@ -3299,6 +3378,27 @@ ab -n 2000 -c 50 https://{website?.domain ?? 'domain-anda.com'}/</pre>
 			</div>
 			<p class="text-[11px] text-gray-500">{translate($language, 'wd.prot.report_source')}</p>
 		</div>
+	</Modal>
+{/if}
+
+{#if logClearTarget}
+	<Modal title={translate($language, 'wd.logs.clear_title')} onclose={() => (logClearTarget = '')} busy={logClearing} closeLabel={translate($language, 'wd.cancel')}>
+		<div class="space-y-3 text-sm text-gray-300">
+			<p>
+				{translate($language, logClearTarget === 'all' ? 'wd.logs.clear_body_all' : 'wd.logs.clear_body_one')
+					.replace('{log}', logClearTarget === 'access' ? 'access.log' : 'error.log')
+					.replace('{size}', formatBytes(logClearTarget === 'all' ? logsTotalSize : logSize(logClearTarget)))}
+			</p>
+			<p class="text-xs text-gray-400">{translate($language, 'wd.logs.clear_note')}</p>
+		</div>
+		{#snippet footer()}
+			<button type="button" onclick={() => (logClearTarget = '')} disabled={logClearing} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">
+				{translate($language, 'wd.cancel')}
+			</button>
+			<button type="button" onclick={clearLogs} disabled={logClearing} class="cursor-pointer rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">
+				{logClearing ? translate($language, 'wd.logs.clearing') : translate($language, 'wd.logs.clear_confirm')}
+			</button>
+		{/snippet}
 	</Modal>
 {/if}
 

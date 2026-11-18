@@ -854,6 +854,36 @@ func (h *Handler) ErrorLog(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]string{"content": content})
 }
 
+// LogFiles handles GET /api/v1/websites/{id}/logs/files.
+func (h *Handler) LogFiles(w http.ResponseWriter, r *http.Request) {
+	files, err := h.svc.LogFiles(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, files)
+}
+
+// ClearLogs handles POST /api/v1/websites/{id}/logs/clear with
+// {"target": "access"|"error"|"php-error"|"php-slow"|"all"}.
+func (h *Handler) ClearLogs(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Target string `json:"target"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil {
+		httputil.HandleError(w, model.NewValidationError("invalid request body"))
+		return
+	}
+	freed, err := h.svc.ClearLogs(r.Context(), id, req.Target)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	h.logAction(r, "clear_logs", id, req.Target+" logs, freed "+strconv.FormatInt(freed, 10)+" bytes")
+	httputil.JSON(w, http.StatusOK, map[string]int64{"bytes_freed": freed})
+}
+
 // GenerateDeployKey handles POST /api/websites/{id}/deploy-key.
 func (h *Handler) GenerateDeployKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
