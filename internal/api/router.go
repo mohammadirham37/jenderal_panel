@@ -530,6 +530,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Put("/websites/{id}/app", websiteHandler.SaveAppService)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Put("/websites/{id}/app/auto-build", websiteHandler.SetAppAutoBuild)
+			r.With(auth.RequirePermission(deps.RBAC, "websites.view")).
+				Get("/websites/{id}/app/go-cache", websiteHandler.GoCacheSize)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).
 				Post("/websites/{id}/app/go-cache/clear", websiteHandler.ClearGoCache)
 			r.With(auth.RequirePermission(deps.RBAC, "websites.update")).

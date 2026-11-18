@@ -4,6 +4,7 @@
 	import { toast } from '#lib/stores/toast.js';
 	import { language, translate } from '#lib/stores/language.js';
 	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import { formatBytes } from '#lib/server-info.js';
 
 	// Build & restart controls for Go sites on the Deployment tab: the
 	// auto-build-on-deploy switch, the build/start commands, and a manual
@@ -36,7 +37,11 @@
 	let building = $state(false);
 	let taskId = $state('');
 	let clearingCache = $state(false);
-	let cacheConfirm = $state(false);
+	// Which clear the user is confirming: compiled packages only, or
+	// everything including downloaded modules.
+	let cacheConfirm = $state<'' | 'build' | 'all'>('');
+	let cacheSize = $state<{ build_bytes: number; module_bytes: number } | null>(null);
+	let cacheSizeLoading = $state(false);
 
 	let isBinary = $derived(status?.runtime === 'go-binary');
 	let dirty = $derived(!!status && (buildCommand.trim() !== status.build_command || startCommand.trim() !== status.start_command));
@@ -121,22 +126,36 @@
 		}
 	}
 
-	async function clearGoCache() {
+	async function loadCacheSize() {
+		cacheSizeLoading = true;
+		try {
+			cacheSize = await api.get<{ build_bytes: number; module_bytes: number }>(appAPI('go-cache'));
+		} catch {
+			cacheSize = null;
+		} finally {
+			cacheSizeLoading = false;
+		}
+	}
+
+	async function clearGoCache(scope: 'build' | 'all') {
 		if (clearingCache) return;
 		clearingCache = true;
-		cacheConfirm = false;
+		cacheConfirm = '';
 		try {
-			const res = await api.post<{ bytes_freed: number }>(appAPI('go-cache/clear'), {});
-			const mb = Math.round((res.bytes_freed || 0) / 1048576);
-			toast.success(translate($language, 'wd.gobuild.cacheCleared').replace('{size}', `${mb} MB`));
+			const res = await api.post<{ bytes_freed: number }>(appAPI('go-cache/clear'), { scope });
+			toast.success(translate($language, 'wd.gobuild.cacheCleared').replace('{size}', formatBytes(res.bytes_freed || 0)));
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : translate($language, 'wd.gobuild.cacheFailed'));
 		} finally {
 			clearingCache = false;
+			void loadCacheSize();
 		}
 	}
 
-	onMount(load);
+	onMount(() => {
+		void load();
+		void loadCacheSize();
+	});
 
 	const inputClass =
 		'w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 font-mono text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/40 disabled:opacity-60';
@@ -241,24 +260,47 @@
 				</div>
 			{/if}
 
-			{#if canUpdate && !isBinary}
-				<div class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
+			<div class="rounded-lg border border-gray-700 bg-gray-900/40 px-4 py-3">
+				<div class="flex flex-wrap items-start justify-between gap-2">
 					<div class="min-w-0">
 						<p class="text-sm font-medium text-white">{translate($language, 'wd.gobuild.cacheTitle')}</p>
 						<p class="mt-0.5 text-xs text-gray-400">{translate($language, 'wd.gobuild.cacheHint')}</p>
 					</div>
-					{#if cacheConfirm}
-						<div class="flex items-center gap-2 text-sm">
-							<button type="button" onclick={clearGoCache} disabled={clearingCache || busy} class="cursor-pointer rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'wd.gobuild.cacheYes')}</button>
-							<button type="button" onclick={() => (cacheConfirm = false)} class="cursor-pointer px-2 py-1.5 text-gray-300">{translate($language, 'wd.gobuild.cancel')}</button>
-						</div>
-					{:else}
-						<button type="button" onclick={() => (cacheConfirm = true)} disabled={clearingCache || busy} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">
-							{clearingCache ? translate($language, 'wd.gobuild.cacheClearing') : translate($language, 'wd.gobuild.cacheButton')}
-						</button>
-					{/if}
+					<button type="button" onclick={loadCacheSize} disabled={cacheSizeLoading} class="cursor-pointer text-xs text-blue-400 hover:underline disabled:opacity-50">
+						{translate($language, 'wd.gobuild.cacheRefresh')}
+					</button>
 				</div>
-			{/if}
+				<div class="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+					<div class="rounded-md border border-gray-700 px-3 py-2">
+						<p class="text-xs text-gray-400">{translate($language, 'wd.gobuild.cacheBuild')}</p>
+						<p class="font-mono text-gray-200">{cacheSize ? formatBytes(cacheSize.build_bytes) : cacheSizeLoading ? '…' : '—'}</p>
+					</div>
+					<div class="rounded-md border border-gray-700 px-3 py-2">
+						<p class="text-xs text-gray-400">{translate($language, 'wd.gobuild.cacheModules')}</p>
+						<p class="font-mono text-gray-200">{cacheSize ? formatBytes(cacheSize.module_bytes) : cacheSizeLoading ? '…' : '—'}</p>
+					</div>
+					<div class="rounded-md border border-gray-700 px-3 py-2">
+						<p class="text-xs text-gray-400">{translate($language, 'wd.gobuild.cacheTotal')}</p>
+						<p class="font-mono font-semibold text-white">{cacheSize ? formatBytes(cacheSize.build_bytes + cacheSize.module_bytes) : cacheSizeLoading ? '…' : '—'}</p>
+					</div>
+				</div>
+				{#if canUpdate}
+					<div class="mt-3 flex flex-wrap items-center gap-2 text-sm">
+						{#if cacheConfirm}
+							<span class="text-gray-300">{translate($language, cacheConfirm === 'all' ? 'wd.gobuild.cacheConfirmAll' : 'wd.gobuild.cacheConfirmBuild')}</span>
+							<button type="button" onclick={() => clearGoCache(cacheConfirm || 'build')} disabled={clearingCache || busy} class="cursor-pointer rounded-lg bg-red-600 px-3 py-1.5 font-semibold text-white transition hover:bg-red-700 disabled:opacity-50">{translate($language, 'wd.gobuild.cacheYes')}</button>
+							<button type="button" onclick={() => (cacheConfirm = '')} class="cursor-pointer px-2 py-1.5 text-gray-300">{translate($language, 'wd.gobuild.cancel')}</button>
+						{:else}
+							<button type="button" onclick={() => (cacheConfirm = 'build')} disabled={clearingCache || busy} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-3 py-1.5 text-gray-200 transition hover:bg-gray-600 disabled:opacity-50">
+								{clearingCache ? translate($language, 'wd.gobuild.cacheClearing') : translate($language, 'wd.gobuild.cacheButtonBuild')}
+							</button>
+							<button type="button" onclick={() => (cacheConfirm = 'all')} disabled={clearingCache || busy} class="cursor-pointer rounded-lg border border-red-700 bg-red-900/30 px-3 py-1.5 text-red-300 transition hover:bg-red-900/50 disabled:opacity-50">
+								{translate($language, 'wd.gobuild.cacheButton')}
+							</button>
+						{/if}
+					</div>
+				{/if}
+			</div>
 
 			<TaskProgress
 				bind:taskId

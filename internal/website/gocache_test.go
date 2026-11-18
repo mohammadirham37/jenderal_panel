@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -81,5 +82,57 @@ func TestClearGoCacheReportsFreedBytesAndRunsAsTheSiteUser(t *testing.T) {
 	}
 	if _, err := svc.clearGoCache(context.Background(), "root", true); err == nil {
 		t.Error("a non-website user must be refused")
+	}
+}
+
+func TestGoCacheSizeScriptMeasuresBothCaches(t *testing.T) {
+	home := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(home, ".cache", "go-build"), 0o755)
+	_ = os.MkdirAll(filepath.Join(home, "go", "pkg", "mod"), 0o755)
+	_ = os.WriteFile(filepath.Join(home, ".cache", "go-build", "a"), make([]byte, 4096), 0o644)
+	_ = os.WriteFile(filepath.Join(home, "go", "pkg", "mod", "b"), make([]byte, 8192), 0o644)
+
+	pathEnv := "PATH=/usr/bin:/bin"
+	if exec.Command("du", "-sb", ".").Run() != nil {
+		shim := t.TempDir()
+		duShim := "#!/bin/bash\nshift\ntotal=0\nfor s in $(find \"$1\" -type f -exec stat -f %z {} +); do total=$((total+s)); done\nprintf '%s\\t%s\\n' \"$total\" \"$1\"\n"
+		if err := os.WriteFile(filepath.Join(shim, "du"), []byte(duShim), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		pathEnv = "PATH=" + shim + ":/usr/bin:/bin"
+	}
+	// No Go toolchain on PATH: the default locations are measured.
+	script := strings.ReplaceAll(goCacheSizeScript("web_x"), "/home/web_x", home)
+	script = strings.ReplaceAll(script, "/usr/local/go/bin", "/nonexistent")
+	cmd := exec.Command("/bin/bash", "-c", script)
+	cmd.Env = []string{pathEnv}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("size: %v\n%s", err, out)
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) != 2 {
+		t.Fatalf("expected build and module sizes, got %q", out)
+	}
+	build, _ := strconv.ParseInt(fields[0], 10, 64)
+	mods, _ := strconv.ParseInt(fields[1], 10, 64)
+	if build < 4096 || mods < 8192 || mods <= build {
+		t.Errorf("expected build and module sizes, got %q", out)
+	}
+}
+
+func TestClearGoCacheBuildScopeKeepsModules(t *testing.T) {
+	var got string
+	svc := &Service{exec: &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			got = strings.Join(append([]string{name}, args...), " ")
+			return &executor.Result{Stdout: "10 0\n"}, nil
+		},
+	}}
+	if _, err := svc.clearGoCache(context.Background(), "web_shop", false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "go clean -cache &&") || strings.Contains(got, "-modcache ") {
+		t.Errorf("build scope must not touch the module cache: %s", got)
 	}
 }

@@ -335,15 +335,47 @@ func (h *Handler) SetAppAutoBuild(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusOK, map[string]bool{"auto_build": *req.AutoBuild})
 }
 
-// ClearGoCache handles POST /api/v1/websites/{id}/app/go-cache/clear.
-func (h *Handler) ClearGoCache(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	freed, err := h.svc.ClearGoCache(r.Context(), id)
+// GoCacheSize handles GET /api/v1/websites/{id}/app/go-cache.
+func (h *Handler) GoCacheSize(w http.ResponseWriter, r *http.Request) {
+	size, err := h.svc.GoCacheSize(r.Context(), chi.URLParam(r, "id"))
 	if err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
-	h.logAction(r, "clear_go_cache", id, "freed "+strconv.FormatInt(freed, 10)+" bytes")
+	httputil.JSON(w, http.StatusOK, size)
+}
+
+// ClearGoCache handles POST /api/v1/websites/{id}/app/go-cache/clear. The
+// body's scope is "build" (compiled packages only) or "all" (also the
+// downloaded modules, the default).
+func (h *Handler) ClearGoCache(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		Scope string `json:"scope"`
+	}
+	if r.ContentLength != 0 {
+		if err := json.NewDecoder(io.LimitReader(r.Body, 1024)).Decode(&req); err != nil && err != io.EOF {
+			httputil.HandleError(w, model.NewValidationError("invalid request body"))
+			return
+		}
+	}
+	switch req.Scope {
+	case "", "all", "build":
+	default:
+		httputil.HandleError(w, model.NewValidationError("scope must be build or all"))
+		return
+	}
+	withModules := req.Scope != "build"
+	freed, err := h.svc.ClearGoCache(r.Context(), id, withModules)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	scope := "build and module caches"
+	if !withModules {
+		scope = "build cache"
+	}
+	h.logAction(r, "clear_go_cache", id, scope+", freed "+strconv.FormatInt(freed, 10)+" bytes")
 	httputil.JSON(w, http.StatusOK, map[string]int64{"bytes_freed": freed})
 }
 

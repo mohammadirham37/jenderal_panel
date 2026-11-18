@@ -91,14 +91,70 @@ func (s *Service) trimGoBuildCache(ctx context.Context, w model.Website, write f
 	}
 }
 
-// ClearGoCache removes a Go website's build and module caches on request.
-func (s *Service) ClearGoCache(ctx context.Context, websiteID string) (int64, error) {
-	w, err := s.Get(ctx, websiteID)
+// ClearGoCache removes a Go website's build cache on request, and the
+// module cache too when withModules is set.
+func (s *Service) ClearGoCache(ctx context.Context, websiteID string, withModules bool) (int64, error) {
+	w, err := s.goWebsite(ctx, websiteID)
 	if err != nil {
 		return 0, err
 	}
-	if w.AppType != "go" {
-		return 0, model.NewValidationError("the Go cache only exists for Go websites")
+	return s.clearGoCache(ctx, w.WebUser, withModules)
+}
+
+// GoCacheSize is how much a Go website's caches currently hold.
+type GoCacheSize struct {
+	BuildBytes  int64 `json:"build_bytes"`
+	ModuleBytes int64 `json:"module_bytes"`
+}
+
+// goCacheSizeScript prints the build cache and module cache sizes in
+// bytes. Without a Go toolchain it measures the default locations, so a
+// leftover cache is still reported.
+func goCacheSizeScript(webUser string) string {
+	size := func(dir string) string {
+		return `$(du -sb "` + dir + `" 2>/dev/null | cut -f1)`
 	}
-	return s.clearGoCache(ctx, w.WebUser, true)
+	return "export " + goBuildEnv(webUser) +
+		` && if command -v go >/dev/null; then build=$(go env GOCACHE); mods=$(go env GOMODCACHE);` +
+		` else build="$HOME/.cache/go-build"; mods="$HOME/go/pkg/mod"; fi` +
+		` && b=` + size("$build") + ` && m=` + size("$mods") +
+		` && echo "${b:-0} ${m:-0}"`
+}
+
+// GoCacheSize reports the size of a Go website's build and module caches.
+func (s *Service) GoCacheSize(ctx context.Context, websiteID string) (GoCacheSize, error) {
+	var size GoCacheSize
+	w, err := s.goWebsite(ctx, websiteID)
+	if err != nil {
+		return size, err
+	}
+	if !goCacheUserPattern.MatchString(w.WebUser) {
+		return size, model.NewValidationError("invalid website user")
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	res, err := s.exec.RunSudo(ctx, "-u", w.WebUser, "--", "/bin/bash", "-c", goCacheSizeScript(w.WebUser))
+	if err != nil {
+		return size, fmt.Errorf("measure Go cache: %w", err)
+	}
+	if res == nil || res.ExitCode != 0 {
+		return size, nil // nothing measurable: report empty caches
+	}
+	fields := strings.Fields(res.Stdout)
+	if len(fields) >= 2 {
+		size.BuildBytes, _ = strconv.ParseInt(fields[len(fields)-2], 10, 64)
+		size.ModuleBytes, _ = strconv.ParseInt(fields[len(fields)-1], 10, 64)
+	}
+	return size, nil
+}
+
+func (s *Service) goWebsite(ctx context.Context, websiteID string) (model.Website, error) {
+	w, err := s.Get(ctx, websiteID)
+	if err != nil {
+		return model.Website{}, err
+	}
+	if w.AppType != "go" {
+		return model.Website{}, model.NewValidationError("the Go cache only exists for Go websites")
+	}
+	return w, nil
 }
