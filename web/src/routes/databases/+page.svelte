@@ -37,8 +37,11 @@ import { toast } from '#lib/stores/toast.js';
 		username: string;
 		database_name: string;
 		engine: string;
+		access?: 'full' | 'readonly';
 		created_at: string;
 	}
+
+	type Access = 'full' | 'readonly';
 
 	// ── State ──────────────────────────────────────────────────────
 	let engines = $state<EngineStatus[]>([]);
@@ -84,7 +87,10 @@ import { toast } from '#lib/stores/toast.js';
 	let newUsername = $state('');
 	let newPassword = $state('');
 	let newUserEngine = $state('mysql');
+	let newUserDatabase = $state('');
+	let newUserAccess = $state<Access>('full');
 	let creatingUser = $state(false);
+	let newUserDbOptions = $derived(databases.filter((d) => d.engine === newUserEngine));
 	let showNewPassword = $state(false);
 
 	// Password generator (shared by create + reset forms)
@@ -100,6 +106,7 @@ import { toast } from '#lib/stores/toast.js';
 	let grantUserId = $state<string | null>(null);
 	let grantSearch = $state('');
 	let grantBusy = $state('');
+	let grantAccess = $state<Access>('full');
 	let grantUser = $derived(dbUsers.find((u) => u.id === grantUserId) || null);
 	let grantCandidates = $derived.by(() => {
 		if (!grantUser) return [];
@@ -111,6 +118,7 @@ import { toast } from '#lib/stores/toast.js';
 	function openGrant(userId: string) {
 		grantUserId = userId;
 		grantSearch = '';
+		grantAccess = 'full';
 	}
 
 	// Copy feedback
@@ -347,6 +355,8 @@ import { toast } from '#lib/stores/toast.js';
 
 	function openCreateUser(engine = 'mysql') {
 		newUserEngine = engine;
+		newUserDatabase = '';
+		newUserAccess = 'full';
 		if (!newPassword) fillGenerated('new');
 		showCreateUser = true;
 	}
@@ -548,18 +558,33 @@ import { toast } from '#lib/stores/toast.js';
 		if (!newUsername.trim() || !newPassword.trim() || !newUserEngine) return;
 		creatingUser = true;
 		try {
-			await api.post('/api/v1/databases/users', {
+			const created = await api.post<{ id: string }>('/api/v1/databases/users', {
 				username: newUsername.trim(),
 				password: newPassword.trim(),
 				engine: newUserEngine
 			});
-			flash(translate($language, 'db.user_created').replace('{name}', newUsername.trim()));
+			let grantError: unknown = null;
+			if (newUserDatabase && created?.id) {
+				try {
+					await api.post(`/api/v1/databases/users/${created.id}/grant`, {
+						user_id: created.id,
+						database_id: newUserDatabase,
+						access: newUserAccess
+					});
+				} catch (err) {
+					grantError = err;
+				}
+			}
+			if (grantError) fail(grantError, translate($language, 'db.grant_failed'));
+			else flash(translate($language, 'db.user_created').replace('{name}', newUsername.trim()));
+			newUserDatabase = '';
+			newUserAccess = 'full';
 			showCreateUser = false;
 			newUsername = '';
 			newPassword = '';
 			showNewPassword = false;
 			newUserEngine = 'mysql';
-			await loadUsers();
+			await Promise.all([loadUsers(), loadGrants()]);
 		} catch (err) {
 			fail(err, translate($language, 'db.user_create_failed'));
 		} finally {
@@ -581,7 +606,7 @@ import { toast } from '#lib/stores/toast.js';
 		}
 	}
 
-	async function grantPrivileges(userId: string, databaseId: string) {
+	async function grantPrivileges(userId: string, databaseId: string, access: Access = grantAccess) {
 		if (grantBusy) return;
 		grantBusy = databaseId;
 		try {
@@ -589,10 +614,11 @@ import { toast } from '#lib/stores/toast.js';
 			// is ignored. database_id is the managed_databases row ID.
 			await api.post(`/api/v1/databases/users/${userId}/grant`, {
 				user_id: userId,
-				database_id: databaseId
+				database_id: databaseId,
+				access
 			});
 			const dbName = databases.find((d) => d.id === databaseId)?.name || databaseId;
-			flash(translate($language, 'db.granted').replace('{name}', dbName));
+			flash(translate($language, access === 'readonly' ? 'db.granted_readonly' : 'db.granted').replace('{name}', dbName));
 			await loadGrants();
 		} catch (err) {
 			fail(err, translate($language, 'db.grant_failed'));
@@ -988,6 +1014,7 @@ import { toast } from '#lib/stores/toast.js';
 												<path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0" />
 											</svg>
 											{g.username}
+											{#if g.access === 'readonly'}<span class="rounded bg-sky-900/60 px-1 text-[9px] font-semibold text-sky-300" title={translate($language, 'db.access_readonly')}>RO</span>{/if}
 										</button>
 									{/each}
 								{/if}
@@ -1149,6 +1176,7 @@ import { toast } from '#lib/stores/toast.js';
 									{#each userGrants as g (g.database_id)}
 										<span class="inline-flex items-center gap-1 rounded-md border border-indigo-700/40 bg-indigo-900/20 py-0.5 pl-1.5 pr-0.5 font-mono text-[10px] text-indigo-300">
 											{g.database_name}
+											{#if g.access === 'readonly'}<span class="rounded bg-sky-900/60 px-1 text-[9px] font-semibold text-sky-300" title={translate($language, 'db.access_readonly')}>RO</span>{/if}
 											<button
 												type="button"
 												onclick={() => (confirmAction = { kind: 'revoke', userId: u.id, databaseId: g.database_id, username: u.username, name: g.database_name })}
@@ -1333,6 +1361,37 @@ import { toast } from '#lib/stores/toast.js';
 				{@render passwordField('user-pass', newPassword, showNewPassword, (v) => (newPassword = v), () => (showNewPassword = !showNewPassword), () => fillGenerated('new'), translate($language, 'db.password_placeholder'))}
 				<p class="mt-2 text-[11px] text-gray-500">{translate($language, 'db.save_password_hint')}</p>
 			</div>
+			<div class="grid gap-4 sm:grid-cols-2">
+				<div>
+					<label for="user-db" class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.new_user_database')}</label>
+					<select
+						id="user-db"
+						bind:value={newUserDatabase}
+						class="w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30"
+					>
+						<option value="">{translate($language, 'db.new_user_no_database')}</option>
+						{#each newUserDbOptions as d (d.id)}
+							<option value={d.id}>{d.name}</option>
+						{/each}
+					</select>
+				</div>
+				<div>
+					<span class="mb-1 block text-[11px] font-medium uppercase tracking-wider text-gray-400">{translate($language, 'db.access_level')}</span>
+					<div class="grid grid-cols-2 overflow-hidden rounded-lg border border-gray-600 text-sm" role="radiogroup" aria-label={translate($language, 'db.access_level')}>
+						{#each ['full', 'readonly'] as const as level (level)}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={newUserAccess === level}
+								disabled={!newUserDatabase}
+								onclick={() => (newUserAccess = level)}
+								class="cursor-pointer px-3 py-2 transition disabled:cursor-not-allowed disabled:opacity-40 {newUserAccess === level ? (level === 'readonly' ? 'bg-sky-600 text-white' : 'bg-green-600 text-white') : 'bg-gray-900 text-gray-300 hover:bg-gray-700'}"
+							>{translate($language, level === 'full' ? 'db.access_full' : 'db.access_readonly')}</button>
+						{/each}
+					</div>
+				</div>
+			</div>
+			<p class="-mt-2 text-[11px] text-gray-500">{translate($language, newUserAccess === 'readonly' ? 'db.access_readonly_hint' : 'db.access_full_hint')}</p>
 		</form>
 		{#snippet footer()}
 			<button type="button" onclick={() => (showCreateUser = false)} disabled={creatingUser} class="cursor-pointer rounded-lg border border-gray-600 bg-gray-700 px-4 py-2 text-sm font-medium text-gray-200 transition hover:bg-gray-600 disabled:opacity-40">
@@ -1383,16 +1442,28 @@ import { toast } from '#lib/stores/toast.js';
 						{#each current as g (g.database_id)}
 							<li class="flex items-center justify-between gap-2 px-3 py-2">
 								<span class="flex min-w-0 items-center gap-2">
-									<span class="h-1.5 w-1.5 shrink-0 rounded-full bg-green-400"></span>
+									<span class="h-1.5 w-1.5 shrink-0 rounded-full {g.access === 'readonly' ? 'bg-sky-400' : 'bg-green-400'}"></span>
 									<span class="truncate font-mono text-sm text-gray-100">{g.database_name}</span>
 								</span>
-								<button
-									type="button"
-									onclick={() => (confirmAction = { kind: 'revoke', userId: grantUser.id, databaseId: g.database_id, username: grantUser.username, name: g.database_name })}
-									class="shrink-0 cursor-pointer rounded-md px-2 py-1 text-xs text-red-300 transition hover:bg-red-500/15"
-								>
-									{translate($language, 'db.revoke')}
-								</button>
+								<span class="flex shrink-0 items-center gap-1">
+									<select
+										value={g.access || 'full'}
+										onchange={(e) => grantUser && grantPrivileges(grantUser.id, g.database_id, e.currentTarget.value as Access)}
+										disabled={!!grantBusy}
+										aria-label={translate($language, 'db.access_level')}
+										class="rounded-md border border-gray-600 bg-gray-900 px-2 py-1 text-xs text-gray-200 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+									>
+										<option value="full">{translate($language, 'db.access_full')}</option>
+										<option value="readonly">{translate($language, 'db.access_readonly')}</option>
+									</select>
+									<button
+										type="button"
+										onclick={() => (confirmAction = { kind: 'revoke', userId: grantUser.id, databaseId: g.database_id, username: grantUser.username, name: g.database_name })}
+										class="cursor-pointer rounded-md px-2 py-1 text-xs text-red-300 transition hover:bg-red-500/15"
+									>
+										{translate($language, 'db.revoke')}
+									</button>
+								</span>
 							</li>
 						{/each}
 					</ul>
@@ -1402,6 +1473,17 @@ import { toast } from '#lib/stores/toast.js';
 			<div>
 				<div class="mb-2 flex items-center justify-between gap-2">
 					<h4 class="text-[11px] font-semibold uppercase tracking-wider text-gray-400">{translate($language, 'db.add_access')}</h4>
+					<div class="ml-auto inline-flex overflow-hidden rounded-lg border border-gray-600 text-xs" role="radiogroup" aria-label={translate($language, 'db.access_level')}>
+						{#each ['full', 'readonly'] as const as level (level)}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={grantAccess === level}
+								onclick={() => (grantAccess = level)}
+								class="cursor-pointer px-2.5 py-1 transition {grantAccess === level ? (level === 'readonly' ? 'bg-sky-600 text-white' : 'bg-green-600 text-white') : 'bg-gray-900 text-gray-300 hover:bg-gray-700'}"
+							>{translate($language, level === 'full' ? 'db.access_full' : 'db.access_readonly')}</button>
+						{/each}
+					</div>
 					<input
 						type="search"
 						bind:value={grantSearch}
@@ -1435,9 +1517,9 @@ import { toast } from '#lib/stores/toast.js';
 									type="button"
 									onclick={() => grantUser && grantPrivileges(grantUser.id, db.id)}
 									disabled={!!grantBusy}
-									class="shrink-0 cursor-pointer rounded-md bg-green-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
+									class="shrink-0 cursor-pointer rounded-md px-3 py-1 text-xs font-semibold text-white transition disabled:opacity-50 {grantAccess === 'readonly' ? 'bg-sky-600 hover:bg-sky-700' : 'bg-green-600 hover:bg-green-700'}"
 								>
-									{grantBusy === db.id ? '…' : translate($language, 'db.grant')}
+									{grantBusy === db.id ? '…' : translate($language, grantAccess === 'readonly' ? 'db.grant_readonly' : 'db.grant')}
 								</button>
 							</li>
 						{/each}

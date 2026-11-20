@@ -325,8 +325,8 @@ func (p *PostgreSQLEngine) RevokePrivileges(ctx context.Context, username, datab
 		"REVOKE ALL PRIVILEGES ON DATABASE %s FROM %s; "+
 			"REVOKE ALL ON SCHEMA public FROM %s; "+
 			"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM %s; "+
-			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %s",
-		database, username, username, username, username)
+			"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM %s; %s",
+		database, username, username, username, username, revokeDefaultPrivilegesSQL(username))
 	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-d", database, "-c", revokeStmt)
 	if err != nil {
 		return fmt.Errorf("postgresql revoke privileges: %w", err)

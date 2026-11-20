@@ -401,6 +401,24 @@ func (s *Service) DropDBUser(ctx context.Context, id string) error {
 		return err
 	}
 
+	// Revoke recorded grants first: PostgreSQL refuses to drop a role
+	// that still holds privileges or default privileges in a database.
+	// Best effort, since the database may already be gone.
+	if rows, qerr := s.db.QueryContext(ctx,
+		`SELECT d.name FROM db_grants g JOIN managed_databases d ON d.id = g.database_id WHERE g.user_id = ?`, id); qerr == nil {
+		var dbNames []string
+		for rows.Next() {
+			var name string
+			if rows.Scan(&name) == nil {
+				dbNames = append(dbNames, name)
+			}
+		}
+		rows.Close()
+		for _, name := range dbNames {
+			_ = eng.RevokePrivileges(ctx, username, name)
+		}
+	}
+
 	if err := eng.DropUser(ctx, username); err != nil {
 		return err
 	}
@@ -499,10 +517,23 @@ func (s *Service) ResetPassword(ctx context.Context, id, password string) error 
 	return eng.ResetPassword(ctx, username, password)
 }
 
-// GrantPrivileges grants all privileges on the specified database to the
-// specified user. Both must exist in the panel DB and share the same engine.
-// The grant is recorded in the panel DB so it can be listed and revoked.
+// GrantPrivileges grants full access on the specified database to the
+// specified user.
 func (s *Service) GrantPrivileges(ctx context.Context, userID, databaseID string) error {
+	return s.GrantAccess(ctx, userID, databaseID, AccessFull)
+}
+
+// GrantAccess gives a database user full or read-only access to a managed
+// database. Both must exist in the panel DB and share the same engine.
+// Granting again with another level switches the user to it. The grant is
+// recorded in the panel DB so it can be listed and revoked.
+func (s *Service) GrantAccess(ctx context.Context, userID, databaseID, access string) error {
+	if access == "" {
+		access = AccessFull
+	}
+	if access != AccessFull && access != AccessReadOnly {
+		return model.NewValidationError("access must be full or readonly")
+	}
 	username, userEngine, dbName, err := s.grantPair(ctx, userID, databaseID)
 	if err != nil {
 		return err
@@ -513,15 +544,24 @@ func (s *Service) GrantPrivileges(ctx context.Context, userID, databaseID string
 		return err
 	}
 
-	if err := eng.GrantPrivileges(ctx, username, dbName); err != nil {
+	if access == AccessReadOnly {
+		ro, ok := eng.(readOnlyGranter)
+		if !ok {
+			return model.NewValidationError(userEngine + " does not support read-only access")
+		}
+		err = ro.GrantReadOnly(ctx, username, dbName)
+	} else {
+		err = eng.GrantPrivileges(ctx, username, dbName)
+	}
+	if err != nil {
 		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = s.db.ExecContext(ctx,
-		`INSERT INTO db_grants (id, user_id, database_id, created_at) VALUES (?, ?, ?, ?)
-		 ON CONFLICT(user_id, database_id) DO NOTHING`,
-		ulid.Make().String(), userID, databaseID, now)
+		`INSERT INTO db_grants (id, user_id, database_id, access, created_at) VALUES (?, ?, ?, ?, ?)
+		 ON CONFLICT(user_id, database_id) DO UPDATE SET access = excluded.access`,
+		ulid.Make().String(), userID, databaseID, access, now)
 	if err != nil {
 		return fmt.Errorf("record grant: %w", err)
 	}
@@ -588,7 +628,7 @@ func (s *Service) grantPair(ctx context.Context, userID, databaseID string) (use
 // names. An empty ownerID returns every grant; otherwise only grants where
 // both the database user and the database belong to that panel user.
 func (s *Service) ListGrants(ctx context.Context, ownerID string) ([]model.DBGrant, error) {
-	query := `SELECT g.user_id, g.database_id, u.username, d.name, u.engine, g.created_at
+	query := `SELECT g.user_id, g.database_id, u.username, d.name, u.engine, g.access, g.created_at
 		FROM db_grants g
 		JOIN db_users u ON u.id = g.user_id
 		JOIN managed_databases d ON d.id = g.database_id`
@@ -608,7 +648,7 @@ func (s *Service) ListGrants(ctx context.Context, ownerID string) ([]model.DBGra
 	grants := []model.DBGrant{}
 	for rows.Next() {
 		var g model.DBGrant
-		if err := rows.Scan(&g.UserID, &g.DatabaseID, &g.Username, &g.DatabaseName, &g.Engine, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.UserID, &g.DatabaseID, &g.Username, &g.DatabaseName, &g.Engine, &g.Access, &g.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan db grant: %w", err)
 		}
 		grants = append(grants, g)

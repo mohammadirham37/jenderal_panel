@@ -406,6 +406,8 @@ func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 type grantPrivilegesRequest struct {
 	UserID     string `json:"user_id"`
 	DatabaseID string `json:"database_id"`
+	// Access is "full" (the default) or "readonly".
+	Access string `json:"access,omitempty"`
 }
 
 // GrantPrivileges grants privileges on a database to a user.
@@ -423,7 +425,10 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.svc.GrantPrivileges(r.Context(), req.UserID, req.DatabaseID); err != nil {
+	if req.Access == "" {
+		req.Access = AccessFull
+	}
+	if err := h.svc.GrantAccess(r.Context(), req.UserID, req.DatabaseID, req.Access); err != nil {
 		httputil.HandleError(w, err)
 		return
 	}
@@ -434,7 +439,7 @@ func (h *Handler) GrantPrivileges(w http.ResponseWriter, r *http.Request) {
 		Action: "grant_privileges",
 		Module: "dbmanager",
 		Target: fmt.Sprintf("user=%s db=%s", req.UserID, req.DatabaseID),
-		Detail: fmt.Sprintf("granted privileges on database %s to user %s", req.DatabaseID, req.UserID),
+		Detail: fmt.Sprintf("granted %s access on database %s to user %s", req.Access, req.DatabaseID, req.UserID),
 		IP:     r.RemoteAddr,
 	})
 

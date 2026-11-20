@@ -325,6 +325,7 @@ type DBGrant struct {
 	Username     string `json:"username"`
 	DatabaseName string `json:"database_name"`
 	Engine       string `json:"engine"`
+	Access       string `json:"access"` // full or readonly
 	CreatedAt    string `json:"created_at"`
 }
 
