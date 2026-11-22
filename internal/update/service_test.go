@@ -124,6 +124,12 @@ func TestUpdateAtomicallyReplacesRunningBinary(t *testing.T) {
 	if !strings.Contains(script, "ensure_build_swap") || !strings.Contains(script, "cleanup_build_swap; rm -f") {
 		t.Fatalf("update script does not guard low-memory builds with a temporary swap:\n%s", script)
 	}
+	if !strings.Contains(script, "MemAvailable") || !strings.Contains(script, "SwapFree") {
+		t.Fatalf("build swap must be sized from available memory, not installed RAM:\n%s", script)
+	}
+	if !strings.Contains(script, "timeout --signal=TERM --kill-after=30s 20m '/usr/bin/sudo' '-u' 'jenderal'") {
+		t.Fatalf("frontend build must be time-limited so a stalled build cannot hang the update:\n%s", script)
+	}
 	if swapIndex := strings.Index(script, "ensure_build_swap"); swapIndex < 0 || swapIndex > strings.Index(script, "'npm' 'install'") {
 		t.Fatalf("update script enables the build swap too late:\n%s", script)
 	}

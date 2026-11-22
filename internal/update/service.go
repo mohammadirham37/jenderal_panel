@@ -414,25 +414,29 @@ BUILD_CACHE_DIR=/var/cache/jenderal
 mkdir -p "$BUILD_CACHE_DIR"
 export GOCACHE="$BUILD_CACHE_DIR/go-build" GOMODCACHE="$BUILD_CACHE_DIR/go-mod" GOFLAGS="-modcacherw"
 `+cleanupFunctions()+`
-# Small VPS (1GB RAM / 1 vCPU) cannot compile the panel without extra
-# swap; add a temporary swapfile when RAM+swap is below ~2.5GB and
+# The frontend and Go builds need ~2.5GB of memory. What counts is what is
+# free right now, not the installed RAM: on a server that has been up for a
+# while, databases, PHP-FPM and page cache hold much of it, and a build that
+# runs short does not fail but thrashes swap and looks stuck. Add a
+# temporary swapfile when available RAM plus free swap is below ~2.5GB and
 # remove it once the build is done (or failed).
 BUILD_SWAPFILE=/jenderal-update-swap
 SWAP_ENABLED=false
+available_mb() {
+    awk '/^MemAvailable/ {m=$2} /^SwapFree/ {s=$2} END {print int((m+s)/1024)}' /proc/meminfo
+}
 ensure_build_swap() {
-    ram=$(awk '/^MemTotal/ {print int($2/1024)}' /proc/meminfo)
-    swap=$(awk '/^SwapTotal/ {print int($2/1024)}' /proc/meminfo)
-    total=$((ram + swap))
+    total=$(available_mb)
     if [ "$total" -ge 2600 ]; then return 0; fi
     needed=$((3072 - total))
     if [ "$needed" -gt 2048 ]; then needed=2048; fi
     if [ "$needed" -lt 512 ]; then needed=512; fi
     free=$(df -BM / | awk 'NR==2 {print int($4)}')
     if [ "$free" -lt $((needed + 2048)) ]; then
-        echo "WARNING: only ${total}MB total memory and not enough disk for a build swap; the build may run out of memory"
+        echo "WARNING: only ${total}MB memory available and not enough disk for a build swap; the build may run out of memory"
         return 0
     fi
-    echo ">>> Low memory (${total}MB total): adding ${needed}MB temporary swap for the build..."
+    echo ">>> Low memory (${total}MB available): adding ${needed}MB temporary swap for the build..."
     fallocate -l ${needed}M "$BUILD_SWAPFILE" 2>/dev/null || dd if=/dev/zero of="$BUILD_SWAPFILE" bs=1M count=$needed status=none
     chmod 600 "$BUILD_SWAPFILE"
     mkswap "$BUILD_SWAPFILE" > /dev/null 2>&1 || true
@@ -471,7 +475,21 @@ chown -hR jenderal:jenderal .
 %s 2>&1
 
 echo ">>> Step 3: Building frontend..."
-%s 2>&1
+# A build left over from an earlier update that hung still holds memory.
+pkill -KILL -u jenderal -f 'vite[ ]build' 2>/dev/null || true
+echo "    Memory available: $(available_mb)MB (RAM + free swap)"
+# The build normally takes under a minute; if memory runs out it can stall
+# instead of failing, so it is stopped after 20 minutes rather than leaving
+# the update hanging until the server is rebooted.
+build_status=0
+timeout --signal=TERM --kill-after=30s 20m %s 2>&1 || build_status=$?
+if [ "$build_status" -ne 0 ]; then
+    if [ "$build_status" -eq 124 ] || [ "$build_status" -eq 137 ]; then
+        pkill -KILL -u jenderal -f 'vite[ ]build' 2>/dev/null || true
+        echo "ERROR: the frontend build did not finish within 20 minutes (memory available now: $(available_mb)MB). The server is probably short of memory; free some (or add swap) and run the update again." >&2
+    fi
+    exit "$build_status"
+fi
 
 echo ">>> Step 4: Preparing embed..."
 cd %s
