@@ -52,7 +52,21 @@ const en = {
 	'relupg.pg.migrateDesc':
 		'After the upgrade the panel backs up every database (pg_dumpall to /var/backups/jenderal), then copies the cluster to PostgreSQL {target} on the same port. The old cluster is kept stopped as a fallback; if the migration fails it is started again unchanged. Databases are unavailable for a few minutes.',
 	'relupg.pg.keep': 'Without this, PostgreSQL {clusters} stays as is and receives updates from apt.postgresql.org.',
-	'relupg.pg.notPossible': 'Migration is not possible: {reason}'
+	'relupg.pg.notPossible': 'Migration is not possible: {reason}',
+	'relupg.cleanup.title': 'Clean up after the upgrade',
+	'relupg.cleanup.desc': 'The server runs Ubuntu 26.04. Once your sites work normally, remove what the upgrade kept as a fallback.',
+	'relupg.cleanup.cluster': 'PostgreSQL {id} (old cluster, {size})',
+	'relupg.cleanup.clusterDesc': 'Kept stopped after the migration to PostgreSQL 18. Data directory: {dir}',
+	'relupg.cleanup.drop': 'Remove cluster',
+	'relupg.cleanup.dropTitle': 'Remove PostgreSQL {id}?',
+	'relupg.cleanup.dropDesc':
+		'This deletes the stopped cluster {id} and its data directory {dir}, then removes the packages of that PostgreSQL version if no other cluster uses them. The running PostgreSQL 18 cluster is not touched. The pg_dumpall backup in /var/backups/jenderal is kept.',
+	'relupg.cleanup.dropType': 'Type {id} to confirm',
+	'relupg.cleanup.autoremove': '{n} package(s) are no longer needed (old kernels and Ubuntu 24.04 libraries)',
+	'relupg.cleanup.autoremoveRun': 'Remove unused packages',
+	'relupg.cleanup.autoremoveConfirm': 'Remove the packages apt no longer needs (apt-get autoremove)? The running kernel is kept.',
+	'relupg.cleanup.showPackages': 'Show packages',
+	'relupg.cleanup.failed': 'Could not start the cleanup'
 };
 
 const id: Record<keyof typeof en, string> = {
@@ -105,7 +119,21 @@ const id: Record<keyof typeof en, string> = {
 	'relupg.pg.migrateDesc':
 		'Setelah upgrade, panel mem-backup semua database (pg_dumpall ke /var/backups/jenderal), lalu menyalin cluster ke PostgreSQL {target} di port yang sama. Cluster lama disimpan dalam keadaan mati sebagai cadangan; kalau migrasi gagal, cluster lama dinyalakan lagi tanpa perubahan. Database tidak bisa diakses selama beberapa menit.',
 	'relupg.pg.keep': 'Tanpa opsi ini, PostgreSQL {clusters} tetap seperti sekarang dan mendapat update dari apt.postgresql.org.',
-	'relupg.pg.notPossible': 'Migrasi tidak bisa dilakukan: {reason}'
+	'relupg.pg.notPossible': 'Migrasi tidak bisa dilakukan: {reason}',
+	'relupg.cleanup.title': 'Bersihkan setelah upgrade',
+	'relupg.cleanup.desc': 'Server sudah berjalan di Ubuntu 26.04. Setelah situs dipastikan normal, hapus sisa yang disimpan upgrade sebagai cadangan.',
+	'relupg.cleanup.cluster': 'PostgreSQL {id} (cluster lama, {size})',
+	'relupg.cleanup.clusterDesc': 'Disimpan dalam keadaan mati setelah migrasi ke PostgreSQL 18. Direktori data: {dir}',
+	'relupg.cleanup.drop': 'Hapus cluster',
+	'relupg.cleanup.dropTitle': 'Hapus PostgreSQL {id}?',
+	'relupg.cleanup.dropDesc':
+		'Cluster {id} yang sudah mati beserta direktori datanya {dir} akan dihapus, lalu paket PostgreSQL versi itu ikut dihapus kalau tidak dipakai cluster lain. Cluster PostgreSQL 18 yang berjalan tidak disentuh. Backup pg_dumpall di /var/backups/jenderal tetap disimpan.',
+	'relupg.cleanup.dropType': 'Ketik {id} untuk konfirmasi',
+	'relupg.cleanup.autoremove': '{n} paket sudah tidak dipakai (kernel lama dan library Ubuntu 24.04)',
+	'relupg.cleanup.autoremoveRun': 'Hapus paket tidak terpakai',
+	'relupg.cleanup.autoremoveConfirm': 'Hapus paket yang sudah tidak dibutuhkan apt (apt-get autoremove)? Kernel yang sedang berjalan tetap disimpan.',
+	'relupg.cleanup.showPackages': 'Lihat daftar paket',
+	'relupg.cleanup.failed': 'Gagal memulai pembersihan'
 };
 
 export const dict = { en, id };

@@ -46,6 +46,10 @@ type fakeServer struct {
 	pgClusters string
 	pgDataSize string
 	pgFree     string
+	// autoremove is apt-get -s autoremove output; dpkgPostgres is the
+	// dpkg-query listing of postgresql* packages.
+	autoremove   string
+	dpkgPostgres string
 	sudoCalls      [][]string
 	inputs         map[string]string
 }
@@ -82,6 +86,8 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 					return fail()
 				}
 				return ok("")
+			case name == "dpkg-query":
+				return ok(f.dpkgPostgres)
 			case name == "pg_lsclusters":
 				if f.pgClusters == "" {
 					return fail()
@@ -123,6 +129,8 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 			}
 			joined := name + " " + strings.Join(args, " ")
 			switch {
+			case name == "apt-get" && args[len(args)-1] == "autoremove":
+				return ok(f.autoremove)
 			case name == "apt-get":
 				return ok(f.pendingLines)
 			case name == "dpkg":
@@ -676,5 +684,113 @@ func TestParseClustersAndMajor(t *testing.T) {
 	}
 	if pgMajor("9.6") != 9 || pgMajor("16") != 16 || pgMajor("x") != -1 {
 		t.Error("pgMajor")
+	}
+}
+
+// After the migration and the reboot: 16/main is stopped next to an online
+// 18/main.
+func cleanupServer() *fakeServer {
+	f := newFakeServer()
+	f.codename = "resolute"
+	f.pgClusters = "16 main 5433 down postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log\n" +
+		"18 main 5432 online postgres /var/lib/postgresql/18/main /var/log/postgresql/postgresql-18-main.log\n"
+	f.pgDataSize = "2000000000"
+	f.autoremove = "Remv linux-image-6.8.0-147-generic [6.8.0-147.147]\nRemv libllvm18 [1:18.1.3-1]\n"
+	f.dpkgPostgres = "postgresql\tinstalled\npostgresql-16\tinstalled\npostgresql-16-pgvector\tinstalled\n" +
+		"postgresql-client-16\tinstalled\npostgresql-18\tinstalled\npostgresql-client-18\tinstalled\n" +
+		"postgresql-15\tnot-installed\npostgresql-common\tinstalled\n"
+	return f
+}
+
+func TestCleanupListsMigratedClustersAndUnusedPackages(t *testing.T) {
+	f := cleanupServer()
+	s := NewService(f.executor(), nil, nil)
+	c, err := s.Cleanup(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Clusters) != 1 || c.Clusters[0].ID != "16/main" || c.Clusters[0].DataBytes != 2000000000 {
+		t.Fatalf("clusters = %+v", c.Clusters)
+	}
+	if strings.Join(c.Autoremove, ",") != "libllvm18,linux-image-6.8.0-147-generic" {
+		t.Errorf("autoremove = %v", c.Autoremove)
+	}
+}
+
+func TestCleanupIsEmptyBeforeTheReboot(t *testing.T) {
+	for _, mutate := range []func(*fakeServer){
+		func(f *fakeServer) { f.state = StateRebootRequired; f.bootID = "a"; f.currentBootID = "a" },
+		func(f *fakeServer) { f.state = StateRunning; f.unitActive = true },
+		func(f *fakeServer) { f.codename = "noble" },
+	} {
+		f := cleanupServer()
+		mutate(f)
+		c, err := NewService(f.executor(), nil, nil).Cleanup(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Clusters) != 0 || len(c.Autoremove) != 0 {
+			t.Errorf("cleanup offered too early: %+v", c)
+		}
+	}
+}
+
+// Only a stopped cluster with an online 18 cluster of the same name counts
+// as left behind by a migration.
+func TestCleanupIgnoresClustersThatWereNotMigrated(t *testing.T) {
+	f := cleanupServer()
+	f.pgClusters = "16 main 5432 online postgres /var/lib/postgresql/16/main log\n" +
+		"16 other 5433 down postgres /var/lib/postgresql/16/other log\n" +
+		"18 main 5434 down postgres /var/lib/postgresql/18/main log\n"
+	c, _ := NewService(f.executor(), nil, nil).Cleanup(context.Background())
+	if len(c.Clusters) != 0 {
+		t.Errorf("clusters = %+v", c.Clusters)
+	}
+}
+
+func TestRunCleanupDropsTheClusterAndItsPackages(t *testing.T) {
+	f := cleanupServer()
+	s := NewService(f.executor(), nil, nil)
+	var got [][]string
+	s.runTask = func(name string, commands [][]string) string {
+		got = commands
+		return "task-1"
+	}
+	if _, err := s.RunCleanup(context.Background(), CleanupRequest{Action: CleanupPostgreSQL, Cluster: "16/main", Confirm: "16"}); err == nil {
+		t.Fatal("a wrong confirmation must be refused")
+	}
+	if _, err := s.RunCleanup(context.Background(), CleanupRequest{Action: CleanupPostgreSQL, Cluster: "18/main", Confirm: "18/main"}); err == nil {
+		t.Fatal("the running cluster must never be removable")
+	}
+	id, err := s.RunCleanup(context.Background(), CleanupRequest{Action: CleanupPostgreSQL, Cluster: "16/main", Confirm: " 16/main "})
+	if err != nil || id != "task-1" {
+		t.Fatalf("RunCleanup = %q, %v", id, err)
+	}
+	if strings.Join(got[0], " ") != "pg_dropcluster 16 main" {
+		t.Errorf("first command = %v", got[0])
+	}
+	remove := strings.Join(got[1], " ")
+	if !strings.HasSuffix(remove, "remove -y postgresql-16 postgresql-16-pgvector postgresql-client-16") {
+		t.Errorf("remove command = %s", remove)
+	}
+
+	id, err = s.RunCleanup(context.Background(), CleanupRequest{Action: CleanupAutoremove})
+	if err != nil || id != "task-1" || !strings.Contains(strings.Join(got[0], " "), "apt-get -o DPkg::Lock::Timeout=120 autoremove -y") {
+		t.Fatalf("autoremove = %q %v %v", id, err, got)
+	}
+}
+
+// Another cluster still on the same version keeps its packages.
+func TestRunCleanupKeepsPackagesUsedByAnotherCluster(t *testing.T) {
+	f := cleanupServer()
+	f.pgClusters += "16 reports 5435 online postgres /var/lib/postgresql/16/reports log\n"
+	s := NewService(f.executor(), nil, nil)
+	var got [][]string
+	s.runTask = func(name string, commands [][]string) string { got = commands; return "t" }
+	if _, err := s.RunCleanup(context.Background(), CleanupRequest{Action: CleanupPostgreSQL, Cluster: "16/main", Confirm: "16/main"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Errorf("packages must stay while 16/reports uses them: %v", got)
 	}
 }

@@ -34,7 +34,15 @@
 		warnings: string[];
 	};
 
+	type OldCluster = { id: string; version: string; name: string; data_dir: string; data_bytes: number };
+	type Cleanup = { clusters: OldCluster[]; autoremove: string[] };
+
 	let status = $state<Status | null>(null);
+	let cleanup = $state<Cleanup | null>(null);
+	let cleanupTaskId = $state('');
+	let dropCluster = $state<OldCluster | null>(null);
+	let dropConfirm = $state('');
+	let cleanupBusy = $state(false);
 	let preflight = $state<Preflight | null>(null);
 	let checking = $state(false);
 	let loadError = $state('');
@@ -47,7 +55,10 @@
 	let repairTaskId = $state('');
 	let logEl = $state<HTMLPreElement | null>(null);
 
-	const visible = $derived(!!status && (status.codename === 'noble' || status.state !== 'idle'));
+	const hasCleanup = $derived(!!cleanup && (cleanup.clusters.length > 0 || cleanup.autoremove.length > 0));
+	const visible = $derived(
+		!!status && (status.codename === 'noble' || status.state !== 'idle' || hasCleanup || !!cleanupTaskId)
+	);
 	const canConfirm = $derived(snapshotConfirmed && confirmText.trim() === '26.04' && !starting);
 
 	const t = (key: string) => translate($language, key);
@@ -62,6 +73,8 @@
 			// one (to try again).
 			const canTry = status.codename === 'noble' && (status.state === 'idle' || status.state === 'failed');
 			if (canTry && !preflight && !checking) void loadPreflight();
+			// After the reboot into the new release: leftovers to remove.
+			if (status.codename !== 'noble' && status.state === 'idle' && !cleanup) void loadCleanup();
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : t('relupg.loadFailed');
 		}
@@ -77,6 +90,43 @@
 		} finally {
 			checking = false;
 		}
+	}
+
+	async function loadCleanup() {
+		try {
+			cleanup = await api.get<Cleanup>('/api/v1/server/release-upgrade/cleanup');
+		} catch (err) {
+			loadError = err instanceof Error ? err.message : t('relupg.loadFailed');
+		}
+	}
+
+	async function runCleanup(body: { action: string; cluster?: string; confirm?: string }) {
+		cleanupBusy = true;
+		try {
+			const result = await api.post<{ task_id: string }>('/api/v1/server/release-upgrade/cleanup', body);
+			cleanupTaskId = result.task_id;
+			dropCluster = null;
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : t('relupg.cleanup.failed'));
+		} finally {
+			cleanupBusy = false;
+		}
+	}
+
+	function autoremove() {
+		if (!confirm(t('relupg.cleanup.autoremoveConfirm'))) return;
+		void runCleanup({ action: 'autoremove' });
+	}
+
+	function openDrop(cluster: OldCluster) {
+		dropConfirm = '';
+		dropCluster = cluster;
+	}
+
+	function formatBytes(n: number) {
+		if (n >= 1 << 30) return (n / (1 << 30)).toFixed(1) + ' GB';
+		if (n >= 1 << 20) return (n / (1 << 20)).toFixed(0) + ' MB';
+		return Math.max(0, Math.round(n / 1024)) + ' KB';
 	}
 
 	async function start() {
@@ -201,6 +251,62 @@
 	{/if}
 {/snippet}
 
+{#snippet leftovers()}
+	<div class="mt-4">
+		<h4 class="text-xs font-semibold uppercase tracking-wide text-gray-400">{t('relupg.cleanup.title')}</h4>
+		<p class="mt-1 text-xs text-gray-500">{t('relupg.cleanup.desc')}</p>
+		{#if cleanup}
+			{#each cleanup.clusters as cluster (cluster.id)}
+				<div class="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-700 p-3">
+					<div class="min-w-0">
+						<p class="text-sm text-gray-200">
+							{fill('relupg.cleanup.cluster', { id: cluster.id, size: formatBytes(cluster.data_bytes) })}
+						</p>
+						<p class="text-xs text-gray-500 break-words">{fill('relupg.cleanup.clusterDesc', { dir: cluster.data_dir })}</p>
+					</div>
+					<button
+						type="button"
+						onclick={() => openDrop(cluster)}
+						disabled={cleanupBusy || !!cleanupTaskId}
+						class="px-3 py-1.5 bg-red-700 hover:bg-red-800 text-white text-sm rounded-lg cursor-pointer disabled:opacity-50"
+					>
+						{t('relupg.cleanup.drop')}
+					</button>
+				</div>
+			{/each}
+			{#if cleanup.autoremove.length > 0}
+				<div class="mt-3 rounded-lg border border-gray-700 p-3">
+					<div class="flex flex-wrap items-center justify-between gap-3">
+						<p class="text-sm text-gray-200">
+							{fill('relupg.cleanup.autoremove', { n: String(cleanup.autoremove.length) })}
+						</p>
+						<button
+							type="button"
+							onclick={autoremove}
+							disabled={cleanupBusy || !!cleanupTaskId}
+							class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-lg cursor-pointer disabled:opacity-50"
+						>
+							{t('relupg.cleanup.autoremoveRun')}
+						</button>
+					</div>
+					<details class="mt-2">
+						<summary class="cursor-pointer text-xs text-gray-400">{t('relupg.cleanup.showPackages')}</summary>
+						<p class="mt-1 text-xs text-gray-500 break-words font-mono">{cleanup.autoremove.join(' ')}</p>
+					</details>
+				</div>
+			{/if}
+		{/if}
+		<TaskProgress
+			bind:taskId={cleanupTaskId}
+			storageKey="jenderal_release_upgrade_cleanup_task"
+			onComplete={() => {
+				cleanup = null;
+				void loadCleanup();
+			}}
+		/>
+	</div>
+{/snippet}
+
 {#if visible && status}
 	<div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
 		<div class="flex flex-wrap items-center justify-between gap-2">
@@ -215,7 +321,9 @@
 			<p class="mt-3 text-sm text-red-400">{loadError}</p>
 		{/if}
 
-		{#if status.state === 'idle'}
+		{#if status.state === 'idle' && status.codename !== 'noble'}
+			{@render leftovers()}
+		{:else if status.state === 'idle'}
 			{@render readiness()}
 		{:else}
 			<p class="mt-3 text-sm text-gray-300">
@@ -272,6 +380,46 @@
 			{/if}
 		{/if}
 	</div>
+
+	{#if dropCluster}
+		{@const cluster = dropCluster}
+		<Modal
+			title={fill('relupg.cleanup.dropTitle', { id: cluster.id })}
+			onclose={() => (dropCluster = null)}
+			busy={cleanupBusy}
+			closeLabel={t('relupg.confirm.cancel')}
+		>
+			<p class="text-sm text-gray-300">{fill('relupg.cleanup.dropDesc', { id: cluster.id, dir: cluster.data_dir })}</p>
+			<label class="mt-4 block text-sm text-gray-300">
+				{fill('relupg.cleanup.dropType', { id: cluster.id })}
+				<input
+					type="text"
+					bind:value={dropConfirm}
+					autocomplete="off"
+					placeholder={cluster.id}
+					class="mt-1 w-full rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm text-white"
+				/>
+			</label>
+			{#snippet footer()}
+				<button
+					type="button"
+					onclick={() => (dropCluster = null)}
+					disabled={cleanupBusy}
+					class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded-lg cursor-pointer disabled:opacity-50"
+				>
+					{t('relupg.confirm.cancel')}
+				</button>
+				<button
+					type="button"
+					onclick={() => runCleanup({ action: 'postgresql', cluster: cluster.id, confirm: dropConfirm.trim() })}
+					disabled={cleanupBusy || dropConfirm.trim() !== cluster.id}
+					class="px-4 py-2 bg-red-700 hover:bg-red-800 text-white text-sm font-medium rounded-lg cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+				>
+					{t('relupg.cleanup.drop')}
+				</button>
+			{/snippet}
+		</Modal>
+	{/if}
 
 	{#if showConfirm}
 		<Modal title={t('relupg.confirm.title')} onclose={() => (showConfirm = false)} busy={starting} closeLabel={t('relupg.confirm.cancel')}>

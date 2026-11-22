@@ -176,6 +176,21 @@ the server has booted again, `reboot_required` is reported as `idle`.
 Only in `failed` state: runs `dpkg --configure -a` then `apt-get -f install
 -y` (confold) as a panel task with live output.
 
+### 5a. Cleanup after the reboot — `GET/POST /api/v1/server/release-upgrade/cleanup`
+
+Only on resolute with state `idle` (upgrade finished and rebooted):
+
+- `postgresql`: a cluster older than 18 that is `down` while an online
+  18 cluster with the same name exists (what the migration left behind).
+  Confirmed by typing its ID (`16/main`); runs `pg_dropcluster`, then
+  `apt-get remove` of that version's packages (`postgresql-16`,
+  `postgresql-16-*`, `postgresql-client-16`, ...) unless another cluster
+  still uses the version. The pg_dumpall backup is kept.
+- `autoremove`: lists `apt-get -s autoremove` removals (old kernels,
+  noble libraries) and runs `apt-get autoremove -y`.
+
+Both run as panel tasks with live output.
+
 ### 6. PHP on resolute
 
 - `phpRepositorySetupScript`: resolute joins jammy/noble (sury) instead of

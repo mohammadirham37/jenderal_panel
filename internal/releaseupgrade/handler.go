@@ -66,6 +66,36 @@ func (h *Handler) Repair(w http.ResponseWriter, r *http.Request) {
 	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
 }
 
+// Cleanup handles GET /api/v1/server/release-upgrade/cleanup.
+func (h *Handler) Cleanup(w http.ResponseWriter, r *http.Request) {
+	c, err := h.svc.Cleanup(r.Context())
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	httputil.JSON(w, http.StatusOK, c)
+}
+
+// RunCleanup handles POST /api/v1/server/release-upgrade/cleanup.
+func (h *Handler) RunCleanup(w http.ResponseWriter, r *http.Request) {
+	var req CleanupRequest
+	if err := httputil.DecodeJSON(r, &req); err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	taskID, err := h.svc.RunCleanup(r.Context(), req)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	detail := req.Action
+	if req.Action == CleanupPostgreSQL {
+		detail += " " + req.Cluster
+	}
+	h.log(r, "release_upgrade_cleanup", detail+" task:"+taskID)
+	httputil.JSON(w, http.StatusAccepted, map[string]string{"task_id": taskID})
+}
+
 func (h *Handler) log(r *http.Request, action, detail string) {
 	if h.audit == nil {
 		return

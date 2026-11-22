@@ -1069,6 +1069,10 @@ func NewRouter(deps Dependencies) http.Handler {
 				Get("/server/release-upgrade/status", releaseUpgradeHandler.Status)
 			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
 				Post("/server/release-upgrade/repair", releaseUpgradeHandler.Repair)
+			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
+				Get("/server/release-upgrade/cleanup", releaseUpgradeHandler.Cleanup)
+			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
+				Post("/server/release-upgrade/cleanup", releaseUpgradeHandler.RunCleanup)
 
 			// Security Center
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
