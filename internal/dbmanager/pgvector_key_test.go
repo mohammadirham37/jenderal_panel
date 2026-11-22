@@ -32,3 +32,20 @@ func TestPgvectorInstallScriptVerifiesTheRepositoryKey(t *testing.T) {
 		t.Error("the key is trusted before it is verified")
 	}
 }
+
+func TestPGDGRepositorySetupScriptOnlyConfiguresTheRepository(t *testing.T) {
+	script := PGDGRepositorySetupScript()
+	for _, want := range []string{pgdgKeyFingerprint, "%s-pgdg main", "/etc/apt/sources.list.d/pgdg.list", "lsb_release -cs"} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q", want)
+		}
+	}
+	if strings.Contains(script, "apt-get install") {
+		t.Error("the repository setup must not install packages")
+	}
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader("set -eu\n" + script)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("invalid bash: %v\n%s", err, out)
+	}
+}

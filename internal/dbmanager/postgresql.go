@@ -442,15 +442,12 @@ func (p *PostgreSQLEngine) EnableVector(ctx context.Context, database string) er
 // repository signing key (ACCC4CF8).
 const pgdgKeyFingerprint = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
 
-// pgvectorInstallScript renders the root script that installs the pgvector
-// apt package for a PostgreSQL major version. Ubuntu 22.04 does not ship
-// pgvector at all and 24.04/26.04 only carry it for their stock version, so
-// the PGDG apt repository (signed keyring, distro codename aware) is added
-// first — the same pattern as the PHP module's sury repository. The script
-// contains no user input.
-func pgvectorInstallScript(majorVersion string) string {
-	return "set -eu\n" +
-		"codename=$(/usr/bin/lsb_release -cs)\n" +
+// PGDGRepositorySetupScript returns the root script that adds the PGDG apt
+// repository for the running release (codename aware) with its signing key
+// pinned by fingerprint. It contains no user input. The release upgrade
+// reuses it to re-point PGDG at the new release.
+func PGDGRepositorySetupScript() string {
+	return "codename=$(/usr/bin/lsb_release -cs)\n" +
 		"install -d -m 0755 /usr/share/postgresql-common/pgdg\n" +
 		"tmp_key=$(mktemp)\n" +
 		"trap 'rm -f \"$tmp_key\"' EXIT\n" +
@@ -465,7 +462,17 @@ func pgvectorInstallScript(majorVersion string) string {
 		"  exit 1\n" +
 		"fi\n" +
 		"install -o root -g root -m 0644 \"$tmp_key\" /usr/share/postgresql-common/pgdg/apt.asc\n" +
-		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n" +
+		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n"
+}
+
+// pgvectorInstallScript renders the root script that installs the pgvector
+// apt package for a PostgreSQL major version. Ubuntu 22.04 does not ship
+// pgvector at all and 24.04/26.04 only carry it for their stock version, so
+// the PGDG apt repository is added first — the same pattern as the PHP
+// module's sury repository. The script contains no user input.
+func pgvectorInstallScript(majorVersion string) string {
+	return "set -eu\n" +
+		PGDGRepositorySetupScript() +
 		"apt-get update -qq\n" +
 		"apt-get install -y -o DPkg::Lock::Timeout=120 postgresql-" + majorVersion + "-pgvector\n" +
 		"echo 'pgvector installed'\n"
