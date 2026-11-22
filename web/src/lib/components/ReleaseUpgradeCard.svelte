@@ -110,9 +110,12 @@
 	});
 
 	// Poll while the upgrade runs; the unit keeps going if the page closes.
+	// A failed state keeps being polled (more slowly) so the card corrects
+	// itself if the upgrade turns out to be still running.
 	$effect(() => {
-		if (!status?.running && status?.state !== 'running') return;
-		const timer = setInterval(loadStatus, 3000);
+		const state = status?.state;
+		if (!status?.running && state !== 'running' && state !== 'failed') return;
+		const timer = setInterval(loadStatus, state === 'failed' && !status?.running ? 15000 : 3000);
 		return () => clearInterval(timer);
 	});
 

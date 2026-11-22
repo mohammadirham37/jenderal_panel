@@ -36,8 +36,14 @@ type fakeServer struct {
 	unitActive    bool
 	bootID        string
 	currentBootID string
-	sudoCalls     [][]string
-	inputs        map[string]string
+	// sudoBroken makes every sudo call fail, as while sudo is replaced by
+	// sudo-rs mid-upgrade.
+	sudoBroken bool
+	// unitQueryFails makes systemctl is-active error out.
+	unitQueryFails bool
+	processAlive   bool
+	sudoCalls      [][]string
+	inputs         map[string]string
 }
 
 func newFakeServer() *fakeServer {
@@ -76,6 +82,24 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 				return ok(f.dfOutput)
 			case joined == "/bin/cat /proc/sys/kernel/random/boot_id":
 				return ok(f.currentBootID + "\n")
+			case joined == "/bin/cat "+StateDir+"/state":
+				if f.state == "" {
+					return fail()
+				}
+				return ok(f.state + "\n")
+			case joined == "systemctl is-active "+UnitName:
+				if f.unitQueryFails {
+					return nil, errors.New("Failed to connect to bus")
+				}
+				if f.unitActive {
+					return ok("active\n")
+				}
+				return &executor.Result{Stdout: "inactive\n", ExitCode: 3}, nil
+			case joined == "pgrep -f DistUpgradeViewNonInteractive":
+				if f.processAlive {
+					return ok("1234\n")
+				}
+				return fail()
 			}
 			return fail()
 		},
@@ -83,6 +107,9 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 			f.mu.Lock()
 			defer f.mu.Unlock()
 			f.sudoCalls = append(f.sudoCalls, append([]string{name}, args...))
+			if f.sudoBroken {
+				return nil, errors.New("sudo: error while loading shared libraries")
+			}
 			joined := name + " " + strings.Join(args, " ")
 			switch {
 			case name == "apt-get":
@@ -107,11 +134,6 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 					return fail()
 				}
 				return ok(f.bootID + "\n")
-			case joined == "systemctl is-active "+UnitName:
-				if f.unitActive {
-					return ok("active\n")
-				}
-				return &executor.Result{Stdout: "inactive\n", ExitCode: 3}, nil
 			}
 			return ok("")
 		},
@@ -517,5 +539,33 @@ func TestStatusIncludesUpgraderLogWhileRunning(t *testing.T) {
 	st, _ = NewService(f.executor(), nil, nil).Status(context.Background())
 	if strings.Contains(st.Log, "dist-upgrade") {
 		t.Fatal("upgrader logs are only shown while running or after a failure")
+	}
+}
+
+// While sudo is being replaced mid-upgrade, a running upgrade must not be
+// reported as failed.
+func TestStatusKeepsRunningWhileSudoIsBroken(t *testing.T) {
+	f := newFakeServer()
+	f.state = StateRunning
+	f.sudoBroken = true
+	f.unitQueryFails = true
+	st, _ := NewService(f.executor(), nil, nil).Status(context.Background())
+	if st.State != StateRunning || !st.Running {
+		t.Fatalf("unknown unit state must count as running: %+v", st)
+	}
+
+	// systemd says inactive, but the upgrader process is still there.
+	f.unitQueryFails = false
+	f.processAlive = true
+	st, _ = NewService(f.executor(), nil, nil).Status(context.Background())
+	if st.State != StateRunning {
+		t.Fatalf("a live upgrader process must count as running: %+v", st)
+	}
+
+	// Positively stopped and no process left: the upgrade died.
+	f.processAlive = false
+	st, _ = NewService(f.executor(), nil, nil).Status(context.Background())
+	if st.State != StateFailed {
+		t.Fatalf("a stopped unit without a process is a failure: %+v", st)
 	}
 }

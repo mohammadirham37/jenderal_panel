@@ -57,22 +57,22 @@ type Status struct {
 	Warnings []string `json:"warnings"`
 }
 
-// Status reads the state file, the unit and the log tail. A "running" state
-// whose unit is gone (the machine rebooted or the script was killed) is
-// reported as failed.
+// Status reads the state file, the unit and the log tail.
+//
+// During the upgrade sudo itself is replaced (sudo -> sudo-rs) and libc is
+// swapped, so sudo can fail for a while. Status therefore reads without
+// sudo where it can, and only reports a running upgrade as failed when the
+// unit is positively known to be stopped and no upgrader process is left;
+// anything it cannot determine counts as still running.
 func (s *Service) Status(ctx context.Context) (*Status, error) {
 	st := &Status{State: StateIdle, Warnings: []string{}}
-	if res, err := s.exec.RunSudo(ctx, "cat", StateDir+"/state"); err == nil && res != nil && res.ExitCode == 0 {
-		if v := strings.TrimSpace(res.Stdout); v != "" {
+	if out, ok := s.readFile(ctx, StateDir+"/state"); ok {
+		if v := strings.TrimSpace(out); v != "" {
 			st.State = v
 		}
 	}
-	if res, err := s.exec.RunSudo(ctx, "systemctl", "is-active", UnitName); err == nil && res != nil {
-		switch strings.TrimSpace(res.Stdout) {
-		case "active", "activating", "reloading":
-			st.Running = true
-		}
-	}
+	unit := s.unitState(ctx)
+	st.Running = unit == unitActive || (unit == unitUnknown && st.State == StateRunning) || s.upgraderProcessAlive(ctx)
 	if st.State == StateRunning && !st.Running {
 		st.State = StateFailed
 	}
@@ -82,7 +82,9 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 		st.State = StateIdle
 	}
 	if st.State != StateIdle {
-		if res, err := s.exec.RunSudo(ctx, "tail", "-n", "400", LogPath); err == nil && res != nil && res.ExitCode == 0 {
+		if res, err := s.exec.Run(ctx, "tail", "-n", "400", LogPath); err == nil && res != nil && res.ExitCode == 0 {
+			st.Log = res.Stdout
+		} else if res, err := s.exec.RunSudo(ctx, "tail", "-n", "400", LogPath); err == nil && res != nil && res.ExitCode == 0 {
 			st.Log = res.Stdout
 		}
 		// do-release-upgrade writes its progress to its own logs, not to
@@ -90,8 +92,8 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 		if st.State == StateRunning || st.State == StateFailed {
 			st.Log += s.upgraderLogTail(ctx)
 		}
-		if res, err := s.exec.RunSudo(ctx, "cat", StateDir+"/warnings"); err == nil && res != nil && res.ExitCode == 0 {
-			for _, line := range strings.Split(res.Stdout, "\n") {
+		if out, ok := s.readFile(ctx, StateDir+"/warnings"); ok {
+			for _, line := range strings.Split(out, "\n") {
 				if line = strings.TrimSpace(line); line != "" {
 					st.Warnings = append(st.Warnings, line)
 				}
@@ -100,6 +102,48 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	}
 	st.Codename = s.codename(ctx)
 	return st, nil
+}
+
+const (
+	unitActive  = "active"
+	unitStopped = "stopped"
+	unitUnknown = "unknown"
+)
+
+// unitState asks systemd (no root needed) whether the upgrade unit runs.
+// Only "inactive"/"failed" count as stopped; an error or anything else is
+// unknown.
+func (s *Service) unitState(ctx context.Context) string {
+	res, err := s.exec.Run(ctx, "systemctl", "is-active", UnitName)
+	if err != nil || res == nil {
+		return unitUnknown
+	}
+	switch strings.TrimSpace(res.Stdout) {
+	case "active", "activating", "deactivating", "reloading":
+		return unitActive
+	case "inactive", "failed":
+		return unitStopped
+	}
+	return unitUnknown
+}
+
+// upgraderProcessAlive reports whether the upgrade script or
+// do-release-upgrade is still running (both carry this marker in argv).
+func (s *Service) upgraderProcessAlive(ctx context.Context) bool {
+	res, err := s.exec.Run(ctx, "pgrep", "-f", "DistUpgradeViewNonInteractive")
+	return err == nil && res != nil && res.ExitCode == 0
+}
+
+// readFile reads a state file, first without sudo (StateDir is world
+// readable) and then with it.
+func (s *Service) readFile(ctx context.Context, path string) (string, bool) {
+	if res, err := s.exec.Run(ctx, "/bin/cat", path); err == nil && res != nil && res.ExitCode == 0 {
+		return res.Stdout, true
+	}
+	if res, err := s.exec.RunSudo(ctx, "cat", path); err == nil && res != nil && res.ExitCode == 0 {
+		return res.Stdout, true
+	}
+	return "", false
 }
 
 // upgraderLogs are do-release-upgrade's own logs: its decisions (main.log)
@@ -122,11 +166,11 @@ func (s *Service) upgraderLogTail(ctx context.Context) string {
 // rebootedSinceUpgrade compares the boot ID recorded when the upgrade
 // finished with the current one.
 func (s *Service) rebootedSinceUpgrade(ctx context.Context) bool {
-	res, err := s.exec.RunSudo(ctx, "cat", StateDir+"/boot_id")
-	if err != nil || res == nil || res.ExitCode != 0 {
+	out, ok := s.readFile(ctx, StateDir+"/boot_id")
+	if !ok {
 		return false
 	}
-	recorded := strings.TrimSpace(res.Stdout)
+	recorded := strings.TrimSpace(out)
 	cur, err := s.exec.Run(ctx, "/bin/cat", "/proc/sys/kernel/random/boot_id")
 	if err != nil || cur == nil || cur.ExitCode != 0 {
 		return false
@@ -167,7 +211,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) error {
 		return model.NewValidationError("the upgrade cannot start: " + strings.Join(reasons, " "))
 	}
 
-	if err := s.sudo(ctx, "install", "-d", "-m", "0700", StateDir); err != nil {
+	if err := s.sudo(ctx, "install", "-d", "-m", "0755", StateDir); err != nil {
 		return err
 	}
 	mysqlNative := "0\n"

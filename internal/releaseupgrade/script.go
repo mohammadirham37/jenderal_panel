@@ -12,7 +12,9 @@ const (
 	// survives a panel restart or a closed browser.
 	UnitName = "jenderal-release-upgrade"
 	// StateDir holds the state file, inputs written by the panel and the
-	// package list recorded before the upgrade.
+	// package list recorded before the upgrade. It is world readable so the
+	// panel can read the state without sudo, which breaks for a while when
+	// the upgrade replaces sudo with sudo-rs.
 	StateDir = "/var/lib/jenderal/release-upgrade"
 	// LogPath is the upgrade's combined output.
 	LogPath = "/var/log/jenderal/release-upgrade.log"
@@ -86,7 +88,8 @@ OVERRIDE=@OVERRIDE@
 APT_CONF=@APT_CONF@
 APT_OPTS="-y -o DPkg::Lock::Timeout=300 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
 
-install -d -m 0700 "$STATE_DIR"
+install -d -m 0755 "$STATE_DIR"
+chmod 0755 "$STATE_DIR"
 install -d -m 0755 "$(dirname "$LOG")" /etc/update-manager/release-upgrades.d
 exec >>"$LOG" 2>&1
 
