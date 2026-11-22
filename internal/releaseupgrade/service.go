@@ -234,9 +234,15 @@ func (s *Service) Start(ctx context.Context, req StartRequest) error {
 	}
 	// A unit left from an earlier failed run would block the name.
 	_, _ = s.exec.RunSudo(ctx, "systemctl", "reset-failed", UnitName)
+	// The script is run from a file: systemd expands ${NAME} in command
+	// arguments, which mangled e.g. dpkg-query's ${Package} when the script
+	// was passed inline.
+	if res, err := s.exec.RunSudoWithInput(ctx, UpgradeScript(), "tee", ScriptPath); err != nil || res == nil || res.ExitCode != 0 {
+		return fmt.Errorf("write the upgrade script failed: %v", err)
+	}
 	if err := s.sudo(ctx, "systemd-run", "--unit="+UnitName, "--collect",
 		"--property=Type=exec",
-		"/bin/bash", "-c", UpgradeScript()); err != nil {
+		"/bin/bash", ScriptPath); err != nil {
 		_, _ = s.exec.RunSudoWithInput(ctx, StateFailed+"\n", "tee", StateDir+"/state")
 		return err
 	}

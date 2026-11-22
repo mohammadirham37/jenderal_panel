@@ -421,8 +421,18 @@ func TestStartLaunchesTheUnitWithInputs(t *testing.T) {
 			run = call
 		}
 	}
-	if len(run) == 0 || run[1] != "--unit="+UnitName || run[len(run)-1] != UpgradeScript() || run[len(run)-3] != "/bin/bash" {
-		t.Fatalf("systemd-run call = %v", run[:min(len(run), 6)])
+	// The script goes to a file: systemd would expand ${NAME} in an inline
+	// argument.
+	if len(run) == 0 || run[1] != "--unit="+UnitName || run[len(run)-2] != "/bin/bash" || run[len(run)-1] != ScriptPath {
+		t.Fatalf("systemd-run call = %v", run)
+	}
+	if f.inputs[ScriptPath] != UpgradeScript() {
+		t.Error("the upgrade script was not written to its file")
+	}
+	for _, arg := range run {
+		if strings.Contains(arg, "${") {
+			t.Errorf("systemd-run argument would be expanded by systemd: %.60q", arg)
+		}
 	}
 }
 

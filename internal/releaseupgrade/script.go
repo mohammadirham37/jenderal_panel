@@ -16,6 +16,8 @@ const (
 	// panel can read the state without sudo, which breaks for a while when
 	// the upgrade replaces sudo with sudo-rs.
 	StateDir = "/var/lib/jenderal/release-upgrade"
+	// ScriptPath is the upgrade script the unit runs.
+	ScriptPath = StateDir + "/upgrade.sh"
 	// LogPath is the upgrade's combined output.
 	LogPath = "/var/log/jenderal/release-upgrade.log"
 	// OverridePath is read by do-release-upgrade after its bundled config.
