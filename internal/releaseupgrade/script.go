@@ -78,6 +78,7 @@ func UpgradeScript() string {
 		"@APT_CONFIG@", AptConfig,
 		"@PHP_REPO_SCRIPT@", php.RepositorySetupScript(),
 		"@PGDG_REPO_SCRIPT@", "set -eu\n"+dbmanager.PGDGRepositorySetupScript(),
+		"@PGDG_PIN_SCRIPT@", dbmanager.PGDGMetaPinScript(),
 		"@TO@", ToCodename,
 		"@PG_TARGET@", ToPostgresMajor,
 		"@NGINX_TOKENS@", hardening.NginxTokensPath,
@@ -181,6 +182,9 @@ if [ "$needs_pgdg" = 1 ] \
 @PGDG_REPO_SCRIPT@JENDERAL_PGDG_REPO
     bash "$STATE_DIR/pgdg-repo.sh" || warn "could not configure the PostgreSQL (pgdg) repository for @TO@"
 fi
+# pgdg's meta packages follow the newest major (postgresql-19 next to
+# @TO@'s 18); keep Ubuntu's. Also covers pgdg entries the upgrader moved.
+@PGDG_PIN_SCRIPT@
 # Backups the upgrader leaves of the panel's lists; apt warns about them.
 rm -f /etc/apt/sources.list.d/pgdg.list.migrate /etc/apt/sources.list.d/pgdg.list.disabled
 apt-get update || warn "apt-get update failed after the upgrade"

@@ -155,6 +155,9 @@ func TestUpgradeScriptSuccessRepairsAndRequiresReboot(t *testing.T) {
 			t.Errorf("calls missing %q:\n%s", want, calls)
 		}
 	}
+	if !strings.Contains(s.read("etc/apt/preferences.d/jenderal-pgdg-meta"), "Pin: origin apt.postgresql.org") {
+		t.Error("the pgdg meta package pin was not written")
+	}
 	if strings.Contains(calls, "evil") {
 		t.Error("an invalid PHP version reached systemctl")
 	}

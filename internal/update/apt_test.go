@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
@@ -178,5 +179,22 @@ func TestAptUpdateMigratesLegacyPHPPPAFirst(t *testing.T) {
 	apt := strings.Index(joined, "apt-get update")
 	if migrate < 0 || apt < 0 || migrate > apt {
 		t.Fatalf("legacy PPA migration must run before apt-get update: %s", joined)
+	}
+}
+
+// The pgdg meta package pin is written before every apt run, so servers
+// that added pgdg earlier (pgvector) stop pulling the newest major.
+func TestAptUpgradePinsPGDGMetaPackagesFirst(t *testing.T) {
+	svc, runner, invoked := capturingApt(t)
+	taskID, err := svc.AptUpgrade()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTask(t, runner, taskID)
+	joined := strings.Join(invoked(), " ")
+	pin := strings.Index(joined, dbmanager.PGDGPinPath)
+	apt := strings.Index(joined, "apt-get upgrade")
+	if pin < 0 || apt < 0 || pin > apt {
+		t.Fatalf("the pgdg pin must be written before apt-get upgrade: %s", joined)
 	}
 }

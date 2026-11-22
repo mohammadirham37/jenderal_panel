@@ -1,7 +1,9 @@
 package dbmanager
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -47,5 +49,41 @@ func TestPGDGRepositorySetupScriptOnlyConfiguresTheRepository(t *testing.T) {
 	cmd.Stdin = strings.NewReader("set -eu\n" + script)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("invalid bash: %v\n%s", err, out)
+	}
+}
+
+// pgdg's postgresql meta package always depends on the newest major
+// (postgresql-19 on a 26.04 server running 18), and the panel's
+// apt upgrade --with-new-pkgs would install it. The meta packages are
+// pinned below the Ubuntu archive whenever pgdg is configured.
+func TestPGDGMetaPackagesArePinnedBelowUbuntu(t *testing.T) {
+	if !strings.Contains(PGDGRepositorySetupScript(), PGDGPinPath) {
+		t.Error("the pgdg setup must write the meta package pin")
+	}
+	root := t.TempDir()
+	script := strings.ReplaceAll(PGDGMetaPinScript(), "/etc/apt/", root+"/etc/apt/")
+	run := func() {
+		t.Helper()
+		if out, err := exec.Command("bash", "-c", "set -eu\n"+script).CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+	}
+	os.MkdirAll(filepath.Join(root, "etc/apt/sources.list.d"), 0o755)
+	run()
+	pin := filepath.Join(root, strings.TrimPrefix(PGDGPinPath, "/"))
+	if _, err := os.Stat(pin); err == nil {
+		t.Fatal("pin written although pgdg is not configured")
+	}
+	os.WriteFile(filepath.Join(root, "etc/apt/sources.list.d/pgdg.sources"),
+		[]byte("Types: deb\nURIs: https://apt.postgresql.org/pub/repos/apt\nSuites: resolute-pgdg\n"), 0o644)
+	run()
+	got, err := os.ReadFile(pin)
+	if err != nil {
+		t.Fatal("pin not written with pgdg configured")
+	}
+	for _, want := range []string{"Package: postgresql postgresql-client postgresql-contrib postgresql-doc", "Pin: origin apt.postgresql.org", "Pin-Priority: 100"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("pin missing %q:\n%s", want, got)
+		}
 	}
 }

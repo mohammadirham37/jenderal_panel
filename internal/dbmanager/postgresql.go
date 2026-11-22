@@ -462,7 +462,33 @@ func PGDGRepositorySetupScript() string {
 		"  exit 1\n" +
 		"fi\n" +
 		"install -o root -g root -m 0644 \"$tmp_key\" /usr/share/postgresql-common/pgdg/apt.asc\n" +
-		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n"
+		"printf 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.asc] https://apt.postgresql.org/pub/repos/apt %s-pgdg main\\n' \"$codename\" > /etc/apt/sources.list.d/pgdg.list\n" +
+		PGDGMetaPinScript()
+}
+
+// PGDGPinPath keeps pgdg's meta packages below the Ubuntu archive.
+const PGDGPinPath = "/etc/apt/preferences.d/jenderal-pgdg-meta"
+
+// pgdgMetaPin: pgdg's postgresql/postgresql-client/... meta packages always
+// depend on the newest PostgreSQL major, so with pgdg configured an apt
+// upgrade (--with-new-pkgs) installed e.g. postgresql-19 next to the
+// release's 18. Pinned to 100 they never win over Ubuntu's meta packages
+// (which follow the release's major); pgdg still supplies the versioned
+// packages (postgresql-16, postgresql-18-pgvector, ...).
+const pgdgMetaPin = `# Written by Jenderal Panel: pgdg's meta packages follow the newest
+# PostgreSQL major; keep Ubuntu's, which follow the release's major.
+Package: postgresql postgresql-client postgresql-contrib postgresql-doc
+Pin: origin apt.postgresql.org
+Pin-Priority: 100
+`
+
+// PGDGMetaPinScript writes the meta package pin when pgdg is configured.
+// It is idempotent and contains no user input.
+func PGDGMetaPinScript() string {
+	return "if grep -rqsE '^[^#]*apt\\.postgresql\\.org' /etc/apt/sources.list /etc/apt/sources.list.d/; then\n" +
+		"  install -d -m 0755 /etc/apt/preferences.d\n" +
+		"  cat > " + PGDGPinPath + " <<'JENDERAL_PGDG_PIN'\n" + pgdgMetaPin + "JENDERAL_PGDG_PIN\n" +
+		"fi\n"
 }
 
 // pgvectorInstallScript renders the root script that installs the pgvector
