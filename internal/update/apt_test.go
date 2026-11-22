@@ -101,6 +101,9 @@ func TestAptOperationsAreSerialized(t *testing.T) {
 	runner := taskrunner.New()
 	svc := NewService(nil, "0.1.0", runner)
 	svc.runSudoStream = func(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
+		if name != "env" {
+			return 0, nil // the legacy PPA migration step
+		}
 		close(blocked)
 		<-release
 		return 0, nil
@@ -129,6 +132,9 @@ func TestAptUpdateLogsStderr(t *testing.T) {
 	runner := taskrunner.New()
 	svc := NewService(&executor.MockExecutor{
 		RunSudoStreamSplitFunc: func(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error) {
+			if name != "env" {
+				return 0, nil
+			}
 			io.WriteString(stdoutW, "Reading package lists...\n")
 			io.WriteString(stderrW, "E: The repository is not signed.\n")
 			return 100, nil
@@ -155,5 +161,22 @@ func TestAptUpdateLogsStderr(t *testing.T) {
 			t.Fatal("timed out waiting for apt task")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A server still carrying the deprecated ondrej PPA cannot run apt-get
+// update; the PPA is migrated to packages.sury.org before apt runs.
+func TestAptUpdateMigratesLegacyPHPPPAFirst(t *testing.T) {
+	svc, runner, invoked := capturingApt(t)
+	taskID, err := svc.AptUpdate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTask(t, runner, taskID)
+	joined := strings.Join(invoked(), " ")
+	migrate := strings.Index(joined, "packages.sury.org/php")
+	apt := strings.Index(joined, "apt-get update")
+	if migrate < 0 || apt < 0 || migrate > apt {
+		t.Fatalf("legacy PPA migration must run before apt-get update: %s", joined)
 	}
 }

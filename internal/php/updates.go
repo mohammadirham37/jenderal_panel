@@ -12,7 +12,7 @@ import (
 )
 
 // securityBaselines is the lowest upstream patch release per PHP branch that
-// carries the latest known security fixes. Ondrej PPA packages track upstream
+// carries the latest known security fixes. packages.sury.org builds track upstream
 // version numbers, so on jammy/noble an installed version below the baseline
 // is definitely vulnerable. The Ubuntu archive (resolute) backports fixes
 // without bumping the upstream number, so baselines are not applied there.
@@ -214,8 +214,9 @@ func (s *Service) PatchOverview(ctx context.Context) (PatchOverview, error) {
 }
 
 // refreshListsCommands refreshes apt package lists so candidates are current.
-// The repository setup script re-asserts the ondrej source first, so a
-// server whose PPA entry went missing still sees upstream patch releases.
+// The repository setup script re-asserts the sury source first, so a
+// server whose entry went missing (or still had the deprecated PPA) still
+// sees upstream patch releases.
 func (s *Service) refreshListsCommands() [][]string {
 	updateArgs := append([]string{"update", "-qq"}, aptTimeoutArgs()...)
 	return [][]string{

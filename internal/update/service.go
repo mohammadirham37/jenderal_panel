@@ -15,6 +15,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/noderuntime"
+	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -291,6 +292,13 @@ func (s *Service) runApt(ctx context.Context, log func(string), action string) e
 	defer cancel()
 	output := &taskLogWriter{log: log}
 	defer output.flush()
+	// A server still carrying the deprecated ondrej PPA cannot run apt-get
+	// update at all (its Label changed), so move it to packages.sury.org
+	// first. A failed migration is reported but does not stop apt.
+	if exit, err := s.runSudoStream(ctx, output, "bash", "-c", php.LegacyRepositoryMigrationScript()); err != nil || exit != 0 {
+		output.flush()
+		log("WARNING: could not move PHP packages off the deprecated ondrej PPA; apt may fail on it.")
+	}
 	args := []string{"env", "DEBIAN_FRONTEND=noninteractive", "apt-get", action}
 	if action == "upgrade" {
 		args = append(args,

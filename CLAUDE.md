@@ -104,7 +104,7 @@ SvelteKit 3 with Svelte 5 (runes syntax: `$state`, `$effect`, `$props`), Tailwin
 - `Start()` methods on background workers MUST use `go func()` (not block main thread)
 - `net.Listen` before signal handling in server startup (avoid race condition)
 - Svelte pages use `bind:taskId` with `storageKey` prop on TaskProgress for refresh persistence
-- PHP install requires ondrej PPA via `internal/php/service.go` phpRepositorySetupScript
+- PHP install uses packages.sury.org/php (the ondrej PPA is deprecated since Nov 2026) via `internal/php/service.go` phpRepositorySetupScript, which also migrates servers off the old PPA
 - Node.js managed via NVM per-website in `/var/lib/jenderal/.nvm/`
 
 ## Testing

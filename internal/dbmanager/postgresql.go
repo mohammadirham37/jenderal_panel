@@ -446,7 +446,7 @@ const pgdgKeyFingerprint = "B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8"
 // apt package for a PostgreSQL major version. Ubuntu 22.04 does not ship
 // pgvector at all and 24.04/26.04 only carry it for their stock version, so
 // the PGDG apt repository (signed keyring, distro codename aware) is added
-// first — the same pattern as the PHP module's ondrej PPA. The script
+// first — the same pattern as the PHP module's sury repository. The script
 // contains no user input.
 func pgvectorInstallScript(majorVersion string) string {
 	return "set -eu\n" +

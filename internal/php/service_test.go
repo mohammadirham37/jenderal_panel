@@ -3,7 +3,9 @@ package php
 import (
 	"context"
 	"errors"
+	"os"
 	osexec "os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -171,7 +173,7 @@ func TestInstall_ValidVersion(t *testing.T) {
 	}
 }
 
-func TestInstallConfiguresPPADirectlyWithoutLaunchpadAPI(t *testing.T) {
+func TestInstallConfiguresSuryRepositoryDirectly(t *testing.T) {
 	type command struct {
 		name string
 		args []string
@@ -213,9 +215,9 @@ func TestInstallConfiguresPPADirectlyWithoutLaunchpadAPI(t *testing.T) {
 	}
 
 	for _, required := range []string{
-		"https://ppa.launchpadcontent.net/ondrej/php/ubuntu",
-		"B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6",
-		"signed-by=/usr/share/keyrings/ondrej-php.gpg",
+		"https://packages.sury.org/php/",
+		"15058500A0235D97F5D10063B188E2B695BD4743",
+		"signed-by=/usr/share/keyrings/sury-php.gpg",
 		"--connect-timeout 10",
 		"--max-time 60",
 		"primary_key_count",
@@ -224,6 +226,9 @@ func TestInstallConfiguresPPADirectlyWithoutLaunchpadAPI(t *testing.T) {
 		if !strings.Contains(repositoryScript, required) {
 			t.Errorf("repository setup script missing %q", required)
 		}
+	}
+	if strings.Contains(repositoryScript, "deb [signed-by=/usr/share/keyrings/ondrej-php.gpg]") || strings.Contains(repositoryScript, "ppa.launchpadcontent.net") {
+		t.Error("repository setup still adds the deprecated ondrej PPA")
 	}
 	if strings.Index(repositoryScript, ". /etc/os-release") > strings.Index(repositoryScript, "curl --fail") {
 		t.Error("repository setup downloads a key before validating the Ubuntu codename")
@@ -481,15 +486,114 @@ func TestRepositoryScriptSkipsPPAOnResolute(t *testing.T) {
 	if !strings.Contains(phpRepositorySetupScript, "resolute)") {
 		t.Fatal("repository script has no resolute branch")
 	}
-	// The resolute branch must exit before the ondrej list is written and
-	// must clear stale PPA lists so apt does not 404 on them.
+	// The resolute branch must exit before the sury list is written and
+	// must clear stale PPA lists so apt does not fail on them.
 	resoluteIdx := strings.Index(phpRepositorySetupScript, "resolute)")
 	printfIdx := strings.Index(phpRepositorySetupScript, "printf 'deb [signed-by=")
 	if resoluteIdx < 0 || printfIdx < 0 || resoluteIdx > printfIdx {
 		t.Fatalf("resolute branch (idx %d) must precede the PPA printf (idx %d)", resoluteIdx, printfIdx)
 	}
 	branch := phpRepositorySetupScript[resoluteIdx:printfIdx]
-	if !strings.Contains(branch, "exit 0") || !strings.Contains(branch, "rm -f") {
+	if !strings.Contains(branch, "exit 0") || !strings.Contains(branch, "remove_legacy_ppa") {
 		t.Fatalf("resolute branch must rm stale lists and exit before writing PPA:\n%s", branch)
+	}
+}
+
+// runRepositoryScript runs the real setup script against a fake /etc tree:
+// os-release, sources.list.d and keyrings are redirected to a temp dir and
+// curl/gpg/install are stubbed, so the migration logic itself is exercised.
+func runRepositoryScript(t *testing.T, script, codename string, files map[string]string) (string, string) {
+	t.Helper()
+	root := t.TempDir()
+	for _, dir := range []string{"etc/apt/sources.list.d", "usr/share/keyrings", "bin"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(root, "etc/os-release"), []byte("VERSION_CODENAME="+codename+"\n"), 0o644)
+	for name, content := range files {
+		os.WriteFile(filepath.Join(root, name), []byte(content), 0o644)
+	}
+	stubs := map[string]string{
+		"curl":    "#!/bin/bash\nwhile [ $# -gt 0 ]; do [ \"$1\" = --output ] && : > \"$2\"; shift; done\n",
+		"gpg":     "#!/bin/bash\nfor a; do case $a in --show-keys) echo 'pub:x'; echo 'fpr:::::::::15058500A0235D97F5D10063B188E2B695BD4743:'; exit;; --output) out=1;; esac; done\n",
+		"install": "#!/bin/bash\n: > \"${@: -1}\"\n",
+	}
+	for name, body := range stubs {
+		os.WriteFile(filepath.Join(root, "bin", name), []byte(body), 0o755)
+	}
+	script = strings.NewReplacer(
+		"/etc/os-release", root+"/etc/os-release",
+		"/etc/apt/", root+"/etc/apt/",
+		"/usr/share/keyrings/", root+"/usr/share/keyrings/",
+	).Replace(script)
+	cmd := osexec.Command("bash", "-c", script)
+	cmd.Env = []string{"PATH=" + root + "/bin:/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("script failed: %v\n%s", err, out)
+	}
+	return root, string(out)
+}
+
+func TestRepositoryScriptMigratesOndrejPPAToSury(t *testing.T) {
+	root, _ := runRepositoryScript(t, phpRepositorySetupScript, "noble", map[string]string{
+		"etc/apt/sources.list.d/ondrej-php.list":                 "deb https://ppa.launchpadcontent.net/ondrej/php/ubuntu noble main\n",
+		"etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources": "Types: deb\n",
+		"usr/share/keyrings/ondrej-php.gpg":                      "old",
+	})
+	for _, gone := range []string{"etc/apt/sources.list.d/ondrej-php.list", "etc/apt/sources.list.d/ondrej-ubuntu-php-noble.sources", "usr/share/keyrings/ondrej-php.gpg"} {
+		if _, err := os.Stat(filepath.Join(root, gone)); err == nil {
+			t.Errorf("%s was not removed", gone)
+		}
+	}
+	list, err := os.ReadFile(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list"))
+	if err != nil {
+		t.Fatal("sury-php.list was not written")
+	}
+	if !strings.Contains(string(list), "/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ noble main") {
+		t.Errorf("unexpected source line %q", list)
+	}
+}
+
+// Two entries for packages.sury.org/php with different signed-by keyrings
+// make apt refuse to run, so one the admin added is kept and ours skipped.
+func TestRepositoryScriptKeepsExistingSuryEntry(t *testing.T) {
+	root, out := runRepositoryScript(t, phpRepositorySetupScript, "jammy", map[string]string{
+		"etc/apt/sources.list.d/php.list":        "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ jammy main\n",
+		"etc/apt/sources.list.d/sury-php.list":   "deb old\n",
+		"etc/apt/sources.list.d/ondrej-php.list": "deb ppa\n",
+	})
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list")); err == nil {
+		t.Error("the panel's duplicate sury entry must be removed")
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/php.list")); err != nil {
+		t.Error("the admin's own sury entry must be kept")
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/ondrej-php.list")); err == nil {
+		t.Error("the deprecated PPA must still be removed")
+	}
+	if !strings.Contains(out, "already configured") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestLegacyMigrationScriptIsNoOpWithoutPPA(t *testing.T) {
+	// No ondrej entry: the migration must not touch apt sources at all.
+	root, _ := runRepositoryScript(t, LegacyRepositoryMigrationScript(), "noble", nil)
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list")); err == nil {
+		t.Error("migration ran although no ondrej PPA was configured")
+	}
+}
+
+func TestLegacyMigrationScriptMigratesWhenPPAPresent(t *testing.T) {
+	root, out := runRepositoryScript(t, LegacyRepositoryMigrationScript(), "noble", map[string]string{
+		"etc/apt/sources.list.d/ondrej-php.list": "deb ppa\n",
+	})
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list")); err != nil {
+		t.Errorf("migration did not add packages.sury.org: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/ondrej-php.list")); err == nil {
+		t.Error("migration did not remove the PPA")
 	}
 }

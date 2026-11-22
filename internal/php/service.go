@@ -15,18 +15,17 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 )
 
-// ppaVersions lists the PHP versions the panel manages via the ondrej PPA
-// (Ubuntu jammy/noble).
+// ppaVersions lists the PHP versions the panel manages from
+// packages.sury.org/php (Ubuntu jammy/noble; formerly the ondrej PPA).
 var ppaVersions = []string{"8.1", "8.2", "8.3", "8.4"}
 
 // archiveVersions lists the PHP versions available straight from the Ubuntu
-// archive on releases the ondrej PPA does not serve yet. Resolute (26.04)
+// archive instead of packages.sury.org. Resolute (26.04)
 // ships 8.5 and does not carry 8.4.
 var archiveVersions = []string{"8.5"}
 
 // VersionsForCodename maps an Ubuntu codename to the PHP versions the panel
-// can manage there. Unknown codenames keep the PPA set, matching the
-// releases the ondrej PPA serves.
+// can manage there. Unknown codenames keep the jammy/noble set.
 func VersionsForCodename(codename string) []string {
 	if codename == "resolute" {
 		return archiveVersions
@@ -57,24 +56,49 @@ func Codename(ctx context.Context, exec executor.CommandExecutor) string {
 	return parseCodename(result.Stdout)
 }
 
+// phpRepositorySetupScript points apt at Ondřej Surý's PHP repository
+// (packages.sury.org/php) on jammy and noble. His Launchpad PPA
+// (ppa:ondrej/php) was frozen in November 2026: its Label changed to
+// "PPA for PHP (deprecated)", which makes every apt-get update fail until
+// the entry is removed, so the script also migrates servers that still
+// have the PPA configured. The signing key is fetched from the Ubuntu
+// keyserver and pinned by fingerprint (DEB.SURY.ORG Automatic Signing Key).
+// When the admin already added packages.sury.org/php another way (the
+// upstream README or the debsuryorg-repository-php package), that entry is
+// kept and the panel does not add a second one, since two entries with
+// different signed-by keyrings make apt refuse to run.
 const phpRepositorySetupScript = `set -euo pipefail
-keyring=/usr/share/keyrings/ondrej-php.gpg
-source_list=/etc/apt/sources.list.d/ondrej-php.list
-fingerprint=B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6
-key_url='https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xB8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6'
+keyring=/usr/share/keyrings/sury-php.gpg
+source_list=/etc/apt/sources.list.d/sury-php.list
+fingerprint=15058500A0235D97F5D10063B188E2B695BD4743
+key_url='https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x15058500A0235D97F5D10063B188E2B695BD4743'
+
+# The deprecated ondrej PPA, whether the panel or add-apt-repository added it.
+remove_legacy_ppa() {
+    rm -f /etc/apt/sources.list.d/ondrej-php.list \
+          /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list \
+          /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources \
+          /usr/share/keyrings/ondrej-php.gpg
+}
 
 . /etc/os-release
 case "${VERSION_CODENAME:-}" in
     jammy|noble) ;;
     resolute)
-        # The ondrej PPA does not publish resolute; PHP comes from the Ubuntu
-        # archive instead. Drop any stale PPA list so apt does not 404 on it.
-        rm -f /etc/apt/sources.list.d/ondrej-php.list \
-              /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list \
-              /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources
+        # PHP comes from the Ubuntu archive on resolute.
+        remove_legacy_ppa
         exit 0 ;;
     *) echo "Unsupported Ubuntu codename: ${VERSION_CODENAME:-unknown}" >&2; exit 1 ;;
 esac
+
+remove_legacy_ppa
+
+existing=$(grep -rlsE 'packages\.sury\.org/php' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -vxF "$source_list" || true)
+if [ -n "$existing" ]; then
+    echo "packages.sury.org/php is already configured in: $existing"
+    rm -f "$source_list"
+    exit 0
+fi
 
 key_fingerprint() {
     gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }'
@@ -99,7 +123,7 @@ if [ ! -f "$keyring" ] || ! key_is_valid "$keyring"; then
         "$key_url" --output "$tmp_key"
 
     if ! key_is_valid "$tmp_key"; then
-        echo "Unexpected Ondrej PHP signing key: fingerprint=$(key_fingerprint "$tmp_key"), primary_keys=$(primary_key_count "$tmp_key")" >&2
+        echo "Unexpected packages.sury.org signing key: fingerprint=$(key_fingerprint "$tmp_key"), primary_keys=$(primary_key_count "$tmp_key")" >&2
         exit 1
     fi
 
@@ -107,9 +131,7 @@ if [ ! -f "$keyring" ] || ! key_is_valid "$keyring"; then
     install -o root -g root -m 0644 "$tmp_keyring" "$keyring"
 fi
 
-rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list \
-    /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources
-printf 'deb [signed-by=/usr/share/keyrings/ondrej-php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu %s main\n' \
+printf 'deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ %s main\n' \
     "$VERSION_CODENAME" > "$source_list"
 `
 
@@ -614,4 +636,21 @@ func parseFPMStatus(output string) (running, enabled bool) {
 	running = props["ActiveState"] == "active"
 	enabled = props["UnitFileState"] == "enabled"
 	return
+}
+
+// LegacyRepositoryMigrationScript moves a server off the deprecated ondrej
+// PPA before a generic apt run. It does nothing unless a PPA entry is still
+// configured; otherwise it runs the repository setup, which removes the PPA
+// and (on jammy/noble) adds packages.sury.org/php. Without it, apt-get
+// update fails on the PPA's changed Label until PHP is touched again.
+func LegacyRepositoryMigrationScript() string {
+	return `legacy_ppa=false
+for f in /etc/apt/sources.list.d/ondrej-php.list /etc/apt/sources.list.d/ondrej-ubuntu-php-*; do
+    if [ -e "$f" ]; then legacy_ppa=true; fi
+done
+if [ "$legacy_ppa" != true ]; then
+    exit 0
+fi
+echo "Moving PHP packages from the deprecated ppa:ondrej/php to packages.sury.org/php..."
+` + phpRepositorySetupScript
 }

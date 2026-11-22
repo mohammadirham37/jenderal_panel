@@ -8,7 +8,7 @@ import (
 
 // The PGDG signing key decides which packages apt will install as root, so
 // the downloaded key is checked against its published fingerprint before it
-// is trusted — the same rule the PHP module applies to the ondrej key.
+// is trusted — the same rule the PHP module applies to the packages.sury.org key.
 func TestPgvectorInstallScriptVerifiesTheRepositoryKey(t *testing.T) {
 	script := pgvectorInstallScript("16")
 
