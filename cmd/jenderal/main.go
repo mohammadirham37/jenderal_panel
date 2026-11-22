@@ -45,6 +45,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
+	"github.com/mohammadirham37/jenderal_panel/internal/releaseupgrade"
 	"github.com/mohammadirham37/jenderal_panel/internal/remotestorage"
 	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
@@ -303,6 +304,7 @@ func cmdServe() {
 	securitySvc.SetPostureChecker(postureChecker)
 	securityWorker := security.NewWorker(securitySvc, securityEvents)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
+	releaseUpgradeSvc := releaseupgrade.NewService(exec, db, tasks)
 	dependencySvc := dependency.NewService(exec)
 	phpSvc := php.NewService(exec, auditSvc)
 	sshAccountSvc := sshaccount.NewService(db, exec, auditSvc)
@@ -427,6 +429,7 @@ func cmdServe() {
 		NotifSvc:        notifSvc,
 		FileManagerSvc:  fileManagerSvc,
 		UpdateSvc:       updateSvc,
+		ReleaseUpgrade:  releaseUpgradeSvc,
 		Exec:            exec,
 		Tasks:           tasks,
 		SecuritySvc:     securitySvc,

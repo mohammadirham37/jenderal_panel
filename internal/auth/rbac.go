@@ -60,6 +60,8 @@ func (r *RBAC) Seed(ctx context.Context) error {
 		{"dashboard.view", "dashboard"},
 		{"server.view", "server"},
 		{"server.reboot", "server"},
+		// Upgrading Ubuntu to the next LTS release (admin only).
+		{"server.release_upgrade", "server"},
 		{"server.hostname", "server"},
 		{"server.timezone", "server"},
 		{"disk.view", "disk"},

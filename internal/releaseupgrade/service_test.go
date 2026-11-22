@@ -215,7 +215,9 @@ func TestPreflightBlocks(t *testing.T) {
 		check string
 		setup func(f *fakeServer)
 	}{
-		{"pending updates", "pending_updates", func(f *fakeServer) { f.pendingLines = "Inst libc6 [2.39-0ubuntu8.5] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates)\nConf libc6\n" }},
+		{"pending updates", "pending_updates", func(f *fakeServer) {
+			f.pendingLines = "Inst libc6 [2.39-0ubuntu8.5] (2.39-0ubuntu8.6 Ubuntu:24.04/noble-updates)\nConf libc6\n"
+		}},
 		{"reboot pending", "reboot_required", func(f *fakeServer) { f.rebootPending = true }},
 		{"dpkg broken", "dpkg", func(f *fakeServer) { f.dpkgAudit = "The following packages are only half configured" }},
 		{"root disk", "disk", func(f *fakeServer) { f.dfOutput = "Avail\n1000000000\n900000000\n" }},

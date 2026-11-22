@@ -34,6 +34,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 	"github.com/mohammadirham37/jenderal_panel/internal/process"
 	"github.com/mohammadirham37/jenderal_panel/internal/queue"
+	"github.com/mohammadirham37/jenderal_panel/internal/releaseupgrade"
 	"github.com/mohammadirham37/jenderal_panel/internal/runtimebin"
 	"github.com/mohammadirham37/jenderal_panel/internal/security"
 	"github.com/mohammadirham37/jenderal_panel/internal/service"
@@ -85,6 +86,7 @@ type Dependencies struct {
 	NotifSvc        *notification.Service
 	FileManagerSvc  *filemanager.Service
 	UpdateSvc       *update.Service
+	ReleaseUpgrade  *releaseupgrade.Service
 	Exec            executor.CommandExecutor
 	Tasks           *taskrunner.Runner
 	SecuritySvc     *security.Service
@@ -155,6 +157,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	fileHandler := filemanager.NewHandler(deps.FileManagerSvc, deps.DB, deps.AuditSvc)
 	terminalHandler := terminal.NewHandler(deps.Exec, deps.AuditSvc)
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
+	releaseUpgradeHandler := releaseupgrade.NewHandler(deps.ReleaseUpgrade, deps.AuditSvc)
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 	securityHandler.SetSetupService(deps.SecuritySetup, deps.Tasks)
 	wafHandler := waf.NewHandler(deps.WAFSvc, deps.AuditSvc, deps.Tasks)
@@ -1056,6 +1059,16 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/server/apt/update", updateHandler.AptUpdate)
 			r.With(auth.RequirePermission(deps.RBAC, "update.perform")).
 				Post("/server/apt/upgrade", updateHandler.AptUpgrade)
+
+			// Ubuntu release upgrade (24.04 -> 26.04) — admin-only.
+			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
+				Get("/server/release-upgrade", releaseUpgradeHandler.Preflight)
+			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
+				Post("/server/release-upgrade", releaseUpgradeHandler.Start)
+			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
+				Get("/server/release-upgrade/status", releaseUpgradeHandler.Status)
+			r.With(auth.RequirePermission(deps.RBAC, "server.release_upgrade")).
+				Post("/server/release-upgrade/repair", releaseUpgradeHandler.Repair)
 
 			// Security Center
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
