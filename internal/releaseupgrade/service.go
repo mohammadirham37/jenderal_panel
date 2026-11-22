@@ -85,6 +85,11 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 		if res, err := s.exec.RunSudo(ctx, "tail", "-n", "400", LogPath); err == nil && res != nil && res.ExitCode == 0 {
 			st.Log = res.Stdout
 		}
+		// do-release-upgrade writes its progress to its own logs, not to
+		// stdout, so show their tails too while it runs or after it failed.
+		if st.State == StateRunning || st.State == StateFailed {
+			st.Log += s.upgraderLogTail(ctx)
+		}
 		if res, err := s.exec.RunSudo(ctx, "cat", StateDir+"/warnings"); err == nil && res != nil && res.ExitCode == 0 {
 			for _, line := range strings.Split(res.Stdout, "\n") {
 				if line = strings.TrimSpace(line); line != "" {
@@ -95,6 +100,23 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	}
 	st.Codename = s.codename(ctx)
 	return st, nil
+}
+
+// upgraderLogs are do-release-upgrade's own logs: its decisions (main.log)
+// and the package installation output (apt-term.log).
+var upgraderLogs = []string{"/var/log/dist-upgrade/main.log", "/var/log/dist-upgrade/apt-term.log"}
+
+func (s *Service) upgraderLogTail(ctx context.Context) string {
+	var b strings.Builder
+	for _, path := range upgraderLogs {
+		res, err := s.exec.RunSudo(ctx, "tail", "-n", "40", path)
+		if err != nil || res == nil || res.ExitCode != 0 || strings.TrimSpace(res.Stdout) == "" {
+			continue
+		}
+		b.WriteString("\n===== " + path + " (last 40 lines) =====\n")
+		b.WriteString(res.Stdout)
+	}
+	return b.String()
 }
 
 // rebootedSinceUpgrade compares the boot ID recorded when the upgrade

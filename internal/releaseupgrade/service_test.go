@@ -100,6 +100,8 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 					return fail()
 				}
 				return ok(f.state + "\n")
+			case joined == "tail -n 40 /var/log/dist-upgrade/main.log":
+				return ok("2026-11-22 06:50:01 INFO cache.commit()\n")
 			case joined == "cat "+StateDir+"/boot_id":
 				if f.bootID == "" {
 					return fail()
@@ -499,5 +501,21 @@ func TestEveryCheckHasAUILabel(t *testing.T) {
 		if strings.Count(string(dict), key) != 2 {
 			t.Errorf("%s must be in both the en and id dictionaries", key)
 		}
+	}
+}
+
+func TestStatusIncludesUpgraderLogWhileRunning(t *testing.T) {
+	f := newFakeServer()
+	f.state = StateRunning
+	f.unitActive = true
+	st, _ := NewService(f.executor(), nil, nil).Status(context.Background())
+	if !strings.Contains(st.Log, "/var/log/dist-upgrade/main.log") || !strings.Contains(st.Log, "cache.commit()") {
+		t.Fatalf("log = %q", st.Log)
+	}
+	f.state = StateRebootRequired
+	f.unitActive = false
+	st, _ = NewService(f.executor(), nil, nil).Status(context.Background())
+	if strings.Contains(st.Log, "dist-upgrade") {
+		t.Fatal("upgrader logs are only shown while running or after a failure")
 	}
 }
