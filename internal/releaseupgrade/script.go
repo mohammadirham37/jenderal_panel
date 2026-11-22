@@ -172,12 +172,17 @@ if grep -qs '^postgresql' "$STATE_DIR/packages-before.txt" \
 @PGDG_REPO_SCRIPT@JENDERAL_PGDG_REPO
     bash "$STATE_DIR/pgdg-repo.sh" || warn "could not configure the PostgreSQL (pgdg) repository for @TO@"
 fi
+# Backups the upgrader leaves of the panel's lists; apt warns about them.
+rm -f /etc/apt/sources.list.d/pgdg.list.migrate /etc/apt/sources.list.d/pgdg.list.disabled
 apt-get update || warn "apt-get update failed after the upgrade"
 
 missing=""
+present=""
 while read -r pkg; do
     [ -n "$pkg" ] || continue
-    if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)" != installed ]; then
+    if [ "$(dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null)" = installed ]; then
+        present="$present $pkg"
+    else
         if apt-cache policy "$pkg" 2>/dev/null | grep -q 'Candidate: [0-9]'; then
             missing="$missing $pkg"
         else
@@ -189,6 +194,13 @@ if [ -n "$missing" ]; then
     echo ">>> Reinstalling:$missing"
     # shellcheck disable=SC2086
     apt-get install $APT_OPTS $missing || warn "could not reinstall:$missing"
+fi
+# With RemoveObsoletes=no, sury/pgdg packages stay on their noble builds
+# (and php8.5 on Ubuntu's build) until upgraded from the re-pointed repos.
+if [ -n "$present" ]; then
+    echo ">>> Upgrading PHP/PostgreSQL packages to their @TO@ builds"
+    # shellcheck disable=SC2086
+    apt-get install --only-upgrade $APT_OPTS $present || warn "could not upgrade PHP/PostgreSQL packages to their @TO@ builds"
 fi
 
 if [ "$(cat "$STATE_DIR/mysql-native" 2>/dev/null)" = 1 ] && [ -d /etc/mysql/mysql.conf.d ]; then

@@ -131,7 +131,12 @@ Script (fixed text, no user input):
      `sury-php` and `pgdg`, re-run the PHP repository setup script and the
      pgdg setup, `apt-get update`.
    - Reinstall any package in `packages-before.txt` that is no longer
-     installed.
+     installed, and `apt-get install --only-upgrade` the ones still
+     installed so sury/pgdg packages move from their noble builds to the
+     resolute builds (php8.5 from Ubuntu's build to sury's).
+   - The upgrader leaves the panel's lists as `*.list.migrate` /
+     `*.list.disabled`; these are removed and never count as an existing
+     entry.
    - If MySQL users use `mysql_native_password`, add
      `mysql_native_password=ON` in a `conf.d` drop-in and restart MySQL.
    - `systemctl enable --now` PHP-FPM for every version used by a site;

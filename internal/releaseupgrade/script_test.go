@@ -141,6 +141,7 @@ func TestUpgradeScriptSuccessRepairsAndRequiresReboot(t *testing.T) {
 		"pgdg-repo", // pgdg still on noble-pgdg after the upgrade
 		"apt-get install -y",
 		"postgresql-16", // reinstalled
+		"apt-get install --only-upgrade -y", // noble builds -> resolute builds
 		"systemctl enable --now php8.3-fpm",
 		"systemctl restart mysql",
 		"nginx -t",
