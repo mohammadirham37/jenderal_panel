@@ -90,7 +90,24 @@ esac
 
 remove_legacy_ppa
 
-existing=$(grep -rlsE 'packages\.sury\.org/php' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | grep -vxF "$source_list" || true)
+# do-release-upgrade leaves the panel's list behind as .migrate/.disabled
+# copies; apt reads neither (and warns about them).
+rm -f "$source_list.migrate" "$source_list.disabled"
+
+# Entries apt actually uses: uncommented lines in *.list, and *.sources
+# files that are not Enabled: no.
+active_sury_entries() {
+    grep -lsE '^[[:space:]]*deb(-src)?[[:space:]].*packages\.sury\.org/php' \
+        /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
+    for f in /etc/apt/sources.list.d/*.sources; do
+        [ -f "$f" ] || continue
+        if grep -qsE '^URIs:.*packages\.sury\.org/php' "$f" && ! grep -qsiE '^Enabled:[[:space:]]*no' "$f"; then
+            echo "$f"
+        fi
+    done
+}
+
+existing=$(active_sury_entries | grep -vxF "$source_list" || true)
 if [ -n "$existing" ]; then
     echo "packages.sury.org/php is already configured in: $existing"
     rm -f "$source_list"

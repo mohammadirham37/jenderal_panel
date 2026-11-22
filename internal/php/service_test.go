@@ -595,3 +595,38 @@ func TestLegacyMigrationScriptMigratesWhenPPAPresent(t *testing.T) {
 		t.Error("migration did not remove the PPA")
 	}
 }
+
+// After do-release-upgrade the panel's list is left as sury-php.list.migrate
+// and a commented sury-php.list.disabled. apt reads neither, so they must
+// not count as an existing entry: the panel writes sury-php.list for the
+// new release and drops the leftovers (apt warns about the .migrate file).
+func TestRepositoryScriptIgnoresUpgraderLeftovers(t *testing.T) {
+	root, out := runRepositoryScript(t, phpRepositorySetupScript, "resolute", map[string]string{
+		"etc/apt/sources.list.d/sury-php.list.migrate":  "deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ noble main\n",
+		"etc/apt/sources.list.d/sury-php.list.disabled": "# deb [signed-by=/usr/share/keyrings/sury-php.gpg] https://packages.sury.org/php/ noble main\n",
+		"etc/apt/sources.list.d/other.list":             "# deb https://packages.sury.org/php/ noble main\n",
+		"etc/apt/sources.list.d/off.sources":            "Types: deb\nURIs: https://packages.sury.org/php/\nSuites: noble\nEnabled: no\n",
+	})
+	list, err := os.ReadFile(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list"))
+	if err != nil || !strings.Contains(string(list), "https://packages.sury.org/php/ resolute main") {
+		t.Fatalf("sury-php.list = %q, %v\n%s", list, err, out)
+	}
+	for _, gone := range []string{"sury-php.list.migrate", "sury-php.list.disabled"} {
+		if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d", gone)); err == nil {
+			t.Errorf("%s was not removed", gone)
+		}
+	}
+}
+
+// A deb822 entry the admin enabled still counts as configured.
+func TestRepositoryScriptKeepsExistingDeb822SuryEntry(t *testing.T) {
+	root, out := runRepositoryScript(t, phpRepositorySetupScript, "resolute", map[string]string{
+		"etc/apt/sources.list.d/php.sources": "Types: deb\nURIs: https://packages.sury.org/php/\nSuites: resolute\nComponents: main\n",
+	})
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list")); err == nil {
+		t.Error("the panel must not add a second sury entry")
+	}
+	if !strings.Contains(out, "already configured") {
+		t.Errorf("output = %q", out)
+	}
+}
