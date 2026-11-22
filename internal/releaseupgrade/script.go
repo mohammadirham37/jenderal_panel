@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
+	"github.com/mohammadirham37/jenderal_panel/internal/hardening"
 	"github.com/mohammadirham37/jenderal_panel/internal/php"
 )
 
@@ -79,6 +80,7 @@ func UpgradeScript() string {
 		"@PGDG_REPO_SCRIPT@", "set -eu\n"+dbmanager.PGDGRepositorySetupScript(),
 		"@TO@", ToCodename,
 		"@PG_TARGET@", ToPostgresMajor,
+		"@NGINX_TOKENS@", hardening.NginxTokensPath,
 	).Replace(upgradeScriptTemplate)
 }
 
@@ -290,9 +292,44 @@ while read -r version; do
     systemctl enable --now "php$version-fpm" || warn "php$version-fpm is not running"
 done < "$STATE_DIR/php-versions"
 
+# glibc changes between releases (2.39 -> 2.43), so text indexes built with
+# the old collation may be ordered wrongly. Databases whose recorded
+# collation version differs are reindexed and then marked current.
+if command -v pg_lsclusters >/dev/null 2>&1; then
+    pg_lsclusters -h 2>/dev/null | while read -r ver name port status _rest; do
+        case "$status" in online*) ;; *) continue ;; esac
+        runuser -u postgres -- psql -p "$port" -XAtqc \
+            "SELECT datname FROM pg_database WHERE datallowconn AND datcollversion IS DISTINCT FROM pg_database_collation_actual_version(oid)" \
+            < /dev/null 2>/dev/null > "$STATE_DIR/pg-collation-$ver-$name.txt" || continue
+        while IFS= read -r db; do
+            [ -n "$db" ] || continue
+            echo ">>> PostgreSQL $ver/$name: rebuilding indexes of $db for the new glibc collation"
+            # Read from stdin so psql quotes the name (:"db") itself.
+            if ! printf '%s\n' 'REINDEX DATABASE CONCURRENTLY :"db";' 'ALTER DATABASE :"db" REFRESH COLLATION VERSION;' \
+                | runuser -u postgres -- psql -p "$port" -X -q -v ON_ERROR_STOP=1 -v db="$db" -d "$db"; then
+                warn "PostgreSQL $ver/$name: could not rebuild the indexes of $db after the glibc update; run REINDEX DATABASE and ALTER DATABASE ... REFRESH COLLATION VERSION"
+            fi
+        done < "$STATE_DIR/pg-collation-$ver-$name.txt"
+    done
+fi
+
 if command -v nginx >/dev/null 2>&1; then
+    # The upgrade replaces an unmodified nginx.conf with the new release's,
+    # which sets "server_tokens build;". With the panel's drop-in that is a
+    # duplicate directive and nginx refuses to start, so the new line is
+    # commented out (the panel's server_tokens off applied before).
+    if [ -f @NGINX_TOKENS@ ] && grep -qE '^[[:space:]]*server_tokens[[:space:]]' /etc/nginx/nginx.conf; then
+        sed -E 's/^([[:space:]]*)(server_tokens[[:space:]])/\1# \2/' /etc/nginx/nginx.conf > /etc/nginx/nginx.conf.jenderal \
+            && cat /etc/nginx/nginx.conf.jenderal > /etc/nginx/nginx.conf
+        rm -f /etc/nginx/nginx.conf.jenderal
+        echo ">>> Commented out server_tokens in nginx.conf; @NGINX_TOKENS@ sets it"
+    fi
     if nginx -t; then
-        systemctl reload nginx || warn "nginx did not reload"
+        if systemctl is-active --quiet nginx; then
+            systemctl reload nginx || warn "nginx did not reload"
+        else
+            systemctl restart nginx || warn "nginx did not start"
+        fi
     else
         warn "nginx -t failed after the upgrade; check the nginx configuration"
     fi

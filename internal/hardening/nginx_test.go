@@ -10,6 +10,7 @@ import (
 
 type nginxHost struct {
 	installed, adminTokens, configBroken bool
+	nginxFailed                          bool
 	files                                map[string]string
 	calls                                []string
 }
@@ -34,6 +35,13 @@ func (h *nginxHost) exec() *executor.MockExecutor {
 					return &executor.Result{}, nil
 				}
 				return &executor.Result{ExitCode: 1}, nil
+			case "systemctl":
+				if args[0] == "is-active" && h.nginxFailed {
+					return &executor.Result{ExitCode: 3}, nil
+				}
+				if args[0] == "is-failed" && !h.nginxFailed {
+					return &executor.Result{ExitCode: 1}, nil
+				}
 			case "nginx":
 				if h.configBroken {
 					return &executor.Result{ExitCode: 1, Stderr: "duplicate"}, nil
@@ -83,5 +91,32 @@ func TestServerTokensRespectsAdminSettingAndRollsBack(t *testing.T) {
 	none := &nginxHost{files: map[string]string{}}
 	if changed, err := EnsureNginxServerTokensOff(context.Background(), none.exec()); changed || err != nil {
 		t.Error("servers without nginx must be left alone")
+	}
+}
+
+// Ubuntu 26.04's nginx.conf sets "server_tokens build;"; when the upgrade
+// replaced an unmodified nginx.conf the drop-in became a duplicate and
+// nginx failed to start. The panel removes its drop-in and starts nginx.
+func TestServerTokensDuplicateAfterPackageUpgradeIsHealed(t *testing.T) {
+	host := &nginxHost{installed: true, adminTokens: true, nginxFailed: true,
+		files: map[string]string{NginxTokensPath: nginxTokensConfig}}
+	if _, err := EnsureNginxServerTokensOff(context.Background(), host.exec()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := host.files[NginxTokensPath]; ok {
+		t.Error("the duplicate drop-in must be removed")
+	}
+	calls := strings.Join(host.calls, "\n")
+	if !strings.Contains(calls, "nginx -t") || !strings.Contains(calls, "systemctl start nginx") {
+		t.Errorf("nginx must be checked and started again:\n%s", calls)
+	}
+
+	// Without a duplicate the installed drop-in is left alone.
+	ok := &nginxHost{installed: true, files: map[string]string{NginxTokensPath: nginxTokensConfig}}
+	if _, err := EnsureNginxServerTokensOff(context.Background(), ok.exec()); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := ok.files[NginxTokensPath]; !present || strings.Contains(strings.Join(ok.calls, "\n"), "rm ") {
+		t.Error("the drop-in must stay when nothing else sets server_tokens")
 	}
 }

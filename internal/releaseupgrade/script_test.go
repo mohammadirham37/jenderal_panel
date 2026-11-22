@@ -110,6 +110,7 @@ func (s *sandbox) run(upgradeTo string, upgradeExit int) {
 		"/etc/postgresql/", s.path("etc/postgresql")+"/",
 		"/usr/lib/postgresql/", s.path("usr/lib/postgresql")+"/",
 		"/var/backups/jenderal", s.path("backups"),
+		"/etc/nginx/", s.path("etc/nginx")+"/",
 		"export PATH=/usr/sbin:/usr/bin:/sbin:/bin", "export PATH="+s.path("bin")+":/usr/bin:/bin",
 	).Replace(UpgradeScript())
 	// The repository scripts need the network; they are covered by their
@@ -207,7 +208,12 @@ func (s *sandbox) pgStubs(upgradeExit int) {
 	os.Chmod(s.path("usr/lib/postgresql/18/bin/postgres"), 0o755)
 	s.write("etc/postgresql/16/main/start.conf", "auto\n")
 	s.stub("pg_lsclusters", "echo '16  main    5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log'\n")
-	s.stub("runuser", log("runuser")+"echo 'CREATE ROLE app;'\n")
+	s.stub("runuser", log("runuser")+
+		"case \"$*\" in\n"+
+		"  *pg_dumpall*) echo 'CREATE ROLE app;' ;;\n"+
+		"  *datcollversion*) echo appdb ;;\n"+
+		"  *) cat >> "+calls+" ;;\n"+
+		"esac\n")
 	s.stub("pg_upgradecluster", log("pg_upgradecluster")+"exit "+strconv.Itoa(upgradeExit)+"\n")
 	s.stub("pg_ctlcluster", log("pg_ctlcluster"))
 	s.stub("pg_dropcluster", log("pg_dropcluster"))
@@ -280,5 +286,41 @@ func TestUpgradeScriptSkipsPostgreSQLMigrationUnlessAsked(t *testing.T) {
 	}
 	if !strings.Contains(calls, "pgdg-repo") {
 		t.Error("PostgreSQL 16 needs pgdg to keep receiving updates")
+	}
+}
+
+// glibc 2.39 -> 2.43: databases with an outdated collation version are
+// reindexed and refreshed.
+func TestUpgradeScriptRefreshesPostgreSQLCollations(t *testing.T) {
+	s := newSandbox(t)
+	s.pgStubs(0)
+	s.write("state/pg-migrate", "0\n")
+	s.run("resolute", 0)
+	calls := s.read("calls")
+	for _, want := range []string{
+		"-d appdb",
+		`REINDEX DATABASE CONCURRENTLY :"db";`,
+		`ALTER DATABASE :"db" REFRESH COLLATION VERSION;`,
+		"-v db=appdb",
+	} {
+		if !strings.Contains(calls, want) {
+			t.Errorf("calls missing %q:\n%s", want, calls)
+		}
+	}
+}
+
+// Ubuntu 26.04's nginx.conf sets server_tokens, which duplicates the
+// panel's drop-in; nginx must still come back.
+func TestUpgradeScriptResolvesDuplicateServerTokens(t *testing.T) {
+	s := newSandbox(t)
+	s.write("etc/nginx/nginx.conf", "http {\n\tserver_tokens build;\n\t# server_tokens off;\n}\n")
+	s.write("etc/nginx/conf.d/jenderal-server-tokens.conf", "server_tokens off;\n")
+	s.run("resolute", 0)
+	conf := s.read("etc/nginx/nginx.conf")
+	if !strings.Contains(conf, "\t# server_tokens build;") || strings.Contains(conf, "# # server_tokens off") {
+		t.Errorf("nginx.conf = %q", conf)
+	}
+	if !strings.Contains(s.read("calls"), "nginx -t") {
+		t.Error("nginx -t must run")
 	}
 }
