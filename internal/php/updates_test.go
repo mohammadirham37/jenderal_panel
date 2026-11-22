@@ -103,14 +103,22 @@ func TestPatchOverviewSkipsBaselineOnUbuntuArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PatchOverview: %v", err)
 	}
-	if len(overview.Versions) != 1 {
+	byVersion := map[string]PatchStatus{}
+	for _, v := range overview.Versions {
+		byVersion[v.Version] = v
+	}
+	php85, ok := byVersion["8.5"]
+	if !ok {
 		t.Fatalf("versions = %+v", overview.Versions)
 	}
-	php85 := overview.Versions[0]
 	// 8.5.4-1ubuntu1.1 is a security backport: an update, but the upstream
 	// number never reaches 8.5.12, so the baseline must not apply.
 	if !php85.UpdateAvailable || php85.Vulnerable || php85.SecurityBaseline != "" {
 		t.Errorf("8.5 on resolute = %+v", php85)
+	}
+	// A sury build on resolute tracks upstream numbers, so it is checked.
+	if php83 := byVersion["8.3"]; php83.SecurityBaseline == "" || !php83.Vulnerable {
+		t.Errorf("sury 8.3 on resolute must be checked against the baseline: %+v", php83)
 	}
 }
 
@@ -153,8 +161,8 @@ func TestUpgradeCommandsOnlyUpgradeInstalledPackages(t *testing.T) {
 func TestUpstreamVersionAndCompare(t *testing.T) {
 	cases := map[string]string{
 		"1:8.3.12-1+ubuntu24.04.1+deb.sury.org+1": "8.3.12",
-		"8.5.4-1ubuntu1":                          "8.5.4",
-		"garbage":                                 "",
+		"8.5.4-1ubuntu1": "8.5.4",
+		"garbage":        "",
 	}
 	for in, want := range cases {
 		if got := upstreamVersion(in); got != want {
@@ -163,5 +171,19 @@ func TestUpstreamVersionAndCompare(t *testing.T) {
 	}
 	if compareUpstream("8.3.9", "8.3.36") != -1 || compareUpstream("8.4.27", "8.4.27") != 0 || compareUpstream("8.10.0", "8.9.9") != 1 {
 		t.Error("compareUpstream must compare numerically")
+	}
+}
+
+func TestUbuntuArchiveBuild(t *testing.T) {
+	for version, want := range map[string]bool{
+		"8.5.4-1ubuntu1.1":                        true,
+		"8.3.6-0ubuntu0.24.04.4":                  true,
+		"8.3.30-1+ubuntu24.04.1+deb.sury.org+1":   false,
+		"1:8.3.12-1+ubuntu26.04.1+deb.sury.org+1": false,
+		"8.5.12-1+0~20261021.1+debian13~1.gbp":    false,
+	} {
+		if got := ubuntuArchiveBuild(version); got != want {
+			t.Errorf("ubuntuArchiveBuild(%q) = %v, want %v", version, got, want)
+		}
 	}
 }

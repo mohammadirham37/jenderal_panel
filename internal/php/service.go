@@ -19,16 +19,17 @@ import (
 // packages.sury.org/php (Ubuntu jammy/noble; formerly the ondrej PPA).
 var ppaVersions = []string{"8.1", "8.2", "8.3", "8.4"}
 
-// archiveVersions lists the PHP versions available straight from the Ubuntu
-// archive instead of packages.sury.org. Resolute (26.04)
-// ships 8.5 and does not carry 8.4.
-var archiveVersions = []string{"8.5"}
+// resoluteVersions lists the PHP versions the panel manages on Ubuntu 26.04
+// (resolute). packages.sury.org serves resolute too, so the jammy/noble
+// branches stay available there and a server upgraded from 24.04 keeps
+// every site's PHP version; 8.5 is the release's own default.
+var resoluteVersions = []string{"8.1", "8.2", "8.3", "8.4", "8.5"}
 
 // VersionsForCodename maps an Ubuntu codename to the PHP versions the panel
 // can manage there. Unknown codenames keep the jammy/noble set.
 func VersionsForCodename(codename string) []string {
 	if codename == "resolute" {
-		return archiveVersions
+		return resoluteVersions
 	}
 	return ppaVersions
 }
@@ -57,7 +58,7 @@ func Codename(ctx context.Context, exec executor.CommandExecutor) string {
 }
 
 // phpRepositorySetupScript points apt at Ondřej Surý's PHP repository
-// (packages.sury.org/php) on jammy and noble. His Launchpad PPA
+// (packages.sury.org/php) on jammy, noble and resolute. His Launchpad PPA
 // (ppa:ondrej/php) was frozen in November 2026: its Label changed to
 // "PPA for PHP (deprecated)", which makes every apt-get update fail until
 // the entry is removed, so the script also migrates servers that still
@@ -83,11 +84,7 @@ remove_legacy_ppa() {
 
 . /etc/os-release
 case "${VERSION_CODENAME:-}" in
-    jammy|noble) ;;
-    resolute)
-        # PHP comes from the Ubuntu archive on resolute.
-        remove_legacy_ppa
-        exit 0 ;;
+    jammy|noble|resolute) ;;
     *) echo "Unsupported Ubuntu codename: ${VERSION_CODENAME:-unknown}" >&2; exit 1 ;;
 esac
 
@@ -641,7 +638,7 @@ func parseFPMStatus(output string) (running, enabled bool) {
 // LegacyRepositoryMigrationScript moves a server off the deprecated ondrej
 // PPA before a generic apt run. It does nothing unless a PPA entry is still
 // configured; otherwise it runs the repository setup, which removes the PPA
-// and (on jammy/noble) adds packages.sury.org/php. Without it, apt-get
+// and adds packages.sury.org/php. Without it, apt-get
 // update fails on the PPA's changed Label until PHP is touched again.
 func LegacyRepositoryMigrationScript() string {
 	return `legacy_ppa=false
@@ -654,3 +651,8 @@ fi
 echo "Moving PHP packages from the deprecated ppa:ondrej/php to packages.sury.org/php..."
 ` + phpRepositorySetupScript
 }
+
+// RepositorySetupScript returns the root script that configures
+// packages.sury.org/php for the running release (and removes the deprecated
+// ondrej PPA). The release upgrade reuses it to re-point PHP at resolute.
+func RepositorySetupScript() string { return phpRepositorySetupScript }

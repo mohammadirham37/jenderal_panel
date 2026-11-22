@@ -13,9 +13,10 @@ import (
 
 // securityBaselines is the lowest upstream patch release per PHP branch that
 // carries the latest known security fixes. packages.sury.org builds track upstream
-// version numbers, so on jammy/noble an installed version below the baseline
-// is definitely vulnerable. The Ubuntu archive (resolute) backports fixes
-// without bumping the upstream number, so baselines are not applied there.
+// version numbers, so an installed sury build below the baseline is
+// definitely vulnerable. Ubuntu archive builds ("8.5.4-1ubuntu1.1") backport
+// fixes without bumping the upstream number, so baselines are not applied to
+// them (see ubuntuArchiveBuild).
 //
 // 2026-10-21: PHP 8.5.12 / 8.4.27 / 8.3.36 / 8.2.35 fix CVE-2026-109618 and
 // CVE-2026-109619 (unauthenticated RCE, CVSS 9.2).
@@ -146,7 +147,7 @@ func parsePolicy(output string) map[string]string {
 
 // patchStatus builds the status of one installed version from dpkg and the
 // cached apt lists. It never touches the network.
-func (s *Service) patchStatus(ctx context.Context, version string, applyBaseline bool) PatchStatus {
+func (s *Service) patchStatus(ctx context.Context, version string) PatchStatus {
 	status := PatchStatus{Version: version, Packages: []PackageUpdate{}, EndOfLife: endOfLifeBranches[version]}
 	installed := s.installedPackages(ctx, version)
 	if len(installed) == 0 {
@@ -185,7 +186,7 @@ func (s *Service) patchStatus(ctx context.Context, version string, applyBaseline
 	}
 	status.UpdateAvailable = len(status.Packages) > 0
 
-	if baseline, ok := securityBaselines[version]; ok && applyBaseline && status.Current != "" {
+	if baseline, ok := securityBaselines[version]; ok && status.Current != "" && !ubuntuArchiveBuild(installed[reference]) {
 		status.SecurityBaseline = baseline
 		status.AdvisoryURL = securityAdvisoryURL
 		status.Vulnerable = compareUpstream(status.Current, baseline) < 0
@@ -196,13 +197,11 @@ func (s *Service) patchStatus(ctx context.Context, version string, applyBaseline
 // PatchOverview reports the patch level of every installed PHP version.
 func (s *Service) PatchOverview(ctx context.Context) (PatchOverview, error) {
 	overview := PatchOverview{Versions: []PatchStatus{}}
-	codename := Codename(ctx, s.exec)
-	applyBaseline := codename != "resolute"
-	for _, version := range VersionsForCodename(codename) {
+	for _, version := range VersionsForCodename(Codename(ctx, s.exec)) {
 		if !s.IsInstalled(ctx, version) {
 			continue
 		}
-		overview.Versions = append(overview.Versions, s.patchStatus(ctx, version, applyBaseline))
+		overview.Versions = append(overview.Versions, s.patchStatus(ctx, version))
 	}
 	if res, err := s.exec.Run(ctx, "/usr/bin/stat", "-c", "%Y", "/var/cache/apt/pkgcache.bin"); err == nil && res != nil && res.ExitCode == 0 {
 		if secs, err := strconv.ParseInt(strings.TrimSpace(res.Stdout), 10, 64); err == nil && secs > 0 {
@@ -264,4 +263,15 @@ func (s *Service) upgradeCommands(ctx context.Context, versions []string) ([][]s
 		commands = append(commands, []string{"systemctl", "try-restart", unit})
 	}
 	return commands, nil
+}
+
+// ubuntuArchiveBuildPattern matches Ubuntu's own package revisions
+// ("8.5.4-1ubuntu1.1", "8.3.6-0ubuntu0.24.04.4"), not sury builds
+// ("8.3.30-1+ubuntu24.04.1+deb.sury.org+1").
+var ubuntuArchiveBuildPattern = regexp.MustCompile(`-[0-9]+ubuntu`)
+
+// ubuntuArchiveBuild reports whether a package version comes from the Ubuntu
+// archive, whose security backports keep the upstream version number.
+func ubuntuArchiveBuild(version string) bool {
+	return ubuntuArchiveBuildPattern.MatchString(version)
 }

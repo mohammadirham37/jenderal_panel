@@ -458,8 +458,8 @@ func TestExtensionsRejectsUnknownVersionAndBadNames(t *testing.T) {
 
 func TestVersionsForCodename(t *testing.T) {
 	resolute := VersionsForCodename("resolute")
-	if len(resolute) != 1 || resolute[0] != "8.5" {
-		t.Fatalf("resolute versions = %v, want [8.5]", resolute)
+	if strings.Join(resolute, " ") != "8.1 8.2 8.3 8.4 8.5" {
+		t.Fatalf("resolute versions = %v, want 8.1-8.5", resolute)
 	}
 	for _, codename := range []string{"", "jammy", "noble", "unknown"} {
 		got := VersionsForCodename(codename)
@@ -482,20 +482,18 @@ func TestParseCodename(t *testing.T) {
 	}
 }
 
-func TestRepositoryScriptSkipsPPAOnResolute(t *testing.T) {
-	if !strings.Contains(phpRepositorySetupScript, "resolute)") {
-		t.Fatal("repository script has no resolute branch")
+// Resolute gets packages.sury.org too, so a server upgraded from 24.04
+// keeps its PHP versions; the deprecated PPA is still removed.
+func TestRepositoryScriptUsesSuryOnResolute(t *testing.T) {
+	root, _ := runRepositoryScript(t, phpRepositorySetupScript, "resolute", map[string]string{
+		"etc/apt/sources.list.d/ondrej-php.list": "deb ppa\n",
+	})
+	list, err := os.ReadFile(filepath.Join(root, "etc/apt/sources.list.d/sury-php.list"))
+	if err != nil || !strings.Contains(string(list), "https://packages.sury.org/php/ resolute main") {
+		t.Fatalf("sury-php.list = %q, %v", list, err)
 	}
-	// The resolute branch must exit before the sury list is written and
-	// must clear stale PPA lists so apt does not fail on them.
-	resoluteIdx := strings.Index(phpRepositorySetupScript, "resolute)")
-	printfIdx := strings.Index(phpRepositorySetupScript, "printf 'deb [signed-by=")
-	if resoluteIdx < 0 || printfIdx < 0 || resoluteIdx > printfIdx {
-		t.Fatalf("resolute branch (idx %d) must precede the PPA printf (idx %d)", resoluteIdx, printfIdx)
-	}
-	branch := phpRepositorySetupScript[resoluteIdx:printfIdx]
-	if !strings.Contains(branch, "exit 0") || !strings.Contains(branch, "remove_legacy_ppa") {
-		t.Fatalf("resolute branch must rm stale lists and exit before writing PPA:\n%s", branch)
+	if _, err := os.Stat(filepath.Join(root, "etc/apt/sources.list.d/ondrej-php.list")); err == nil {
+		t.Error("the deprecated PPA must be removed on resolute")
 	}
 }
 
