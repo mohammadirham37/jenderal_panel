@@ -11,7 +11,21 @@
 	// result stays visible after the reboot.
 
 	type Check = { id: string; status: 'ok' | 'warn' | 'block'; message: string };
-	type Preflight = { current: string; target: string; checks: Check[]; blocked: boolean };
+	type PostgresMigration = {
+		clusters: string[];
+		target: string;
+		data_bytes: number;
+		free_bytes: number;
+		possible: boolean;
+		reason?: string;
+	};
+	type Preflight = {
+		current: string;
+		target: string;
+		checks: Check[];
+		blocked: boolean;
+		postgresql?: PostgresMigration;
+	};
 	type Status = {
 		state: 'idle' | 'running' | 'reboot_required' | 'failed';
 		running: boolean;
@@ -27,6 +41,7 @@
 	let showConfirm = $state(false);
 	let snapshotConfirmed = $state(false);
 	let confirmText = $state('');
+	let migratePostgres = $state(false);
 	let starting = $state(false);
 	let rebooting = $state(false);
 	let repairTaskId = $state('');
@@ -36,6 +51,8 @@
 	const canConfirm = $derived(snapshotConfirmed && confirmText.trim() === '26.04' && !starting);
 
 	const t = (key: string) => translate($language, key);
+	const fill = (key: string, values: Record<string, string>) =>
+		Object.entries(values).reduce((text, [name, value]) => text.replaceAll(`{${name}}`, value), t(key));
 
 	async function loadStatus() {
 		try {
@@ -66,7 +83,11 @@
 		if (!canConfirm) return;
 		starting = true;
 		try {
-			await api.post('/api/v1/server/release-upgrade', { snapshot_confirmed: snapshotConfirmed, confirm: confirmText.trim() });
+			await api.post('/api/v1/server/release-upgrade', {
+				snapshot_confirmed: snapshotConfirmed,
+				confirm: confirmText.trim(),
+				migrate_postgresql: migratePostgres && !!preflight?.postgresql?.possible
+			});
 			toast.success(t('relupg.started'));
 			showConfirm = false;
 			await loadStatus();
@@ -102,6 +123,7 @@
 	function openConfirm() {
 		snapshotConfirmed = false;
 		confirmText = '';
+		migratePostgres = false;
 		showConfirm = true;
 	}
 
@@ -258,6 +280,24 @@
 				<input type="checkbox" bind:checked={snapshotConfirmed} class="mt-0.5" />
 				<span>{t('relupg.confirm.snapshot')}</span>
 			</label>
+			{#if preflight?.postgresql}
+				{@const pg = preflight.postgresql}
+				{@const names = { clusters: pg.clusters.join(', '), target: pg.target, reason: pg.reason ?? '' }}
+				<div class="mt-4 rounded-lg border border-gray-700 p-3">
+					<label class="flex items-start gap-2 text-sm text-gray-200 {pg.possible ? 'cursor-pointer' : 'opacity-60'}">
+						<input type="checkbox" bind:checked={migratePostgres} disabled={!pg.possible || starting} class="mt-0.5" />
+						<span>{fill('relupg.pg.migrate', names)}</span>
+					</label>
+					{#if pg.possible}
+						<p class="mt-1 pl-6 text-xs text-gray-400">{fill('relupg.pg.migrateDesc', names)}</p>
+					{:else}
+						<p class="mt-1 pl-6 text-xs text-yellow-400">{fill('relupg.pg.notPossible', names)}</p>
+					{/if}
+					{#if !migratePostgres}
+						<p class="mt-1 pl-6 text-xs text-gray-500">{fill('relupg.pg.keep', names)}</p>
+					{/if}
+				</div>
+			{/if}
 			<label class="mt-4 block text-sm text-gray-300">
 				{t('relupg.confirm.type')}
 				<input

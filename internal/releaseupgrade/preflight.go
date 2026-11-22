@@ -34,6 +34,8 @@ type Preflight struct {
 	Target  string  `json:"target"`
 	Checks  []Check `json:"checks"`
 	Blocked bool    `json:"blocked"`
+	// PostgreSQL is set when clusters older than ToPostgresMajor exist.
+	PostgreSQL *PostgresMigration `json:"postgresql,omitempty"`
 
 	// mysqlNative is passed to the script (re-enable the plugin).
 	mysqlNative bool
@@ -81,6 +83,7 @@ func (s *Service) Preflight(ctx context.Context) (*Preflight, error) {
 	s.checkSources(ctx, p)
 	s.checkPHP(ctx, p)
 	s.checkMySQL(ctx, p)
+	s.checkPostgreSQL(ctx, p)
 	return p, nil
 }
 

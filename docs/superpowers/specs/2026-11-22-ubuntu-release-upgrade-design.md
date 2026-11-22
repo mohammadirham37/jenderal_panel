@@ -144,6 +144,26 @@ Script (fixed text, no user input):
 7. Always (trap): remove the override cfg and the apt.conf.d file; write
    `state` = `reboot_required` (success) or `failed` with the exit code.
 
+### 3a. PostgreSQL majors older than resolute's (18)
+
+- Preflight check `postgresql` (warn) lists clusters older than 18 from
+  `pg_lsclusters -h` and whether migrating fits on disk: free space next
+  to the data directories must be at least twice the data size (copy +
+  backup) plus 1 GiB.
+- Without migration the post-upgrade repair adds pgdg whenever a recorded
+  `postgresql-NN` other than 18 is installed (resolute's archive does not
+  carry it), then upgrades it to the pgdg build.
+- The confirm modal offers "also migrate to PostgreSQL 18"
+  (`migrate_postgresql`); Start rejects it when no cluster needs it or the
+  disk check failed. For each online older cluster the script installs
+  the `postgresql-18-*` counterparts of its extension packages (skips the
+  cluster with a warning if one is missing), writes a `pg_dumpall` backup
+  to `/var/backups/jenderal`, runs `pg_upgradecluster -v 18 -m upgrade`
+  (copy mode, the new cluster takes the old port) and keeps the old
+  cluster stopped with `start.conf` = manual. On failure the new cluster is
+  dropped and the old one started again; the upgrade itself still counts
+  as finished, with a warning.
+
 ### 4. Status — `GET /api/v1/server/release-upgrade/status`
 
 Reads `state`, `systemctl is-active jenderal-release-upgrade` and the last

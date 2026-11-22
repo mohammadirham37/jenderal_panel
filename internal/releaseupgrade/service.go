@@ -183,6 +183,9 @@ func (s *Service) rebootedSinceUpgrade(ctx context.Context) bool {
 type StartRequest struct {
 	SnapshotConfirmed bool   `json:"snapshot_confirmed"`
 	Confirm           string `json:"confirm"`
+	// MigratePostgreSQL moves clusters older than ToPostgresMajor to it
+	// after the upgrade.
+	MigratePostgreSQL bool `json:"migrate_postgresql"`
 }
 
 // Start re-runs the preflight and launches the upgrade in its own systemd
@@ -211,6 +214,19 @@ func (s *Service) Start(ctx context.Context, req StartRequest) error {
 		return model.NewValidationError("the upgrade cannot start: " + strings.Join(reasons, " "))
 	}
 
+	if req.MigratePostgreSQL {
+		switch {
+		case p.PostgreSQL == nil:
+			return model.NewValidationError("no PostgreSQL cluster needs migrating")
+		case !p.PostgreSQL.Possible:
+			return model.NewValidationError("PostgreSQL cannot be migrated: " + p.PostgreSQL.Reason)
+		}
+	}
+	pgMigrate := "0\n"
+	if req.MigratePostgreSQL {
+		pgMigrate = "1\n"
+	}
+
 	if err := s.sudo(ctx, "install", "-d", "-m", "0755", StateDir); err != nil {
 		return err
 	}
@@ -221,6 +237,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) error {
 	inputs := map[string]string{
 		StateDir + "/php-versions": strings.Join(p.phpVersions, "\n") + "\n",
 		StateDir + "/mysql-native": mysqlNative,
+		StateDir + "/pg-migrate":   pgMigrate,
 		StateDir + "/state":        StateRunning + "\n",
 	}
 	for path, content := range inputs {

@@ -42,6 +42,10 @@ type fakeServer struct {
 	// unitQueryFails makes systemctl is-active error out.
 	unitQueryFails bool
 	processAlive   bool
+	// pgClusters is pg_lsclusters -h output; empty means not installed.
+	pgClusters string
+	pgDataSize string
+	pgFree     string
 	sudoCalls      [][]string
 	inputs         map[string]string
 }
@@ -78,6 +82,13 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 					return fail()
 				}
 				return ok("")
+			case name == "pg_lsclusters":
+				if f.pgClusters == "" {
+					return fail()
+				}
+				return ok(f.pgClusters)
+			case name == "df" && args[len(args)-1] == "/var/lib/postgresql/16":
+				return ok("    Avail\n" + f.pgFree + "\n")
 			case name == "df":
 				return ok(f.dfOutput)
 			case joined == "/bin/cat /proc/sys/kernel/random/boot_id":
@@ -116,6 +127,8 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 				return ok(f.pendingLines)
 			case name == "dpkg":
 				return ok(f.dpkgAudit)
+			case name == "du":
+				return ok(f.pgDataSize + "\t" + args[len(args)-1] + "\n")
 			case name == "fuser":
 				return fail()
 			case name == "/bin/bash" && args[1] == sourcesDumpScript:
@@ -520,9 +533,13 @@ func TestEveryCheckHasAUILabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src, err := os.ReadFile("preflight.go")
-	if err != nil {
-		t.Fatal(err)
+	var src []byte
+	for _, file := range []string{"preflight.go", "postgresql.go"} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src = append(src, b...)
 	}
 	ids := regexp.MustCompile(`p\.add\("([a-z_]+)"`).FindAllStringSubmatch(string(src), -1)
 	if len(ids) < 10 {
@@ -577,5 +594,87 @@ func TestStatusKeepsRunningWhileSudoIsBroken(t *testing.T) {
 	st, _ = NewService(f.executor(), nil, nil).Status(context.Background())
 	if st.State != StateFailed {
 		t.Fatalf("a stopped unit without a process is a failure: %+v", st)
+	}
+}
+
+func pgServer(dataSize, free string) *fakeServer {
+	f := newFakeServer()
+	f.mysqlMissing = true
+	f.pgClusters = "16  main    5432 online postgres /var/lib/postgresql/16/main /var/log/postgresql/postgresql-16-main.log\n"
+	f.pgDataSize = dataSize
+	f.pgFree = free
+	return f
+}
+
+func TestPreflightOffersPostgreSQLMigration(t *testing.T) {
+	srv := repoServer(t)
+	f := pgServer("1000000000", "10000000000")
+	s := newTestService(t, f, setupDB(t), srv)
+	p, err := s.Preflight(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := checkByID(p, "postgresql"); c.Status != CheckWarn || !strings.Contains(c.Message, "16/main") {
+		t.Errorf("postgresql check = %+v", c)
+	}
+	if p.Blocked {
+		t.Error("an old PostgreSQL must not block the upgrade")
+	}
+	m := p.PostgreSQL
+	if m == nil || !m.Possible || m.Target != "18" || len(m.Clusters) != 1 || m.Clusters[0] != "16/main" || m.DataBytes != 1000000000 {
+		t.Fatalf("migration = %+v", m)
+	}
+}
+
+func TestPreflightPostgreSQLMigrationNeedsDisk(t *testing.T) {
+	srv := repoServer(t)
+	// 3 GB of data needs 7 GB free (copy + backup + 1 GiB).
+	f := pgServer("3000000000", "6000000000")
+	s := newTestService(t, f, setupDB(t), srv)
+	p, _ := s.Preflight(context.Background())
+	if p.PostgreSQL == nil || p.PostgreSQL.Possible || !strings.Contains(p.PostgreSQL.Reason, "free") {
+		t.Fatalf("migration = %+v", p.PostgreSQL)
+	}
+	err := s.Start(context.Background(), StartRequest{SnapshotConfirmed: true, Confirm: "26.04", MigratePostgreSQL: true})
+	if err == nil || !strings.Contains(err.Error(), "cannot be migrated") {
+		t.Fatalf("Start = %v, want a disk space refusal", err)
+	}
+	if err := s.Start(context.Background(), StartRequest{SnapshotConfirmed: true, Confirm: "26.04"}); err != nil {
+		t.Fatalf("Start without migration = %v", err)
+	}
+	if f.inputs[StateDir+"/pg-migrate"] != "0\n" {
+		t.Errorf("pg-migrate = %q", f.inputs[StateDir+"/pg-migrate"])
+	}
+}
+
+func TestStartPassesThePostgreSQLMigrationChoice(t *testing.T) {
+	srv := repoServer(t)
+	f := pgServer("1000000000", "10000000000")
+	s := newTestService(t, f, setupDB(t), srv)
+	if err := s.Start(context.Background(), StartRequest{SnapshotConfirmed: true, Confirm: "26.04", MigratePostgreSQL: true}); err != nil {
+		t.Fatal(err)
+	}
+	if f.inputs[StateDir+"/pg-migrate"] != "1\n" {
+		t.Errorf("pg-migrate = %q", f.inputs[StateDir+"/pg-migrate"])
+	}
+}
+
+func TestStartRefusesMigrationWithoutOldClusters(t *testing.T) {
+	srv := repoServer(t)
+	f := newFakeServer()
+	s := newTestService(t, f, setupDB(t), srv)
+	err := s.Start(context.Background(), StartRequest{SnapshotConfirmed: true, Confirm: "26.04", MigratePostgreSQL: true})
+	if err == nil || !strings.Contains(err.Error(), "no PostgreSQL cluster") {
+		t.Fatalf("Start = %v", err)
+	}
+}
+
+func TestParseClustersAndMajor(t *testing.T) {
+	got := parseClusters("9.6 legacy 5433 down postgres /var/lib/postgresql/9.6/legacy log\n\n18 main 5432 online postgres /var/lib/postgresql/18/main log\n")
+	if len(got) != 2 || got[0].Version != "9.6" || got[1].DataDir != "/var/lib/postgresql/18/main" {
+		t.Fatalf("clusters = %+v", got)
+	}
+	if pgMajor("9.6") != 9 || pgMajor("16") != 16 || pgMajor("x") != -1 {
+		t.Error("pgMajor")
 	}
 }

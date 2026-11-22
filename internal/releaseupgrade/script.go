@@ -78,6 +78,7 @@ func UpgradeScript() string {
 		"@PHP_REPO_SCRIPT@", php.RepositorySetupScript(),
 		"@PGDG_REPO_SCRIPT@", "set -eu\n"+dbmanager.PGDGRepositorySetupScript(),
 		"@TO@", ToCodename,
+		"@PG_TARGET@", ToPostgresMajor,
 	).Replace(upgradeScriptTemplate)
 }
 
@@ -165,9 +166,15 @@ if grep -qs '^php' "$STATE_DIR/packages-before.txt"; then
 @PHP_REPO_SCRIPT@JENDERAL_PHP_REPO
     bash "$STATE_DIR/php-repo.sh" || warn "could not configure packages.sury.org/php for @TO@"
 fi
-if grep -qs '^postgresql' "$STATE_DIR/packages-before.txt" \
-    && grep -rqs 'apt.postgresql.org' /etc/apt/sources.list /etc/apt/sources.list.d/ \
-    && ! grep -rqsE '^[^#]*@TO@-pgdg' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+# pgdg is needed when it was configured before, or when a PostgreSQL major
+# other than @TO@'s (@PG_TARGET@) is installed: @TO@'s archive does not
+# carry it, so without pgdg it would never be updated again.
+needs_pgdg=0
+grep -rqs 'apt.postgresql.org' /etc/apt/sources.list /etc/apt/sources.list.d/ && needs_pgdg=1
+grep -qsE '^postgresql-[0-9]+$' "$STATE_DIR/packages-before.txt" \
+    && grep -sE '^postgresql-[0-9]+$' "$STATE_DIR/packages-before.txt" | grep -qvx 'postgresql-@PG_TARGET@' && needs_pgdg=1
+if [ "$needs_pgdg" = 1 ] \
+    && ! grep -rqsE '^[^#]*@TO@-pgdg' /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; then
     cat > "$STATE_DIR/pgdg-repo.sh" <<'JENDERAL_PGDG_REPO'
 @PGDG_REPO_SCRIPT@JENDERAL_PGDG_REPO
     bash "$STATE_DIR/pgdg-repo.sh" || warn "could not configure the PostgreSQL (pgdg) repository for @TO@"
@@ -207,6 +214,72 @@ if [ "$(cat "$STATE_DIR/mysql-native" 2>/dev/null)" = 1 ] && [ -d /etc/mysql/mys
     echo ">>> Enabling mysql_native_password for existing MySQL users (MySQL 8.4 disables it by default)"
     printf '[mysqld]\nmysql_native_password=ON\n' > /etc/mysql/mysql.conf.d/zz-jenderal-native-password.cnf
     systemctl restart mysql || warn "MySQL did not restart with mysql_native_password enabled"
+fi
+
+# Optional: move PostgreSQL clusters older than @PG_TARGET@ to @PG_TARGET@.
+# pg_upgradecluster -m upgrade copies the data, so the old cluster stays
+# intact; it is kept stopped (start.conf manual) as a fallback, and a
+# pg_dumpall backup is written first. A failed migration restarts the old
+# cluster unchanged.
+pg_target=@PG_TARGET@
+migrate_cluster() {
+    ver=$1 name=$2 port=$3 status=$4
+    label="PostgreSQL $ver/$name"
+    if pg_lsclusters -h | awk -v v="$pg_target" -v n="$name" '$1 == v && $2 == n { found = 1 } END { exit !found }'; then
+        warn "$label was not migrated: a $pg_target/$name cluster already exists"
+        return
+    fi
+    case "$status" in
+        online*) ;;
+        *) warn "$label was not migrated: it is not running"; return ;;
+    esac
+    ext=""
+    for pkg in $(dpkg-query -W -f='${Package}\t${db:Status-Status}\n' "postgresql-$ver-*" 2>/dev/null | awk -F'\t' '$2 == "installed" { print $1 }'); do
+        new_pkg="postgresql-$pg_target-${pkg#postgresql-$ver-}"
+        if apt-cache policy "$new_pkg" 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+            ext="$ext $new_pkg"
+        else
+            warn "$label was not migrated: its extension package $pkg has no $new_pkg"
+            return
+        fi
+    done
+    if [ -n "$ext" ]; then
+        # shellcheck disable=SC2086
+        apt-get install $APT_OPTS $ext || { warn "$label was not migrated: could not install$ext"; return; }
+    fi
+    install -d -m 0700 /var/backups/jenderal
+    dump="/var/backups/jenderal/postgresql-$ver-$name-$(date -u +%Y%m%d%H%M%S).sql.gz"
+    echo ">>> Backing up $label to $dump"
+    if ! runuser -u postgres -- pg_dumpall -p "$port" | gzip > "$dump"; then
+        rm -f "$dump"
+        warn "$label was not migrated: the backup failed"
+        return
+    fi
+    chmod 0600 "$dump"
+    echo ">>> Migrating $label to PostgreSQL $pg_target (pg_upgradecluster)"
+    if pg_upgradecluster -v "$pg_target" -m upgrade "$ver" "$name"; then
+        pg_ctlcluster "$ver" "$name" stop 2>/dev/null || true
+        printf 'manual\n' > "/etc/postgresql/$ver/$name/start.conf"
+        echo ">>> $label now runs as PostgreSQL $pg_target/$name on port $port. The old cluster is kept stopped; remove it with: pg_dropcluster $ver $name"
+    else
+        pg_dropcluster --stop "$pg_target" "$name" 2>/dev/null || true
+        pg_ctlcluster "$ver" "$name" start || true
+        warn "$label could not be migrated to PostgreSQL $pg_target and was restarted unchanged (backup: $dump)"
+    fi
+}
+if [ "$(cat "$STATE_DIR/pg-migrate" 2>/dev/null)" = 1 ] && command -v pg_lsclusters >/dev/null 2>&1; then
+    if [ ! -x "/usr/lib/postgresql/$pg_target/bin/postgres" ]; then
+        apt-get install $APT_OPTS "postgresql-$pg_target" || warn "could not install PostgreSQL $pg_target"
+    fi
+    if [ -x "/usr/lib/postgresql/$pg_target/bin/postgres" ] && pg_lsclusters -h > "$STATE_DIR/clusters-before.txt"; then
+        while read -r ver name port status _rest; do
+            case "$ver" in
+                *[!0-9.]*|'') continue ;;
+            esac
+            [ "${ver%%.*}" -lt "$pg_target" ] || continue
+            migrate_cluster "$ver" "$name" "$port" "$status" < /dev/null
+        done < "$STATE_DIR/clusters-before.txt"
+    fi
 fi
 
 while read -r version; do

@@ -46,7 +46,13 @@ const en = {
 	'relupg.check.sources': 'Apt repositories',
 	'relupg.check.foreign_sources': 'Third-party repositories',
 	'relupg.check.php': 'PHP versions used by sites',
-	'relupg.check.mysql_native_password': 'MySQL 8.0 → 8.4'
+	'relupg.check.mysql_native_password': 'MySQL 8.0 → 8.4',
+	'relupg.check.postgresql': 'PostgreSQL',
+	'relupg.pg.migrate': 'Also migrate PostgreSQL {clusters} to PostgreSQL {target}',
+	'relupg.pg.migrateDesc':
+		'After the upgrade the panel backs up every database (pg_dumpall to /var/backups/jenderal), then copies the cluster to PostgreSQL {target} on the same port. The old cluster is kept stopped as a fallback; if the migration fails it is started again unchanged. Databases are unavailable for a few minutes.',
+	'relupg.pg.keep': 'Without this, PostgreSQL {clusters} stays as is and receives updates from apt.postgresql.org.',
+	'relupg.pg.notPossible': 'Migration is not possible: {reason}'
 };
 
 const id: Record<keyof typeof en, string> = {
@@ -93,7 +99,13 @@ const id: Record<keyof typeof en, string> = {
 	'relupg.check.sources': 'Repositori apt',
 	'relupg.check.foreign_sources': 'Repositori pihak ketiga',
 	'relupg.check.php': 'Versi PHP yang dipakai situs',
-	'relupg.check.mysql_native_password': 'MySQL 8.0 → 8.4'
+	'relupg.check.mysql_native_password': 'MySQL 8.0 → 8.4',
+	'relupg.check.postgresql': 'PostgreSQL',
+	'relupg.pg.migrate': 'Sekalian migrasi PostgreSQL {clusters} ke PostgreSQL {target}',
+	'relupg.pg.migrateDesc':
+		'Setelah upgrade, panel mem-backup semua database (pg_dumpall ke /var/backups/jenderal), lalu menyalin cluster ke PostgreSQL {target} di port yang sama. Cluster lama disimpan dalam keadaan mati sebagai cadangan; kalau migrasi gagal, cluster lama dinyalakan lagi tanpa perubahan. Database tidak bisa diakses selama beberapa menit.',
+	'relupg.pg.keep': 'Tanpa opsi ini, PostgreSQL {clusters} tetap seperti sekarang dan mendapat update dari apt.postgresql.org.',
+	'relupg.pg.notPossible': 'Migrasi tidak bisa dilakukan: {reason}'
 };
 
 export const dict = { en, id };
