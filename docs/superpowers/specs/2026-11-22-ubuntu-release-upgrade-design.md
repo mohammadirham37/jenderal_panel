@@ -85,7 +85,7 @@ state }`. Any `block` disables the start button. Checks:
 | `reboot_required` | `/var/run/reboot-required` exists |
 | `dpkg` | `dpkg --audit` reports anything, or apt/dpkg is locked |
 | `disk` | `/` has < 5 GB free or `/boot` < 300 MB free |
-| `sources` | an enabled apt source has no resolute equivalent (its mapped suite's `InRelease`/`Release` does not answer 200). The message names the repo so the admin can disable it |
+| `sources` | a panel repository (sury, pgdg) has no resolute equivalent (its mapped suite's `InRelease`/`Release` does not answer 200). Any other source without one is only a warning: the upgrader disables it and, with `RemoveObsoletes=no`, keeps its packages |
 | `php` | a PHP version used by any site is not published by sury for resolute |
 | `panel_task` | a panel apt/PHP/DB task or a panel update is running |
 
@@ -143,7 +143,8 @@ Script (fixed text, no user input):
 
 Reads `state`, `systemctl is-active jenderal-release-upgrade` and the last
 ~400 lines of the log. A `running` state with an inactive unit (crash) is
-reported as `failed`.
+reported as `failed`. The script records the boot ID it finished in; once
+the server has booted again, `reboot_required` is reported as `idle`.
 
 ### 5. Repair — `POST /api/v1/server/release-upgrade/repair`
 

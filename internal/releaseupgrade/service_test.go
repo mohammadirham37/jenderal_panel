@@ -8,6 +8,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -32,6 +34,8 @@ type fakeServer struct {
 	mysqlMissing  bool
 	state         string
 	unitActive    bool
+	bootID        string
+	currentBootID string
 	sudoCalls     [][]string
 	inputs        map[string]string
 }
@@ -70,6 +74,8 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 				return ok("")
 			case name == "df":
 				return ok(f.dfOutput)
+			case joined == "/bin/cat /proc/sys/kernel/random/boot_id":
+				return ok(f.currentBootID + "\n")
 			}
 			return fail()
 		},
@@ -94,6 +100,11 @@ func (f *fakeServer) executor() *executor.MockExecutor {
 					return fail()
 				}
 				return ok(f.state + "\n")
+			case joined == "cat "+StateDir+"/boot_id":
+				if f.bootID == "" {
+					return fail()
+				}
+				return ok(f.bootID + "\n")
 			case joined == "systemctl is-active "+UnitName:
 				if f.unitActive {
 					return ok("active\n")
@@ -450,5 +461,43 @@ func TestParseMetaRelease(t *testing.T) {
 	}
 	if v, _ := parseMetaRelease(content, "questing"); v != "" {
 		t.Errorf("unknown dist = %q", v)
+	}
+}
+
+func TestStatusClearsRebootRequiredAfterReboot(t *testing.T) {
+	f := newFakeServer()
+	f.state = StateRebootRequired
+	f.bootID = "boot-a"
+	f.currentBootID = "boot-a"
+	s := NewService(f.executor(), nil, nil)
+	if st, _ := s.Status(context.Background()); st.State != StateRebootRequired {
+		t.Fatalf("before reboot: %+v", st)
+	}
+	f.currentBootID = "boot-b"
+	if st, _ := s.Status(context.Background()); st.State != StateIdle {
+		t.Fatalf("after reboot: %+v", st)
+	}
+}
+
+// Every check ID the preflight can report needs a label in the UI
+// dictionary (web/src/lib/i18n/domains/relupg.ts).
+func TestEveryCheckHasAUILabel(t *testing.T) {
+	dict, err := os.ReadFile("../../web/src/lib/i18n/domains/relupg.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.ReadFile("preflight.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := regexp.MustCompile(`p\.add\("([a-z_]+)"`).FindAllStringSubmatch(string(src), -1)
+	if len(ids) < 10 {
+		t.Fatalf("found only %d check calls", len(ids))
+	}
+	for _, m := range ids {
+		key := "'relupg.check." + m[1] + "'"
+		if strings.Count(string(dict), key) != 2 {
+			t.Errorf("%s must be in both the en and id dictionaries", key)
+		}
 	}
 }

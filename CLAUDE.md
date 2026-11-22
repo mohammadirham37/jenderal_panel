@@ -58,6 +58,8 @@ internal/{domain}/service_test.go  # Tests with MockExecutor and in-memory SQLit
 
 **frankenphp** (`internal/frankenphp`): installs the sha256-verified pinned FrankenPHP static binary for Laravel Octane sites; `website.Octane*` methods manage per-site units (`jenderal-octane-*`), Caddyfiles, and ports 8100–8199.
 
+**releaseupgrade** (`internal/releaseupgrade`): Ubuntu 24.04 → 26.04 via `do-release-upgrade` in the transient unit `jenderal-release-upgrade`, with preflight checks, an upgrader override that never removes obsolete packages, and a post-upgrade repair of sury/pgdg/PHP-FPM. Design: `docs/superpowers/specs/2026-11-22-ubuntu-release-upgrade-design.md`.
+
 **TaskRunner** (`internal/taskrunner/runner.go`): Background task execution with live output streaming and SQLite persistence. Used for all install operations (PHP, databases, Docker, updates). Returns task ID immediately; frontend polls `GET /api/v1/tasks/{id}` for progress.
 
 ### Auth & RBAC

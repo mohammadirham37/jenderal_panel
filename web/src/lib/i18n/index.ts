@@ -21,6 +21,7 @@ import { dict as security } from './domains/security';
 import { dict as disk } from './domains/disk';
 import { dict as tunnel } from './domains/tunnel';
 import { dict as supervisor } from './domains/supervisor';
+import { dict as relupg } from './domains/relupg';
 
 export const translations: Record<'en' | 'id', Record<string, string>> = {
 	en: {
@@ -42,7 +43,8 @@ export const translations: Record<'en' | 'id', Record<string, string>> = {
 		...security.en,
 		...disk.en,
 		...tunnel.en,
-		...supervisor.en
+		...supervisor.en,
+		...relupg.en
 	},
 	id: {
 		...core.id,
@@ -63,6 +65,7 @@ export const translations: Record<'en' | 'id', Record<string, string>> = {
 		...security.id,
 		...disk.id,
 		...tunnel.id,
-		...supervisor.id
+		...supervisor.id,
+		...relupg.id
 	}
 };

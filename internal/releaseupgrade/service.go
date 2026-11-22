@@ -76,6 +76,11 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	if st.State == StateRunning && !st.Running {
 		st.State = StateFailed
 	}
+	// The upgrade recorded the boot it finished in; once the server has
+	// booted again the reboot is done and there is nothing left to show.
+	if st.State == StateRebootRequired && s.rebootedSinceUpgrade(ctx) {
+		st.State = StateIdle
+	}
 	if st.State != StateIdle {
 		if res, err := s.exec.RunSudo(ctx, "tail", "-n", "400", LogPath); err == nil && res != nil && res.ExitCode == 0 {
 			st.Log = res.Stdout
@@ -90,6 +95,22 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	}
 	st.Codename = s.codename(ctx)
 	return st, nil
+}
+
+// rebootedSinceUpgrade compares the boot ID recorded when the upgrade
+// finished with the current one.
+func (s *Service) rebootedSinceUpgrade(ctx context.Context) bool {
+	res, err := s.exec.RunSudo(ctx, "cat", StateDir+"/boot_id")
+	if err != nil || res == nil || res.ExitCode != 0 {
+		return false
+	}
+	recorded := strings.TrimSpace(res.Stdout)
+	cur, err := s.exec.Run(ctx, "/bin/cat", "/proc/sys/kernel/random/boot_id")
+	if err != nil || cur == nil || cur.ExitCode != 0 {
+		return false
+	}
+	current := strings.TrimSpace(cur.Stdout)
+	return recorded != "" && current != "" && recorded != current
 }
 
 // StartRequest is the admin's confirmation.

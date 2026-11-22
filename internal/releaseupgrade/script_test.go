@@ -130,6 +130,9 @@ func TestUpgradeScriptSuccessRepairsAndRequiresReboot(t *testing.T) {
 	if got := strings.TrimSpace(s.read("state/state")); got != StateRebootRequired {
 		t.Fatalf("state = %q\nlog:\n%s", got, s.read("log/release-upgrade.log"))
 	}
+	if !strings.Contains(UpgradeScript(), `cat /proc/sys/kernel/random/boot_id > "$STATE_DIR/boot_id"`) {
+		t.Error("the finished boot must be recorded")
+	}
 	calls := s.read("calls")
 	for _, want := range []string{
 		"do-release-upgrade -f DistUpgradeViewNonInteractive",

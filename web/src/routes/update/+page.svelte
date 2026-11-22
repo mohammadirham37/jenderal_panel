@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api } from '#lib/api.js';
 	import TaskProgress from '#lib/components/TaskProgress.svelte';
+	import ReleaseUpgradeCard from '#lib/components/ReleaseUpgradeCard.svelte';
 	import { cacheBustedURL, classifyUpdateRecovery, waitForUpdatedPanel } from '#lib/update-readiness.js';
 	import { language, translate } from '#lib/stores/language.js';
 	import { permissions, hasPermission } from '#lib/stores/auth.js';
@@ -177,6 +178,7 @@
 	let aptBusy = $state(false);
 	let confirmAptUpgrade = $state(false);
 	const canManageOS = $derived(hasPermission($permissions, 'update.perform'));
+	const canReleaseUpgrade = $derived(hasPermission($permissions, 'server.release_upgrade'));
 	const aptInProgress = $derived(!!aptUpdateTaskId || !!aptUpgradeTaskId);
 
 	async function startApt(kind: 'update' | 'upgrade') {
@@ -467,5 +469,9 @@
 			<TaskProgress bind:taskId={aptUpdateTaskId} storageKey="jenderal_apt_update_task" onComplete={onAptComplete} onMissing={onAptMissing} />
 			<TaskProgress bind:taskId={aptUpgradeTaskId} storageKey="jenderal_apt_upgrade_task" onComplete={onAptComplete} onMissing={onAptMissing} />
 		</div>
+	{/if}
+
+	{#if canReleaseUpgrade}
+		<ReleaseUpgradeCard />
 	{/if}
 </div>

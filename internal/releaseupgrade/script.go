@@ -104,6 +104,7 @@ finish() {
     status=$?
     rm -f "$OVERRIDE" "$APT_CONF"
     if [ "$status" -eq 0 ] && [ "$(codename)" = @TO@ ]; then
+        cat /proc/sys/kernel/random/boot_id > "$STATE_DIR/boot_id" 2>/dev/null || true
         set_state reboot_required
         echo ">>> $(date -u '+%F %T') Upgrade finished. Reboot the server to start Ubuntu 26.04's kernel."
     else
@@ -114,7 +115,7 @@ finish() {
     fi
 }
 
-rm -f "$STATE_DIR/warnings" "$STATE_DIR/exit_code"
+rm -f "$STATE_DIR/warnings" "$STATE_DIR/exit_code" "$STATE_DIR/boot_id"
 set_state running
 trap finish EXIT
 echo ">>> $(date -u '+%F %T') Ubuntu release upgrade to @TO@ started"
