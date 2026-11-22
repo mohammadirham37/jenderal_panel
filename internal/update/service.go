@@ -42,8 +42,8 @@ type Service struct {
 	updateTask string
 	aptMu      sync.Mutex
 	aptRunning bool
-	// runSudoStream indirection exists for tests; production always streams
-	// through exec.RunSudoStream.
+	// runSudoStream indirection exists for tests; production streams stdout
+	// and stderr through exec.RunSudoStreamSplit into the same writer.
 	runSudoStream func(ctx context.Context, w io.Writer, name string, args ...string) (int, error)
 }
 
@@ -55,7 +55,11 @@ func NewService(exec executor.CommandExecutor, version string, tasks *taskrunner
 		httpClient: &http.Client{Timeout: httpTimeout},
 	}
 	if exec != nil {
-		s.runSudoStream = exec.RunSudoStream
+		// apt prints its errors ("E: ...", "W: ...") on stderr; without it a
+		// failed apt-get update only shows its exit code.
+		s.runSudoStream = func(ctx context.Context, w io.Writer, name string, args ...string) (int, error) {
+			return exec.RunSudoStreamSplit(ctx, w, w, name, args...)
+		}
 	}
 	return s
 }
@@ -173,7 +177,8 @@ func (s *Service) Changelog(ctx context.Context, limit int) ([]model.CommitInfo,
 	return out, nil
 }
 
-func displayVersion(value string) string {	value = strings.TrimSpace(value)
+func displayVersion(value string) string {
+	value = strings.TrimSpace(value)
 	if len(value) > 8 && isHexRevision(value) {
 		return value[:8]
 	}

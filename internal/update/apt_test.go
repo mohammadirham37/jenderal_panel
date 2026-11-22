@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
 
@@ -120,4 +121,39 @@ func TestAptOperationsAreSerialized(t *testing.T) {
 	}
 	close(release)
 	waitForTask(t, runner, taskID)
+}
+
+// apt reports why it failed on stderr ("E: ..."); the task log must show it,
+// not just the exit code.
+func TestAptUpdateLogsStderr(t *testing.T) {
+	runner := taskrunner.New()
+	svc := NewService(&executor.MockExecutor{
+		RunSudoStreamSplitFunc: func(ctx context.Context, stdoutW, stderrW io.Writer, name string, args ...string) (int, error) {
+			io.WriteString(stdoutW, "Reading package lists...\n")
+			io.WriteString(stderrW, "E: The repository is not signed.\n")
+			return 100, nil
+		},
+	}, "0.1.0", runner)
+
+	taskID, err := svc.AptUpdate()
+	if err != nil {
+		t.Fatalf("AptUpdate() error = %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		task, _ := runner.Get(taskID)
+		if task != nil && task.Status != "running" {
+			if task.Status != "failed" {
+				t.Fatalf("status = %q, want failed", task.Status)
+			}
+			if !strings.Contains(task.Output, "E: The repository is not signed.") {
+				t.Fatalf("stderr missing from task output:\n%s", task.Output)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for apt task")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
