@@ -113,6 +113,8 @@ func TestPostgreSQLMajorVersion(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return &executor.Result{ExitCode: 0, Stdout: "psql (PostgreSQL) 16.4 (Ubuntu 16.4-1.pgdg24.04+1)"}, nil
+		}, RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 2, Stderr: "could not connect to server"}, nil
 		},
 	}
 	major, err := NewPostgreSQLEngine(mock).MajorVersion(context.Background())
@@ -127,6 +129,8 @@ func TestPostgreSQLMajorVersion(t *testing.T) {
 func TestPostgreSQLMajorVersionRequiresInstall(t *testing.T) {
 	mock := &executor.MockExecutor{
 		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 127}, nil
+		}, RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
 			return &executor.Result{ExitCode: 127}, nil
 		},
 	}
@@ -263,5 +267,48 @@ func TestCreateDatabaseReportsOtherFailures(t *testing.T) {
 	err := NewPostgreSQLEngine(mock).CreateDatabase(context.Background(), "shop", "")
 	if err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("CreateDatabase() = %v", err)
+	}
+}
+
+// On Ubuntu 26.04 a server that kept its 16 cluster also has
+// postgresql-client-18, so psql --version says 18; pgvector must match the
+// running server (16).
+func TestPostgreSQLMajorVersionAsksTheRunningServer(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{Stdout: "psql (PostgreSQL) 18.7 (Ubuntu 18.7-1.pgdg26.04+5)"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			if strings.Contains(strings.Join(args, " "), "SHOW server_version_num") {
+				return &executor.Result{Stdout: "160016\n"}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		},
+	}
+	major, err := NewPostgreSQLEngine(mock).MajorVersion(context.Background())
+	if err != nil || major != "16" {
+		t.Fatalf("MajorVersion() = %q, %v; want 16", major, err)
+	}
+}
+
+func TestPostgreSQLStatusShowsTheServerVersion(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{Stdout: "psql (PostgreSQL) 18.7 (Ubuntu 18.7-1.pgdg26.04+5)\n"}, nil
+		},
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := strings.Join(args, " ")
+			switch {
+			case strings.Contains(joined, "is-active"):
+				return &executor.Result{Stdout: "active\n"}, nil
+			case strings.Contains(joined, "SHOW server_version"):
+				return &executor.Result{Stdout: "16.16 (Ubuntu 16.16-1.pgdg26.04+1)\n"}, nil
+			}
+			return &executor.Result{ExitCode: 1}, nil
+		},
+	}
+	st, err := NewPostgreSQLEngine(mock).Status(context.Background())
+	if err != nil || !st.Running || st.Version != "PostgreSQL 16.16 (Ubuntu 16.16-1.pgdg26.04+1)" {
+		t.Fatalf("Status() = %+v, %v", st, err)
 	}
 }

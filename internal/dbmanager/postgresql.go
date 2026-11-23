@@ -66,6 +66,16 @@ func (p *PostgreSQLEngine) Status(ctx context.Context) (model.EngineStatus, erro
 	}
 	status.Running = strings.TrimSpace(sysResult.Stdout) == "active"
 
+	// psql --version is the newest installed client; show the running
+	// server's version when they differ (e.g. a 16 cluster next to
+	// postgresql-client-18 on Ubuntu 26.04).
+	if status.Running {
+		if res, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-XtAc", "SHOW server_version"); err == nil && res != nil && res.ExitCode == 0 {
+			if v := strings.TrimSpace(res.Stdout); v != "" {
+				status.Version = "PostgreSQL " + v
+			}
+		}
+	}
 	return status, nil
 }
 
@@ -403,9 +413,16 @@ func (p *PostgreSQLEngine) ResetPassword(ctx context.Context, username, password
 	return nil
 }
 
-// MajorVersion returns the server's major version ("16") derived from
-// psql --version, used to pick the matching pgvector apt package.
+// MajorVersion returns the running server's major version ("16"), used to
+// pick the matching pgvector apt package. The server is asked first:
+// psql --version reports the newest installed client, which differs from
+// the server when several majors are installed (a 26.04 server keeping its
+// 16 cluster has postgresql-client-18, and pgvector for 18 cannot be loaded
+// by 16). psql --version is the fallback while the server is down.
 func (p *PostgreSQLEngine) MajorVersion(ctx context.Context) (string, error) {
+	if major, ok := p.serverMajor(ctx); ok {
+		return major, nil
+	}
 	result, err := p.exec.Run(ctx, "psql", "--version")
 	if err != nil {
 		return "", fmt.Errorf("postgresql version probe: %w", err)
@@ -421,6 +438,20 @@ func (p *PostgreSQLEngine) MajorVersion(ctx context.Context) (string, error) {
 		}
 	}
 	return "", model.NewDomainError("POSTGRESQL_ERROR", "could not parse psql version: "+strings.TrimSpace(result.Stdout), nil)
+}
+
+// serverMajor reads server_version_num (e.g. 160016) from the running
+// server.
+func (p *PostgreSQLEngine) serverMajor(ctx context.Context) (string, bool) {
+	result, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-XtAc", "SHOW server_version_num")
+	if err != nil || result == nil || result.ExitCode != 0 {
+		return "", false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(result.Stdout))
+	if err != nil || n < 100000 {
+		return "", false
+	}
+	return strconv.Itoa(n / 10000), true
 }
 
 // VectorAvailableVersion reports the pgvector version available to the
