@@ -8,6 +8,8 @@ const en = {
 		"Runs Canonical's do-release-upgrade without a terminal. The panel keeps every site's PHP version, PostgreSQL clusters and edited configs, and repairs its repositories afterwards. Takes 20–60 minutes; sites may be briefly unavailable while services restart.",
 	'relupg.loading': 'Checking whether this server can be upgraded…',
 	'relupg.loadFailed': 'Could not check the upgrade',
+	'relupg.reconnecting':
+		'The panel is briefly unreachable while the upgrade restarts services. The upgrade keeps running; this page reconnects by itself.',
 	'relupg.recheck': 'Check again',
 	'relupg.checks': 'Readiness checks',
 	'relupg.blocked': 'Fix the items marked as blocking before upgrading.',
@@ -75,6 +77,8 @@ const id: Record<keyof typeof en, string> = {
 		'Menjalankan do-release-upgrade resmi Canonical tanpa terminal. Panel mempertahankan versi PHP setiap situs, cluster PostgreSQL, dan konfigurasi yang sudah diedit, lalu memperbaiki repositorinya sesudah upgrade. Butuh 20–60 menit; situs bisa sempat tidak bisa diakses saat layanan dimulai ulang.',
 	'relupg.loading': 'Memeriksa apakah server ini bisa di-upgrade…',
 	'relupg.loadFailed': 'Gagal memeriksa upgrade',
+	'relupg.reconnecting':
+		'Panel sebentar tidak bisa dihubungi karena upgrade sedang me-restart layanan. Upgrade tetap berjalan; halaman ini akan tersambung kembali dengan sendirinya.',
 	'relupg.recheck': 'Periksa lagi',
 	'relupg.checks': 'Pemeriksaan kesiapan',
 	'relupg.blocked': 'Perbaiki item yang menghalangi sebelum melakukan upgrade.',

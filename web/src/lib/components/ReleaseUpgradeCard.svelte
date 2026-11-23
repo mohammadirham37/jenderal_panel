@@ -46,6 +46,9 @@
 	let preflight = $state<Preflight | null>(null);
 	let checking = $state(false);
 	let loadError = $state('');
+	// The panel can be unreachable for a moment while the upgrade restarts
+	// nginx and system libraries; that is not an upgrade failure.
+	let reconnecting = $state(false);
 	let showConfirm = $state(false);
 	let snapshotConfirmed = $state(false);
 	let confirmText = $state('');
@@ -69,6 +72,7 @@
 		try {
 			status = await api.get<Status>('/api/v1/server/release-upgrade/status');
 			loadError = '';
+			reconnecting = false;
 			// Readiness is shown before a first attempt and after a failed
 			// one (to try again).
 			const canTry = status.codename === 'noble' && (status.state === 'idle' || status.state === 'failed');
@@ -76,6 +80,10 @@
 			// After the reboot into the new release: leftovers to remove.
 			if (status.codename !== 'noble' && status.state === 'idle' && !cleanup) void loadCleanup();
 		} catch (err) {
+			if (status?.state === 'running') {
+				reconnecting = true;
+				return;
+			}
 			loadError = err instanceof Error ? err.message : t('relupg.loadFailed');
 		}
 	}
@@ -317,7 +325,9 @@
 		</div>
 		<p class="mt-1 text-xs text-gray-500">{t('relupg.desc')}</p>
 
-		{#if loadError}
+		{#if reconnecting}
+			<p class="mt-3 text-sm text-yellow-400">{t('relupg.reconnecting')}</p>
+		{:else if loadError}
 			<p class="mt-3 text-sm text-red-400">{loadError}</p>
 		{/if}
 
