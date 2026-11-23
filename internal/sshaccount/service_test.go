@@ -174,10 +174,10 @@ func (f *fakeSSHExecutor) RunSudo(ctx context.Context, name string, args ...stri
 		f.chmodN++
 		return &executor.Result{ExitCode: 0}, nil
 	case "-u":
-		// sudo -u <account> -- /usr/bin/test -x <dir>: the traversal check
-		// for that account.
+		// sudo -u <account> -- /bin/sh -c 'cd -- "$1"' sh <dir>: the
+		// traversal check for that account.
 		for _, arg := range args {
-			if arg == "/usr/bin/test" {
+			if arg == `cd -- "$1"` {
 				if f.canEnter {
 					return &executor.Result{ExitCode: 0}, nil
 				}

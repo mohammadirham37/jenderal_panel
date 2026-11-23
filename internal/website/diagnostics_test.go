@@ -133,7 +133,7 @@ func TestDiagnoseReportsNginxPermissionDenied(t *testing.T) {
 				return &executor.Result{Stdout: "404"}, nil
 			case name == "-u":
 				// The worker account cannot enter the project directory.
-				if strings.Contains(joined, "test -x /home/web_diag2_example_com/app") {
+				if strings.Contains(joined, `cd -- "$1" sh /home/web_diag2_example_com/app`) && !strings.Contains(joined, "app/public") {
 					return &executor.Result{ExitCode: 1}, nil
 				}
 				return &executor.Result{ExitCode: 0}, nil

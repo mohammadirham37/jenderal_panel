@@ -421,7 +421,8 @@ func (s *Service) GrantWebsiteOwner(ctx context.Context, websiteID string) error
 // accountCanEnter reports whether username can traverse dir right now, as
 // that account.
 func (s *Service) accountCanEnter(ctx context.Context, username, dir string) bool {
-	result, err := s.exec.RunSudo(ctx, "-u", username, "--", "/usr/bin/test", "-x", dir)
+	args := executor.CanEnterArgs(username, dir)
+	result, err := s.exec.RunSudo(ctx, args[0], args[1:]...)
 	if err != nil || result == nil {
 		return false
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 	"github.com/mohammadirham37/jenderal_panel/internal/model"
 	"github.com/mohammadirham37/jenderal_panel/internal/taskrunner"
 )
@@ -264,7 +265,8 @@ func (s *Service) checkNginxAccess(ctx context.Context, w model.Website, homeDir
 		}
 	}
 	for _, dir := range components {
-		res, err := s.exec.RunSudo(ctx, "-u", user, "--", "/usr/bin/test", "-x", dir)
+		probe := executor.CanEnterArgs(user, dir)
+		res, err := s.exec.RunSudo(ctx, probe[0], probe[1:]...)
 		if err != nil {
 			return DiagFail, dir + ": " + err.Error(), "wd.diag.hint_permissions"
 		}
@@ -272,7 +274,8 @@ func (s *Service) checkNginxAccess(ctx context.Context, w model.Website, homeDir
 			return DiagFail, fmt.Sprintf("%s cannot enter %s (permission denied) — nginx answers \"File not found\"", user, dir), "wd.diag.hint_permissions"
 		}
 	}
-	if res, err := s.exec.RunSudo(ctx, "-u", user, "--", "/usr/bin/test", "-r", indexPath); err == nil && res.ExitCode != 0 {
+	probe := executor.CanReadArgs(user, indexPath)
+	if res, err := s.exec.RunSudo(ctx, probe[0], probe[1:]...); err == nil && res.ExitCode != 0 {
 		return DiagFail, fmt.Sprintf("%s cannot read %s", user, indexPath), "wd.diag.hint_permissions"
 	}
 	return DiagOK, user + " can traverse " + docRoot, ""
