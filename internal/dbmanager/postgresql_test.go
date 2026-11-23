@@ -217,3 +217,51 @@ func TestPgvectorInstallScript(t *testing.T) {
 		t.Error("install script must not use eval")
 	}
 }
+
+// After a glibc update (Ubuntu 24.04 -> 26.04: 2.39 -> 2.43) createdb
+// refuses to copy template1 until its collation version is refreshed. The
+// panel reindexes and refreshes the small system databases and retries.
+func TestCreateDatabaseRefreshesTemplateCollationAfterGlibcUpdate(t *testing.T) {
+	var calls []string
+	refreshed := false
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			joined := strings.Join(append([]string{name}, args...), " ")
+			calls = append(calls, joined)
+			switch {
+			case strings.Contains(joined, "createdb") && !refreshed:
+				return &executor.Result{ExitCode: 1, Stderr: `createdb: error: database creation failed: ERROR:  template database "template1" has a collation version mismatch`}, nil
+			case strings.Contains(joined, "REFRESH COLLATION VERSION") && strings.Contains(joined, "-d template1"):
+				refreshed = true
+			}
+			return &executor.Result{}, nil
+		},
+	}
+	if err := NewPostgreSQLEngine(mock).CreateDatabase(context.Background(), "shop", ""); err != nil {
+		t.Fatalf("CreateDatabase() = %v\n%s", err, strings.Join(calls, "\n"))
+	}
+	all := strings.Join(calls, "\n")
+	for _, want := range []string{
+		"-d template1 -c REINDEX DATABASE template1 -c ALTER DATABASE template1 REFRESH COLLATION VERSION",
+		"-d postgres -c REINDEX DATABASE postgres -c ALTER DATABASE postgres REFRESH COLLATION VERSION",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("calls missing %q:\n%s", want, all)
+		}
+	}
+	if strings.Count(all, "createdb shop") != 2 {
+		t.Errorf("createdb must be retried once:\n%s", all)
+	}
+}
+
+func TestCreateDatabaseReportsOtherFailures(t *testing.T) {
+	mock := &executor.MockExecutor{
+		RunSudoFunc: func(ctx context.Context, name string, args ...string) (*executor.Result, error) {
+			return &executor.Result{ExitCode: 1, Stderr: `database "shop" already exists`}, nil
+		},
+	}
+	err := NewPostgreSQLEngine(mock).CreateDatabase(context.Background(), "shop", "")
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("CreateDatabase() = %v", err)
+	}
+}

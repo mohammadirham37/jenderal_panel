@@ -114,8 +114,42 @@ func (p *PostgreSQLEngine) CreateDatabase(ctx context.Context, name, charset str
 	if err != nil {
 		return fmt.Errorf("postgresql create database: %w", err)
 	}
+	if result.ExitCode != 0 && templateCollationMismatch(result.Stderr) {
+		// A glibc update (e.g. Ubuntu 24.04 -> 26.04) left template1 with
+		// an outdated collation version, and createdb refuses to copy it.
+		if err := p.refreshSystemCollations(ctx); err != nil {
+			return err
+		}
+		result, err = p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "createdb", name)
+		if err != nil {
+			return fmt.Errorf("postgresql create database: %w", err)
+		}
+	}
 	if result.ExitCode != 0 {
 		return model.NewDomainError("POSTGRESQL_ERROR", "failed to create database: "+result.Stderr, nil)
+	}
+	return nil
+}
+
+func templateCollationMismatch(stderr string) bool {
+	return strings.Contains(stderr, "template database") && strings.Contains(stderr, "collation version mismatch")
+}
+
+// refreshSystemCollations rebuilds the indexes of the system databases
+// (template1, postgres; both small) and records the current collation
+// version, so new databases can be created from template1 again. Site
+// databases are left alone: reindexing them is the admin's call.
+func (p *PostgreSQLEngine) refreshSystemCollations(ctx context.Context) error {
+	for _, db := range []string{"template1", "postgres"} {
+		res, err := p.exec.RunSudo(ctx, "sudo", "-u", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1", "-d", db,
+			"-c", "REINDEX DATABASE "+db,
+			"-c", "ALTER DATABASE "+db+" REFRESH COLLATION VERSION")
+		if err != nil {
+			return fmt.Errorf("postgresql refresh %s collation: %w", db, err)
+		}
+		if res.ExitCode != 0 {
+			return model.NewDomainError("POSTGRESQL_ERROR", "failed to refresh the collation version of "+db+" after a system library update: "+res.Stderr, nil)
+		}
 	}
 	return nil
 }
