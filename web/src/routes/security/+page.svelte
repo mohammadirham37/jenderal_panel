@@ -5,6 +5,7 @@
 	import { api } from '#lib/api.js';
 	import TaskProgress from '#lib/components/TaskProgress.svelte';
 	import FirewallPanel from '#lib/components/FirewallPanel.svelte';
+	import DependencyAuditPanel from '#lib/components/DependencyAuditPanel.svelte';
 	import { hasPermission, permissions } from '#lib/stores/auth.js';
 	import {
 		buildSafeFail2banSettings,
@@ -30,7 +31,7 @@
 import { toast } from '#lib/stores/toast.js';
 	import { language, translate } from '#lib/stores/language.js';
 
-	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'firewall' | 'waf' | 'events';
+	type Tab = 'overview' | 'setup' | 'fail2ban' | 'malware' | 'traffic' | 'dependencies' | 'firewall' | 'waf' | 'events';
 	interface ComponentStatus {
 		name: string;
 		state: string;
@@ -129,7 +130,7 @@ import { toast } from '#lib/stores/toast.js';
 	interface SetupState { id: string; status: string; safe_error: string; task_id: string; completed_steps: string[] }
 	interface SetupAssessment { website_ids: string[]; latest?: SetupState }
 
-	const allTabs: readonly Tab[] = ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'firewall', 'waf', 'events'];
+	const allTabs: readonly Tab[] = ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'dependencies', 'firewall', 'waf', 'events'];
 	function tabFromURL(): Tab {
 		const tab = new URLSearchParams(page.url.search).get('tab');
 		return (allTabs as readonly string[]).includes(tab ?? '') ? (tab as Tab) : 'overview';
@@ -210,7 +211,7 @@ import { toast } from '#lib/stores/toast.js';
 	let dosBurst = $state(20);
 
 	let securityTabs = $derived.by(() => {
-		const tabs: Tab[] = ['overview', 'setup', 'fail2ban', 'malware', 'traffic'];
+		const tabs: Tab[] = ['overview', 'setup', 'fail2ban', 'malware', 'traffic', 'dependencies'];
 		if (hasPermission($permissions, 'firewall.view')) tabs.push('firewall');
 		tabs.push('waf', 'events');
 		return tabs;
@@ -1040,6 +1041,8 @@ import { toast } from '#lib/stores/toast.js';
 				<div class="mt-5 flex flex-wrap gap-3"><button onclick={applyTrafficGuard} disabled={!selectedTrafficWebsite || busy !== '' || !!currentTaskId || (trafficMode !== 'observe' && (!trafficConfirmed || trafficObservation < 100))} class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{translate($language, 'sec.validateApply')}</button><button onclick={resetTrafficObserve} disabled={!selectedTrafficWebsite || selectedTrafficProfile?.mode === 'observe' || busy !== '' || !!currentTaskId} class="rounded-lg border border-green-700 px-4 py-2 text-sm text-green-300 disabled:opacity-50">{translate($language, 'tg.returnObserve')}</button></div>
 			</section>
 		</div>
+	{:else if activeTab === 'dependencies'}
+		<DependencyAuditPanel />
 	{:else if activeTab === 'firewall'}
 		<FirewallPanel />
 	{:else if activeTab === 'waf'}
