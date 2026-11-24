@@ -12,7 +12,16 @@ type Worker struct {
 	busy        chan struct{}
 	lastCleanup time.Time
 	now         func() time.Time
+	deps        DueScanner
 }
+
+// DueScanner starts a background scan when one is due (internal/depaudit).
+type DueScanner interface {
+	ScanIfDue(ctx context.Context, now time.Time)
+}
+
+// SetDependencyScanner makes each tick start the daily dependency audit.
+func (w *Worker) SetDependencyScanner(d DueScanner) { w.deps = d }
 
 func NewWorker(service *Service, events *EventService) *Worker {
 	return &Worker{service: service, events: events, busy: make(chan struct{}, 1), now: func() time.Time { return time.Now().UTC() }}
@@ -25,6 +34,9 @@ func (w *Worker) Tick(ctx context.Context, now time.Time) {
 		return
 	}
 	defer func() { <-w.busy }()
+	if w.deps != nil {
+		w.deps.ScanIfDue(ctx, now)
+	}
 	report := w.service.RefreshPosture(ctx, now)
 	active := map[string]bool{}
 	for _, finding := range report.Findings {
