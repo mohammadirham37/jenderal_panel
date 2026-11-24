@@ -50,8 +50,8 @@ type fakeServer struct {
 	// dpkg-query listing of postgresql* packages.
 	autoremove   string
 	dpkgPostgres string
-	sudoCalls      [][]string
-	inputs         map[string]string
+	sudoCalls    [][]string
+	inputs       map[string]string
 }
 
 func newFakeServer() *fakeServer {

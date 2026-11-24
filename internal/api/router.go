@@ -16,6 +16,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/cron"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbconfig"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
+	"github.com/mohammadirham37/jenderal_panel/internal/depaudit"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
@@ -87,6 +88,7 @@ type Dependencies struct {
 	FileManagerSvc  *filemanager.Service
 	UpdateSvc       *update.Service
 	ReleaseUpgrade  *releaseupgrade.Service
+	DepAudit        *depaudit.Service
 	Exec            executor.CommandExecutor
 	Tasks           *taskrunner.Runner
 	SecuritySvc     *security.Service
@@ -158,6 +160,7 @@ func NewRouter(deps Dependencies) http.Handler {
 	terminalHandler := terminal.NewHandler(deps.Exec, deps.AuditSvc)
 	updateHandler := update.NewHandler(deps.UpdateSvc, deps.AuditSvc)
 	releaseUpgradeHandler := releaseupgrade.NewHandler(deps.ReleaseUpgrade, deps.AuditSvc)
+	depAuditHandler := depaudit.NewHandler(deps.DepAudit, deps.AuditSvc)
 	securityHandler := security.NewHandler(deps.SecuritySvc, deps.SecurityEvents, deps.AuditSvc)
 	securityHandler.SetSetupService(deps.SecuritySetup, deps.Tasks)
 	wafHandler := waf.NewHandler(deps.WAFSvc, deps.AuditSvc, deps.Tasks)
@@ -1083,6 +1086,10 @@ func NewRouter(deps Dependencies) http.Handler {
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/setup/review", securityHandler.SetupReview)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/setup/apply", securityHandler.SetupApply)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).Post("/security/setup/resume", securityHandler.SetupResume)
+			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
+				Get("/security/dependencies", depAuditHandler.Report)
+			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).
+				Post("/security/dependencies/scan", depAuditHandler.Scan)
 			r.With(auth.RequirePermission(deps.RBAC, "security.view")).
 				Get("/security/events", securityHandler.ListEvents)
 			r.With(auth.RequirePermission(deps.RBAC, "security.manage")).

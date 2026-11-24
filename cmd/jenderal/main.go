@@ -24,6 +24,7 @@ import (
 	"github.com/mohammadirham37/jenderal_panel/internal/database"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbconfig"
 	"github.com/mohammadirham37/jenderal_panel/internal/dbmanager"
+	"github.com/mohammadirham37/jenderal_panel/internal/depaudit"
 	"github.com/mohammadirham37/jenderal_panel/internal/dependency"
 	"github.com/mohammadirham37/jenderal_panel/internal/deployment"
 	"github.com/mohammadirham37/jenderal_panel/internal/diskusage"
@@ -303,6 +304,9 @@ func cmdServe() {
 	postureChecker := security.NewPostureChecker(exec)
 	securitySvc.SetPostureChecker(postureChecker)
 	securityWorker := security.NewWorker(securitySvc, securityEvents)
+	depAuditSvc := depaudit.NewService(db, exec)
+	depAuditSvc.SetEventSink(security.NewDependencyEventSink(securityEvents))
+	securityWorker.SetDependencyScanner(depAuditSvc)
 	updateSvc := update.NewService(exec, buildVersion(), tasks)
 	releaseUpgradeSvc := releaseupgrade.NewService(exec, db, tasks)
 	dependencySvc := dependency.NewService(exec)
@@ -430,6 +434,7 @@ func cmdServe() {
 		FileManagerSvc:  fileManagerSvc,
 		UpdateSvc:       updateSvc,
 		ReleaseUpgrade:  releaseUpgradeSvc,
+		DepAudit:        depAuditSvc,
 		Exec:            exec,
 		Tasks:           tasks,
 		SecuritySvc:     securitySvc,
