@@ -60,6 +60,8 @@ internal/{domain}/service_test.go  # Tests with MockExecutor and in-memory SQLit
 
 **releaseupgrade** (`internal/releaseupgrade`): Ubuntu 24.04 → 26.04 via `do-release-upgrade` in the transient unit `jenderal-release-upgrade`, with preflight checks, an upgrader override that never removes obsolete packages, and a post-upgrade repair of sury/pgdg/PHP-FPM. Design: `docs/superpowers/specs/2026-11-22-ubuntu-release-upgrade-design.md`.
 
+**depaudit** (`internal/depaudit`): the Composer/npm lockfiles of every website (read as the site account) checked against OSV.dev daily (security worker) and on demand; high/critical non-dev findings become security events via `security.DependencyEventSink`. Design: `docs/superpowers/specs/2026-11-24-dependency-cve-audit-design.md`.
+
 **TaskRunner** (`internal/taskrunner/runner.go`): Background task execution with live output streaming and SQLite persistence. Used for all install operations (PHP, databases, Docker, updates). Returns task ID immediately; frontend polls `GET /api/v1/tasks/{id}` for progress.
 
 ### Auth & RBAC
