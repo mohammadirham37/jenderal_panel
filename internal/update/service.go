@@ -428,6 +428,13 @@ export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 BUILD_CACHE_DIR=/var/cache/jenderal
 mkdir -p "$BUILD_CACHE_DIR"
 export GOCACHE="$BUILD_CACHE_DIR/go-build" GOMODCACHE="$BUILD_CACHE_DIR/go-mod" GOFLAGS="-modcacherw"
+# Build temporaries on disk: Ubuntu 26.04 mounts /tmp as tmpfs (half the
+# RAM), which go build's work directory and gcc's temporaries for the
+# sqlite cgo build fill up on a small server ("No space left on device").
+BUILD_TMP_DIR="$BUILD_CACHE_DIR/tmp"
+rm -rf "$BUILD_TMP_DIR"
+mkdir -p -m 0700 "$BUILD_TMP_DIR"
+export TMPDIR="$BUILD_TMP_DIR" GOTMPDIR="$BUILD_TMP_DIR"
 `+cleanupFunctions()+`
 # The frontend and Go builds need ~2.5GB of memory. What counts is what is
 # free right now, not the installed RAM: on a server that has been up for a
@@ -524,6 +531,7 @@ case "$revision" in
 esac
 CGO_ENABLED=1 go build -o %s -ldflags "-X main.version=$revision" ./cmd/jenderal 2>&1
 cleanup_build_swap
+rm -rf "$BUILD_TMP_DIR"
 
 echo ">>> Step 6: Installing branded Nginx welcome page..."
 mkdir -p /var/www/html

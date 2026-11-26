@@ -311,7 +311,14 @@ step_create_dirs() {
 step_build() {
     ensure_build_swap
     log "Building Jenderal Panel from source..."
-    local bd="/tmp/jenderal-build-$$"
+    # Source and build temporaries on disk: Ubuntu 26.04 mounts /tmp as
+    # tmpfs (half the RAM), and on a 1GB server go build's work directory
+    # and gcc's temporaries for the sqlite cgo build fill it up.
+    local BUILD_ROOT=/var/cache/jenderal/build
+    rm -rf "$BUILD_ROOT"
+    mkdir -p -m 0755 "$BUILD_ROOT"
+    mkdir -p -m 0700 "$BUILD_ROOT/tmp"
+    local bd="$BUILD_ROOT/src-$$"
 
     git clone --depth 1 "https://github.com/${JENDERAL_REPO}.git" "$bd" 2>&1 | tail -1
 
@@ -337,6 +344,7 @@ step_build() {
     # this build's cache and later updates can keep it bounded.
     mkdir -p /var/cache/jenderal
     export GOCACHE=/var/cache/jenderal/go-build GOMODCACHE=/var/cache/jenderal/go-mod GOFLAGS=-modcacherw
+    export TMPDIR="$BUILD_ROOT/tmp" GOTMPDIR="$BUILD_ROOT/tmp"
     CGO_ENABLED=1 go build -ldflags "-X main.version=${JENDERAL_VERSION}" \
         -o "$JENDERAL_BIN" ./cmd/jenderal 2>&1
     [[ -f "$JENDERAL_BIN" ]] || fail "Go build failed"
@@ -352,7 +360,8 @@ step_build() {
         || fail "Failed to install Nginx welcome page"
 
     cd /
-    rm -rf "$bd"
+    rm -rf "$BUILD_ROOT"
+    unset TMPDIR GOTMPDIR
 
     # Verify
     "$JENDERAL_BIN" version 2>/dev/null || fail "Binary verification failed"

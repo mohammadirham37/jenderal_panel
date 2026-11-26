@@ -263,3 +263,28 @@ func TestInstallerWiresSwapGuardIntoBuildStep(t *testing.T) {
 		t.Fatalf("installer removes the build swap before the binary is verified:\n%s", script)
 	}
 }
+
+// Ubuntu 26.04 mounts /tmp as tmpfs (half the RAM): on a 1GB server the
+// sqlite cgo build failed with "No space left on device" although the disk
+// had 26GB free. The source tree and the build temporaries live on disk.
+func TestInstallerBuildsOnDiskNotInTmpfs(t *testing.T) {
+	source, err := os.ReadFile("install.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(source)
+	if strings.Contains(script, `local bd="/tmp/`) {
+		t.Error("the build directory must not be under /tmp")
+	}
+	for _, want := range []string{
+		`local bd="$BUILD_ROOT/src-$$"`,
+		`export TMPDIR="$BUILD_ROOT/tmp" GOTMPDIR="$BUILD_ROOT/tmp"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("installer missing %q", want)
+		}
+	}
+	if strings.Index(script, `export TMPDIR="$BUILD_ROOT/tmp"`) > strings.Index(script, "CGO_ENABLED=1 go build") {
+		t.Error("TMPDIR must be set before go build")
+	}
+}

@@ -287,3 +287,22 @@ func TestChangelogSurfacesGitHubErrors(t *testing.T) {
 		t.Fatalf("expected the GitHub status code to surface, got %v", err)
 	}
 }
+
+// Ubuntu 26.04 mounts /tmp as tmpfs (half the RAM). go build's work
+// directory and gcc's temporaries (the sqlite cgo build) ran it out of
+// space on a 1GB server, so the build uses a directory on disk.
+func TestUpdateScriptBuildsWithTemporaryFilesOnDisk(t *testing.T) {
+	script := UpdateScript("/usr/local/bin/jenderal")
+	for _, want := range []string{
+		`BUILD_TMP_DIR="$BUILD_CACHE_DIR/tmp"`,
+		`export TMPDIR="$BUILD_TMP_DIR" GOTMPDIR="$BUILD_TMP_DIR"`,
+		`rm -rf "$BUILD_TMP_DIR"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("update script missing %q", want)
+		}
+	}
+	if strings.Index(script, `export TMPDIR="$BUILD_TMP_DIR"`) > strings.Index(script, "CGO_ENABLED=1 go build") {
+		t.Error("TMPDIR must be set before go build")
+	}
+}
