@@ -136,3 +136,18 @@ func TestResolveProfileGoDefaults(t *testing.T) {
 		t.Fatalf("go-binary docroot = %q, want app/public", pb.RelativeDocumentRoot)
 	}
 }
+
+// PHP 8.5 is installed on Ubuntu 26.04 (packages.sury.org and the release
+// itself); creating or switching a site to it was rejected.
+func TestSupportedPHPIncludes85(t *testing.T) {
+	for _, v := range []string{"8.1", "8.2", "8.3", "8.4", "8.5"} {
+		if !supportedPHP(v) {
+			t.Errorf("supportedPHP(%q) = false", v)
+		}
+	}
+	for _, v := range []string{"7.4", "8.0", "8.6", "9", ""} {
+		if supportedPHP(v) {
+			t.Errorf("supportedPHP(%q) = true", v)
+		}
+	}
+}

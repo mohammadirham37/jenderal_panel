@@ -313,8 +313,18 @@ func resolveLaravelProfile(req CreateRequest, setupMode string) (Profile, error)
 	return profile, nil
 }
 
+// sitePHPVersions are the PHP versions a site can use. Whether one is
+// installed on this server is the PHP module's business (8.5 is offered on
+// Ubuntu 26.04).
+var sitePHPVersions = []string{"8.1", "8.2", "8.3", "8.4", "8.5"}
+
 func supportedPHP(version string) bool {
-	return version == "8.1" || version == "8.2" || version == "8.3" || version == "8.4"
+	for _, v := range sitePHPVersions {
+		if v == version {
+			return true
+		}
+	}
+	return false
 }
 
 func comparePHP(left, right string) int {
@@ -483,7 +493,7 @@ func websiteProfileOptions() []ProfileOption {
 			}
 		}
 		if option.UsesPHP {
-			for _, version := range []string{"8.1", "8.2", "8.3", "8.4"} {
+			for _, version := range sitePHPVersions {
 				compatible := option.MinimumPHP == "" || comparePHP(version, option.MinimumPHP) >= 0
 				compatibility := CompatibilityOption{Version: version, Enabled: compatible}
 				if !compatible {
