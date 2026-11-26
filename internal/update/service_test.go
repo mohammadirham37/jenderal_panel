@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -304,5 +305,30 @@ func TestUpdateScriptBuildsWithTemporaryFilesOnDisk(t *testing.T) {
 	}
 	if strings.Index(script, `export TMPDIR="$BUILD_TMP_DIR"`) > strings.Index(script, "CGO_ENABLED=1 go build") {
 		t.Error("TMPDIR must be set before go build")
+	}
+}
+
+// The panel unit runs with UMask=0077, which the update script inherits:
+// a fresh clone of the source was root-only (0700) and npm, running as the
+// panel user, failed with EACCES on /opt/jenderal/source/web.
+func TestUpdateScriptKeepsTheSourceReadableForThePanelUser(t *testing.T) {
+	script := UpdateScript("/usr/local/bin/jenderal")
+	umask := strings.Index(script, "\numask 022\n")
+	clone := strings.Index(script, "git clone")
+	if umask < 0 || clone < 0 || umask > clone {
+		t.Fatalf("umask 022 must be set before the source is cloned:\n%s", script)
+	}
+	repair := strings.Index(script, `-exec chmod go+rX {} +`)
+	install := strings.Index(script, "Step 2: Installing frontend dependencies")
+	if repair < 0 || repair > install {
+		t.Fatal("a source tree left root-only by an earlier update must be made readable before npm runs")
+	}
+}
+
+func TestUpdateScriptIsValidBash(t *testing.T) {
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader(UpdateScript("/usr/local/bin/jenderal"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bash -n: %v\n%s", err, out)
 	}
 }

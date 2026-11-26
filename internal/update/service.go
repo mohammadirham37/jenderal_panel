@@ -420,6 +420,10 @@ func UpdateScript(execPath string) string {
 	// Single bash script for entire update — avoids PATH/env issues between steps
 	return fmt.Sprintf(`#!/bin/bash
 	set -e
+# The panel unit runs with UMask=0077, which this script inherits. The
+# source tree is public and the panel user runs npm in it, so files created
+# here must be readable (secrets below set their modes explicitly).
+umask 022
 export PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin:$PATH
 
 # Go caches live in one known place instead of root's home, where earlier
@@ -488,6 +492,9 @@ else
     rm -rf %s
     git clone --depth 1 %s %s 2>&1
 fi
+# A clone made by an earlier update under UMask=0077 is root-only; the
+# panel user could not enter it ("EACCES ... mkdir .../web").
+find %s -path %s/web/node_modules -prune -o \( ! -perm -o+r -o \( -type d ! -perm -o+x \) \) -exec chmod go+rX {} +
 
 echo ">>> Step 2: Installing frontend dependencies..."
 echo ">>> Preparing panel-owned NVM runtime..."
@@ -596,6 +603,7 @@ fi
 echo ">>> Update complete! Service restart scheduled."
 `,
 		sourceDir, sourceDir, sourceDir, repoURL, sourceDir,
+		sourceDir, sourceDir,
 		noderuntime.PanelBootstrapShell(), sourceDir, noderuntime.PanelNPMCommand("install", "--loglevel=error"), noderuntime.PanelNPMCommand("run", "build"),
 		sourceDir,
 		replacementPath, replacementPath, replacementPath,
