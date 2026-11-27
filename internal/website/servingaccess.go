@@ -3,8 +3,10 @@ package website
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mohammadirham37/jenderal_panel/internal/executor"
 )
@@ -56,6 +58,88 @@ func (p *Provisioner) RestoreServingAccess(ctx context.Context, websiteID string
 		return err
 	}
 	return p.grantNginxACLs(ctx, w)
+}
+
+// servingReconcileInterval is how often document roots are checked for files
+// nginx cannot read.
+const servingReconcileInterval = 5 * time.Minute
+
+// StartServingReconciler periodically repairs document roots holding files
+// nginx cannot read. Builds and checkouts run outside the panel (SSH, the
+// web terminal) create files whose modes come from the parent directory's
+// default ACL; a document root recreated by `git clone` inherits the
+// project directory's default ACL, whose other entry is ---, so every
+// public/build asset ends up 0640 and Laravel answers the asset URLs with
+// an HTML page. Checking is a single find per site; the full repair only
+// runs when something is unreadable.
+func (p *Provisioner) StartServingReconciler(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(servingReconcileInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				p.ReconcileServingAccess(ctx)
+			}
+		}
+	}()
+}
+
+// ReconcileServingAccess re-applies serving access to every active site
+// whose document root contains something nginx cannot read.
+func (p *Provisioner) ReconcileServingAccess(ctx context.Context) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id, domain, document_root, web_user FROM websites WHERE status IN ('active', 'suspended') ORDER BY created_at ASC`)
+	if err != nil {
+		slog.Warn("serving access reconcile: list websites", "error", err)
+		return
+	}
+	var websites []websiteRow
+	for rows.Next() {
+		var w websiteRow
+		if err := rows.Scan(&w.ID, &w.Domain, &w.DocumentRoot, &w.WebUser); err != nil {
+			rows.Close()
+			slog.Warn("serving access reconcile: scan website", "error", err)
+			return
+		}
+		websites = append(websites, w)
+	}
+	rows.Close()
+	for _, w := range websites {
+		if ctx.Err() != nil {
+			return
+		}
+		path := p.unservablePath(ctx, w)
+		if path == "" {
+			continue
+		}
+		if err := p.ensureServingPermissions(ctx, w); err != nil {
+			slog.Warn("serving access reconcile failed", "domain", w.Domain, "path", path, "error", err)
+			continue
+		}
+		slog.Info("serving access repaired", "domain", w.Domain, "unreadable", path)
+	}
+}
+
+// unservablePath returns the first file or directory under a managed
+// document root that nginx cannot read through the other class, or "" when
+// everything is servable (or the root does not exist yet). Symlinks are not
+// followed; public/storage is covered by grantNginxACLs.
+func (p *Provisioner) unservablePath(ctx context.Context, w websiteRow) string {
+	root := filepath.Clean(w.DocumentRoot)
+	if !webUserRegex.MatchString(w.WebUser) || !pathStrictlyBelow(filepath.Join("/home", w.WebUser), root) {
+		return ""
+	}
+	result, err := p.exec.RunSudo(ctx, "find", root, "-xdev", "(",
+		"(", "-type", "d", "!", "-perm", "-o=rx", ")", "-o",
+		"(", "-type", "f", "!", "-perm", "-o=r", ")",
+		")", "-print", "-quit")
+	if err != nil || result == nil {
+		return ""
+	}
+	return strings.TrimSpace(result.Stdout)
 }
 
 // grantNginxACLs gives the nginx worker account named-user ACLs on the

@@ -480,6 +480,7 @@ func cmdServe() {
 		logger.Warn("website permission reconciliation failed", "error", err)
 	}
 	provisioner.Start(bgCtx)
+	provisioner.StartServingReconciler(bgCtx)
 	if err := provisioner.Recover(bgCtx); err != nil {
 		logger.Warn("website provisioning recovery failed", "error", err)
 	}

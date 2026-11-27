@@ -413,6 +413,13 @@ func directivesForProfile(data VhostData, tls bool) nginxProfileDirectives {
     add_header Referrer-Policy strict-origin-when-cross-origin always;
 `, Location: `    location / {
         try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # Vite build output is static: a missing or unreadable asset is a 404
+    # (with "Permission denied" in the error log), never Laravel's HTML page
+    # served as a stylesheet.
+    location ^~ /build/ {
+        try_files $uri =404;
     }`, PHP: `    location ~ ^/index\.php(/|$) {
         include fastcgi_params;
         fastcgi_pass unix:/run/php/php` + data.PHPVersion + `-fpm-` + data.Domain + `.sock;

@@ -441,7 +441,7 @@ func (s *Service) RunCommand(ctx context.Context, websiteID string, command stri
 	}
 
 	s.ensureSitePHPCLI(ctx, w)
-	shellCmd := buildCommandScript(w, workDir, args, nodeVersion)
+	shellCmd := keepDocumentRootServable(w, buildCommandScript(w, workDir, args, nodeVersion))
 
 	taskID := tr.Run(
 		command+" ("+w.Domain+")",
@@ -469,6 +469,7 @@ func (s *Service) runInitialSetup(ctx context.Context, websiteID string, withDev
 	if err != nil {
 		return "", err
 	}
+	shellCmd = keepDocumentRootServable(w, shellCmd)
 
 	name := InitialSetupCommand
 	if withDev {
@@ -515,6 +516,21 @@ func (s *Service) buildInitialSetupScript(ctx context.Context, w model.Website, 
 		return "", model.NewValidationError("nothing to set up: no composer.json, artisan, or package.json found in the project")
 	}
 	return "cd " + workDir + " && " + sitePHPPath(w) + strings.Join(steps, " && "), nil
+}
+
+// keepDocumentRootServable makes a command leave the document root readable
+// by nginx. Files the command creates (npm run build output, git pull) get
+// their modes from the parent's default ACL, which is other::--- when the
+// directory was recreated outside the panel, or from the panel's UMask=0077:
+// nginx then cannot read public/build and Laravel answers the asset URLs
+// with an HTML page. The document root is public content; the project
+// outside it stays private. The command's exit status is preserved.
+func keepDocumentRootServable(w model.Website, script string) string {
+	root := filepath.Clean(w.DocumentRoot)
+	if w.AppType == "go" || !pathStrictlyBelow("/home/"+w.WebUser, root) {
+		return script
+	}
+	return "{ " + script + "; }; rc=$?; chmod -R o+rX -- " + shQuote(root) + " 2>/dev/null; exit $rc"
 }
 
 // nvmWrappedCommand returns a shell fragment running command through the
