@@ -102,6 +102,8 @@ var allowedCommands = map[string][]string{
 	"php spark db:seed":                                  {"php", "spark", "db:seed"},
 	"php spark cache:clear":                              {"php", "spark", "cache:clear"},
 	"npm install":                                        {"npm", "install"},
+	"npm ci":                                             {"npm", "ci"},
+	"npm update":                                         {"npm", "update"},
 	"npm run build":                                      {"npm", "run", "build"},
 	"npm run dev":                                        {"npm", "run", "dev"},
 	"yarn install":                                       {"yarn", "install"},
@@ -249,6 +251,8 @@ func commandPresetsFor(w model.Website) []CommandPreset {
 	// Node/frontend commands are always available.
 	presets = append(presets,
 		CommandPreset{Label: "npm install", Command: "npm install", Category: "npm", Danger: false},
+		CommandPreset{Label: "npm ci", Command: "npm ci", Category: "npm", Danger: false},
+		CommandPreset{Label: "npm update", Command: "npm update", Category: "npm", Danger: false},
 		CommandPreset{Label: "npm run build", Command: "npm run build", Category: "npm", Danger: false},
 		CommandPreset{Label: "npm run dev", Command: "npm run dev", Category: "npm", Danger: false},
 		CommandPreset{Label: "yarn install", Command: "yarn install", Category: "yarn", Danger: false},

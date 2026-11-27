@@ -340,3 +340,26 @@ func TestBuildCommandScriptUsesTheSitePHPVersion(t *testing.T) {
 		t.Errorf("non-PHP sites must not get the PHP path: %q", got)
 	}
 }
+
+func TestNpmCiAndUpdateAreOffered(t *testing.T) {
+	presets := commandPresetsFor(model.Website{AppType: "laravel", WebUser: "web_example"})
+	for _, command := range []string{"npm ci", "npm update"} {
+		if _, ok := allowedCommands[command]; !ok {
+			t.Errorf("%s is not allowed", command)
+		}
+		found := false
+		for _, p := range presets {
+			found = found || p.Command == command
+		}
+		if !found {
+			t.Errorf("%s is not offered in the Commands tab", command)
+		}
+		if projectMarkerFor(command) != "package.json" {
+			t.Errorf("%s must run in the package.json directory", command)
+		}
+	}
+	w := model.Website{WebUser: "web_example"}
+	if got := buildCommandScript(w, "/home/web_example/app", allowedCommands["npm ci"], "22"); !strings.Contains(got, "nvm-exec npm ci") {
+		t.Errorf("npm ci must run through the site's NVM runtime: %s", got)
+	}
+}
