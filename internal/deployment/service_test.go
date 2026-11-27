@@ -674,3 +674,44 @@ func TestDeploy_GoSite_ClonesIntoAppDir(t *testing.T) {
 		t.Errorf("clone targeted the document root: %q", joined)
 	}
 }
+
+func TestDeploymentRecordsItsRepository(t *testing.T) {
+	db := setupTestDB(t)
+	svc := NewService(db, newMockExecutor(), audit.NewService(db))
+	websiteID := insertWebsite(t, db, "example.com", "www-data", "/var/www/example")
+
+	repo := "https://deploy:ghp_secret@github.com/example/repo.git"
+	d, err := svc.Deploy(context.Background(), websiteID, repo, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.GetDeployment(context.Background(), d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Repo != repo || got.Log != "" {
+		t.Errorf("repo = %q log = %q", got.Repo, got.Log)
+	}
+	list, err := svc.ListByWebsite(context.Background(), websiteID)
+	if err != nil || len(list) != 1 || list[0].Repo != repo {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+	if out := redactForClient(got); out.Repo != "https://github.com/example/repo.git" {
+		t.Errorf("client repo = %q", out.Repo)
+	}
+}
+
+func TestRedactRepo(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://github.com/org/repo.git":            "https://github.com/org/repo.git",
+		"https://user:token@gitlab.com/org/repo.git": "https://gitlab.com/org/repo.git",
+		"https://oauth2@github.com/org/repo.git":     "https://github.com/org/repo.git",
+		"git@github.com:org/repo.git":                "git@github.com:org/repo.git",
+		"ssh://git:secret@example.com:2222/repo.git": "ssh://git@example.com:2222/repo.git",
+		"": "",
+	} {
+		if got := RedactRepo(in); got != want {
+			t.Errorf("RedactRepo(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

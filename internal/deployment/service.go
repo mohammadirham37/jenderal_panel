@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -130,6 +131,7 @@ func (s *Service) Deploy(ctx context.Context, websiteID, repo, branch string) (m
 	d := model.Deployment{
 		ID:        id,
 		WebsiteID: websiteID,
+		Repo:      repo,
 		Branch:    branch,
 		Status:    "pending",
 		CreatedAt: time.Now().UTC(),
@@ -137,19 +139,13 @@ func (s *Service) Deploy(ctx context.Context, websiteID, repo, branch string) (m
 	}
 
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO deployments (id, website_id, branch, status, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		id, websiteID, branch, "pending", now, now,
+		`INSERT INTO deployments (id, website_id, repo, branch, status, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, websiteID, repo, branch, "pending", now, now,
 	)
 	if err != nil {
 		return model.Deployment{}, fmt.Errorf("insert deployment: %w", err)
 	}
-
-	// Store repo URL in the log field temporarily so the worker can retrieve it.
-	_, _ = s.db.ExecContext(ctx,
-		`UPDATE deployments SET log = ? WHERE id = ?`,
-		"repo="+repo, id,
-	)
 
 	s.queue <- id
 
@@ -174,9 +170,9 @@ func (s *Service) deploy(ctx context.Context, deploymentID string) {
 		return
 	}
 
-	// Extract repo URL from log field where we temporarily stored it.
-	repo := ""
-	if strings.HasPrefix(d.Log, "repo=") {
+	// Deployments queued by an older panel carried the repo in the log.
+	repo := d.Repo
+	if repo == "" && strings.HasPrefix(d.Log, "repo=") {
 		repo = strings.TrimPrefix(d.Log, "repo=")
 	}
 
@@ -491,7 +487,7 @@ func (s *Service) failDeployment(ctx context.Context, id, log string, durationMs
 // GetDeployment returns a single deployment by ID.
 func (s *Service) GetDeployment(ctx context.Context, id string) (model.Deployment, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, website_id, commit_hash, branch, status, duration_ms, log, created_at, updated_at
+		`SELECT id, website_id, commit_hash, repo, branch, status, duration_ms, log, created_at, updated_at
 		 FROM deployments WHERE id = ?`, id,
 	)
 	d, err := scanDeployment(row)
@@ -507,7 +503,7 @@ func (s *Service) GetDeployment(ctx context.Context, id string) (model.Deploymen
 // ListByWebsite returns all deployments for a website, newest first.
 func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.Deployment, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, website_id, commit_hash, branch, status, duration_ms, log, created_at, updated_at
+		`SELECT id, website_id, commit_hash, repo, branch, status, duration_ms, log, created_at, updated_at
 		 FROM deployments WHERE website_id = ? ORDER BY created_at DESC`, websiteID,
 	)
 	if err != nil {
@@ -523,7 +519,7 @@ func (s *Service) ListByWebsite(ctx context.Context, websiteID string) ([]model.
 		var createdStr, updatedStr string
 
 		if err := rows.Scan(
-			&d.ID, &d.WebsiteID, &commitHash, &d.Branch, &d.Status,
+			&d.ID, &d.WebsiteID, &commitHash, &d.Repo, &d.Branch, &d.Status,
 			&durationMs, &log, &createdStr, &updatedStr,
 		); err != nil {
 			return nil, fmt.Errorf("scan deployment: %w", err)
@@ -554,7 +550,7 @@ func scanDeployment(s scanner) (model.Deployment, error) {
 	var createdStr, updatedStr string
 
 	err := s.Scan(
-		&d.ID, &d.WebsiteID, &commitHash, &d.Branch, &d.Status,
+		&d.ID, &d.WebsiteID, &commitHash, &d.Repo, &d.Branch, &d.Status,
 		&durationMs, &log, &createdStr, &updatedStr,
 	)
 	if err != nil {
@@ -568,4 +564,30 @@ func scanDeployment(s scanner) (model.Deployment, error) {
 	d.UpdatedAt, _ = time.Parse(time.RFC3339, updatedStr)
 
 	return d, nil
+}
+
+// RedactRepo strips credentials from a repository URL before it leaves the
+// server: https://user:token@host/... becomes https://host/... . SSH
+// remotes (git@host:org/repo.git) carry no secret and are returned as is.
+func RedactRepo(repo string) string {
+	u, err := url.Parse(repo)
+	if err != nil || u.Scheme == "" || u.Host == "" || u.User == nil {
+		return repo
+	}
+	if u.Scheme == "ssh" {
+		u.User = url.User(u.User.Username())
+		return u.String()
+	}
+	u.User = nil
+	return u.String()
+}
+
+// redactForClient prepares a deployment for an API response: no repository
+// credentials, and no pre-run repo marker in the log.
+func redactForClient(d model.Deployment) model.Deployment {
+	d.Repo = RedactRepo(d.Repo)
+	if strings.HasPrefix(d.Log, "repo=") {
+		d.Log = ""
+	}
+	return d
 }

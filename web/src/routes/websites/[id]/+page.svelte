@@ -67,6 +67,7 @@ import { toast } from '#lib/stores/toast.js';
 	interface DeploymentEntry {
 		id: string;
 		commit_hash: string;
+		repo?: string;
 		branch: string;
 		status: string;
 		duration_ms: number;
@@ -2402,6 +2403,11 @@ import { toast } from '#lib/stores/toast.js';
 														<span class="text-xs text-red-400">{translate($language, 'wd.deploy.view_error')}</span>
 													{/if}
 												</div>
+												{#if dep.repo}
+													<p class="mt-1 truncate font-mono text-xs text-gray-300" title={dep.repo}>{dep.repo}</p>
+												{:else}
+													<p class="mt-1 text-xs italic text-gray-500">{translate($language, 'wd.deploy.repo_unknown')}</p>
+												{/if}
 												<p class="mt-1 text-xs text-gray-500">
 													{formatDate(dep.created_at)}{dep.duration_ms ? ` · ${formatDuration(dep.duration_ms)}` : ''}
 												</p>

@@ -76,7 +76,7 @@ func (h *Handler) Deploy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.logAction(r, "deploy_website", websiteID, "started deployment "+d.ID+" branch "+body.Branch)
-	httputil.JSON(w, http.StatusAccepted, d)
+	httputil.JSON(w, http.StatusAccepted, redactForClient(d))
 }
 
 // List handles GET /api/websites/{id}/deployments.
@@ -89,6 +89,9 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for i := range deployments {
+		deployments[i] = redactForClient(deployments[i])
+	}
 	httputil.JSON(w, http.StatusOK, deployments)
 }
 
@@ -102,7 +105,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	httputil.JSON(w, http.StatusOK, d)
+	httputil.JSON(w, http.StatusOK, redactForClient(d))
 }
 
 // Cancel handles POST /api/deployments/{id}/cancel — clears a stuck pending

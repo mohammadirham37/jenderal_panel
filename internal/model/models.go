@@ -250,6 +250,7 @@ type Deployment struct {
 	ID         string    `json:"id"`
 	WebsiteID  string    `json:"website_id"`
 	CommitHash string    `json:"commit_hash"`
+	Repo       string    `json:"repo"`
 	Branch     string    `json:"branch"`
 	Status     string    `json:"status"`
 	DurationMs int       `json:"duration_ms"`
