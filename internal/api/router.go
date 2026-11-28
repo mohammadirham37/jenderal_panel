@@ -1046,6 +1046,8 @@ func NewRouter(deps Dependencies) http.Handler {
 				Post("/websites/{id}/files/upload", fileHandler.Upload)
 			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
 				Get("/websites/{id}/files/download", fileHandler.Download)
+			r.With(auth.RequirePermission(deps.RBAC, "files.view")).
+				Get("/websites/{id}/files/download-zip", fileHandler.DownloadZip)
 
 			// Self-Update
 			r.With(auth.RequirePermission(deps.RBAC, "update.view")).

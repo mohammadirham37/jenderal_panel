@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -484,4 +486,36 @@ func (h *Handler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte(content))
+}
+
+// DownloadZip handles GET /api/websites/{websiteID}/files/download-zip?path=..&path=..
+// and streams one zip archive of the selected files and folders.
+func (h *Handler) DownloadZip(w http.ResponseWriter, r *http.Request) {
+	basePath, err := h.getWebsite(r)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+	paths := r.URL.Query()["path"]
+	resolved, err := h.svc.ValidateDownloadPaths(r.Context(), basePath, paths)
+	if err != nil {
+		httputil.HandleError(w, err)
+		return
+	}
+
+	name := ArchiveDownloadName(paths)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", name))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+
+	h.logAction(r, "download_zip", strings.Join(paths, ", "), fmt.Sprintf("downloaded %d entries as %s", len(paths), name))
+	warnings, err := h.svc.StreamZip(r.Context(), basePath, resolved, w)
+	// Headers are sent: a failure can only end the stream (the browser then
+	// reports the download as failed). Log it for the panel log.
+	if err != nil {
+		slog.Warn("file manager zip download failed", "paths", paths, "error", err)
+	} else if warnings != "" {
+		slog.Info("file manager zip download skipped entries", "paths", paths, "detail", warnings)
+	}
 }
